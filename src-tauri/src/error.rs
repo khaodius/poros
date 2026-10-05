@@ -18,6 +18,8 @@ pub enum ErrorKind {
     Io,
     Sftp,
     Ssh,
+    Cancelled,
+    Keychain,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -63,6 +65,30 @@ impl AppError {
 
     pub fn session_not_found() -> Self {
         Self::new(ErrorKind::SessionNotFound, "Session is no longer open")
+    }
+
+    pub fn cancelled() -> Self {
+        Self::new(ErrorKind::Cancelled, "Cancelled")
+    }
+
+    /// Network trouble that a later attempt, on a fresh connection, may not hit.
+    pub fn is_retryable(&self) -> bool {
+        matches!(
+            self.kind,
+            ErrorKind::Timeout
+                | ErrorKind::Disconnected
+                | ErrorKind::Connection
+                | ErrorKind::Ssh
+                | ErrorKind::Sftp
+        )
+    }
+
+    /// The connection carrying the request is unusable and must be reopened.
+    pub fn is_connection_lost(&self) -> bool {
+        matches!(
+            self.kind,
+            ErrorKind::Timeout | ErrorKind::Disconnected | ErrorKind::Connection | ErrorKind::Ssh
+        )
     }
 
     pub fn host_key(kind: ErrorKind, info: HostKeyInfo) -> Self {

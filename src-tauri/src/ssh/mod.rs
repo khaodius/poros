@@ -5,6 +5,7 @@ mod auth;
 pub mod keys;
 pub mod known_hosts;
 
+use std::borrow::Cow;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -18,6 +19,9 @@ use known_hosts::{fingerprint, HostKeyStatus, KnownHosts};
 
 pub const DEFAULT_TIMEOUT_SECS: u64 = 20;
 pub const DEFAULT_KEEPALIVE_SECS: u64 = 30;
+/// Larger than russh's 2 MiB default so a single download channel is not window-bound on
+/// high-latency links.
+const CHANNEL_WINDOW_BYTES: u32 = 16 * 1024 * 1024;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -46,9 +50,33 @@ pub struct ConnectProfile {
     pub timeout_secs: Option<u64>,
     #[serde(default)]
     pub keepalive_secs: Option<u64>,
+    #[serde(default)]
+    pub compression: bool,
+    /// Fills an empty password or passphrase from the system keychain.
+    #[serde(default)]
+    pub saved_connection_id: Option<String>,
 }
 
 impl ConnectProfile {
+    /// The password or passphrase is missing, so a saved one may fill it.
+    pub fn lacks_secret(&self) -> bool {
+        match &self.auth {
+            AuthMethod::Password { password } => password.is_empty(),
+            AuthMethod::PublicKey { passphrase, .. } => {
+                passphrase.as_deref().unwrap_or("").is_empty()
+            }
+            AuthMethod::Agent => false,
+        }
+    }
+
+    pub fn set_secret(&mut self, secret: String) {
+        match &mut self.auth {
+            AuthMethod::Password { password } => *password = secret,
+            AuthMethod::PublicKey { passphrase, .. } => *passphrase = Some(secret),
+            AuthMethod::Agent => {}
+        }
+    }
+
     pub fn label(&self) -> String {
         if self.port == 22 {
             format!("{}@{}", self.username, self.host)
@@ -81,6 +109,13 @@ pub struct HostKeyApproval {
 
 pub type SshHandle = Handle<ClientHandler>;
 
+pub struct Connection {
+    pub handle: SshHandle,
+    /// The key the server proved it holds. Extra connections pin it, so a host key that was
+    /// trusted for this session only is still accepted by transfer workers.
+    pub host_key_fingerprint: String,
+}
+
 pub struct ClientHandler {
     host: String,
     port: u16,
@@ -89,6 +124,7 @@ pub struct ClientHandler {
     approval: Option<HostKeyApproval>,
     /// Read by `connect` after a failed handshake to report why the key was rejected.
     rejection: Arc<Mutex<Option<AppError>>>,
+    accepted_fingerprint: Arc<Mutex<Option<String>>>,
     events: Events,
 }
 
@@ -115,6 +151,7 @@ impl client::Handler for ClientHandler {
                     info.algorithm, info.fingerprint
                 ),
             );
+            *self.accepted_fingerprint.lock().unwrap() = Some(info.fingerprint);
             return Ok(true);
         }
 
@@ -132,6 +169,7 @@ impl client::Handler for ClientHandler {
                         info.algorithm, info.fingerprint
                     ),
                 );
+                *self.accepted_fingerprint.lock().unwrap() = Some(info.fingerprint);
                 return Ok(true);
             }
         }
@@ -187,11 +225,19 @@ pub async fn connect(
     known_hosts: &KnownHosts,
     approval: Option<HostKeyApproval>,
     events: &Events,
-) -> AppResult<SshHandle> {
+) -> AppResult<Connection> {
     profile.validate()?;
     let timeout = Duration::from_secs(profile.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS));
     let keepalive = profile.keepalive_secs.unwrap_or(DEFAULT_KEEPALIVE_SECS);
 
+    let mut preferred = russh::Preferred::default();
+    if profile.compression {
+        preferred.compression = Cow::Borrowed(&[
+            russh::compression::ZLIB_LEGACY,
+            russh::compression::ZLIB,
+            russh::compression::NONE,
+        ]);
+    }
     let config = client::Config {
         client_id: russh::SshId::Standard(
             concat!("SSH-2.0-Poros_", env!("CARGO_PKG_VERSION")).into(),
@@ -199,10 +245,13 @@ pub async fn connect(
         keepalive_interval: (keepalive > 0).then(|| Duration::from_secs(keepalive)),
         keepalive_max: 3,
         nodelay: true,
+        window_size: CHANNEL_WINDOW_BYTES,
+        preferred,
         ..Default::default()
     };
 
     let rejection = Arc::new(Mutex::new(None));
+    let accepted_fingerprint = Arc::new(Mutex::new(None));
     let handler = ClientHandler {
         host: profile.host.trim().to_string(),
         port: profile.port,
@@ -210,6 +259,7 @@ pub async fn connect(
         known_hosts: known_hosts.clone(),
         approval,
         rejection: rejection.clone(),
+        accepted_fingerprint: accepted_fingerprint.clone(),
         events: events.clone(),
     };
 
@@ -254,7 +304,15 @@ pub async fn connect(
         Ok(result) => result,
     }?;
     events.log(LogLevel::Info, Some(session_id), "Authenticated");
-    Ok(handle)
+    let host_key_fingerprint = accepted_fingerprint
+        .lock()
+        .unwrap()
+        .take()
+        .unwrap_or_default();
+    Ok(Connection {
+        handle,
+        host_key_fingerprint,
+    })
 }
 
 fn connection_error(e: russh::Error, profile: &ConnectProfile) -> AppError {
