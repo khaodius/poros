@@ -218,8 +218,8 @@ pub async fn connect(
         Some(session_id),
         format!("Connecting to {}:{}", profile.host.trim(), profile.port),
     );
-    let addr = (profile.host.trim().to_string(), profile.port);
-    let connecting = client::connect(Arc::new(config), addr, handler);
+    let address = (profile.host.trim().to_string(), profile.port);
+    let connecting = client::connect(Arc::new(config), address, handler);
     let mut handle = match tokio::time::timeout(timeout, connecting).await {
         Err(_) => {
             return Err(AppError::new(

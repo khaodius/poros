@@ -154,7 +154,7 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    const PASS: &str = "poros-test";
+    const PASSPHRASE: &str = "poros-test";
 
     fn fixture(name: &str) -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -193,7 +193,7 @@ mod tests {
         for name in PPK_KEYS {
             for version in ["v2", "v3"] {
                 let file = format!("{name}-{version}-enc.ppk");
-                let key = load_private_key(&fixture(&file), Some(PASS))
+                let key = load_private_key(&fixture(&file), Some(PASSPHRASE))
                     .unwrap_or_else(|error| panic!("{file}: {}", error.message));
                 assert_eq!(public_of(&key), expected_public(name), "{file}");
             }
@@ -209,7 +209,7 @@ mod tests {
             // puttygen's default (calibrated) Argon2id parameters.
             "ed25519-v3-default-kdf-enc.ppk",
         ] {
-            let key = load_private_key(&fixture(file), Some(PASS))
+            let key = load_private_key(&fixture(file), Some(PASSPHRASE))
                 .unwrap_or_else(|error| panic!("{file}: {}", error.message));
             assert_eq!(public_of(&key), expected_public("ed25519"), "{file}");
         }
@@ -256,8 +256,8 @@ mod tests {
                     .join("\r\n")
             );
             assert!(file != "nocomment-v3-plain.ppk" || mangled.contains("Comment:\r\n"));
-            let pass = file.contains("enc").then_some(PASS);
-            let key = decode_private_key(mangled.as_bytes(), pass)
+            let passphrase = file.contains("enc").then_some(PASSPHRASE);
+            let key = decode_private_key(mangled.as_bytes(), passphrase)
                 .unwrap_or_else(|error| panic!("{file}: {}", error.message));
             assert_eq!(public_of(&key), expected_public(name), "{file}");
         }
@@ -285,9 +285,9 @@ mod tests {
     fn openssh_pem_and_pkcs8_keys() {
         for (file, pass) in [
             ("openssh-ed25519", None),
-            ("openssh-ed25519-enc", Some(PASS)),
+            ("openssh-ed25519-enc", Some(PASSPHRASE)),
             ("pem-rsa", None),
-            ("pem-rsa-enc", Some(PASS)),
+            ("pem-rsa-enc", Some(PASSPHRASE)),
             ("pkcs8-ecdsa", None),
         ] {
             let key = load_private_key(&fixture(file), pass)

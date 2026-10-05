@@ -49,8 +49,8 @@ fn fixture(name: &str) -> String {
 
 /// A manager whose app known_hosts already trusts the test server.
 async fn trusted_manager(server: &Server) -> (tempfile::TempDir, SessionManager) {
-    let dir = tempfile::tempdir().unwrap();
-    let manager = SessionManager::new(dir.path().join("known_hosts"), Events::default());
+    let temp_dir = tempfile::tempdir().unwrap();
+    let manager = SessionManager::new(temp_dir.path().join("known_hosts"), Events::default());
     let password = AuthMethod::Password {
         password: server.password.clone(),
     };
@@ -74,14 +74,14 @@ async fn trusted_manager(server: &Server) -> (tempfile::TempDir, SessionManager)
             .unwrap();
         manager.disconnect(&info.id).await.unwrap();
     }
-    (dir, manager)
+    (temp_dir, manager)
 }
 
 #[tokio::test]
 async fn host_key_prompt_then_remembered() {
     let Some(server) = server() else { return };
-    let dir = tempfile::tempdir().unwrap();
-    let manager = SessionManager::new(dir.path().join("known_hosts"), Events::default());
+    let temp_dir = tempfile::tempdir().unwrap();
+    let manager = SessionManager::new(temp_dir.path().join("known_hosts"), Events::default());
     let auth = AuthMethod::Password {
         password: server.password.clone(),
     };

@@ -76,8 +76,8 @@ impl KnownHosts {
         );
         kept.push(&record);
 
-        if let Some(dir) = self.app_file.parent() {
-            fs::create_dir_all(dir)?;
+        if let Some(parent) = self.app_file.parent() {
+            fs::create_dir_all(parent)?;
         }
         let temporary = self.app_file.with_extension("tmp");
         {
@@ -245,13 +245,13 @@ mod tests {
     }
 
     fn store(app: &str, system: &str) -> (tempfile::TempDir, KnownHosts) {
-        let dir = tempfile::tempdir().unwrap();
-        let app_file = dir.path().join("app_known_hosts");
-        let system_file = dir.path().join("known_hosts");
+        let temp_dir = tempfile::tempdir().unwrap();
+        let app_file = temp_dir.path().join("app_known_hosts");
+        let system_file = temp_dir.path().join("known_hosts");
         fs::write(&app_file, app).unwrap();
         fs::write(&system_file, system).unwrap();
         let known_hosts = KnownHosts::new(app_file, vec![system_file]);
-        (dir, known_hosts)
+        (temp_dir, known_hosts)
     }
 
     #[test]

@@ -1,12 +1,12 @@
 //! Remote paths are always `/`-separated, so `std::path` must not be used for them.
 
-pub fn join(dir: &str, name: &str) -> String {
-    if dir.is_empty() {
+pub fn join(directory: &str, name: &str) -> String {
+    if directory.is_empty() {
         name.to_string()
-    } else if dir.ends_with('/') {
-        format!("{dir}{name}")
+    } else if directory.ends_with('/') {
+        format!("{directory}{name}")
     } else {
-        format!("{dir}/{name}")
+        format!("{directory}/{name}")
     }
 }
 

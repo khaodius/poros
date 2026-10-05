@@ -69,18 +69,20 @@ impl RemoteFs {
 
     pub async fn list_dir(&self, path: &str) -> AppResult<DirListing> {
         let resolved = self.resolve(path);
-        let dir = self
+        let directory = self
             .canonicalize(&resolved)
             .await
             .map_err(|error| error.with_path(resolved.clone()))?;
         let raw_entries = self
-            .read_dir(&dir)
+            .read_dir(&directory)
             .await
-            .map_err(|error| error.with_path(dir.clone()))?;
+            .map_err(|error| error.with_path(directory.clone()))?;
 
         let mut entries: Vec<FileEntry> = raw_entries
             .into_iter()
-            .map(|(name, longname, attrs)| entry_from_attrs(&dir, name, &longname, &attrs))
+            .map(|(name, longname, attributes)| {
+                entry_from_attributes(&directory, name, &longname, &attributes)
+            })
             .collect();
 
         // The UI needs to know which links lead to folders.
@@ -103,8 +105,8 @@ impl RemoteFs {
         for (index, target) in resolved_links {
             let entry = &mut entries[index];
             match target {
-                Some(attrs) => {
-                    let is_dir = attrs
+                Some(attributes) => {
+                    let is_dir = attributes
                         .permissions
                         .is_some_and(|mode| kind_from_mode(mode) == EntryKind::Dir);
                     entry.link_target = Some(if is_dir {
@@ -113,7 +115,7 @@ impl RemoteFs {
                         LinkTarget::File
                     });
                     if !is_dir {
-                        entry.size = attrs.size.unwrap_or(0);
+                        entry.size = attributes.size.unwrap_or(0);
                     }
                 }
                 None => entry.link_target = Some(LinkTarget::Broken),
@@ -121,8 +123,8 @@ impl RemoteFs {
         }
 
         Ok(DirListing {
-            parent: remote_path::parent(&dir),
-            path: dir,
+            parent: remote_path::parent(&directory),
+            path: directory,
             entries,
         })
     }
@@ -161,13 +163,13 @@ impl RemoteFs {
             if path == "/" {
                 return Err(AppError::invalid("Refusing to delete /"));
             }
-            let attrs = self
+            let attributes = self
                 .raw
                 .lstat(path.clone())
                 .await
                 .map_err(|error| AppError::from(error).with_path(path.clone()))?
                 .attrs;
-            if is_dir(&attrs) {
+            if is_dir(&attributes) {
                 self.remove_tree(path).await?;
             } else {
                 self.raw
@@ -179,17 +181,17 @@ impl RemoteFs {
         Ok(())
     }
 
-    fn remove_tree(&self, dir: String) -> BoxFuture<'_, AppResult<()>> {
+    fn remove_tree(&self, directory: String) -> BoxFuture<'_, AppResult<()>> {
         Box::pin(async move {
             let children = self
-                .read_dir(&dir)
+                .read_dir(&directory)
                 .await
-                .map_err(|error| error.with_path(dir.clone()))?;
+                .map_err(|error| error.with_path(directory.clone()))?;
             let mut subdirs = Vec::new();
             let mut files = Vec::new();
-            for (name, _, attrs) in children {
-                let path = remote_path::join(&dir, &name);
-                if is_dir(&attrs) {
+            for (name, _, attributes) in children {
+                let path = remote_path::join(&directory, &name);
+                if is_dir(&attributes) {
                     subdirs.push(path);
                 } else {
                     files.push(path);
@@ -211,15 +213,15 @@ impl RemoteFs {
                 self.remove_tree(sub).await?;
             }
             self.raw
-                .rmdir(dir.clone())
+                .rmdir(directory.clone())
                 .await
-                .map_err(|error| AppError::from(error).with_path(dir))?;
+                .map_err(|error| AppError::from(error).with_path(directory))?;
             Ok(())
         })
     }
 
-    async fn read_dir(&self, dir: &str) -> AppResult<Vec<(String, String, FileAttributes)>> {
-        let handle = self.raw.opendir(dir).await?.handle;
+    async fn read_dir(&self, directory: &str) -> AppResult<Vec<(String, String, FileAttributes)>> {
+        let handle = self.raw.opendir(directory).await?.handle;
         let mut out = Vec::new();
         let result = loop {
             match self.raw.readdir(handle.as_str()).await {
@@ -260,8 +262,8 @@ async fn canonicalize(raw: &RawSftpSession, path: &str) -> AppResult<String> {
         .ok_or_else(|| AppError::new(ErrorKind::Sftp, "Server returned no path"))
 }
 
-fn is_dir(attrs: &FileAttributes) -> bool {
-    attrs
+fn is_dir(attributes: &FileAttributes) -> bool {
+    attributes
         .permissions
         .is_some_and(|mode| kind_from_mode(mode) == EntryKind::Dir)
 }
@@ -274,24 +276,29 @@ fn validate_name(name: &str) -> AppResult<()> {
     }
 }
 
-fn entry_from_attrs(dir: &str, name: String, longname: &str, attrs: &FileAttributes) -> FileEntry {
-    let kind = attrs
+fn entry_from_attributes(
+    directory: &str,
+    name: String,
+    longname: &str,
+    attributes: &FileAttributes,
+) -> FileEntry {
+    let kind = attributes
         .permissions
         .map(kind_from_mode)
         .unwrap_or(EntryKind::File);
-    let (owner, group) = owner_group(longname, attrs);
+    let (owner, group) = owner_group(longname, attributes);
     FileEntry {
-        path: remote_path::join(dir, &name),
+        path: remote_path::join(directory, &name),
         hidden: name.starts_with('.'),
         kind,
         link_target: None,
         size: if kind == EntryKind::Dir {
             0
         } else {
-            attrs.size.unwrap_or(0)
+            attributes.size.unwrap_or(0)
         },
-        modified: attrs.mtime.map(i64::from),
-        permissions: attrs.permissions.map(|mode| mode & 0o7777),
+        modified: attributes.mtime.map(i64::from),
+        permissions: attributes.permissions.map(|mode| mode & 0o7777),
         owner,
         group,
         name,
@@ -300,7 +307,7 @@ fn entry_from_attrs(dir: &str, name: String, longname: &str, attrs: &FileAttribu
 
 /// SFTP v3 only carries numeric uid/gid; OpenSSH and most servers put the names in the
 /// `ls -l` style longname (`drwxr-xr-x  2 alice staff 4096 Jan 1 00:00 name`).
-fn owner_group(longname: &str, attrs: &FileAttributes) -> (Option<String>, Option<String>) {
+fn owner_group(longname: &str, attributes: &FileAttributes) -> (Option<String>, Option<String>) {
     let mut fields = longname.split_whitespace();
     let looks_like_ls = fields.next().is_some_and(|mode| {
         mode.len() >= 10 && mode.starts_with(['-', 'd', 'l', 'c', 'b', 'p', 's'])
@@ -312,8 +319,8 @@ fn owner_group(longname: &str, attrs: &FileAttributes) -> (Option<String>, Optio
         }
     }
     (
-        attrs.uid.map(|uid| uid.to_string()),
-        attrs.gid.map(|gid| gid.to_string()),
+        attributes.uid.map(|uid| uid.to_string()),
+        attributes.gid.map(|gid| gid.to_string()),
     )
 }
 
@@ -323,7 +330,7 @@ mod tests {
 
     #[test]
     fn owner_group_from_longname() {
-        let attrs = FileAttributes {
+        let attributes = FileAttributes {
             uid: Some(1000),
             gid: Some(1000),
             ..Default::default()
@@ -331,25 +338,25 @@ mod tests {
         assert_eq!(
             owner_group(
                 "-rw-r--r--    1 alice    staff        42 Jan  1 00:00 f.txt",
-                &attrs
+                &attributes
             ),
             (Some("alice".into()), Some("staff".into()))
         );
         assert_eq!(
-            owner_group("", &attrs),
+            owner_group("", &attributes),
             (Some("1000".into()), Some("1000".into()))
         );
     }
 
     #[test]
     fn entry_kinds_and_sizes() {
-        let dir = FileAttributes {
+        let folder_attributes = FileAttributes {
             permissions: Some(0o040755),
             size: Some(4096),
             mtime: Some(1_700_000_000),
             ..Default::default()
         };
-        let entry = entry_from_attrs("/srv", "www".into(), "", &dir);
+        let entry = entry_from_attributes("/srv", "www".into(), "", &folder_attributes);
         assert_eq!(entry.kind, EntryKind::Dir);
         assert_eq!(entry.size, 0);
         assert_eq!(entry.path, "/srv/www");
@@ -361,7 +368,7 @@ mod tests {
             size: Some(12),
             ..Default::default()
         };
-        let entry = entry_from_attrs("/", ".env".into(), "", &file);
+        let entry = entry_from_attributes("/", ".env".into(), "", &file);
         assert_eq!(entry.kind, EntryKind::File);
         assert_eq!(entry.size, 12);
         assert!(entry.hidden);

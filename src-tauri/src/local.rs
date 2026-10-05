@@ -26,9 +26,10 @@ pub fn roots() -> Vec<String> {
 }
 
 pub fn list_dir(path: &str) -> AppResult<DirListing> {
-    let dir = fs::canonicalize(path).map_err(|error| AppError::from(error).with_path(path))?;
+    let directory =
+        fs::canonicalize(path).map_err(|error| AppError::from(error).with_path(path))?;
     let mut entries = Vec::new();
-    for item in fs::read_dir(&dir).map_err(|error| AppError::from(error).with_path(path))? {
+    for item in fs::read_dir(&directory).map_err(|error| AppError::from(error).with_path(path))? {
         let Ok(item) = item else { continue };
         // Entries that vanish or can't be stat'ed mid-listing are skipped, not fatal.
         if let Some(entry) = entry_from_path(&item.path()) {
@@ -36,8 +37,8 @@ pub fn list_dir(path: &str) -> AppResult<DirListing> {
         }
     }
     Ok(DirListing {
-        path: display_path(&dir),
-        parent: dir.parent().map(display_path),
+        path: display_path(&directory),
+        parent: directory.parent().map(display_path),
         entries,
     })
 }
