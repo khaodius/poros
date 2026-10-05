@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use tokio::sync::RwLock;
@@ -15,8 +15,20 @@ pub struct Session {
     pub id: String,
     /// Kept (with credentials) so transfer workers can open more connections.
     pub profile: ConnectProfile,
+    pub host_key_fingerprint: String,
+    /// Label of the window showing this session; closing that window disconnects it.
+    owner: Mutex<String>,
+    info: SessionInfo,
     handle: SshHandle,
     pub fs: RemoteFs,
+}
+
+impl Session {
+    /// A further SFTP channel multiplexed over this session's connection, for transfer workers
+    /// when the server refuses extra connections.
+    pub async fn open_channel(&self) -> AppResult<RemoteFs> {
+        open_sftp(&self.handle).await
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -29,11 +41,15 @@ pub struct SessionInfo {
     pub username: String,
     pub home: String,
     pub initial_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub saved_connection_id: Option<String>,
 }
 
 pub struct SessionManager {
     sessions: RwLock<HashMap<String, Arc<Session>>>,
-    known_hosts: KnownHosts,
+    /// Sessions whose connection dropped, kept until closed so they can reconnect.
+    lost: RwLock<HashMap<String, Arc<Session>>>,
+    pub known_hosts: KnownHosts,
     events: Events,
 }
 
@@ -41,6 +57,7 @@ impl SessionManager {
     pub fn new(known_hosts_file: PathBuf, events: Events) -> Self {
         Self {
             sessions: RwLock::new(HashMap::new()),
+            lost: RwLock::new(HashMap::new()),
             known_hosts: KnownHosts::with_defaults(known_hosts_file),
             events,
         }
@@ -50,9 +67,10 @@ impl SessionManager {
         &self,
         profile: ConnectProfile,
         approval: Option<HostKeyApproval>,
+        owner: &str,
     ) -> AppResult<SessionInfo> {
         let id = uuid::Uuid::new_v4().to_string();
-        let result = self.open(&id, profile, approval).await;
+        let result = self.open(&id, profile, approval, owner).await;
         if let Err(error) = &result {
             let level = match error.kind {
                 ErrorKind::HostKeyUnknown | ErrorKind::PassphraseRequired => LogLevel::Warn,
@@ -63,13 +81,45 @@ impl SessionManager {
         result
     }
 
+    /// Opens a new session with the profile of an existing or dropped one, pinning the host
+    /// key it was trusted with unless the caller approves another.
+    pub async fn reconnect(
+        &self,
+        id: &str,
+        approval: Option<HostKeyApproval>,
+        owner: &str,
+    ) -> AppResult<SessionInfo> {
+        let previous = match self.sessions.read().await.get(id) {
+            Some(session) => Some(session.clone()),
+            None => self.lost.read().await.get(id).cloned(),
+        }
+        .ok_or_else(AppError::session_not_found)?;
+        let approval = approval.or_else(|| {
+            (!previous.host_key_fingerprint.is_empty()).then(|| HostKeyApproval {
+                fingerprint: previous.host_key_fingerprint.clone(),
+                remember: false,
+            })
+        });
+        let info = self
+            .connect(previous.profile.clone(), approval, owner)
+            .await?;
+        if self.lost.write().await.remove(id).is_some() {
+            previous.fs.close();
+        }
+        Ok(info)
+    }
+
     async fn open(
         &self,
         id: &str,
         profile: ConnectProfile,
         approval: Option<HostKeyApproval>,
+        owner: &str,
     ) -> AppResult<SessionInfo> {
-        let handle = ssh::connect(id, &profile, &self.known_hosts, approval, &self.events).await?;
+        let ssh::Connection {
+            handle,
+            host_key_fingerprint,
+        } = ssh::connect(id, &profile, &self.known_hosts, approval, &self.events).await?;
         let fs = match open_sftp(&handle).await {
             Ok(fs) => fs,
             Err(error) => {
@@ -106,6 +156,7 @@ impl SessionManager {
             username: profile.username.clone(),
             home: fs.home.clone(),
             initial_path,
+            saved_connection_id: profile.saved_connection_id.clone(),
         };
         self.events.log(
             LogLevel::Info,
@@ -115,6 +166,9 @@ impl SessionManager {
         let session = Arc::new(Session {
             id: id.to_string(),
             profile,
+            host_key_fingerprint,
+            owner: Mutex::new(owner.to_string()),
+            info: info.clone(),
             handle,
             fs,
         });
@@ -131,23 +185,48 @@ impl SessionManager {
             .cloned()
             .ok_or_else(AppError::session_not_found)?;
         if session.handle.is_closed() {
-            self.sessions.write().await.remove(id);
+            if let Some(session) = self.sessions.write().await.remove(id) {
+                self.lost.write().await.insert(id.to_string(), session);
+            }
             return Err(AppError::new(
-                crate::error::ErrorKind::Disconnected,
+                ErrorKind::Disconnected,
                 "The connection was closed",
             ));
         }
         Ok(session)
     }
 
+    /// The session's details, for a window taking over a tab; the window becomes its owner.
+    pub async fn adopt(&self, id: &str, owner: &str) -> AppResult<SessionInfo> {
+        let session = self.get(id).await?;
+        *session.owner.lock().unwrap() = owner.to_string();
+        Ok(session.info.clone())
+    }
+
     pub async fn disconnect(&self, id: &str) -> AppResult<()> {
         let session = self.sessions.write().await.remove(id);
+        self.lost.write().await.remove(id);
         if let Some(session) = session {
             session.fs.close();
             ssh::disconnect(&session.handle).await;
             self.events.log(LogLevel::Info, Some(id), "Disconnected");
         }
         Ok(())
+    }
+
+    pub async fn disconnect_owned_by(&self, owner: &str) {
+        let owned = |sessions: &HashMap<String, Arc<Session>>| -> Vec<String> {
+            sessions
+                .values()
+                .filter(|session| *session.owner.lock().unwrap() == owner)
+                .map(|session| session.id.clone())
+                .collect()
+        };
+        let mut ids = owned(&*self.sessions.read().await);
+        ids.extend(owned(&*self.lost.read().await));
+        for id in ids {
+            let _ = self.disconnect(&id).await;
+        }
     }
 
     pub async fn disconnect_all(&self) {
@@ -158,7 +237,7 @@ impl SessionManager {
     }
 }
 
-async fn open_sftp(handle: &SshHandle) -> AppResult<RemoteFs> {
+pub async fn open_sftp(handle: &SshHandle) -> AppResult<RemoteFs> {
     let channel = handle.channel_open_session().await?;
     RemoteFs::open(channel).await
 }

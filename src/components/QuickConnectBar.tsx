@@ -1,23 +1,19 @@
 import { useState, type FormEvent } from "react";
-import { Plug, SlidersHorizontal } from "lucide-react";
-import { parseHostInput } from "../lib/path";
-import { connectWithPrompts } from "../state/connectFlow";
-import { useConnectionStore } from "../state/connectionStore";
-import { useToastStore } from "../state/toastStore";
+import { Plug } from "lucide-react";
 import { EMPTY_DRAFT, profileFromDraft, type ConnectDraft } from "../lib/connectDraft";
+import { parseHostInput } from "../lib/path";
+import { quickConnect } from "../state/connectActions";
+import { useToastStore } from "../state/toastStore";
+import { useUiStore } from "../state/uiStore";
 
-interface QuickConnectBarProps {
-  onOpenDialog: (draft: ConnectDraft) => void;
-}
-
-export function QuickConnectBar({ onOpenDialog }: QuickConnectBarProps) {
+export function QuickConnectBar() {
   const [host, setHost] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [port, setPort] = useState("");
-  const status = useConnectionStore((state) => state.status);
+  const [connecting, setConnecting] = useState(false);
   const showToast = useToastStore((state) => state.show);
-  const connecting = status === "connecting";
+  const openDialog = useUiStore((state) => state.open);
 
   const currentDraft = (): ConnectDraft => {
     const parsed = parseHostInput(host);
@@ -36,11 +32,14 @@ export function QuickConnectBar({ onOpenDialog }: QuickConnectBarProps) {
     const draft = currentDraft();
     if (!draft.host || connecting) return;
     if (!draft.username) {
-      onOpenDialog(draft);
+      openDialog({ kind: "connect", draft });
       return;
     }
-    const failure = await connectWithPrompts(profileFromDraft(draft));
+    setConnecting(true);
+    const failure = await quickConnect(profileFromDraft(draft));
+    setConnecting(false);
     if (failure) showToast("error", failure.message);
+    else setPassword("");
   };
 
   return (
@@ -80,15 +79,6 @@ export function QuickConnectBar({ onOpenDialog }: QuickConnectBarProps) {
       <button type="submit" className="button button-primary" disabled={!host.trim() || connecting}>
         <Plug size={14} />
         {connecting ? "Connecting..." : "Connect"}
-      </button>
-      <button
-        type="button"
-        className="icon-button"
-        title="More connection options (key file, SSH agent)"
-        aria-label="More connection options"
-        onClick={() => onOpenDialog(currentDraft())}
-      >
-        <SlidersHorizontal size={15} />
       </button>
     </form>
   );

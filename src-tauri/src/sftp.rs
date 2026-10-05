@@ -9,7 +9,7 @@ use russh_sftp::client::error::Error as SftpError;
 use russh_sftp::client::rawsession::Limits;
 use russh_sftp::client::{Config, RawSftpSession};
 use russh_sftp::extensions;
-use russh_sftp::protocol::{FileAttributes, StatusCode};
+use russh_sftp::protocol::{FileAttributes, OpenFlags, StatusCode};
 
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::model::{kind_from_mode, DirListing, EntryKind, FileEntry, LinkTarget};
@@ -21,6 +21,34 @@ const REQUEST_TIMEOUT_SECS: u64 = 30;
 pub struct RemoteFs {
     raw: RawSftpSession,
     pub home: String,
+    /// Largest read and write payloads the server accepts (`limits@openssh.com`).
+    read_limit: Option<u32>,
+    write_limit: Option<u32>,
+}
+
+pub enum ReadChunk {
+    Data(Vec<u8>),
+    Eof,
+}
+
+/// The parts of SFTP file attributes a transfer needs.
+#[derive(Debug, Clone, Copy)]
+pub struct RemoteStat {
+    pub is_dir: bool,
+    pub size: u64,
+    pub modified: Option<i64>,
+    pub permissions: Option<u32>,
+}
+
+impl From<&FileAttributes> for RemoteStat {
+    fn from(attributes: &FileAttributes) -> Self {
+        Self {
+            is_dir: is_dir(attributes),
+            size: attributes.size.unwrap_or(0),
+            modified: attributes.mtime.map(i64::from),
+            permissions: attributes.permissions.map(|mode| mode & 0o7777),
+        }
+    }
 }
 
 impl RemoteFs {
@@ -32,18 +60,36 @@ impl RemoteFs {
         };
         let mut raw = RawSftpSession::new_with_config(channel.into_stream(), config);
         let version = raw.init().await?;
+        let mut limits = Limits::default();
         if version
             .extensions
             .get(extensions::LIMITS)
             .map(String::as_str)
             == Some("1")
         {
-            if let Ok(limits) = raw.limits().await {
-                raw.set_limits(Limits::from(limits));
+            if let Ok(reported) = raw.limits().await {
+                limits = Limits::from(reported);
+                raw.set_limits(limits);
             }
         }
         let home = canonicalize(&raw, ".").await?;
-        Ok(Self { raw, home })
+        let clamp = |limit: Option<u64>| limit.map(|bytes| bytes.min(u64::from(u32::MAX)) as u32);
+        Ok(Self {
+            raw,
+            home,
+            read_limit: clamp(limits.read_len),
+            write_limit: clamp(limits.write_len),
+        })
+    }
+
+    pub fn read_size(&self, requested: u32) -> u32 {
+        self.read_limit
+            .map_or(requested, |limit| requested.min(limit))
+    }
+
+    pub fn write_size(&self, requested: u32) -> u32 {
+        self.write_limit
+            .map_or(requested, |limit| requested.min(limit))
     }
 
     pub fn close(&self) {
@@ -218,6 +264,129 @@ impl RemoteFs {
                 .map_err(|error| AppError::from(error).with_path(directory))?;
             Ok(())
         })
+    }
+
+    /// `None` when nothing exists at `path`. Follows symlinks.
+    pub async fn stat(&self, path: &str) -> AppResult<Option<RemoteStat>> {
+        match self.raw.stat(path).await {
+            Ok(reply) => Ok(Some(RemoteStat::from(&reply.attrs))),
+            Err(SftpError::Status(status)) if status.status_code == StatusCode::NoSuchFile => {
+                Ok(None)
+            }
+            Err(error) => Err(AppError::from(error).with_path(path)),
+        }
+    }
+
+    /// Creates `path` unless a folder is already there; another worker may race to create it.
+    pub async fn ensure_dir(&self, path: &str) -> AppResult<()> {
+        if let Some(existing) = self.stat(path).await? {
+            return if existing.is_dir {
+                Ok(())
+            } else {
+                Err(AppError::new(
+                    ErrorKind::AlreadyExists,
+                    format!(
+                        "{} exists and is not a folder",
+                        remote_path::file_name(path)
+                    ),
+                )
+                .with_path(path))
+            };
+        }
+        match self.raw.mkdir(path, FileAttributes::empty()).await {
+            Ok(_) => Ok(()),
+            Err(error) => match self.stat(path).await {
+                Ok(Some(existing)) if existing.is_dir => Ok(()),
+                _ => Err(AppError::from(error).with_path(path)),
+            },
+        }
+    }
+
+    pub async fn open_for_read(&self, path: &str) -> AppResult<String> {
+        self.raw
+            .open(path, OpenFlags::READ, FileAttributes::empty())
+            .await
+            .map(|reply| reply.handle)
+            .map_err(|error| AppError::from(error).with_path(path))
+    }
+
+    pub async fn open_for_write(
+        &self,
+        path: &str,
+        truncate: bool,
+        permissions: Option<u32>,
+    ) -> AppResult<String> {
+        let mut flags = OpenFlags::WRITE | OpenFlags::CREATE;
+        if truncate {
+            flags |= OpenFlags::TRUNCATE;
+        }
+        let attributes = FileAttributes {
+            permissions,
+            ..Default::default()
+        };
+        self.raw
+            .open(path, flags, attributes)
+            .await
+            .map(|reply| reply.handle)
+            .map_err(|error| AppError::from(error).with_path(path))
+    }
+
+    /// Servers may return fewer bytes than requested before the end of the file.
+    pub async fn read_chunk(&self, handle: &str, offset: u64, len: u32) -> AppResult<ReadChunk> {
+        match self.raw.read(handle, offset, len).await {
+            Ok(reply) if reply.data.is_empty() => Ok(ReadChunk::Eof),
+            Ok(reply) => Ok(ReadChunk::Data(reply.data)),
+            Err(SftpError::Status(status)) if status.status_code == StatusCode::Eof => {
+                Ok(ReadChunk::Eof)
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    pub async fn write_chunk(&self, handle: &str, offset: u64, data: Vec<u8>) -> AppResult<()> {
+        self.raw.write(handle, offset, data).await?;
+        Ok(())
+    }
+
+    pub async fn close_handle(&self, handle: String) -> AppResult<()> {
+        self.raw.close(handle).await?;
+        Ok(())
+    }
+
+    pub async fn set_attributes(
+        &self,
+        path: &str,
+        modified: Option<i64>,
+        permissions: Option<u32>,
+    ) -> AppResult<()> {
+        // SFTP v3 sets access and modification times together.
+        let time = modified.and_then(|seconds| u32::try_from(seconds).ok());
+        let attributes = FileAttributes {
+            atime: time,
+            mtime: time,
+            permissions,
+            ..Default::default()
+        };
+        if time.is_none() && permissions.is_none() {
+            return Ok(());
+        }
+        self.raw
+            .setstat(path, attributes)
+            .await
+            .map(|_| ())
+            .map_err(|error| AppError::from(error).with_path(path))
+    }
+
+    pub async fn truncate(&self, path: &str, len: u64) -> AppResult<()> {
+        let attributes = FileAttributes {
+            size: Some(len),
+            ..Default::default()
+        };
+        self.raw
+            .setstat(path, attributes)
+            .await
+            .map(|_| ())
+            .map_err(|error| AppError::from(error).with_path(path))
     }
 
     async fn read_dir(&self, directory: &str) -> AppResult<Vec<(String, String, FileAttributes)>> {

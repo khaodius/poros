@@ -1,7 +1,13 @@
 import { create } from "zustand";
 import { toAppError } from "../lib/ipc";
-import type { AppError, ConnectProfile, HostKeyApproval, HostKeyInfo } from "../lib/types";
-import { useConnectionStore } from "./connectionStore";
+import type {
+  AppError,
+  ConnectProfile,
+  HostKeyApproval,
+  HostKeyInfo,
+  SessionInfo,
+} from "../lib/types";
+import { useSessionStore } from "./sessionStore";
 
 export interface HostKeyQuestion {
   hostKey: HostKeyInfo;
@@ -31,22 +37,34 @@ export const useHostKeyPrompt = create<HostKeyPromptState>((set) => ({
     ),
 }));
 
-/** Connects, asking the user about unknown or changed host keys. Resolves to the failure, if any. */
-export async function connectWithPrompts(
-  profile: ConnectProfile,
+export type ConnectResult = { session: SessionInfo } | { error: AppError };
+
+/** Runs a connection attempt, asking the user about unknown or changed host keys. */
+async function withHostKeyPrompts(
+  attempt: (approval?: HostKeyApproval) => Promise<SessionInfo>,
   approval?: HostKeyApproval,
-): Promise<AppError | null> {
+): Promise<ConnectResult> {
   try {
-    await useConnectionStore.getState().connect(profile, approval);
-    return null;
+    return { session: await attempt(approval) };
   } catch (caught) {
     const error = toAppError(caught);
     const isHostKeyQuestion = error.kind === "hostKeyUnknown" || error.kind === "hostKeyChanged";
-    if (!isHostKeyQuestion || !error.hostKey) return error;
+    if (!isHostKeyQuestion || !error.hostKey) return { error };
     const decision = await useHostKeyPrompt
       .getState()
       .ask(error.hostKey, error.kind === "hostKeyChanged");
-    if (!decision) return { kind: error.kind, message: "The host key was not accepted." };
-    return connectWithPrompts(profile, decision);
+    if (!decision)
+      return { error: { kind: error.kind, message: "The host key was not accepted." } };
+    return withHostKeyPrompts(attempt, decision);
   }
+}
+
+export function connectWithPrompts(profile: ConnectProfile): Promise<ConnectResult> {
+  return withHostKeyPrompts((approval) => useSessionStore.getState().connect(profile, approval));
+}
+
+export function reconnectWithPrompts(sessionId: string): Promise<ConnectResult> {
+  return withHostKeyPrompts((approval) =>
+    useSessionStore.getState().reconnect(sessionId, approval),
+  );
 }

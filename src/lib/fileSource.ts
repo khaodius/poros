@@ -1,5 +1,4 @@
-// Local and remote share one interface so panes, and later the transfer queue, treat both
-// sides alike.
+// Local and remote share one interface so panes treat both sides alike.
 
 import { local, remote } from "./ipc";
 import type { DirListing, SessionInfo } from "./types";
@@ -37,9 +36,14 @@ export const localSource: FileSource = {
   remove: (paths) => local.remove(paths),
 };
 
+const remoteSources = new Map<string, FileSource>();
+
+/** One source per session, so a pane keeps its place when the session's details change. */
 export function remoteSource(session: SessionInfo): FileSource {
+  const existing = remoteSources.get(session.id);
+  if (existing) return existing;
   const id = session.id;
-  return {
+  const source: FileSource = {
     key: `remote:${id}`,
     kind: "remote",
     label: session.label,
@@ -51,4 +55,15 @@ export function remoteSource(session: SessionInfo): FileSource {
     rename: (path, newName) => remote.rename(id, path, newName),
     remove: (paths) => remote.remove(id, paths),
   };
+  remoteSources.set(id, source);
+  return source;
+}
+
+export function forgetRemoteSource(sessionId: string): void {
+  remoteSources.delete(sessionId);
+}
+
+/** The same source, opening at `path` instead of its usual first folder. */
+export function startingAt(source: FileSource, path: string | undefined): FileSource {
+  return path ? { ...source, initialPath: async () => path } : source;
 }

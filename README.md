@@ -13,15 +13,32 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0"></a>
 </p>
 
+![Poros with a local folder, two server tabs and transfers running in the queue](.github/assets/screenshot.png)
+
 It is a native desktop app built with
 [Tauri](https://tauri.app): the interface is TypeScript and React, and everything that touches
 the network or the disk is Rust.
 
 ## Features
 
-- **Dual-pane browsing** of local and remote folders with breadcrumbs, a typed path bar,
-  history, sorting, filtering and hidden file toggling. Lists are virtualized, so large folders
-  stay responsive.
+- **Tabs and docking**: every local folder and server session is a tab. Drag tabs to reorder
+  them, drop one on the edge of another group to split the window left, right, up or down, and
+  drag the dividers to resize. Pull a tab out of the window to give it a window of its own, and
+  send it back from its menu.
+- **Transfer queue** with parallel workers, each on its own connection. Large files are split
+  across idle connections. Pause, resume, reorder, retry and remove transfers; failed and
+  completed transfers have their own lists. Upload and download speeds sit beside the version in
+  the status bar.
+- **Drag and drop** between a local and a server tab, onto a folder row to land inside it, or
+  from your file manager onto a server tab.
+- **Saved connections** with name, host, port, user, authentication method, key file and remote
+  folder. Passwords and passphrases are only kept if you ask, and then in the system keychain,
+  never in a file.
+- **Settings** for simultaneous transfers, connections per file, upload and download limits,
+  request size and requests in flight, what to do when a file exists, timestamps and
+  permissions, retries, timeouts, keepalives, compression, and the log.
+- **Themes** as JSON files anyone can write and share, plus simple color pickers in settings.
+  See [Themes](#themes).
 - **Every common key format**, including the ones other clients choke on:
   - OpenSSH, PEM (PKCS#1) and PKCS#8 private keys, encrypted or not.
   - PuTTY `.ppk` files, version 2 and 3, encrypted (Argon2id, Argon2i, Argon2d) or not, with
@@ -35,20 +52,18 @@ the network or the disk is Rust.
 - **Host key verification** that reads your existing `~/.ssh/known_hosts` (hashed entries,
   wildcards, `@revoked` markers and non-standard ports included) and asks before trusting a new
   or changed key. Poros never writes to your OpenSSH files.
-- **File management** on both sides: new folder, rename, recursive delete with confirmation,
-  copy path.
+- **File browsing and management** on both sides: breadcrumbs, a typed path bar, history,
+  sorting, filtering, hidden files, new folder, rename, recursive delete with confirmation and
+  copy path. Lists are virtualized, so large folders stay responsive.
 - **Symlink aware**: links to folders can be opened, broken links are marked.
-- **Activity log** with server banners and every operation Poros performs.
-- **Light and dark themes** that follow your system.
+- **Activity log** with server banners and every operation, filterable by level, session and
+  text, and savable to a file.
 - **Native on Linux and Windows**, including Wayland sessions, Windows drive letters and UNC
   paths.
 
 ### Roadmap
 
-- Transfer queue with parallel workers, pause, resume and retry.
 - Folder sync built on rsync.
-- Settings for appearance and behavior.
-- Site manager with saved connections.
 
 ## Install
 
@@ -124,39 +139,96 @@ npm run tauri build    # installers in src-tauri/target/release/bundle
 ## Usage
 
 Type a host into the bar at the top and press Enter. It accepts `host`, `user@host`,
-`user@host:port` and `sftp://user@host:port/path`. The button beside **Connect** opens the full
-connection dialog for key files and SSH agents.
+`user@host:port` and `sftp://user@host:port/path`. The **+** button at the top right opens the
+connection dialog for key files, SSH agents and saved connections; the button beside it opens
+settings. The **+** at the end of a tab bar opens a new tab with your saved connections.
+
+To transfer, drag files from a local tab to a server tab or the other way, or right-click them and
+choose **Upload** or **Download**. Double-clicking a file sends it to the other side too; settings
+can turn that off.
 
 The first time you connect to a server, Poros shows its key fingerprint. Choose **Trust and
 connect** to remember it, or **Connect once** to trust it for this session only.
 
 ### Keyboard
 
-| Keys                                    | Action                          |
-| --------------------------------------- | ------------------------------- |
-| Up, Down, Page Up, Page Down, Home, End | Move                            |
-| Shift + movement                        | Extend the selection            |
-| Ctrl + click, Shift + click             | Toggle, select a range          |
-| Ctrl + A                                | Select all                      |
-| Enter                                   | Open folder                     |
-| Backspace, Alt + Up                     | Parent folder                   |
-| Alt + Left, Alt + Right                 | Back, forward                   |
-| F5, Ctrl + R                            | Refresh                         |
-| F2                                      | Rename                          |
-| F7, Ctrl + Shift + N                    | New folder                      |
-| Delete                                  | Delete                          |
-| Ctrl + L                                | Type a path                     |
-| Ctrl + F                                | Filter                          |
-| Tab                                     | Switch between local and remote |
-| Letters                                 | Jump to a matching name         |
-| Escape                                  | Clear the selection             |
+| Keys                                    | Action                  |
+| --------------------------------------- | ----------------------- |
+| Up, Down, Page Up, Page Down, Home, End | Move                    |
+| Shift + movement                        | Extend the selection    |
+| Ctrl + click, Shift + click             | Toggle, select a range  |
+| Ctrl + A                                | Select all              |
+| Enter                                   | Open folder             |
+| Backspace, Alt + Up                     | Parent folder           |
+| Alt + Left, Alt + Right                 | Back, forward           |
+| F5, Ctrl + R                            | Refresh                 |
+| F2                                      | Rename                  |
+| F7, Ctrl + Shift + N                    | New folder              |
+| Delete                                  | Delete                  |
+| Ctrl + L                                | Type a path             |
+| Ctrl + F                                | Filter                  |
+| Tab                                     | Move to the next pane   |
+| Letters                                 | Jump to a matching name |
+| Escape                                  | Clear the selection     |
+| Ctrl + T                                | New tab                 |
+| Ctrl + W, middle click on a tab         | Close the tab           |
+| Ctrl + ,                                | Settings                |
 
 ### Where Poros keeps its data
 
-Trusted host keys go to `known_hosts` in the app's config folder:
+Everything lives in the app's config folder:
 
 - Linux: `~/.config/io.github.khaodius.poros/`
 - Windows: `%APPDATA%\io.github.khaodius.poros\`
+
+| File               | Contents                             |
+| ------------------ | ------------------------------------ |
+| `settings.json`    | Settings                             |
+| `connections.json` | Saved connections, without passwords |
+| `known_hosts`      | Host keys you chose to trust         |
+| `themes/`          | Theme files                          |
+
+Passwords and passphrases you choose to remember are stored in the system keychain (Secret
+Service on Linux, Credential Manager on Windows) under the service name `io.github.khaodius.poros`.
+
+### Themes
+
+A theme is a JSON file in the `themes` folder; **Open themes folder** in Settings > Appearance
+takes you there, and **Import theme file** copies one in. Poros rereads the folder whenever its
+window gets focus, so edits made in a text editor apply when you switch back. Editing a color in
+settings writes to the active theme file, and editing a built-in theme saves a copy of it first.
+
+```json
+{
+  "name": "Midnight",
+  "base": "dark",
+  "colors": {
+    "accent": "#8a63e6",
+    "surface-base": "#141219",
+    "surface-raised": "#1b1822",
+    "text": "#ebe7f3"
+  },
+  "fonts": { "ui": "Inter, sans-serif", "mono": "JetBrains Mono, monospace" },
+  "radius": 6
+}
+```
+
+- `base` is `dark`, `light` or `system` and supplies every color the theme leaves out.
+- `colors` takes hex (`#rgb`, `#rrggbb`, with or without alpha) or `rgb()` and `hsl()` values.
+  Hover and tint colors follow `accent` and `danger` unless set. Keys:
+  - Accent: `accent`, `accent-hover`, `accent-soft`, `accent-softer`, `text-on-accent`
+  - Surfaces: `surface-base`, `surface-raised`, `surface-sunken`, `surface-overlay`,
+    `surface-hover`, `surface-pressed`
+  - Borders: `border`, `border-strong`, `border-focus`
+  - Text: `text`, `text-muted`, `text-faint`
+  - Status: `danger`, `danger-hover`, `danger-soft`, `warning`, `success`
+  - File icons: `icon-folder`, `icon-image`, `icon-video`, `icon-audio`, `icon-archive`,
+    `icon-data`, `icon-key`, `icon-code`, `icon-text`, `icon-file`
+  - Lists: `row-selected`, `row-selected-inactive`, `row-hover`, `backdrop`
+- `fonts.ui` and `fonts.mono` are CSS font lists.
+- `radius` is the corner radius in pixels, from 0 to 16.
+
+Unknown keys and invalid values are ignored and listed under the theme in settings.
 
 ### Wayland
 

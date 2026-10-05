@@ -21,7 +21,8 @@ tauri = { version = "2.12", features = [] }
 tauri-plugin-dialog = "2.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "sync", "time", "net"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "sync", "time", "net", "io-util"] }
+tokio-util = "0.7"
 futures = "0.3"
 # `ring` instead of the default `aws-lc-rs` backend: it builds with only a C compiler,
 # so Windows contributors don't need NASM/CMake.
@@ -34,6 +35,8 @@ log = "0.4"
 base64 = "0.22"
 hmac = "0.12"
 sha1 = "0.10"
+# Saved passwords: Windows Credential Manager, or the Secret Service (GNOME Keyring, KWallet) on Linux.
+keyring = "4.2"
 
 [dev-dependencies]
 tempfile = "3"

@@ -4,6 +4,17 @@ use tauri::{AppHandle, Emitter};
 // Mirrored in `src/lib/ipc.ts`.
 pub const LOG_EVENT: &str = "poros://log";
 pub const SESSION_CLOSED_EVENT: &str = "poros://session-closed";
+pub const TRANSFERS_EVENT: &str = "poros://transfers";
+/// Tells every window to reload settings, saved connections or themes another window changed.
+pub const STORE_CHANGED_EVENT: &str = "poros://store-changed";
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Store {
+    Settings,
+    Connections,
+    Themes,
+}
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -57,6 +68,18 @@ impl Events {
                 message,
             };
             let _ = app.emit(LOG_EVENT, record);
+        }
+    }
+
+    pub fn transfers(&self, update: &crate::transfer::TransferUpdate) {
+        if let Some(app) = &self.app {
+            let _ = app.emit(TRANSFERS_EVENT, update);
+        }
+    }
+
+    pub fn store_changed(&self, store: Store) {
+        if let Some(app) = &self.app {
+            let _ = app.emit(STORE_CHANGED_EVENT, store);
         }
     }
 

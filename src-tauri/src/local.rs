@@ -91,6 +91,15 @@ pub fn delete(paths: &[String]) -> AppResult<()> {
     Ok(())
 }
 
+/// Entries for files dropped onto the window from the system file manager. Paths that vanished
+/// are left out.
+pub fn stat_paths(paths: &[String]) -> Vec<FileEntry> {
+    paths
+        .iter()
+        .filter_map(|path| entry_from_path(Path::new(path)))
+        .collect()
+}
+
 fn child_path(parent: &str, name: &str) -> AppResult<PathBuf> {
     validate_name(name)?;
     Ok(Path::new(parent).join(name))

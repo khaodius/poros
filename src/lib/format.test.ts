@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { formatPermissions, formatSize, formatVersion, pluralize } from "./format";
+import {
+  formatDuration,
+  formatPermissions,
+  formatSize,
+  formatSpeed,
+  formatVersion,
+  pluralize,
+} from "./format";
 
 describe("formatSize", () => {
   it.each([
@@ -51,5 +58,15 @@ describe("pluralize", () => {
     expect(pluralize(1, "item")).toBe("1 item");
     expect(pluralize(0, "item")).toBe("0 items");
     expect(pluralize(3, "entry", "entries")).toBe("3 entries");
+  });
+});
+
+describe("formatSpeed and formatDuration", () => {
+  it("formats rates and times left", () => {
+    expect(formatSpeed(1536)).toBe("1.5 KB/s");
+    expect(formatSpeed(-5)).toBe("0 B/s");
+    expect(formatDuration(45)).toBe("45s");
+    expect(formatDuration(125)).toBe("2m 5s");
+    expect(formatDuration(3720)).toBe("1h 2m");
   });
 });
