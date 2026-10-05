@@ -1,0 +1,152 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  MANIFEST: src-tauri/Cargo.toml
+
+jobs:
+  check:
+    name: Check (${{ matrix.platform.name }})
+    runs-on: ${{ matrix.platform.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - { name: Linux, os: ubuntu-22.04 }
+          - { name: Windows, os: windows-latest }
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Linux system libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev openssh-server
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - name: Lint and formatting
+        if: runner.os == 'Linux'
+        run: |
+          npm run lint
+          npm run format:check
+          cargo fmt --manifest-path "$MANIFEST" --check
+
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+      - name: Clippy
+        run: cargo clippy --manifest-path ${{ env.MANIFEST }} --all-targets --locked -- -D warnings
+
+      - name: Start a throwaway SSH server for end-to-end tests
+        if: runner.os == 'Linux'
+        run: |
+          sudo useradd --create-home --shell /bin/bash poros
+          echo 'poros:poros-pass' | sudo chpasswd
+          sudo -u poros mkdir -p /home/poros/.ssh /home/poros/data
+          sudo -u poros ln -s data /home/poros/data-link
+          sudo -u poros ln -s missing /home/poros/broken-link
+          cat src-tauri/tests/fixtures/keys/*.pub | sudo -u poros tee /home/poros/.ssh/authorized_keys > /dev/null
+          sudo chmod 700 /home/poros/.ssh
+          sudo chmod 600 /home/poros/.ssh/authorized_keys
+          sshd_dir="$RUNNER_TEMP/sshd"
+          mkdir -p "$sshd_dir"
+          sudo ssh-keygen -q -t ed25519 -N '' -f "$sshd_dir/host_ed25519"
+          sudo ssh-keygen -q -t rsa -b 3072 -N '' -f "$sshd_dir/host_rsa"
+          cat > "$sshd_dir/sshd_config" <<EOF
+          Port 2222
+          ListenAddress 127.0.0.1
+          HostKey $sshd_dir/host_ed25519
+          HostKey $sshd_dir/host_rsa
+          PidFile $sshd_dir/sshd.pid
+          PasswordAuthentication yes
+          KbdInteractiveAuthentication no
+          PubkeyAuthentication yes
+          UsePAM no
+          Subsystem sftp internal-sftp
+          EOF
+          sudo mkdir -p /run/sshd
+          sudo /usr/sbin/sshd -f "$sshd_dir/sshd_config"
+          echo "POROS_TEST_SSH_PORT=2222" >> "$GITHUB_ENV"
+
+      - name: Test
+        run: cargo test --manifest-path ${{ env.MANIFEST }} --locked
+
+  bundle:
+    name: Bundle (${{ matrix.platform.name }})
+    needs: check
+    runs-on: ${{ matrix.platform.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: Linux
+            os: ubuntu-22.04
+            artifacts: |
+              src-tauri/target/release/bundle/deb/*.deb
+              src-tauri/target/release/bundle/rpm/*.rpm
+              src-tauri/target/release/bundle/appimage/*.AppImage
+          - name: Windows
+            os: windows-latest
+            artifacts: |
+              src-tauri/target/release/bundle/msi/*.msi
+              src-tauri/target/release/bundle/nsis/*.exe
+    env:
+      APPIMAGE_EXTRACT_AND_RUN: 1
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Linux system libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: bundle
+
+      - run: npm ci
+      - run: npm run tauri build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: poros-${{ runner.os }}
+          path: ${{ matrix.platform.artifacts }}
+          if-no-files-found: error
+          retention-days: 14

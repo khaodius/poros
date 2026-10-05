@@ -1,0 +1,22 @@
+# Dependencies and build output
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editors and OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Local assistant notes
+CLAUDE.md
+.claude/

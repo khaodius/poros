@@ -1,0 +1,165 @@
+:root {
+  color-scheme: dark;
+
+  --font-ui:
+    "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Cantarell", "Ubuntu",
+    sans-serif;
+  --font-mono:
+    "JetBrains Mono", "Cascadia Mono", "Cascadia Code", "SF Mono", "Consolas", "DejaVu Sans Mono",
+    monospace;
+  --font-size: 13px;
+  --font-size-small: 12px;
+  --font-size-tiny: 11px;
+
+  --radius-small: 4px;
+  --radius: 6px;
+  --radius-large: 10px;
+
+  --surface-base: #111317;
+  --surface-sunken: #0c0e11;
+  --surface-raised: #181b20;
+  --surface-overlay: #1e2228;
+  --surface-hover: #232830;
+  --surface-pressed: #2a303a;
+
+  --border: #262b33;
+  --border-strong: #353c47;
+  --border-focus: #4c8dff;
+
+  --text: #e3e7ee;
+  --text-muted: #9aa3b2;
+  --text-faint: #6b7483;
+  --text-on-accent: #ffffff;
+
+  --accent: #3d7eff;
+  --accent-hover: #5590ff;
+  --accent-soft: rgb(61 126 255 / 0.16);
+  --accent-softer: rgb(61 126 255 / 0.09);
+
+  --danger: #e5484d;
+  --danger-hover: #f05a5f;
+  --danger-soft: rgb(229 72 77 / 0.14);
+  --warning: #f0a33a;
+  --success: #3dbb76;
+
+  --icon-folder: #e8b34b;
+  --icon-image: #c678dd;
+  --icon-video: #e06c75;
+  --icon-audio: #d19a66;
+  --icon-archive: #b38b5d;
+  --icon-data: #3dbb76;
+  --icon-key: #e5c07b;
+  --icon-code: #61afef;
+  --icon-text: #a8b3c4;
+  --icon-file: #8b95a5;
+
+  --row-selected: rgb(61 126 255 / 0.22);
+  --row-selected-inactive: rgb(154 163 178 / 0.14);
+  --row-hover: rgb(255 255 255 / 0.035);
+
+  --shadow-popover: 0 8px 28px rgb(0 0 0 / 0.45), 0 0 0 1px var(--border-strong);
+  --shadow-dialog: 0 24px 64px rgb(0 0 0 / 0.55), 0 0 0 1px var(--border-strong);
+  --backdrop: rgb(5 6 8 / 0.6);
+
+  --transition-fast: 90ms ease-out;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+
+    --surface-base: #f6f7f9;
+    --surface-sunken: #eceef2;
+    --surface-raised: #ffffff;
+    --surface-overlay: #ffffff;
+    --surface-hover: #e9ecf1;
+    --surface-pressed: #dde2ea;
+
+    --border: #dfe3e9;
+    --border-strong: #c8ced8;
+    --border-focus: #2f6fea;
+
+    --text: #1b1f26;
+    --text-muted: #5b6575;
+    --text-faint: #8a93a2;
+
+    --accent: #2f6fea;
+    --accent-hover: #2560d4;
+    --accent-soft: rgb(47 111 234 / 0.14);
+    --accent-softer: rgb(47 111 234 / 0.07);
+
+    --danger: #d13438;
+    --danger-hover: #b92b2f;
+    --danger-soft: rgb(209 52 56 / 0.1);
+    --warning: #b86e00;
+    --success: #1f8a4c;
+
+    --icon-folder: #d39b22;
+    --icon-image: #a347c2;
+    --icon-video: #c94452;
+    --icon-audio: #b8742f;
+    --icon-archive: #8f6a3d;
+    --icon-data: #1f8a4c;
+    --icon-key: #b38712;
+    --icon-code: #2a7fd4;
+    --icon-text: #5b6575;
+    --icon-file: #6b7483;
+
+    --row-selected: rgb(47 111 234 / 0.18);
+    --row-selected-inactive: rgb(91 101 117 / 0.13);
+    --row-hover: rgb(0 0 0 / 0.035);
+
+    --shadow-popover: 0 8px 24px rgb(20 30 50 / 0.16), 0 0 0 1px var(--border-strong);
+    --shadow-dialog: 0 24px 64px rgb(20 30 50 / 0.22), 0 0 0 1px var(--border-strong);
+    --backdrop: rgb(20 24 32 / 0.35);
+  }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --surface-base: #f6f7f9;
+  --surface-sunken: #eceef2;
+  --surface-raised: #ffffff;
+  --surface-overlay: #ffffff;
+  --surface-hover: #e9ecf1;
+  --surface-pressed: #dde2ea;
+
+  --border: #dfe3e9;
+  --border-strong: #c8ced8;
+  --border-focus: #2f6fea;
+
+  --text: #1b1f26;
+  --text-muted: #5b6575;
+  --text-faint: #8a93a2;
+
+  --accent: #2f6fea;
+  --accent-hover: #2560d4;
+  --accent-soft: rgb(47 111 234 / 0.14);
+  --accent-softer: rgb(47 111 234 / 0.07);
+
+  --danger: #d13438;
+  --danger-hover: #b92b2f;
+  --danger-soft: rgb(209 52 56 / 0.1);
+  --warning: #b86e00;
+  --success: #1f8a4c;
+
+  --icon-folder: #d39b22;
+  --icon-image: #a347c2;
+  --icon-video: #c94452;
+  --icon-audio: #b8742f;
+  --icon-archive: #8f6a3d;
+  --icon-data: #1f8a4c;
+  --icon-key: #b38712;
+  --icon-code: #2a7fd4;
+  --icon-text: #5b6575;
+  --icon-file: #6b7483;
+
+  --row-selected: rgb(47 111 234 / 0.18);
+  --row-selected-inactive: rgb(91 101 117 / 0.13);
+  --row-hover: rgb(0 0 0 / 0.035);
+
+  --shadow-popover: 0 8px 24px rgb(20 30 50 / 0.16), 0 0 0 1px var(--border-strong);
+  --shadow-dialog: 0 24px 64px rgb(20 30 50 / 0.22), 0 0 0 1px var(--border-strong);
+  --backdrop: rgb(20 24 32 / 0.35);
+}

@@ -1,0 +1,46 @@
+[package]
+name = "poros"
+version = "0.1.0"
+description = "SFTP and rsync client"
+authors = ["khaodius"]
+license = "Apache-2.0"
+repository = "https://github.com/khaodius/poros"
+edition = "2021"
+rust-version = "1.88"
+
+[lib]
+# The `_lib` suffix keeps the lib name distinct from the bin name (cargo#8519 on Windows).
+name = "poros_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7", features = [] }
+
+[dependencies]
+tauri = { version = "2.12", features = [] }
+tauri-plugin-dialog = "2.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "sync", "time", "net"] }
+futures = "0.3"
+# `ring` instead of the default `aws-lc-rs` backend: it builds with only a C compiler,
+# so Windows contributors don't need NASM/CMake.
+russh = { version = "0.64", default-features = false, features = ["ring", "flate2", "rsa"] }
+russh-sftp = "3.0.1"
+thiserror = "2"
+uuid = { version = "1", features = ["v4"] }
+dirs = "6"
+log = "0.4"
+base64 = "0.22"
+hmac = "0.12"
+sha1 = "0.10"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
