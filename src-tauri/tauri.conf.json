@@ -29,7 +29,11 @@
     "active": true,
     "targets": "all",
     "category": "Utility",
+    "publisher": "khaodius",
+    "homepage": "https://github.com/khaodius/poros",
+    "license": "Apache-2.0",
     "shortDescription": "SFTP and rsync client",
+    "longDescription": "Dual-pane SFTP client for Linux and Windows with OpenSSH and PuTTY key support.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
