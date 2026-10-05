@@ -40,8 +40,9 @@ export function filterEntries(
   entries: FileEntry[],
   { showHidden, query }: { showHidden: boolean; query: string },
 ): FileEntry[] {
-  const q = query.trim().toLowerCase();
+  const needle = query.trim().toLowerCase();
   return entries.filter(
-    (e) => (showHidden || !e.hidden) && (q === "" || e.name.toLowerCase().includes(q)),
+    (entry) =>
+      (showHidden || !entry.hidden) && (needle === "" || entry.name.toLowerCase().includes(needle)),
   );
 }

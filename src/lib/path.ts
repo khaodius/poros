@@ -15,10 +15,10 @@ export function breadcrumbs(path: string, style: PathStyle): Crumb[] {
   if (style === "posix") {
     const parts = path.split("/").filter(Boolean);
     const crumbs: Crumb[] = [{ label: "/", path: "/" }];
-    let acc = "";
+    let currentPath = "";
     for (const part of parts) {
-      acc += `/${part}`;
-      crumbs.push({ label: part, path: acc });
+      currentPath += `/${part}`;
+      crumbs.push({ label: part, path: currentPath });
     }
     return crumbs;
   }
@@ -29,10 +29,10 @@ export function breadcrumbs(path: string, style: PathStyle): Crumb[] {
     if (parts.length < 2) return [{ label: normalized, path: normalized }];
     const root = `\\\\${parts[0]}\\${parts[1]}`;
     const crumbs: Crumb[] = [{ label: root, path: `${root}\\` }];
-    let acc = root;
+    let currentPath = root;
     for (const part of parts.slice(2)) {
-      acc += `\\${part}`;
-      crumbs.push({ label: part, path: acc });
+      currentPath += `\\${part}`;
+      crumbs.push({ label: part, path: currentPath });
     }
     return crumbs;
   }
@@ -41,10 +41,10 @@ export function breadcrumbs(path: string, style: PathStyle): Crumb[] {
   if (parts.length === 0) return [];
   const drive = parts[0];
   const crumbs: Crumb[] = [{ label: drive, path: `${drive}\\` }];
-  let acc = drive;
+  let currentPath = drive;
   for (const part of parts.slice(1)) {
-    acc += `\\${part}`;
-    crumbs.push({ label: part, path: acc });
+    currentPath += `\\${part}`;
+    crumbs.push({ label: part, path: currentPath });
   }
   return crumbs;
 }
@@ -52,8 +52,8 @@ export function breadcrumbs(path: string, style: PathStyle): Crumb[] {
 /** Splits `name.ext` for rename preselection; dotfiles and folders select the whole name. */
 export function stemLength(name: string, isDir: boolean): number {
   if (isDir) return name.length;
-  const dot = name.lastIndexOf(".");
-  return dot > 0 ? dot : name.length;
+  const extensionDot = name.lastIndexOf(".");
+  return extensionDot > 0 ? extensionDot : name.length;
 }
 
 /** Parses quick-connect host input: `user@host:port`, `sftp://user@host:port/path`. */
@@ -85,8 +85,8 @@ export function parseHostInput(input: string): {
     const colon = rest.lastIndexOf(":");
     // A single colon is host:port; more than one is a bare IPv6 address.
     if (colon >= 0 && rest.indexOf(":") === colon) {
-      const p = Number(rest.slice(colon + 1));
-      if (Number.isInteger(p) && p > 0) port = p;
+      const parsedPort = Number(rest.slice(colon + 1));
+      if (Number.isInteger(parsedPort) && parsedPort > 0) port = parsedPort;
       rest = rest.slice(0, colon);
     }
   }

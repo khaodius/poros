@@ -14,20 +14,20 @@ export function formatSize(bytes: number): string {
   return unit === 0 ? `${value} B` : `${value.toFixed(1)} ${UNITS[unit]}`;
 }
 
-function pad(n: number): string {
-  return n < 10 ? `0${n}` : String(n);
+function pad(value: number): string {
+  return value < 10 ? `0${value}` : String(value);
 }
 
 /** `YYYY-MM-DD HH:MM` in local time: sortable, unambiguous across locales. */
-export function formatDate(secs: number | null): string {
-  if (secs === null) return "";
-  const d = new Date(secs * 1000);
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+export function formatDate(epochSeconds: number | null): string {
+  if (epochSeconds === null) return "";
+  const date = new Date(epochSeconds * 1000);
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-export function formatTime(ms: number): string {
-  const d = new Date(ms);
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+export function formatTime(epochMillis: number): string {
+  const date = new Date(epochMillis);
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
 /** `ls -l` style: `drwxr-xr-x`, including setuid/setgid/sticky bits. */
@@ -35,13 +35,20 @@ export function formatPermissions(entry: Pick<FileEntry, "kind" | "permissions">
   if (entry.permissions === null) return "";
   const mode = entry.permissions;
   const type = entry.kind === "dir" ? "d" : entry.kind === "symlink" ? "l" : "-";
-  const triplet = (shift: number, special: number, specialChar: string) => {
-    const r = mode & (4 << shift) ? "r" : "-";
-    const w = mode & (2 << shift) ? "w" : "-";
-    const xBit = mode & (1 << shift);
-    const sBit = mode & special;
-    const x = sBit ? (xBit ? specialChar : specialChar.toUpperCase()) : xBit ? "x" : "-";
-    return r + w + x;
+  // One `rwx` group; `shift` selects owner (6), group (3) or other (0).
+  const triplet = (shift: number, specialBit: number, specialChar: string) => {
+    const read = mode & (4 << shift) ? "r" : "-";
+    const write = mode & (2 << shift) ? "w" : "-";
+    const executable = (mode & (1 << shift)) !== 0;
+    const special = (mode & specialBit) !== 0;
+    const execute = special
+      ? executable
+        ? specialChar
+        : specialChar.toUpperCase()
+      : executable
+        ? "x"
+        : "-";
+    return read + write + execute;
   };
   return (
     type + triplet(6, 0o4000, "s") + triplet(3, 0o2000, "s") + triplet(0, 0o1000, "t")
@@ -54,6 +61,6 @@ export function formatVersion(version: string): string {
   return patch === "0" ? `v${major}.${minor}` : `v${major}.${minor}.${patch}`;
 }
 
-export function pluralize(n: number, one: string, many = `${one}s`): string {
-  return `${n} ${n === 1 ? one : many}`;
+export function pluralize(count: number, singular: string, plural = `${singular}s`): string {
+  return `${count} ${count === 1 ? singular : plural}`;
 }
