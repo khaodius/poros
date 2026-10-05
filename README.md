@@ -13,14 +13,9 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0"></a>
 </p>
 
-![Poros with a local folder on the left and a remote server on the right](.github/assets/screenshot.png)
-
-Poros puts your computer and a remote server side by side, so browsing, renaming and
-cleaning up files on either end feels the same. It is a native desktop app built with
+It is a native desktop app built with
 [Tauri](https://tauri.app): the interface is TypeScript and React, and everything that touches
 the network or the disk is Rust.
-
-The name is Greek for "passage" or "pore": a way through.
 
 ## Features
 
