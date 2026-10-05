@@ -35,8 +35,6 @@ pub struct SavedConnection {
     pub key_path: Option<String>,
     #[serde(default)]
     pub remote_path: Option<String>,
-    #[serde(default)]
-    pub local_path: Option<String>,
     /// A password or passphrase is in the keychain.
     #[serde(default)]
     pub save_secret: bool,
@@ -227,7 +225,6 @@ mod tests {
             auth_type: AuthType::Password,
             key_path: None,
             remote_path: None,
-            local_path: None,
             save_secret: true,
             last_used: None,
         }

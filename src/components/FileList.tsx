@@ -1,14 +1,22 @@
-import { useEffect, useMemo, useRef, type KeyboardEvent, type MouseEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  type KeyboardEvent,
+  type MouseEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown, ArrowUp, CornerLeftUp } from "lucide-react";
-import { useElementWidth } from "../hooks/useElementWidth";
+import { useFitCount } from "../hooks/useFitCount";
 import type { PaneController } from "../hooks/usePane";
 import { formatDate, formatPermissions, formatSize } from "../lib/format";
 import { isDirLike, type SortKey } from "../lib/sort";
 import type { FileEntry } from "../lib/types";
 import { FileIcon } from "./FileIcon";
 
-const ROW_HEIGHT = 24;
+export const ROW_HEIGHT = 24;
+export const COMPACT_ROW_HEIGHT = 21;
 const SCROLLBAR_GUTTER = 10;
 const TYPE_AHEAD_RESET_MILLIS = 800;
 
@@ -20,7 +28,10 @@ export interface FileListActions {
   onNewFolder: () => void;
   onEditPath: () => void;
   onFocusFilter: () => void;
-  onSwitchPane: () => void;
+  onSwitchPane: (from: HTMLElement) => void;
+  onRowPointerDown: (event: ReactPointerEvent<HTMLElement>, entry: FileEntry) => void;
+  /** Double-click or Enter on a file. */
+  onFileActivate: (entry: FileEntry) => void;
 }
 
 interface Column {
@@ -67,34 +78,38 @@ const OWNER_COLUMN: Column = {
 interface FileListProps extends FileListActions {
   pane: PaneController;
   active: boolean;
+  rowHeight: number;
+  /** While files are dragged over this list: the folder under the pointer, or "" for the
+   * list itself. */
+  dropFolder?: string;
 }
 
-export function FileList({ pane, active, ...actions }: FileListProps) {
+export function FileList({ pane, active, rowHeight, dropFolder, ...actions }: FileListProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const listWidth = useElementWidth(rootRef);
   const typeAhead = useRef({ text: "", lastKeyAt: 0 });
   const entries = pane.visibleEntries;
   const showParentRow = pane.canGoUp && pane.filter === "";
   const rowOffset = showParentRow ? 1 : 0;
 
-  const columns = useMemo(() => {
+  const detailColumns = useMemo(() => {
     const all = pane.listing?.entries ?? [];
-    const detailColumns = [
+    return [
       SIZE_COLUMN,
       MODIFIED_COLUMN,
       ...(all.some((entry) => entry.permissions !== null) ? [PERMISSIONS_COLUMN] : []),
       ...(all.some((entry) => entry.owner !== null) ? [OWNER_COLUMN] : []),
     ];
-    const visible = [NAME_COLUMN];
-    let remaining = listWidth - SCROLLBAR_GUTTER - NAME_COLUMN.width;
-    for (const column of detailColumns) {
-      if (column.width > remaining) break;
-      visible.push(column);
-      remaining -= column.width;
-    }
-    return visible;
-  }, [pane.listing, listWidth]);
+  }, [pane.listing]);
+  const widthNeeded = useMemo(() => {
+    let total = NAME_COLUMN.width + SCROLLBAR_GUTTER;
+    return detailColumns.map((column) => (total += column.width));
+  }, [detailColumns]);
+  const fittingColumns = useFitCount(rootRef, widthNeeded);
+  const columns = useMemo(
+    () => [NAME_COLUMN, ...detailColumns.slice(0, fittingColumns)],
+    [detailColumns, fittingColumns],
+  );
   const gridTemplateColumns = columns
     .map((column) =>
       column === NAME_COLUMN ? `minmax(${column.width}px, 1fr)` : `${column.width}px`,
@@ -104,7 +119,7 @@ export function FileList({ pane, active, ...actions }: FileListProps) {
   const virtualizer = useVirtualizer({
     count: entries.length + rowOffset,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => ROW_HEIGHT,
+    estimateSize: () => rowHeight,
     overscan: 16,
   });
 
@@ -119,12 +134,16 @@ export function FileList({ pane, active, ...actions }: FileListProps) {
   }, [pane.listing?.path]);
 
   useEffect(() => {
+    virtualizer.measure();
+  }, [rowHeight, virtualizer]);
+
+  useEffect(() => {
     scrollRef.current?.focus({ preventScroll: true });
   }, []);
 
   const pageSize = Math.max(
     1,
-    Math.floor((scrollRef.current?.clientHeight ?? 400) / ROW_HEIGHT) - 1,
+    Math.floor((scrollRef.current?.clientHeight ?? 400) / rowHeight) - 1,
   );
   const emptyMessage = pane.filter
     ? "Nothing matches the filter"
@@ -178,7 +197,7 @@ export function FileList({ pane, active, ...actions }: FileListProps) {
           pane.moveCursorTo(entries.length - 1, extend);
           return true;
         case "Enter":
-          if (cursorEntry) pane.open(cursorEntry);
+          if (cursorEntry) openEntry(cursorEntry);
           return true;
         case "Backspace":
           pane.goUp();
@@ -200,7 +219,7 @@ export function FileList({ pane, active, ...actions }: FileListProps) {
           return true;
         case "Tab":
           if (primary || event.altKey) return false;
-          actions.onSwitchPane();
+          actions.onSwitchPane(event.currentTarget);
           return true;
       }
       if (primary && event.key.toLowerCase() === "a") {
@@ -233,6 +252,20 @@ export function FileList({ pane, active, ...actions }: FileListProps) {
       event.preventDefault();
       event.stopPropagation();
     }
+  };
+
+  const openEntry = (entry: FileEntry) => {
+    if (isDirLike(entry)) pane.open(entry);
+    else actions.onFileActivate(entry);
+  };
+
+  // Pressing an unselected row selects it so a drag carries it; pressing a selected row keeps
+  // the selection until release, so several rows can be dragged.
+  const handleRowPointerDown = (event: ReactPointerEvent<HTMLElement>, entry: FileEntry) => {
+    if (event.button !== 0) return;
+    const modified = event.ctrlKey || event.metaKey || event.shiftKey;
+    if (!modified && !pane.selection.has(entry.path)) pane.selectOnly(entry.path);
+    if (!modified) actions.onRowPointerDown(event, entry);
   };
 
   const handleRowClick = (event: MouseEvent, entry: FileEntry) => {
@@ -291,16 +324,18 @@ export function FileList({ pane, active, ...actions }: FileListProps) {
           {virtualizer.getVirtualItems().map((item) => {
             const style = {
               transform: `translateY(${item.start}px)`,
-              height: ROW_HEIGHT,
+              height: rowHeight,
               gridTemplateColumns,
             };
             if (showParentRow && item.index === 0) {
+              const parent = pane.listing?.parent ?? undefined;
               return (
                 <div
                   key="parent"
-                  className="file-row file-row-parent"
+                  className={`file-row file-row-parent ${dropFolder && dropFolder === parent ? "is-drop-folder" : ""}`}
                   style={style}
                   role="row"
+                  data-drop-folder={parent}
                   onDoubleClick={pane.goUp}
                   onClick={pane.clearSelection}
                   onContextMenu={(event) => {
@@ -320,6 +355,7 @@ export function FileList({ pane, active, ...actions }: FileListProps) {
             const entry = entries[item.index - rowOffset];
             const selected = pane.selection.has(entry.path);
             const isCursor = pane.cursorPath === entry.path;
+            const folder = isDirLike(entry);
             return (
               <div
                 key={entry.path}
@@ -328,6 +364,7 @@ export function FileList({ pane, active, ...actions }: FileListProps) {
                   selected && "is-selected",
                   isCursor && "is-cursor",
                   entry.hidden && "is-hidden",
+                  folder && dropFolder === entry.path && "is-drop-folder",
                 ]
                   .filter(Boolean)
                   .join(" ")}
@@ -335,8 +372,10 @@ export function FileList({ pane, active, ...actions }: FileListProps) {
                 role="row"
                 aria-selected={selected}
                 title={entry.name}
+                data-drop-folder={folder ? entry.path : undefined}
+                onPointerDown={(event) => handleRowPointerDown(event, entry)}
                 onClick={(event) => handleRowClick(event, entry)}
-                onDoubleClick={() => pane.open(entry)}
+                onDoubleClick={() => openEntry(entry)}
                 onContextMenu={(event) => handleRowContextMenu(event, entry)}
               >
                 {columns.map((column) =>

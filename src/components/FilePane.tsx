@@ -1,9 +1,19 @@
-import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type MouseEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
 import {
   ArrowLeft,
   ArrowRight,
   ArrowUp,
+  Bookmark,
   ClipboardCopy,
+  Download,
   Eye,
   EyeOff,
   FolderOpen,
@@ -14,6 +24,7 @@ import {
   RefreshCw,
   Search,
   Trash2,
+  Upload,
   X,
 } from "lucide-react";
 import { usePane } from "../hooks/usePane";
@@ -22,11 +33,17 @@ import { formatSize, pluralize } from "../lib/format";
 import { stemLength } from "../lib/path";
 import { isDirLike } from "../lib/sort";
 import type { FileEntry } from "../lib/types";
+import { beginDrag, useDragStore } from "../state/dragStore";
 import { useLogStore } from "../state/logStore";
+import { lastActivePane, registerPane, updatePane } from "../state/paneRegistry";
+import { useSessionStore } from "../state/sessionStore";
+import { useSettingsStore } from "../state/settingsStore";
 import { useToastStore } from "../state/toastStore";
+import { transferFromPane, transferToOtherSide } from "../state/transferActions";
+import { useUiStore } from "../state/uiStore";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
-import { FileList } from "./FileList";
+import { COMPACT_ROW_HEIGHT, FileList, ROW_HEIGHT } from "./FileList";
 import { PathBar } from "./PathBar";
 import { PromptDialog } from "./PromptDialog";
 
@@ -36,12 +53,18 @@ type PaneDialog =
   | { type: "delete"; entries: FileEntry[] };
 
 interface FilePaneProps {
+  tabId: string;
   title: string;
   icon: ReactNode;
   source: FileSource;
+  /** For server panes. */
+  sessionId?: string;
+  /** The pane is its group's selected tab. */
+  visible: boolean;
+  /** The pane is visible in the group the user works in. */
   active: boolean;
-  onActivate: () => void;
-  onSwitchPane: () => void;
+  /** Covers the file list, for example while the connection is lost. */
+  overlay?: ReactNode;
 }
 
 interface OpenMenu {
@@ -50,15 +73,74 @@ interface OpenMenu {
   items: MenuItem[];
 }
 
-export function FilePane({ title, icon, source, active, onActivate, onSwitchPane }: FilePaneProps) {
-  const pane = usePane(source);
+/** Moves keyboard focus to the next file list on screen. */
+function focusNextPane(from: HTMLElement | null) {
+  const lists = [
+    ...document.querySelectorAll<HTMLElement>(".tab-panel:not([hidden]) .file-list-body"),
+  ];
+  if (lists.length < 2) return;
+  const current = lists.findIndex((list) => list === from || list.contains(from));
+  lists[(current + 1) % lists.length].focus();
+}
+
+export function FilePane({
+  tabId,
+  title,
+  icon,
+  source,
+  sessionId,
+  visible,
+  active,
+  overlay,
+}: FilePaneProps) {
+  const showHiddenByDefault = useSettingsStore((state) => state.settings.interface.showHiddenFiles);
+  const doubleClickFile = useSettingsStore((state) => state.settings.interface.doubleClickFile);
+  const compactRows = useSettingsStore((state) => state.settings.appearance.compactRows);
+  const pane = usePane(source, showHiddenByDefault);
   const [dialog, setDialog] = useState<PaneDialog | null>(null);
   const [menu, setMenu] = useState<OpenMenu | null>(null);
   const [pathEditRequest, setPathEditRequest] = useState(0);
   const filterRef = useRef<HTMLInputElement>(null);
   const writeLog = useLogStore((state) => state.write);
   const showToast = useToastStore((state) => state.show);
+  const openDialog = useUiStore((state) => state.open);
+  const unsaved = useSessionStore((state) => {
+    const entry = sessionId ? state.sessions[sessionId] : undefined;
+    return Boolean(entry?.profile && !entry.info.savedConnectionId);
+  });
   const where = source.kind === "remote" ? "remote" : "local";
+  const paneRef = useRef(pane);
+  useLayoutEffect(() => {
+    paneRef.current = pane;
+  });
+
+  useEffect(
+    () =>
+      registerPane({
+        tabId,
+        kind: source.kind,
+        sessionId,
+        label: title,
+        path: () => paneRef.current.listing?.path ?? null,
+        refresh: () => void paneRef.current.refresh(),
+        visible: false,
+        activatedAt: 0,
+      }),
+    [tabId, source.kind, sessionId, title],
+  );
+
+  useEffect(() => {
+    updatePane(tabId, active ? { visible, activatedAt: Date.now() } : { visible });
+  }, [tabId, visible, active]);
+
+  const dropFolder = useDragStore((state) => {
+    const { payload, target } = state;
+    if (!payload || payload.kind === "tab" || target?.kind !== "pane" || target.tabId !== tabId) {
+      return undefined;
+    }
+    if (payload.kind === "files" && payload.sourceTabId === tabId) return undefined;
+    return target.folder ?? "";
+  });
 
   useEffect(() => {
     if (pane.error && pane.listing) {
@@ -84,6 +166,39 @@ export function FilePane({ title, icon, source, active, onActivate, onSwitchPane
     if (text) void navigator.clipboard.writeText(text);
   };
 
+  const markActive = () => updatePane(tabId, { visible: true, activatedAt: Date.now() });
+
+  const startDrag = (event: ReactPointerEvent<HTMLElement>, entry: FileEntry) => {
+    const wasSelected = pane.selection.has(entry.path);
+    const selectedNow = pane.selectedEntries();
+    beginDrag(
+      event,
+      () => ({ kind: "files", sourceTabId: tabId, entries: wasSelected ? selectedNow : [entry] }),
+      (target, payload) => {
+        if (target.kind !== "pane" || target.tabId === tabId || payload.kind !== "files") return;
+        transferFromPane(tabId, payload.entries, target.tabId, target.folder);
+      },
+    );
+  };
+
+  const activateFile = (entry: FileEntry) => {
+    if (doubleClickFile === "transfer") transferToOtherSide(tabId, [entry]);
+  };
+
+  const transferMenuItem = (targets: FileEntry[]): MenuItem => {
+    const upload = source.kind === "local";
+    const destination = lastActivePane(upload ? "remote" : "local");
+    const verb = upload ? "Upload" : "Download";
+    return {
+      label: destination
+        ? `${verb} to ${upload ? destination.label : (destination.path() ?? "local folder")}`
+        : `${verb} (${upload ? "no server open" : "no local tab open"})`,
+      icon: upload ? <Upload size={14} /> : <Download size={14} />,
+      disabled: !destination || targets.length === 0,
+      onSelect: () => transferToOtherSide(tabId, targets),
+    };
+  };
+
   const showContextMenu = (event: MouseEvent, entry: FileEntry | null) => {
     setMenu({ x: event.clientX, y: event.clientY, items: contextMenuItems(entry) });
   };
@@ -106,6 +221,7 @@ export function FilePane({ title, icon, source, active, onActivate, onSwitchPane
   const contextMenuItems = (entry: FileEntry | null): MenuItem[] => {
     const targets = entry ? (pane.selection.has(entry.path) ? selected : [entry]) : [];
     return [
+      ...(targets.length > 0 ? [transferMenuItem(targets), "separator" as const] : []),
       ...(entry && isDirLike(entry)
         ? [
             {
@@ -154,13 +270,27 @@ export function FilePane({ title, icon, source, active, onActivate, onSwitchPane
   };
 
   return (
-    <section className={`pane ${active ? "is-active" : ""}`} onMouseDown={onActivate}>
+    <section
+      className={["pane", active && "is-active", dropFolder === "" && "is-drop-target"]
+        .filter(Boolean)
+        .join(" ")}
+      data-drop-pane={tabId}
+      onMouseDown={markActive}
+    >
       <header className="pane-header">
         <div className="pane-title">
           {icon}
           <span title={title}>{title}</span>
         </div>
         <div className="pane-toolbar">
+          {unsaved && sessionId && (
+            <ToolbarButton
+              label="Save this connection"
+              onClick={() => openDialog({ kind: "saveConnection", sessionId })}
+            >
+              <Bookmark size={15} />
+            </ToolbarButton>
+          )}
           <ToolbarButton label="Back (Alt+Left)" onClick={pane.goBack} disabled={!pane.canGoBack}>
             <ArrowLeft size={15} />
           </ToolbarButton>
@@ -242,14 +372,18 @@ export function FilePane({ title, icon, source, active, onActivate, onSwitchPane
         <FileList
           pane={pane}
           active={active}
-          onActivate={onActivate}
+          rowHeight={compactRows ? COMPACT_ROW_HEIGHT : ROW_HEIGHT}
+          dropFolder={dropFolder}
+          onActivate={markActive}
           onContextMenu={showContextMenu}
           onDelete={openDelete}
           onRename={openRename}
           onNewFolder={openNewFolder}
           onEditPath={() => setPathEditRequest((count) => count + 1)}
           onFocusFilter={() => filterRef.current?.focus()}
-          onSwitchPane={onSwitchPane}
+          onSwitchPane={(from) => focusNextPane(from)}
+          onRowPointerDown={startDrag}
+          onFileActivate={activateFile}
         />
       ) : (
         <div className="pane-empty">
@@ -266,6 +400,8 @@ export function FilePane({ title, icon, source, active, onActivate, onSwitchPane
           )}
         </div>
       )}
+
+      {overlay}
 
       <footer className="pane-footer">
         <span>

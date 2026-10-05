@@ -5,7 +5,7 @@
   "windows": ["main", "workspace-*"],
   "permissions": [
     "core:default",
-    "core:window:allow-set-title",
+    "core:window:allow-close",
     "core:window:allow-set-focus",
     "dialog:allow-open",
     "dialog:allow-save"

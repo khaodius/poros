@@ -1,70 +1,217 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { HardDrive, LogOut, RotateCw, Server } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Plus, SlidersHorizontal } from "lucide-react";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { CloseTabDialog } from "./components/CloseTabDialog";
+import { ConflictDialog } from "./components/ConflictDialog";
 import { ConnectDialog } from "./components/ConnectDialog";
-import { FilePane } from "./components/FilePane";
+import { DragGhost } from "./components/DragGhost";
 import { HostKeyDialog } from "./components/HostKeyDialog";
-import { LogPanel } from "./components/LogPanel";
 import { QuickConnectBar } from "./components/QuickConnectBar";
-import { SplitView } from "./components/SplitView";
+import { SaveConnectionDialog } from "./components/SaveConnectionDialog";
+import { SettingsDialog } from "./components/SettingsDialog";
+import { StatusBar } from "./components/StatusBar";
 import { Toasts } from "./components/Toasts";
-import { EMPTY_DRAFT, type ConnectDraft } from "./lib/connectDraft";
-import { localSource, remoteSource } from "./lib/fileSource";
-import { formatVersion } from "./lib/format";
-import { onLog, onSessionClosed } from "./lib/ipc";
-import { connectWithPrompts } from "./state/connectFlow";
-import { useConnectionStore } from "./state/connectionStore";
+import { Workspace } from "./components/Workspace";
+import { EMPTY_DRAFT } from "./lib/connectDraft";
+import {
+  RETURN_TAB_EVENT,
+  onLog,
+  onSessionClosed,
+  onStoreChanged,
+  onTransfers,
+  toAppError,
+  windows,
+} from "./lib/ipc";
+import { findGroup, group, welcomeTab } from "./lib/layout";
+import type { StoreName } from "./lib/types";
+import { hitTest, useDragStore, type DragPayload } from "./state/dragStore";
+import { persistLayout, restoreLayout, useLayoutStore } from "./state/layoutStore";
 import { useLogStore } from "./state/logStore";
-import { useToastStore } from "./state/toastStore";
+import { useSavedConnections } from "./state/savedConnectionsStore";
+import { useSessionStore } from "./state/sessionStore";
+import { useSettingsStore } from "./state/settingsStore";
+import { adoptHandoff, isMainWindow, requestCloseTab } from "./state/tabActions";
+import { applyTheme, findTheme, useThemeStore } from "./state/themeStore";
+import { uploadDroppedPaths } from "./state/transferActions";
+import { useTransferStore } from "./state/transferStore";
+import { useUiStore } from "./state/uiStore";
 
-type PaneSide = "local" | "remote";
+let starting: Promise<void> | null = null;
 
-const APP_VERSION = formatVersion(__APP_VERSION__);
+/** Loads stored state and this window's tabs, once per window. */
+function startApp(): Promise<void> {
+  starting ??= (async () => {
+    await useSettingsStore.getState().load();
+    await Promise.all([
+      useSavedConnections
+        .getState()
+        .load()
+        .catch((caught) => reportError("Could not read saved connections", caught)),
+      useThemeStore.getState().load(),
+      useTransferStore.getState().load(),
+    ]);
+    if (isMainWindow()) {
+      const remember = () => useSettingsStore.getState().settings.interface.rememberLayout;
+      const restored = remember() ? restoreLayout() : null;
+      if (restored) useLayoutStore.getState().setRoot(restored);
+      persistLayout(remember);
+    } else {
+      const handoff = await windows.initialLayout().catch(() => null);
+      const tabs = await adoptHandoff(handoff);
+      useLayoutStore.getState().setRoot(group(tabs.length > 0 ? tabs : [welcomeTab()]));
+    }
+  })();
+  return starting;
+}
 
-export function App() {
-  const [activePane, setActivePane] = useState<PaneSide>("local");
-  const [connectDraft, setConnectDraft] = useState<ConnectDraft | null>(null);
-  const session = useConnectionStore((state) => state.session);
-  const status = useConnectionStore((state) => state.status);
-  const [activatedSessionId, setActivatedSessionId] = useState<string | null>(null);
-  if (session && session.id !== activatedSessionId) {
-    setActivatedSessionId(session.id);
-    setActivePane("remote");
+function reportError(context: string, caught: unknown): void {
+  useLogStore.getState().write("error", `${context}: ${toAppError(caught).message}`);
+}
+
+function reloadStore(store: StoreName): Promise<void> {
+  switch (store) {
+    case "settings":
+      return useSettingsStore.getState().load();
+    case "connections":
+      return useSavedConnections
+        .getState()
+        .load()
+        .catch((caught) => reportError("Could not read saved connections", caught));
+    case "themes":
+      return useThemeStore.getState().load();
   }
-  const paneElements = useRef<Record<PaneSide, HTMLDivElement | null>>({
-    local: null,
-    remote: null,
-  });
-  const remote = useMemo(() => (session ? remoteSource(session) : null), [session]);
+}
 
+/** Adds tabs a torn-out window handed back, and brings this window forward. */
+async function receiveTabs(handoff: unknown): Promise<void> {
+  for (const tab of await adoptHandoff(handoff)) useLayoutStore.getState().addTab(tab);
+  await getCurrentWindow()
+    .setFocus()
+    .catch(() => undefined);
+}
+
+function activeTabId(): string | null {
+  const { root, activeGroupId } = useLayoutStore.getState();
+  return findGroup(root, activeGroupId)?.activeTabId ?? null;
+}
+
+function useBackendEvents() {
   useEffect(() => {
-    const appendLog = useLogStore.getState().append;
-    const markLost = useConnectionStore.getState().markLost;
     const subscriptions = [
-      onLog(appendLog),
-      onSessionClosed(({ sessionId, reason }) => markLost(sessionId, reason)),
+      onLog((record) => useLogStore.getState().append(record)),
+      onSessionClosed(({ sessionId, reason }) =>
+        useSessionStore.getState().markLost(sessionId, reason),
+      ),
+      onTransfers((update) => useTransferStore.getState().apply(update)),
+      onStoreChanged((store) => void reloadStore(store)),
     ];
+    if (isMainWindow()) {
+      subscriptions.push(
+        getCurrentWindow().listen<unknown>(RETURN_TAB_EVENT, (event) => {
+          void receiveTabs(event.payload);
+        }),
+      );
+    }
     return () => {
       for (const subscription of subscriptions) void subscription.then((unlisten) => unlisten());
     };
   }, []);
+}
 
+function useAppliedTheme() {
+  const themeId = useSettingsStore((state) => state.settings.appearance.theme);
+  const fontSize = useSettingsStore((state) => state.settings.appearance.fontSize);
+  const themes = useThemeStore((state) => state.files);
   useEffect(() => {
+    const { theme } = findTheme(themes, themeId);
+    const apply = () => applyTheme(theme, fontSize);
+    apply();
+    const scheme = window.matchMedia("(prefers-color-scheme: dark)");
+    scheme.addEventListener("change", apply);
+    return () => scheme.removeEventListener("change", apply);
+  }, [themes, themeId, fontSize]);
+}
+
+// Windows reports drop positions in physical pixels; WebKitGTK and WKWebView in CSS pixels.
+const DROP_POSITION_SCALE = navigator.userAgent.includes("Windows")
+  ? () => window.devicePixelRatio || 1
+  : () => 1;
+
+/** Highlights where files dragged in from the system would land, and uploads them on drop. */
+function useSystemFileDrops() {
+  useEffect(() => {
+    let dragged: DragPayload | null = null;
+    const subscription = getCurrentWebview().onDragDropEvent(({ payload: event }) => {
+      if (event.type === "enter") {
+        dragged = event.paths.length > 0 ? { kind: "external", paths: event.paths } : null;
+      }
+      if (event.type === "leave" || !dragged) {
+        useDragStore.setState({ payload: null, target: null });
+        return;
+      }
+      const scale = DROP_POSITION_SCALE();
+      const clientX = event.position.x / scale;
+      const clientY = event.position.y / scale;
+      const target = hitTest({ clientX, clientY, screenX: 0, screenY: 0 }, dragged);
+      if (event.type === "drop") {
+        dragged = null;
+        useDragStore.setState({ payload: null, target: null });
+        if (target?.kind === "pane") {
+          void uploadDroppedPaths(event.paths, target.tabId, target.folder);
+        }
+        return;
+      }
+      useDragStore.setState({ payload: dragged, target, pointer: { x: clientX, y: clientY } });
+    });
+    return () => void subscription.then((unlisten) => unlisten());
+  }, []);
+}
+
+function useShortcuts() {
+  useEffect(() => {
+    const handleKey = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+      if (useUiStore.getState().dialog) return;
+      const key = event.key.toLowerCase();
+      if (key === "t") {
+        useLayoutStore.getState().addTab(welcomeTab());
+      } else if (key === "w") {
+        const tabId = activeTabId();
+        if (tabId) void requestCloseTab(tabId);
+      } else if (key === ",") {
+        useUiStore.getState().open({ kind: "settings", section: "transfers" });
+      } else {
+        return;
+      }
+      event.preventDefault();
+    };
     const suppressNativeMenu = (event: MouseEvent) => {
       const target = event.target as HTMLElement;
       if (!target.closest("input, textarea, .selectable")) event.preventDefault();
     };
+    window.addEventListener("keydown", handleKey);
     window.addEventListener("contextmenu", suppressNativeMenu);
-    return () => window.removeEventListener("contextmenu", suppressNativeMenu);
+    return () => {
+      window.removeEventListener("keydown", handleKey);
+      window.removeEventListener("contextmenu", suppressNativeMenu);
+    };
   }, []);
+}
 
-  const switchPane = (from: PaneSide) => {
-    const target: PaneSide = from === "local" ? "remote" : "local";
-    const list = paneElements.current[target]?.querySelector<HTMLElement>(".file-list-body");
-    if (list) {
-      list.focus();
-      setActivePane(target);
-    }
-  };
+export function App() {
+  const [ready, setReady] = useState(false);
+  const openDialog = useUiStore((state) => state.open);
+
+  useEffect(() => {
+    void startApp()
+      .catch((caught) => reportError("Could not start", caught))
+      .finally(() => setReady(true));
+  }, []);
+  useBackendEvents();
+  useAppliedTheme();
+  useSystemFileDrops();
+  useShortcuts();
 
   return (
     <div className="app">
@@ -73,160 +220,69 @@ export function App() {
           <img src="/poros.svg" alt="" width={20} height={20} />
           <span>Poros</span>
         </div>
-        <QuickConnectBar onOpenDialog={setConnectDraft} />
-        <SessionControls />
+        <QuickConnectBar />
+        <div className="topbar-actions">
+          <button
+            type="button"
+            className="icon-button topbar-button"
+            title="Connect to server"
+            aria-label="Connect to server"
+            onClick={() => openDialog({ kind: "connect", draft: EMPTY_DRAFT })}
+          >
+            <Plus size={17} />
+          </button>
+          <button
+            type="button"
+            className="icon-button topbar-button"
+            title="Settings (Ctrl+,)"
+            aria-label="Settings"
+            onClick={() => openDialog({ kind: "settings", section: "transfers" })}
+          >
+            <SlidersHorizontal size={15} />
+          </button>
+        </div>
       </header>
 
-      <main className="workspace">
-        <SplitView
-          direction="vertical"
-          storageKey="poros.split.log"
-          defaultRatio={0.78}
-          minRatio={0.4}
-          maxRatio={0.92}
-          first={
-            <SplitView
-              direction="horizontal"
-              storageKey="poros.split.panes"
-              defaultRatio={0.5}
-              first={
-                <div
-                  className="pane-slot"
-                  ref={(element) => void (paneElements.current.local = element)}
-                >
-                  <FilePane
-                    title="Local"
-                    icon={<HardDrive size={15} />}
-                    source={localSource}
-                    active={activePane === "local"}
-                    onActivate={() => setActivePane("local")}
-                    onSwitchPane={() => switchPane("local")}
-                  />
-                </div>
-              }
-              second={
-                <div
-                  className="pane-slot"
-                  ref={(element) => void (paneElements.current.remote = element)}
-                >
-                  {remote && status !== "lost" ? (
-                    <FilePane
-                      key={remote.key}
-                      title={remote.label}
-                      icon={<Server size={15} />}
-                      source={remote}
-                      active={activePane === "remote"}
-                      onActivate={() => setActivePane("remote")}
-                      onSwitchPane={() => switchPane("remote")}
-                    />
-                  ) : (
-                    <RemotePlaceholder onConnect={() => setConnectDraft(EMPTY_DRAFT)} />
-                  )}
-                </div>
-              }
-            />
-          }
-          second={<LogPanel />}
-        />
-      </main>
+      {ready ? <Workspace /> : <main className="workspace" />}
 
       <StatusBar />
-
-      {connectDraft && (
-        <ConnectDialog initialDraft={connectDraft} onClose={() => setConnectDraft(null)} />
-      )}
+      <AppDialog />
+      <ConflictDialog />
       <HostKeyDialog />
       <Toasts />
+      <DragGhost />
     </div>
   );
 }
 
-function SessionControls() {
-  const status = useConnectionStore((state) => state.status);
-  const disconnect = useConnectionStore((state) => state.disconnect);
-  if (status !== "connected" && status !== "lost") return null;
-  return (
-    <button type="button" className="button" onClick={() => void disconnect()}>
-      <LogOut size={14} />
-      Disconnect
-    </button>
-  );
-}
-
-function RemotePlaceholder({ onConnect }: { onConnect: () => void }) {
-  const status = useConnectionStore((state) => state.status);
-  const lostReason = useConnectionStore((state) => state.lostReason);
-  const lastProfile = useConnectionStore((state) => state.lastProfile);
-  const cancelConnect = useConnectionStore((state) => state.cancelConnect);
-  const showToast = useToastStore((state) => state.show);
-
-  const reconnect = async () => {
-    if (!lastProfile) return;
-    const failure = await connectWithPrompts(lastProfile);
-    if (failure) showToast("error", failure.message);
-  };
-
-  return (
-    <section className="pane">
-      <header className="pane-header">
-        <div className="pane-title">
-          <Server size={15} />
-          <span>Remote</span>
-        </div>
-      </header>
-      <div className="pane-empty">
-        {status === "connecting" && (
-          <>
-            <p className="pane-empty-detail">Connecting...</p>
-            <button type="button" className="button" onClick={cancelConnect}>
-              Cancel
-            </button>
-          </>
-        )}
-        {status === "disconnected" && (
-          <>
-            <Server size={40} className="pane-empty-icon" />
-            <p className="pane-empty-title">Not connected</p>
-            <p className="pane-empty-detail">
-              Enter a host in the bar above, or open the full connection dialog for key files and
-              SSH agents.
-            </p>
-            <button type="button" className="button button-primary" onClick={onConnect}>
-              Connect to server
-            </button>
-          </>
-        )}
-        {status === "lost" && (
-          <>
-            <p className="pane-empty-title">Connection lost</p>
-            {lostReason && <p className="pane-empty-detail">{lostReason}</p>}
-            <button type="button" className="button button-primary" onClick={reconnect}>
-              <RotateCw size={14} />
-              Reconnect
-            </button>
-          </>
-        )}
-      </div>
-    </section>
-  );
-}
-
-function StatusBar() {
-  const status = useConnectionStore((state) => state.status);
-  const session = useConnectionStore((state) => state.session);
-  const text = {
-    disconnected: "Not connected",
-    connecting: "Connecting...",
-    connected: session ? `Connected to ${session.label}` : "Connected",
-    lost: "Connection lost",
-  }[status];
-  return (
-    <footer className="statusbar">
-      <span className="status-item">
-        <span className={`status-dot status-${status}`} />
-        {text}
-      </span>
-      <span className="status-item status-version">Poros {APP_VERSION}</span>
-    </footer>
-  );
+function AppDialog() {
+  const dialog = useUiStore((state) => state.dialog);
+  const close = useUiStore((state) => state.close);
+  switch (dialog?.kind) {
+    case "connect":
+      return (
+        <ConnectDialog
+          initialDraft={dialog.draft}
+          targetTabId={dialog.targetTabId}
+          initialError={dialog.error}
+          onClose={close}
+        />
+      );
+    case "settings":
+      return <SettingsDialog section={dialog.section} />;
+    case "saveConnection":
+      return <SaveConnectionDialog sessionId={dialog.sessionId} onClose={close} />;
+    case "closeTab":
+      return (
+        <CloseTabDialog
+          tabId={dialog.tabId}
+          sessionId={dialog.sessionId}
+          label={dialog.label}
+          pendingTransfers={dialog.pendingTransfers}
+          onClose={close}
+        />
+      );
+    default:
+      return null;
+  }
 }

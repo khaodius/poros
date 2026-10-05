@@ -45,7 +45,7 @@ export interface PaneController {
   selectedEntries: () => FileEntry[];
 }
 
-export function usePane(source: FileSource): PaneController {
+export function usePane(source: FileSource, showHiddenByDefault = false): PaneController {
   const [listing, setListing] = useState<DirListing | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<AppError | null>(null);
@@ -55,7 +55,7 @@ export function usePane(source: FileSource): PaneController {
   const [cursorPath, setCursorPath] = useState<string | null>(null);
   const [sort, setSort] = useState<SortSpec>({ key: "name", direction: 1 });
   const [filter, setFilter] = useState("");
-  const [showHidden, setShowHidden] = useState(false);
+  const [showHidden, setShowHidden] = useState(showHiddenByDefault);
   const latestRequest = useRef(0);
   const listedPath = useRef<string | null>(null);
 

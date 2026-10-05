@@ -53,3 +53,16 @@ export function formatVersion(version: string): string {
 export function pluralize(count: number, singular: string, plural = `${singular}s`): string {
   return `${count} ${count === 1 ? singular : plural}`;
 }
+
+export function formatSpeed(bytesPerSecond: number): string {
+  return `${formatSize(Math.max(0, Math.round(bytesPerSecond)))}/s`;
+}
+
+/** `45s`, `2m 5s`, `1h 2m`. */
+export function formatDuration(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.round(totalSeconds));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
