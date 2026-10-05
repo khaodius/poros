@@ -21,10 +21,7 @@ pub fn run() {
             let config_dir = app.path().app_config_dir()?;
             std::fs::create_dir_all(&config_dir)?;
             let events = Events::new(app.handle().clone());
-            app.manage(SessionManager::new(
-                config_dir.join("known_hosts"),
-                events,
-            ));
+            app.manage(SessionManager::new(config_dir.join("known_hosts"), events));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

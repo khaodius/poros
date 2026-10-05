@@ -1,7 +1,5 @@
-//! POSIX path helpers for remote (SFTP) paths. Remote paths are always `/`-separated,
-//! regardless of the local OS, so `std::path` must not be used for them.
+//! Remote paths are always `/`-separated, so `std::path` must not be used for them.
 
-/// Joins `name` onto `dir`. `name` must be a single component.
 pub fn join(dir: &str, name: &str) -> String {
     if dir.is_empty() {
         name.to_string()
@@ -12,7 +10,6 @@ pub fn join(dir: &str, name: &str) -> String {
     }
 }
 
-/// Parent of an absolute path. `None` for `/`.
 pub fn parent(path: &str) -> Option<String> {
     let trimmed = path.trim_end_matches('/');
     if trimmed.is_empty() {
@@ -20,12 +17,11 @@ pub fn parent(path: &str) -> Option<String> {
     }
     match trimmed.rfind('/') {
         Some(0) => Some("/".to_string()),
-        Some(i) => Some(trimmed[..i].to_string()),
+        Some(separator) => Some(trimmed[..separator].to_string()),
         None => None,
     }
 }
 
-/// Last component of a path.
 pub fn file_name(path: &str) -> &str {
     let trimmed = path.trim_end_matches('/');
     trimmed.rsplit('/').next().unwrap_or(trimmed)

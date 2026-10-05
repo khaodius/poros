@@ -1,14 +1,11 @@
-//! Host key verification against OpenSSH-format known_hosts files.
-//!
-//! Poros reads the user's `~/.ssh/known_hosts` but only ever writes to its own file in
-//! the app config dir, so accepting a key in Poros never edits the user's SSH setup.
-//! The app file is consulted first and is authoritative for the hosts it lists.
+//! Reads `~/.ssh/known_hosts` but writes only the app's own file, which is consulted
+//! first and is authoritative for the hosts it lists.
 
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use base64::engine::general_purpose::STANDARD as B64;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use hmac::{Hmac, Mac};
 use russh::keys::{HashAlg, PublicKey};
@@ -16,11 +13,9 @@ use sha1::Sha1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostKeyStatus {
-    /// A recorded key of the same algorithm matches.
     Trusted,
-    /// No key of this algorithm is recorded for the host.
     Unknown,
-    /// A different key of the same algorithm is recorded, or the key is `@revoked`.
+    /// Also returned for a `@revoked` key.
     Changed,
 }
 
@@ -38,10 +33,9 @@ impl KnownHosts {
         }
     }
 
-    /// App store plus the user's OpenSSH known_hosts, when a home dir exists.
     pub fn with_defaults(app_file: PathBuf) -> Self {
         let system = dirs::home_dir()
-            .map(|h| vec![h.join(".ssh").join("known_hosts")])
+            .map(|home| vec![home.join(".ssh").join("known_hosts")])
             .unwrap_or_default();
         Self::new(app_file, system)
     }
@@ -57,23 +51,23 @@ impl KnownHosts {
         HostKeyStatus::Unknown
     }
 
-    /// Records `key` for the host in the app store, replacing any recorded key of the
-    /// same algorithm for that host.
+    /// Replaces any recorded key of the same algorithm for the host.
     pub fn trust(&self, host: &str, port: u16, key: &PublicKey) -> io::Result<()> {
         let host_port = host_pattern(host, port);
         let existing = fs::read_to_string(&self.app_file).unwrap_or_default();
         let mut kept: Vec<&str> = existing
             .lines()
             .filter(|line| match parse_line(line) {
-                Some(entry) => !(entry.matches_host(&host_port)
-                    && entry.key.key_data().algorithm() == key.key_data().algorithm()),
+                Some(entry) => {
+                    !(entry.matches_host(&host_port)
+                        && entry.key.key_data().algorithm() == key.key_data().algorithm())
+                }
                 None => true,
             })
             .collect();
         let openssh = key
             .to_openssh()
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-        // Drop the comment so the line is `host alg base64`.
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
         let mut parts = openssh.split_whitespace();
         let record = format!(
             "{host_port} {} {}",
@@ -85,15 +79,15 @@ impl KnownHosts {
         if let Some(dir) = self.app_file.parent() {
             fs::create_dir_all(dir)?;
         }
-        let tmp = self.app_file.with_extension("tmp");
+        let temporary = self.app_file.with_extension("tmp");
         {
-            let mut f = fs::File::create(&tmp)?;
+            let mut file = fs::File::create(&temporary)?;
             for line in &kept {
-                writeln!(f, "{line}")?;
+                writeln!(file, "{line}")?;
             }
-            f.sync_all()?;
+            file.sync_all()?;
         }
-        fs::rename(&tmp, &self.app_file)
+        fs::rename(&temporary, &self.app_file)
     }
 }
 
@@ -198,7 +192,7 @@ fn hashed_match(pattern: &str, host_port: &str) -> bool {
     let (Some(salt), Some(hash)) = (parts.next(), parts.next()) else {
         return false;
     };
-    let (Ok(salt), Ok(hash)) = (B64.decode(salt), B64.decode(hash)) else {
+    let (Ok(salt), Ok(hash)) = (BASE64.decode(salt), BASE64.decode(hash)) else {
         return false;
     };
     let Ok(mut mac) = Hmac::<Sha1>::new_from_slice(&salt) else {
@@ -208,32 +202,35 @@ fn hashed_match(pattern: &str, host_port: &str) -> bool {
     mac.verify_slice(&hash).is_ok()
 }
 
-/// OpenSSH host pattern matching: `*` matches any run, `?` a single character.
 fn glob_match(pattern: &str, text: &str) -> bool {
-    let p: Vec<char> = pattern.chars().collect();
-    let t: Vec<char> = text.chars().collect();
-    let (mut pi, mut ti) = (0, 0);
-    let (mut star, mut mark) = (None, 0);
-    while ti < t.len() {
-        if pi < p.len() && (p[pi] == '?' || p[pi] == t[ti]) {
-            pi += 1;
-            ti += 1;
-        } else if pi < p.len() && p[pi] == '*' {
-            star = Some(pi);
-            mark = ti;
-            pi += 1;
-        } else if let Some(s) = star {
-            pi = s + 1;
-            mark += 1;
-            ti = mark;
-        } else {
-            return false;
+    let pattern: Vec<char> = pattern.chars().collect();
+    let text: Vec<char> = text.chars().collect();
+    let (mut pattern_index, mut text_index) = (0, 0);
+    // On mismatch, retry from the last `*` with it absorbing one more character.
+    let mut backtrack: Option<(usize, usize)> = None;
+    while text_index < text.len() {
+        match pattern.get(pattern_index) {
+            Some('*') => {
+                backtrack = Some((pattern_index, text_index));
+                pattern_index += 1;
+            }
+            Some(&expected) if expected == '?' || expected == text[text_index] => {
+                pattern_index += 1;
+                text_index += 1;
+            }
+            _ => match backtrack {
+                Some((star_index, absorbed_until)) => {
+                    pattern_index = star_index + 1;
+                    text_index = absorbed_until + 1;
+                    backtrack = Some((star_index, absorbed_until + 1));
+                }
+                None => return false,
+            },
         }
     }
-    while pi < p.len() && p[pi] == '*' {
-        pi += 1;
-    }
-    pi == p.len()
+    pattern[pattern_index..]
+        .iter()
+        .all(|&remaining| remaining == '*')
 }
 
 #[cfg(test)]
@@ -250,26 +247,41 @@ mod tests {
     fn store(app: &str, system: &str) -> (tempfile::TempDir, KnownHosts) {
         let dir = tempfile::tempdir().unwrap();
         let app_file = dir.path().join("app_known_hosts");
-        let sys_file = dir.path().join("known_hosts");
+        let system_file = dir.path().join("known_hosts");
         fs::write(&app_file, app).unwrap();
-        fs::write(&sys_file, system).unwrap();
-        let kh = KnownHosts::new(app_file, vec![sys_file]);
-        (dir, kh)
+        fs::write(&system_file, system).unwrap();
+        let known_hosts = KnownHosts::new(app_file, vec![system_file]);
+        (dir, known_hosts)
     }
 
     #[test]
     fn unknown_when_nothing_recorded() {
-        let (_d, kh) = store("", "");
-        assert_eq!(kh.check("example.com", 22, &key(KEY_A)), HostKeyStatus::Unknown);
+        let (_dir, known_hosts) = store("", "");
+        assert_eq!(
+            known_hosts.check("example.com", 22, &key(KEY_A)),
+            HostKeyStatus::Unknown
+        );
     }
 
     #[test]
     fn trusted_and_changed_from_system_file() {
-        let (_d, kh) = store("", &format!("example.com ssh-ed25519 {KEY_A}\n"));
-        assert_eq!(kh.check("example.com", 22, &key(KEY_A)), HostKeyStatus::Trusted);
-        assert_eq!(kh.check("EXAMPLE.com", 22, &key(KEY_A)), HostKeyStatus::Trusted);
-        assert_eq!(kh.check("example.com", 22, &key(KEY_B)), HostKeyStatus::Changed);
-        assert_eq!(kh.check("example.com", 2222, &key(KEY_A)), HostKeyStatus::Unknown);
+        let (_dir, known_hosts) = store("", &format!("example.com ssh-ed25519 {KEY_A}\n"));
+        assert_eq!(
+            known_hosts.check("example.com", 22, &key(KEY_A)),
+            HostKeyStatus::Trusted
+        );
+        assert_eq!(
+            known_hosts.check("EXAMPLE.com", 22, &key(KEY_A)),
+            HostKeyStatus::Trusted
+        );
+        assert_eq!(
+            known_hosts.check("example.com", 22, &key(KEY_B)),
+            HostKeyStatus::Changed
+        );
+        assert_eq!(
+            known_hosts.check("example.com", 2222, &key(KEY_A)),
+            HostKeyStatus::Unknown
+        );
     }
 
     #[test]
@@ -279,10 +291,19 @@ mod tests {
             "|1|8fxdNxJC4ug7TvJLO7OFyjeiwlA=|C6auzEsTkwfTHMojSmP26uYRtuE= ssh-ed25519 {KEY_A}\n\
              |1|l17BdQJFBuoThJQtEtB+nJ+BtS4=|CI/ykWdqjIKDD8u9ALJBzTob4fM= ssh-ed25519 {KEY_A}\n"
         );
-        let (_d, kh) = store("", &hashed);
-        assert_eq!(kh.check("example.com", 22, &key(KEY_A)), HostKeyStatus::Trusted);
-        assert_eq!(kh.check("example.com", 2222, &key(KEY_A)), HostKeyStatus::Trusted);
-        assert_eq!(kh.check("other.com", 22, &key(KEY_A)), HostKeyStatus::Unknown);
+        let (_dir, known_hosts) = store("", &hashed);
+        assert_eq!(
+            known_hosts.check("example.com", 22, &key(KEY_A)),
+            HostKeyStatus::Trusted
+        );
+        assert_eq!(
+            known_hosts.check("example.com", 2222, &key(KEY_A)),
+            HostKeyStatus::Trusted
+        );
+        assert_eq!(
+            known_hosts.check("other.com", 22, &key(KEY_A)),
+            HostKeyStatus::Unknown
+        );
     }
 
     #[test]
@@ -293,29 +314,47 @@ mod tests {
              @revoked * ssh-ed25519 {KEY_B}\n\
              garbage line\n"
         );
-        let (_d, kh) = store("", &lines);
-        assert_eq!(kh.check("a.example.com", 22, &key(KEY_A)), HostKeyStatus::Trusted);
-        assert_eq!(kh.check("bad.example.com", 22, &key(KEY_A)), HostKeyStatus::Unknown);
-        assert_eq!(kh.check("a.example.com", 22, &key(KEY_B)), HostKeyStatus::Changed);
+        let (_dir, known_hosts) = store("", &lines);
+        assert_eq!(
+            known_hosts.check("a.example.com", 22, &key(KEY_A)),
+            HostKeyStatus::Trusted
+        );
+        assert_eq!(
+            known_hosts.check("bad.example.com", 22, &key(KEY_A)),
+            HostKeyStatus::Unknown
+        );
+        assert_eq!(
+            known_hosts.check("a.example.com", 22, &key(KEY_B)),
+            HostKeyStatus::Changed
+        );
     }
 
     #[test]
     fn app_store_overrides_system_file_after_trust() {
-        let (_d, kh) = store("", &format!("example.com ssh-ed25519 {KEY_A}\n"));
-        assert_eq!(kh.check("example.com", 22, &key(KEY_B)), HostKeyStatus::Changed);
-        kh.trust("example.com", 22, &key(KEY_B)).unwrap();
-        assert_eq!(kh.check("example.com", 22, &key(KEY_B)), HostKeyStatus::Trusted);
+        let (_dir, known_hosts) = store("", &format!("example.com ssh-ed25519 {KEY_A}\n"));
+        assert_eq!(
+            known_hosts.check("example.com", 22, &key(KEY_B)),
+            HostKeyStatus::Changed
+        );
+        known_hosts.trust("example.com", 22, &key(KEY_B)).unwrap();
+        assert_eq!(
+            known_hosts.check("example.com", 22, &key(KEY_B)),
+            HostKeyStatus::Trusted
+        );
         // The old key is now the changed one, since the app store is authoritative.
-        assert_eq!(kh.check("example.com", 22, &key(KEY_A)), HostKeyStatus::Changed);
+        assert_eq!(
+            known_hosts.check("example.com", 22, &key(KEY_A)),
+            HostKeyStatus::Changed
+        );
     }
 
     #[test]
     fn trust_replaces_previous_key_for_same_host() {
-        let (_d, kh) = store("", "");
-        kh.trust("h", 2222, &key(KEY_A)).unwrap();
-        kh.trust("h", 2222, &key(KEY_B)).unwrap();
-        kh.trust("other", 22, &key(KEY_A)).unwrap();
-        let contents = fs::read_to_string(&kh.app_file).unwrap();
+        let (_dir, known_hosts) = store("", "");
+        known_hosts.trust("h", 2222, &key(KEY_A)).unwrap();
+        known_hosts.trust("h", 2222, &key(KEY_B)).unwrap();
+        known_hosts.trust("other", 22, &key(KEY_A)).unwrap();
+        let contents = fs::read_to_string(&known_hosts.app_file).unwrap();
         assert_eq!(contents.lines().count(), 2, "{contents}");
         assert!(contents.contains(&format!("[h]:2222 ssh-ed25519 {KEY_B}")));
         assert!(contents.contains(&format!("other ssh-ed25519 {KEY_A}")));

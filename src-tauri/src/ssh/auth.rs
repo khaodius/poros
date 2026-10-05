@@ -1,6 +1,3 @@
-//! User authentication: password (with keyboard-interactive fallback), private key
-//! file (OpenSSH, PEM, PKCS#8 and PuTTY .ppk), and ssh-agent / Pageant.
-
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -84,7 +81,11 @@ pub(super) async fn authenticate(
 }
 
 /// Answers every hidden prompt with the password; echoed prompts get an empty answer.
-async fn keyboard_interactive(handle: &mut SshHandle, user: &str, password: &str) -> AppResult<bool> {
+async fn keyboard_interactive(
+    handle: &mut SshHandle,
+    user: &str,
+    password: &str,
+) -> AppResult<bool> {
     let mut response = handle
         .authenticate_keyboard_interactive_start(user, None::<String>)
         .await?;
@@ -95,8 +96,8 @@ async fn keyboard_interactive(handle: &mut SshHandle, user: &str, password: &str
             KeyboardInteractiveAuthResponse::InfoRequest { prompts, .. } => {
                 let answers = prompts
                     .iter()
-                    .map(|p| {
-                        if p.echo {
+                    .map(|prompt| {
+                        if prompt.echo {
                             String::new()
                         } else {
                             password.to_string()
@@ -112,16 +113,15 @@ async fn keyboard_interactive(handle: &mut SshHandle, user: &str, password: &str
     Ok(false)
 }
 
-/// Tries every identity the agent offers. `Ok(None)` on success, otherwise the
-/// methods the server still accepts.
+/// `Ok(None)` on success, otherwise the methods the server still accepts.
 async fn agent_auth(
     handle: &mut SshHandle,
     user: &str,
     log: &impl Fn(LogLevel, String),
 ) -> AppResult<Option<MethodSet>> {
     let mut agent = connect_agent().await?;
-    let identities = agent.request_identities().await.map_err(|e| {
-        AppError::new(ErrorKind::AuthFailed, format!("SSH agent error: {e}"))
+    let identities = agent.request_identities().await.map_err(|error| {
+        AppError::new(ErrorKind::AuthFailed, format!("SSH agent error: {error}"))
     })?;
     if identities.is_empty() {
         return Err(AppError::new(
@@ -135,7 +135,10 @@ async fn agent_auth(
         let public = identity.public_key().into_owned();
         log(
             LogLevel::Info,
-            format!("Trying agent key {}", public.fingerprint(russh_keys::HashAlg::Sha256)),
+            format!(
+                "Trying agent key {}",
+                public.fingerprint(russh_keys::HashAlg::Sha256)
+            ),
         );
         let hash = if public.algorithm().is_rsa() {
             handle.best_supported_rsa_hash().await?.flatten()
@@ -145,7 +148,9 @@ async fn agent_auth(
         let result = handle
             .authenticate_publickey_with(user, public, hash, &mut agent)
             .await
-            .map_err(|e| AppError::new(ErrorKind::AuthFailed, format!("SSH agent error: {e}")))?;
+            .map_err(|error| {
+                AppError::new(ErrorKind::AuthFailed, format!("SSH agent error: {error}"))
+            })?;
         match result {
             russh::client::AuthResult::Success => return Ok(None),
             russh::client::AuthResult::Failure {
@@ -164,11 +169,11 @@ type DynAgent = russh_keys::agent::client::AgentClient<
 async fn connect_agent() -> AppResult<DynAgent> {
     russh_keys::agent::client::AgentClient::connect_env()
         .await
-        .map(|a| a.dynamic())
-        .map_err(|e| {
+        .map(|agent| agent.dynamic())
+        .map_err(|error| {
             AppError::new(
                 ErrorKind::AuthFailed,
-                format!("No SSH agent available (is SSH_AUTH_SOCK set?): {e}"),
+                format!("No SSH agent available (is SSH_AUTH_SOCK set?): {error}"),
             )
         })
 }
@@ -182,11 +187,11 @@ async fn connect_agent() -> AppResult<DynAgent> {
     }
     AgentClient::connect_pageant()
         .await
-        .map(|a| a.dynamic())
-        .map_err(|e| {
+        .map(|agent| agent.dynamic())
+        .map_err(|error| {
             AppError::new(
                 ErrorKind::AuthFailed,
-                format!("No SSH agent available (OpenSSH agent service or Pageant): {e}"),
+                format!("No SSH agent available (OpenSSH agent service or Pageant): {error}"),
             )
         })
 }
@@ -194,7 +199,7 @@ async fn connect_agent() -> AppResult<DynAgent> {
 fn describe_methods(methods: &MethodSet) -> String {
     let names: Vec<&str> = methods
         .iter()
-        .map(|m| match m {
+        .map(|method| match method {
             MethodKind::None => "none",
             MethodKind::Password => "password",
             MethodKind::PublicKey => "public key",
@@ -210,7 +215,6 @@ fn describe_methods(methods: &MethodSet) -> String {
     }
 }
 
-/// Expands a leading `~` so key paths copied from ssh configs work.
 fn expand_home(path: &str) -> PathBuf {
     let trimmed = path.trim();
     if let Some(rest) = trimmed

@@ -1,6 +1,3 @@
-//! Local filesystem operations. All functions are blocking; commands run them on
-//! the blocking thread pool.
-
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
@@ -10,11 +7,10 @@ use crate::model::{DirListing, EntryKind, FileEntry, LinkTarget};
 
 pub fn home_dir() -> AppResult<String> {
     dirs::home_dir()
-        .map(|p| p.to_string_lossy().into_owned())
+        .map(|home| home.to_string_lossy().into_owned())
         .ok_or_else(|| AppError::invalid("Could not determine the home directory"))
 }
 
-/// Filesystem roots: `/` on unix, every mounted drive letter on Windows.
 pub fn roots() -> Vec<String> {
     #[cfg(windows)]
     {
@@ -30,9 +26,9 @@ pub fn roots() -> Vec<String> {
 }
 
 pub fn list_dir(path: &str) -> AppResult<DirListing> {
-    let dir = fs::canonicalize(path).map_err(|e| AppError::from(e).with_path(path))?;
+    let dir = fs::canonicalize(path).map_err(|error| AppError::from(error).with_path(path))?;
     let mut entries = Vec::new();
-    for item in fs::read_dir(&dir).map_err(|e| AppError::from(e).with_path(path))? {
+    for item in fs::read_dir(&dir).map_err(|error| AppError::from(error).with_path(path))? {
         let Ok(item) = item else { continue };
         // Entries that vanish or can't be stat'ed mid-listing are skipped, not fatal.
         if let Some(entry) = entry_from_path(&item.path()) {
@@ -48,7 +44,8 @@ pub fn list_dir(path: &str) -> AppResult<DirListing> {
 
 pub fn make_dir(parent: &str, name: &str) -> AppResult<String> {
     let target = child_path(parent, name)?;
-    fs::create_dir(&target).map_err(|e| AppError::from(e).with_path(display_path(&target)))?;
+    fs::create_dir(&target)
+        .map_err(|error| AppError::from(error).with_path(display_path(&target)))?;
     Ok(display_path(&target))
 }
 
@@ -65,35 +62,34 @@ pub fn rename(path: &str, new_name: &str) -> AppResult<String> {
         )
         .with_path(display_path(&target)));
     }
-    fs::rename(&source, &target).map_err(|e| AppError::from(e).with_path(path))?;
+    fs::rename(&source, &target).map_err(|error| AppError::from(error).with_path(path))?;
     Ok(display_path(&target))
 }
 
-/// Deletes files, symlinks (never their targets) and directories recursively.
+/// Symlinks are removed, never followed.
 pub fn delete(paths: &[String]) -> AppResult<()> {
     for path in paths {
-        let p = Path::new(path);
-        let meta = p
+        let target = Path::new(path);
+        let meta = target
             .symlink_metadata()
-            .map_err(|e| AppError::from(e).with_path(path.as_str()))?;
+            .map_err(|error| AppError::from(error).with_path(path.as_str()))?;
         let result = if meta.is_dir() {
-            fs::remove_dir_all(p)
+            fs::remove_dir_all(target)
         } else {
-            fs::remove_file(p).or_else(|e| {
+            fs::remove_file(target).or_else(|error| {
                 // Windows directory symlinks/junctions must be removed with remove_dir.
                 if cfg!(windows) && meta.file_type().is_symlink() {
-                    fs::remove_dir(p)
+                    fs::remove_dir(target)
                 } else {
-                    Err(e)
+                    Err(error)
                 }
             })
         };
-        result.map_err(|e| AppError::from(e).with_path(path.as_str()))?;
+        result.map_err(|error| AppError::from(error).with_path(path.as_str()))?;
     }
     Ok(())
 }
 
-/// Joins a single path component onto `parent`, rejecting separators and `..`.
 fn child_path(parent: &str, name: &str) -> AppResult<PathBuf> {
     validate_name(name)?;
     Ok(Path::new(parent).join(name))
@@ -120,14 +116,19 @@ fn entry_from_path(path: &Path) -> Option<FileEntry> {
     let (kind, link_target, size, modified_meta) = if file_type.is_symlink() {
         match fs::metadata(path) {
             Ok(target) => {
-                let t = if target.is_dir() {
+                let target_kind = if target.is_dir() {
                     LinkTarget::Dir
                 } else {
                     LinkTarget::File
                 };
-                (EntryKind::Symlink, Some(t), target.len(), target)
+                (EntryKind::Symlink, Some(target_kind), target.len(), target)
             }
-            Err(_) => (EntryKind::Symlink, Some(LinkTarget::Broken), 0, meta.clone()),
+            Err(_) => (
+                EntryKind::Symlink,
+                Some(LinkTarget::Broken),
+                0,
+                meta.clone(),
+            ),
         }
     } else if file_type.is_dir() {
         (EntryKind::Dir, None, 0, meta.clone())
@@ -140,8 +141,8 @@ fn entry_from_path(path: &Path) -> Option<FileEntry> {
     let modified = modified_meta
         .modified()
         .ok()
-        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        .map(|d| d.as_secs() as i64);
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map(|since_epoch| since_epoch.as_secs() as i64);
 
     Some(FileEntry {
         hidden: is_hidden(&name, &meta),
@@ -182,17 +183,17 @@ fn is_hidden(name: &str, _meta: &fs::Metadata) -> bool {
 
 /// Strips the `\\?\` verbatim prefix `canonicalize` adds on Windows.
 fn display_path(path: &Path) -> String {
-    let s = path.to_string_lossy();
+    let text = path.to_string_lossy();
     #[cfg(windows)]
     {
-        if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
             return format!(r"\\{rest}");
         }
-        if let Some(rest) = s.strip_prefix(r"\\?\") {
+        if let Some(rest) = text.strip_prefix(r"\\?\") {
             return rest.to_string();
         }
     }
-    s.into_owned()
+    text.into_owned()
 }
 
 #[cfg(test)]
@@ -208,7 +209,13 @@ mod tests {
 
         let listing = list_dir(tmp.path().to_str().unwrap()).unwrap();
         assert!(listing.parent.is_some());
-        let find = |n: &str| listing.entries.iter().find(|e| e.name == n).unwrap();
+        let find = |name: &str| {
+            listing
+                .entries
+                .iter()
+                .find(|entry| entry.name == name)
+                .unwrap()
+        };
         assert_eq!(find("a.txt").kind, EntryKind::File);
         assert_eq!(find("a.txt").size, 5);
         assert!(find(".hidden").hidden);
@@ -225,7 +232,13 @@ mod tests {
         std::os::unix::fs::symlink(tmp.path().join("nope"), tmp.path().join("dangling")).unwrap();
 
         let listing = list_dir(tmp.path().to_str().unwrap()).unwrap();
-        let find = |n: &str| listing.entries.iter().find(|e| e.name == n).unwrap();
+        let find = |name: &str| {
+            listing
+                .entries
+                .iter()
+                .find(|entry| entry.name == name)
+                .unwrap()
+        };
         assert_eq!(find("to-dir").link_target, Some(LinkTarget::Dir));
         assert!(find("to-dir").is_dir_like());
         assert_eq!(find("dangling").link_target, Some(LinkTarget::Broken));
@@ -240,7 +253,7 @@ mod tests {
         let renamed = rename(&made, "renamed").unwrap();
         assert!(Path::new(&renamed).is_dir());
         assert!(!Path::new(&made).exists());
-        delete(&[renamed.clone()]).unwrap();
+        delete(std::slice::from_ref(&renamed)).unwrap();
         assert!(!Path::new(&renamed).exists());
     }
 

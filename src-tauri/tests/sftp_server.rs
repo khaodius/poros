@@ -59,7 +59,9 @@ async fn trusted_manager(server: &Server) -> (tempfile::TempDir, SessionManager)
         .await
         .err();
     if let Some(err) = err {
-        let host_key = err.host_key.expect("first connect should ask about the host key");
+        let host_key = err
+            .host_key
+            .expect("first connect should ask about the host key");
         let info = manager
             .connect(
                 profile(server, password),
@@ -145,11 +147,20 @@ async fn every_key_format_authenticates() {
     for name in ["rsa", "ed25519", "ecdsa256", "ecdsa384", "ecdsa521"] {
         for version in ["v2", "v3"] {
             files.push((format!("{name}-{version}-plain.ppk"), None));
-            files.push((format!("{name}-{version}-enc.ppk"), Some("poros-test".into())));
+            files.push((
+                format!("{name}-{version}-enc.ppk"),
+                Some("poros-test".into()),
+            ));
         }
     }
-    files.push(("ed25519-v3-argon2i-enc.ppk".into(), Some("poros-test".into())));
-    files.push(("ed25519-v3-argon2d-enc.ppk".into(), Some("poros-test".into())));
+    files.push((
+        "ed25519-v3-argon2i-enc.ppk".into(),
+        Some("poros-test".into()),
+    ));
+    files.push((
+        "ed25519-v3-argon2d-enc.ppk".into(),
+        Some("poros-test".into()),
+    ));
     files.push(("nocomment-v3-plain.ppk".into(), None));
     files.push(("openssh-ed25519".into(), None));
     files.push(("openssh-ed25519-enc".into(), Some("poros-test".into())));
@@ -165,7 +176,7 @@ async fn every_key_format_authenticates() {
         let info = manager
             .connect(profile(&server, auth), None)
             .await
-            .unwrap_or_else(|e| panic!("{file}: {}", e.message));
+            .unwrap_or_else(|error| panic!("{file}: {}", error.message));
         manager.disconnect(&info.id).await.unwrap();
     }
 }
@@ -207,11 +218,11 @@ async fn browse_and_manage_files() {
 
     // Symlinks are resolved so the UI can navigate into linked folders.
     let home = fs.list_dir("~").await.unwrap();
-    if let Some(link) = home.entries.iter().find(|e| e.name == "data-link") {
+    if let Some(link) = home.entries.iter().find(|entry| entry.name == "data-link") {
         assert_eq!(link.kind, EntryKind::Symlink);
         assert_eq!(link.link_target, Some(LinkTarget::Dir));
     }
-    if let Some(link) = home.entries.iter().find(|e| e.name == "broken-link") {
+    if let Some(link) = home.entries.iter().find(|entry| entry.name == "broken-link") {
         assert_eq!(link.link_target, Some(LinkTarget::Broken));
     }
 

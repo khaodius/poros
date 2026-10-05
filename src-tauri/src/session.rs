@@ -1,5 +1,3 @@
-//! Open remote sessions, keyed by an id the frontend holds.
-
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -30,7 +28,6 @@ pub struct SessionInfo {
     pub port: u16,
     pub username: String,
     pub home: String,
-    /// Directory the remote pane should open first.
     pub initial_path: String,
 }
 
@@ -56,8 +53,9 @@ impl SessionManager {
     ) -> AppResult<SessionInfo> {
         let id = uuid::Uuid::new_v4().to_string();
         let result = self.open(&id, profile, approval).await;
-        if let Err(e) = &result {
-            self.events.log(LogLevel::Error, Some(&id), e.message.clone());
+        if let Err(error) = &result {
+            self.events
+                .log(LogLevel::Error, Some(&id), error.message.clone());
         }
         result
     }
@@ -71,24 +69,29 @@ impl SessionManager {
         let handle = ssh::connect(id, &profile, &self.known_hosts, approval, &self.events).await?;
         let fs = match open_sftp(&handle).await {
             Ok(fs) => fs,
-            Err(e) => {
+            Err(error) => {
                 ssh::disconnect(&handle).await;
-                return Err(e);
+                return Err(error);
             }
         };
 
         let initial_path = match profile.initial_path.as_deref().map(str::trim) {
-            Some(p) if !p.is_empty() => match fs.canonicalize(&fs.resolve(p)).await {
-                Ok(resolved) => resolved,
-                Err(e) => {
-                    self.events.log(
-                        LogLevel::Warn,
-                        Some(id),
-                        format!("Initial directory {p} is not accessible: {}", e.message),
-                    );
-                    fs.home.clone()
+            Some(requested) if !requested.is_empty() => {
+                match fs.canonicalize(&fs.resolve(requested)).await {
+                    Ok(resolved) => resolved,
+                    Err(error) => {
+                        self.events.log(
+                            LogLevel::Warn,
+                            Some(id),
+                            format!(
+                                "Initial directory {requested} is not accessible: {}",
+                                error.message
+                            ),
+                        );
+                        fs.home.clone()
+                    }
                 }
-            },
+            }
             _ => fs.home.clone(),
         };
 
@@ -112,10 +115,7 @@ impl SessionManager {
             handle,
             fs,
         });
-        self.sessions
-            .write()
-            .await
-            .insert(id.to_string(), session);
+        self.sessions.write().await.insert(id.to_string(), session);
         Ok(info)
     }
 

@@ -1,6 +1,3 @@
-//! Tauri command handlers. Thin wrappers: argument plumbing only, logic lives in the
-//! `local`, `sftp` and `session` modules. Wrappers are typed in `src/lib/ipc.ts`.
-
 use tauri::State;
 
 use crate::error::AppResult;
@@ -75,7 +72,12 @@ pub async fn remote_mkdir(
     parent: String,
     name: String,
 ) -> AppResult<String> {
-    sessions.get(&session_id).await?.fs.make_dir(&parent, &name).await
+    sessions
+        .get(&session_id)
+        .await?
+        .fs
+        .make_dir(&parent, &name)
+        .await
 }
 
 #[tauri::command]
@@ -85,7 +87,12 @@ pub async fn remote_rename(
     path: String,
     new_name: String,
 ) -> AppResult<String> {
-    sessions.get(&session_id).await?.fs.rename(&path, &new_name).await
+    sessions
+        .get(&session_id)
+        .await?
+        .fs
+        .rename(&path, &new_name)
+        .await
 }
 
 #[tauri::command]

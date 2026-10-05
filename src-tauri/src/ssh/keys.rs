@@ -1,14 +1,6 @@
-//! Private key loading for public key authentication.
-//!
-//! Accepts OpenSSH (`BEGIN OPENSSH PRIVATE KEY`), PEM/PKCS#1, PKCS#8 and PuTTY `.ppk`
-//! v2 and v3 (Argon2i/d/id) files, encrypted or not, for RSA, Ed25519 and ECDSA
-//! P-256/384/521 keys.
-//!
-//! Key files that went through Windows editors, mail clients or `git autocrlf` often
-//! pick up a UTF-8 BOM, CRLF line endings or stripped trailing spaces (an empty PPK
-//! `Comment: ` becomes `Comment:`). Other clients reject those files outright; we
-//! normalize them before parsing. PPK MACs cover the decoded field values, not the
-//! file's bytes, so normalization does not invalidate them.
+//! Key files that passed through Windows editors or mail clients often carry a BOM, CRLF,
+//! blank lines or a stripped `Comment: ` space, which other clients reject. They are
+//! normalized before parsing; PPK MACs cover decoded values, so this keeps them valid.
 
 use std::path::Path;
 
@@ -20,12 +12,13 @@ const PPK_PREFIX: &str = "PuTTY-User-Key-File-";
 
 pub fn load_private_key(path: &Path, passphrase: Option<&str>) -> AppResult<PrivateKey> {
     let display = path.to_string_lossy().into_owned();
-    let bytes = std::fs::read(path).map_err(|e| AppError::from(e).with_path(display.clone()))?;
-    decode_private_key(&bytes, passphrase).map_err(|e| e.with_path(display))
+    let bytes =
+        std::fs::read(path).map_err(|error| AppError::from(error).with_path(display.clone()))?;
+    decode_private_key(&bytes, passphrase).map_err(|error| error.with_path(display))
 }
 
 pub fn decode_private_key(bytes: &[u8], passphrase: Option<&str>) -> AppResult<PrivateKey> {
-    let passphrase = passphrase.filter(|p| !p.is_empty());
+    let passphrase = passphrase.filter(|value| !value.is_empty());
     let text = std::str::from_utf8(bytes)
         .map_err(|_| key_error("This file is not a private key (it is not text)"))?;
     let text = normalize(text);
@@ -33,7 +26,10 @@ pub fn decode_private_key(bytes: &[u8], passphrase: Option<&str>) -> AppResult<P
     if text.starts_with(PPK_PREFIX) {
         return decode_ppk(&text, passphrase);
     }
-    if text.starts_with("ssh-") || text.starts_with("ecdsa-") || text.starts_with("---- BEGIN SSH2 PUBLIC KEY") {
+    if text.starts_with("ssh-")
+        || text.starts_with("ecdsa-")
+        || text.starts_with("---- BEGIN SSH2 PUBLIC KEY")
+    {
         return Err(key_error(
             "This is a public key. Select the matching private key file instead.",
         ));
@@ -52,7 +48,9 @@ pub fn decode_private_key(bytes: &[u8], passphrase: Option<&str>) -> AppResult<P
         {
             Err(wrong_passphrase())
         }
-        Err(e) => Err(key_error(format!("Could not read the private key: {e}"))),
+        Err(error) => Err(key_error(format!(
+            "Could not read the private key: {error}"
+        ))),
     }
 }
 
@@ -60,7 +58,7 @@ fn decode_ppk(text: &str, passphrase: Option<&str>) -> AppResult<PrivateKey> {
     let header = text.lines().next().unwrap_or_default();
     let (version, algorithm) = header[PPK_PREFIX.len()..]
         .split_once(':')
-        .map(|(v, a)| (v.trim(), a.trim()))
+        .map(|(version, algorithm)| (version.trim(), algorithm.trim()))
         .ok_or_else(|| key_error("The PuTTY key file header is malformed"))?;
     match version {
         "2" | "3" => {}
@@ -69,7 +67,11 @@ fn decode_ppk(text: &str, passphrase: Option<&str>) -> AppResult<PrivateKey> {
                 "PuTTY key format version 1 is obsolete. Re-save the key with a current PuTTYgen.",
             ))
         }
-        v => return Err(key_error(format!("Unsupported PuTTY key format version {v}"))),
+        other => {
+            return Err(key_error(format!(
+                "Unsupported PuTTY key format version {other}"
+            )))
+        }
     }
     match algorithm {
         "ssh-dss" => {
@@ -83,27 +85,25 @@ fn decode_ppk(text: &str, passphrase: Option<&str>) -> AppResult<PrivateKey> {
 
     let encrypted = text
         .lines()
-        .find_map(|l| l.strip_prefix("Encryption:"))
-        .is_some_and(|v| v.trim() != "none");
+        .find_map(|line| line.strip_prefix("Encryption:"))
+        .is_some_and(|value| value.trim() != "none");
     if encrypted && passphrase.is_none() {
         return Err(passphrase_required());
     }
 
-    PrivateKey::from_ppk(text, passphrase.map(str::to_owned)).map_err(|e| {
+    PrivateKey::from_ppk(text, passphrase.map(str::to_owned)).map_err(|error| {
         // `ssh_key`'s PPK error type is private; its MAC failure is the one case we need
         // to tell apart, since with encryption it means "wrong passphrase".
-        let mac_failed = format!("{e:?}").contains("IncorrectMac");
+        let mac_failed = format!("{error:?}").contains("IncorrectMac");
         match (mac_failed, encrypted) {
             (true, true) => wrong_passphrase(),
             (true, false) => key_error("The PuTTY key file is corrupted (integrity check failed)"),
-            _ => key_error(format!("Could not read the PuTTY key: {e}")),
+            _ => key_error(format!("Could not read the PuTTY key: {error}")),
         }
     })
 }
 
-/// Strips a BOM and leading blank lines, converts CRLF to LF, and restores the
-/// `Key: value` separator PPK parsers require. The PPK comment is kept byte-exact
-/// (it is covered by the MAC); other values and base64 lines are trimmed.
+/// The PPK comment stays byte-exact because the MAC covers it.
 fn normalize(text: &str) -> String {
     let text = text.trim_start_matches('\u{feff}').trim_start();
     let is_ppk = text.starts_with(PPK_PREFIX);
@@ -116,7 +116,11 @@ fn normalize(text: &str) -> String {
                 let value = value.strip_prefix(' ').unwrap_or(value);
                 out.push_str(key.trim());
                 out.push_str(": ");
-                out.push_str(if key.trim() == "Comment" { value } else { value.trim() });
+                out.push_str(if key.trim() == "Comment" {
+                    value
+                } else {
+                    value.trim()
+                });
             }
             // The PPK parser rejects blank lines, including a trailing one.
             _ if is_ppk && line.trim().is_empty() => continue,
@@ -135,7 +139,10 @@ fn passphrase_required() -> AppError {
 }
 
 fn wrong_passphrase() -> AppError {
-    AppError::new(ErrorKind::PassphraseRequired, "The passphrase is incorrect.")
+    AppError::new(
+        ErrorKind::PassphraseRequired,
+        "The passphrase is incorrect.",
+    )
 }
 
 fn key_error(message: impl Into<String>) -> AppError {
@@ -150,10 +157,11 @@ mod tests {
     const PASS: &str = "poros-test";
 
     fn fixture(name: &str) -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/keys").join(name)
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/keys")
+            .join(name)
     }
 
-    /// The OpenSSH public key puttygen exported for the fixture, without the comment.
     fn expected_public(name: &str) -> String {
         let text = std::fs::read_to_string(fixture(&format!("{name}.pub"))).unwrap();
         let mut parts = text.split_whitespace();
@@ -174,7 +182,7 @@ mod tests {
             for version in ["v2", "v3"] {
                 let file = format!("{name}-{version}-plain.ppk");
                 let key = load_private_key(&fixture(&file), None)
-                    .unwrap_or_else(|e| panic!("{file}: {}", e.message));
+                    .unwrap_or_else(|error| panic!("{file}: {}", error.message));
                 assert_eq!(public_of(&key), expected_public(name), "{file}");
             }
         }
@@ -186,7 +194,7 @@ mod tests {
             for version in ["v2", "v3"] {
                 let file = format!("{name}-{version}-enc.ppk");
                 let key = load_private_key(&fixture(&file), Some(PASS))
-                    .unwrap_or_else(|e| panic!("{file}: {}", e.message));
+                    .unwrap_or_else(|error| panic!("{file}: {}", error.message));
                 assert_eq!(public_of(&key), expected_public(name), "{file}");
             }
         }
@@ -202,7 +210,7 @@ mod tests {
             "ed25519-v3-default-kdf-enc.ppk",
         ] {
             let key = load_private_key(&fixture(file), Some(PASS))
-                .unwrap_or_else(|e| panic!("{file}: {}", e.message));
+                .unwrap_or_else(|error| panic!("{file}: {}", error.message));
             assert_eq!(public_of(&key), expected_public("ed25519"), "{file}");
         }
     }
@@ -246,7 +254,7 @@ mod tests {
             assert!(file != "nocomment-v3-plain.ppk" || mangled.contains("Comment:\r\n"));
             let pass = file.contains("enc").then_some(PASS);
             let key = decode_private_key(mangled.as_bytes(), pass)
-                .unwrap_or_else(|e| panic!("{file}: {}", e.message));
+                .unwrap_or_else(|error| panic!("{file}: {}", error.message));
             assert_eq!(public_of(&key), expected_public(name), "{file}");
         }
     }
@@ -279,7 +287,7 @@ mod tests {
             ("pkcs8-ecdsa", None),
         ] {
             let key = load_private_key(&fixture(file), pass)
-                .unwrap_or_else(|e| panic!("{file}: {}", e.message));
+                .unwrap_or_else(|error| panic!("{file}: {}", error.message));
             assert_eq!(public_of(&key), expected_public(file), "{file}");
         }
     }

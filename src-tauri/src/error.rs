@@ -1,19 +1,11 @@
-//! The single error type returned by every Tauri command.
-//!
-//! Serialized as `{ kind, message, hostKey?, path? }` so the frontend can branch on
-//! `kind` (e.g. prompt for a host key or a key passphrase) and show `message` otherwise.
-
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ErrorKind {
-    /// Server presented a host key that is not in any known_hosts file.
     HostKeyUnknown,
-    /// Server presented a different key than the one on record. Possible MITM.
     HostKeyChanged,
     AuthFailed,
-    /// The private key file is encrypted and no (or a wrong) passphrase was given.
     PassphraseRequired,
     Connection,
     Timeout,
@@ -34,7 +26,6 @@ pub struct HostKeyInfo {
     pub host: String,
     pub port: u16,
     pub algorithm: String,
-    /// `SHA256:<base64>` as printed by `ssh-keygen -l`.
     pub fingerprint: String,
 }
 
@@ -44,7 +35,7 @@ pub struct AppError {
     pub kind: ErrorKind,
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub host_key: Option<HostKeyInfo>,
+    pub host_key: Option<Box<HostKeyInfo>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
 }
@@ -88,7 +79,7 @@ impl AppError {
         Self {
             kind,
             message,
-            host_key: Some(info),
+            host_key: Some(Box::new(info)),
             path: None,
         }
     }
@@ -141,7 +132,10 @@ impl From<russh::keys::Error> for AppError {
                 "The private key is encrypted; enter its passphrase",
             ),
             russh::keys::Error::IO(io) => io.into(),
-            other => Self::new(ErrorKind::AuthFailed, format!("Could not load key: {other}")),
+            other => Self::new(
+                ErrorKind::AuthFailed,
+                format!("Could not load key: {other}"),
+            ),
         }
     }
 }

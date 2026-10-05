@@ -1,8 +1,7 @@
-//! Backend-to-frontend events. Event names and payloads are mirrored in `src/lib/events.ts`.
-
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
+// Mirrored in `src/lib/ipc.ts`.
 pub const LOG_EVENT: &str = "poros://log";
 pub const SESSION_CLOSED_EVENT: &str = "poros://session-closed";
 
@@ -12,7 +11,6 @@ pub enum LogLevel {
     Info,
     Warn,
     Error,
-    /// Text the server sent (auth banners).
     Server,
 }
 
@@ -20,7 +18,7 @@ pub enum LogLevel {
 #[serde(rename_all = "camelCase")]
 pub struct LogRecord {
     /// Milliseconds since the Unix epoch.
-    pub ts: u64,
+    pub timestamp: u64,
     pub level: LogLevel,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
@@ -34,8 +32,6 @@ pub struct SessionClosed {
     pub reason: String,
 }
 
-/// Emits connection log lines to the UI log panel and the process logger.
-/// Without an `AppHandle` (unit tests) it only writes to the process logger.
 #[derive(Clone, Default)]
 pub struct Events {
     app: Option<AppHandle>,
@@ -55,7 +51,7 @@ impl Events {
         }
         if let Some(app) = &self.app {
             let record = LogRecord {
-                ts: now_millis(),
+                timestamp: now_millis(),
                 level,
                 session_id: session_id.map(str::to_owned),
                 message,
@@ -80,6 +76,6 @@ impl Events {
 fn now_millis() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
+        .map(|elapsed| elapsed.as_millis() as u64)
         .unwrap_or(0)
 }

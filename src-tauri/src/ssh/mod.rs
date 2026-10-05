@@ -1,7 +1,5 @@
-//! SSH transport: connection setup, host key verification and user authentication.
-//!
-//! `connect` is deliberately self-contained (profile in, authenticated handle out) so the
-//! transfer engine can open extra connections for parallel workers with the same profile.
+//! `connect` is self-contained (profile in, authenticated handle out) so transfer workers
+//! can open extra connections with the same profile.
 
 mod auth;
 pub mod keys;
@@ -42,7 +40,6 @@ pub struct ConnectProfile {
     pub port: u16,
     pub username: String,
     pub auth: AuthMethod,
-    /// Remote directory to open after connecting. Defaults to the login directory.
     #[serde(default)]
     pub initial_path: Option<String>,
     #[serde(default)]
@@ -74,7 +71,6 @@ impl ConnectProfile {
     }
 }
 
-/// The user's answer to a host key prompt, sent back on the retried connect.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HostKeyApproval {
@@ -91,7 +87,7 @@ pub struct ClientHandler {
     session_id: String,
     known_hosts: KnownHosts,
     approval: Option<HostKeyApproval>,
-    /// Why the host key was rejected, read by `connect` after the handshake fails.
+    /// Read by `connect` after a failed handshake to report why the key was rejected.
     rejection: Arc<Mutex<Option<AppError>>>,
     events: Events,
 }
@@ -114,7 +110,10 @@ impl client::Handler for ClientHandler {
         if status == HostKeyStatus::Trusted {
             self.log(
                 LogLevel::Info,
-                format!("Host key verified ({} {})", info.algorithm, info.fingerprint),
+                format!(
+                    "Host key verified ({} {})",
+                    info.algorithm, info.fingerprint
+                ),
             );
             return Ok(true);
         }
@@ -122,13 +121,16 @@ impl client::Handler for ClientHandler {
         if let Some(approval) = &self.approval {
             if approval.fingerprint == info.fingerprint {
                 if approval.remember {
-                    if let Err(e) = self.known_hosts.trust(&self.host, self.port, &key) {
-                        self.log(LogLevel::Warn, format!("Could not save host key: {e}"));
+                    if let Err(error) = self.known_hosts.trust(&self.host, self.port, &key) {
+                        self.log(LogLevel::Warn, format!("Could not save host key: {error}"));
                     }
                 }
                 self.log(
                     LogLevel::Info,
-                    format!("Host key accepted by user ({} {})", info.algorithm, info.fingerprint),
+                    format!(
+                        "Host key accepted by user ({} {})",
+                        info.algorithm, info.fingerprint
+                    ),
                 );
                 return Ok(true);
             }
@@ -179,7 +181,6 @@ impl ClientHandler {
     }
 }
 
-/// Opens a TCP connection, verifies the host key and authenticates.
 pub async fn connect(
     session_id: &str,
     profile: &ConnectProfile,
@@ -223,7 +224,11 @@ pub async fn connect(
         Err(_) => {
             return Err(AppError::new(
                 ErrorKind::Timeout,
-                format!("Timed out after {}s connecting to {}", timeout.as_secs(), profile.host),
+                format!(
+                    "Timed out after {}s connecting to {}",
+                    timeout.as_secs(),
+                    profile.host
+                ),
             ))
         }
         Ok(Err(e)) => {
@@ -242,7 +247,10 @@ pub async fn connect(
     );
     let authenticating = auth::authenticate(&mut handle, profile, events, session_id);
     match tokio::time::timeout(timeout, authenticating).await {
-        Err(_) => Err(AppError::new(ErrorKind::Timeout, "Timed out during authentication")),
+        Err(_) => Err(AppError::new(
+            ErrorKind::Timeout,
+            "Timed out during authentication",
+        )),
         Ok(result) => result,
     }?;
     events.log(LogLevel::Info, Some(session_id), "Authenticated");
@@ -253,7 +261,10 @@ fn connection_error(e: russh::Error, profile: &ConnectProfile) -> AppError {
     match e {
         russh::Error::IO(io) => AppError::new(
             ErrorKind::Connection,
-            format!("Could not connect to {}:{}: {io}", profile.host, profile.port),
+            format!(
+                "Could not connect to {}:{}: {io}",
+                profile.host, profile.port
+            ),
         ),
         other => other.into(),
     }
