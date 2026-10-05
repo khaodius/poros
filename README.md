@@ -62,6 +62,20 @@ once one is published:
 
 Every CI run also uploads installers as build artifacts.
 
+### Upgrading
+
+Run the newer package over the old one; there is no need to uninstall first. Upgrades never touch
+the app's data folder (see [Where Poros keeps its data](#where-poros-keeps-its-data)).
+
+- **Windows setup**: when it finds an older Poros, it asks once and then upgrades in place with
+  only a progress window. It closes Poros if it is running, keeps the install folder and shortcuts,
+  and starts the new version when it finishes. Running it over the same or a newer version opens
+  the regular setup wizard.
+- **Windows MSI**: replaces the older version automatically.
+- **Linux**: install the new package with your package manager, for example
+  `sudo apt install ./Poros_0.2.0_amd64.deb` or `sudo dnf install ./Poros-0.2.0-1.x86_64.rpm`.
+  For the AppImage, replace the file.
+
 ## Build from source
 
 You need [Node.js](https://nodejs.org) 22 or newer and [Rust](https://rustup.rs) 1.88 or newer.
