@@ -90,7 +90,8 @@ export interface AppError {
 export type LogLevel = "info" | "warn" | "error" | "server";
 
 export interface LogRecord {
-  ts: number;
+  /** Milliseconds since the Unix epoch. */
+  timestamp: number;
   level: LogLevel;
   sessionId?: string;
   message: string;

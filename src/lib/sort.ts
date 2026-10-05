@@ -3,7 +3,7 @@ import type { FileEntry } from "./types";
 export type SortKey = "name" | "size" | "modified" | "permissions" | "owner";
 export interface SortSpec {
   key: SortKey;
-  dir: 1 | -1;
+  direction: 1 | -1;
 }
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
@@ -32,7 +32,7 @@ export function sortEntries(entries: FileEntry[], spec: SortSpec): FileEntry[] {
   return [...entries].sort((a, b) => {
     const dirs = Number(isDirLike(b)) - Number(isDirLike(a));
     if (dirs !== 0) return dirs;
-    return (column(a, b) || byName(a, b)) * spec.dir;
+    return (column(a, b) || byName(a, b)) * spec.direction;
   });
 }
 
