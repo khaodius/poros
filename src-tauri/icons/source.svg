@@ -1,12 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
   <defs>
     <linearGradient id="streak" gradientUnits="userSpaceOnUse" x1="91.5" y1="0" x2="810.5" y2="0">
-      <stop offset="0" stop-color="#A58BE8"/>
-      <stop offset="0.3" stop-color="#7B55C7"/>
-      <stop offset="0.62" stop-color="#5B3496"/>
-      <stop offset="1" stop-color="#3A2260"/>
+      <stop offset="0" stop-color="#C4ADF7"/>
+      <stop offset="0.3" stop-color="#9C7BE6"/>
+      <stop offset="0.65" stop-color="#7E57CF"/>
+      <stop offset="1" stop-color="#6A43B8"/>
     </linearGradient>
   </defs>
-  <rect x="64" y="64" width="896" height="896" rx="200" fill="#ffffff"/>
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="#1f2228"/>
   <path fill="url(#streak)" fill-rule="evenodd" transform="translate(35.3 -32.3) scale(1.0570)" d="M160.6 230 L680.6 230 C771.7 230 829.9 303.9 810.5 395 C791.1 486.1 701.6 560 610.4 560 L530.4 560 L479.4 800 L339.4 800 L382.4 598 C362 598 251.7 508.8 231.9 506 L385.9 506 C394.7 506 403.4 498.8 405.3 490 C407.2 481.2 401.6 474 392.7 474 C355 474 128.8 415.8 91.5 414 L405.5 414 C414.3 414 423 406.8 424.9 398 C426.7 389.2 421.1 382 412.3 382 C390.2 382 262.7 323.8 241 322 L425 322 C433.9 322 442.5 314.8 444.4 306 C446.3 297.2 440.7 290 431.8 290 C397.7 290 194.3 231.8 160.6 230 Z M579.3 330 L651.3 330 C687.2 330 710.1 359.1 702.5 395 C694.9 430.9 659.6 460 623.7 460 L551.7 460 Z"/>
 </svg>
