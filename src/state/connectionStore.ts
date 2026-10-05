@@ -7,7 +7,6 @@ export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "lo
 interface ConnectionState {
   status: ConnectionStatus;
   session: SessionInfo | null;
-  /** Kept for reconnecting after the connection drops. */
   lastProfile: ConnectProfile | null;
   lostReason: string | null;
   connect: (profile: ConnectProfile, approval?: HostKeyApproval) => Promise<SessionInfo>;

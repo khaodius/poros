@@ -2,7 +2,6 @@ import type { FileEntry } from "./types";
 
 const UNITS = ["B", "KB", "MB", "GB", "TB", "PB"];
 
-/** Binary units with one decimal above 1 KB: `0 B`, `512 B`, `1.5 KB`, `2.0 GB`. */
 export function formatSize(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return "";
   let value = bytes;
@@ -35,24 +34,14 @@ export function formatPermissions(entry: Pick<FileEntry, "kind" | "permissions">
   if (entry.permissions === null) return "";
   const mode = entry.permissions;
   const type = entry.kind === "dir" ? "d" : entry.kind === "symlink" ? "l" : "-";
-  // One `rwx` group; `shift` selects owner (6), group (3) or other (0).
   const triplet = (shift: number, specialBit: number, specialChar: string) => {
     const read = mode & (4 << shift) ? "r" : "-";
     const write = mode & (2 << shift) ? "w" : "-";
     const executable = (mode & (1 << shift)) !== 0;
-    const special = (mode & specialBit) !== 0;
-    const execute = special
-      ? executable
-        ? specialChar
-        : specialChar.toUpperCase()
-      : executable
-        ? "x"
-        : "-";
-    return read + write + execute;
+    if ((mode & specialBit) === 0) return read + write + (executable ? "x" : "-");
+    return read + write + (executable ? specialChar : specialChar.toUpperCase());
   };
-  return (
-    type + triplet(6, 0o4000, "s") + triplet(3, 0o2000, "s") + triplet(0, 0o1000, "t")
-  );
+  return type + triplet(6, 0o4000, "s") + triplet(3, 0o2000, "s") + triplet(0, 0o1000, "t");
 }
 
 /** `0.1.0` -> `v0.1`, `0.1.2` -> `v0.1.2`. */

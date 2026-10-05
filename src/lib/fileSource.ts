@@ -1,5 +1,5 @@
-// A pane browses a FileSource. Local and remote sources share one interface so the same
-// pane component (and later the transfer queue) works with either side.
+// Local and remote share one interface so panes, and later the transfer queue, treat both
+// sides alike.
 
 import { local, remote } from "./ipc";
 import type { DirListing, SessionInfo } from "./types";
@@ -7,14 +7,14 @@ import type { DirListing, SessionInfo } from "./types";
 export type PathStyle = "posix" | "windows";
 
 export interface FileSource {
-  /** Stable identity; a pane resets its state when this changes. */
   key: string;
   kind: "local" | "remote";
   label: string;
   pathStyle: PathStyle;
-  /** Directory the pane opens first. */
   initialPath(): Promise<string>;
   home(): Promise<string>;
+  /** Drive letters on Windows; absent where a single root exists. */
+  roots?(): Promise<string[]>;
   list(path: string): Promise<DirListing>;
   mkdir(parent: string, name: string): Promise<string>;
   rename(path: string, newName: string): Promise<string>;
@@ -30,6 +30,7 @@ export const localSource: FileSource = {
   pathStyle: isWindows ? "windows" : "posix",
   initialPath: () => local.home(),
   home: () => local.home(),
+  roots: isWindows ? () => local.roots() : undefined,
   list: (path) => local.list(path),
   mkdir: (parent, name) => local.mkdir(parent, name),
   rename: (path, newName) => local.rename(path, newName),

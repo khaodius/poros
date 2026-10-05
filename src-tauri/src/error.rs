@@ -182,8 +182,8 @@ mod tests {
 
     #[test]
     fn serializes_kind_and_message() {
-        let err = AppError::new(ErrorKind::NotFound, "gone").with_path("/tmp/x");
-        let json = serde_json::to_value(&err).unwrap();
+        let error = AppError::new(ErrorKind::NotFound, "gone").with_path("/tmp/x");
+        let json = serde_json::to_value(&error).unwrap();
         assert_eq!(json["kind"], "notFound");
         assert_eq!(json["message"], "gone");
         assert_eq!(json["path"], "/tmp/x");
@@ -192,7 +192,7 @@ mod tests {
 
     #[test]
     fn host_key_errors_carry_fingerprint() {
-        let err = AppError::host_key(
+        let error = AppError::host_key(
             ErrorKind::HostKeyUnknown,
             HostKeyInfo {
                 host: "example.com".into(),
@@ -201,7 +201,7 @@ mod tests {
                 fingerprint: "SHA256:abc".into(),
             },
         );
-        let json = serde_json::to_value(&err).unwrap();
+        let json = serde_json::to_value(&error).unwrap();
         assert_eq!(json["kind"], "hostKeyUnknown");
         assert_eq!(json["hostKey"]["fingerprint"], "SHA256:abc");
     }

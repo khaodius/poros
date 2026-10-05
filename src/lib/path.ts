@@ -56,6 +56,14 @@ export function stemLength(name: string, isDir: boolean): number {
   return extensionDot > 0 ? extensionDot : name.length;
 }
 
+function decodeUserInfo(encoded: string): string {
+  try {
+    return decodeURIComponent(encoded);
+  } catch {
+    return encoded;
+  }
+}
+
 /** Parses quick-connect host input: `user@host:port`, `sftp://user@host:port/path`. */
 export function parseHostInput(input: string): {
   host: string;
@@ -73,7 +81,7 @@ export function parseHostInput(input: string): {
   let username: string | undefined;
   const at = rest.lastIndexOf("@");
   if (at >= 0) {
-    username = decodeURIComponent(rest.slice(0, at));
+    username = decodeUserInfo(rest.slice(0, at));
     rest = rest.slice(at + 1);
   }
   let port: number | undefined;

@@ -12,7 +12,6 @@ interface History {
 type NavigationMode = "push" | "replace" | "travel";
 
 export interface PaneController {
-  source: FileSource | null;
   listing: DirListing | null;
   visibleEntries: FileEntry[];
   hiddenCount: number;
@@ -46,7 +45,7 @@ export interface PaneController {
   selectedEntries: () => FileEntry[];
 }
 
-export function usePane(source: FileSource | null): PaneController {
+export function usePane(source: FileSource): PaneController {
   const [listing, setListing] = useState<DirListing | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<AppError | null>(null);
@@ -71,7 +70,6 @@ export function usePane(source: FileSource | null): PaneController {
 
   const load = useCallback(
     async (target: string, mode: NavigationMode, focusPath?: string): Promise<boolean> => {
-      if (!source) return false;
       const request = ++latestRequest.current;
       setLoading(true);
       try {
@@ -116,15 +114,6 @@ export function usePane(source: FileSource | null): PaneController {
   );
 
   useEffect(() => {
-    latestRequest.current++;
-    listedPath.current = null;
-    setListing(null);
-    setError(null);
-    setHistory({ paths: [], index: -1 });
-    setSelection(new Set());
-    setCursorPath(null);
-    setFilter("");
-    if (!source) return;
     let cancelled = false;
     source
       .initialPath()
@@ -137,9 +126,7 @@ export function usePane(source: FileSource | null): PaneController {
     return () => {
       cancelled = true;
     };
-    // Reset only when the source identity changes, not when its object is rebuilt.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source?.key]);
+  }, [source, load]);
 
   const navigate = useCallback((path: string) => load(path, "push"), [load]);
   const refresh = useCallback(
@@ -165,7 +152,10 @@ export function usePane(source: FileSource | null): PaneController {
   );
 
   const goHome = useCallback(() => {
-    if (source) void source.home().then((home) => load(home, "push"));
+    source
+      .home()
+      .then((home) => load(home, "push"))
+      .catch((caught) => setError(toAppError(caught)));
   }, [source, load]);
 
   const open = useCallback(
@@ -261,7 +251,6 @@ export function usePane(source: FileSource | null): PaneController {
   );
 
   return {
-    source,
     listing,
     visibleEntries,
     hiddenCount,

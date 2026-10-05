@@ -6,8 +6,6 @@ use crate::model::DirListing;
 use crate::session::{SessionInfo, SessionManager};
 use crate::ssh::{ConnectProfile, HostKeyApproval};
 
-// ---- local filesystem ----------------------------------------------------------------
-
 #[tauri::command]
 pub async fn local_home() -> AppResult<String> {
     local::home_dir()
@@ -38,8 +36,6 @@ pub async fn local_delete(paths: Vec<String>) -> AppResult<()> {
     tokio::task::spawn_blocking(move || local::delete(&paths)).await?
 }
 
-// ---- sessions ------------------------------------------------------------------------
-
 #[tauri::command]
 pub async fn connect(
     sessions: State<'_, SessionManager>,
@@ -53,8 +49,6 @@ pub async fn connect(
 pub async fn disconnect(sessions: State<'_, SessionManager>, session_id: String) -> AppResult<()> {
     sessions.disconnect(&session_id).await
 }
-
-// ---- remote filesystem ---------------------------------------------------------------
 
 #[tauri::command]
 pub async fn remote_list(

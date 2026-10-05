@@ -218,19 +218,23 @@ mod tests {
     #[test]
     fn encrypted_ppk_without_passphrase_asks_for_one() {
         for file in ["rsa-v2-enc.ppk", "ed25519-v3-enc.ppk"] {
-            let err = load_private_key(&fixture(file), None).unwrap_err();
-            assert_eq!(err.kind, ErrorKind::PassphraseRequired, "{file}");
-            let err = load_private_key(&fixture(file), Some("")).unwrap_err();
-            assert_eq!(err.kind, ErrorKind::PassphraseRequired, "{file}");
+            let error = load_private_key(&fixture(file), None).unwrap_err();
+            assert_eq!(error.kind, ErrorKind::PassphraseRequired, "{file}");
+            let error = load_private_key(&fixture(file), Some("")).unwrap_err();
+            assert_eq!(error.kind, ErrorKind::PassphraseRequired, "{file}");
         }
     }
 
     #[test]
     fn wrong_ppk_passphrase_is_reported_as_such() {
         for file in ["ecdsa256-v2-enc.ppk", "ed25519-v3-enc.ppk"] {
-            let err = load_private_key(&fixture(file), Some("nope")).unwrap_err();
-            assert_eq!(err.kind, ErrorKind::PassphraseRequired, "{file}");
-            assert!(err.message.contains("incorrect"), "{file}: {}", err.message);
+            let error = load_private_key(&fixture(file), Some("nope")).unwrap_err();
+            assert_eq!(error.kind, ErrorKind::PassphraseRequired, "{file}");
+            assert!(
+                error.message.contains("incorrect"),
+                "{file}: {}",
+                error.message
+            );
         }
     }
 
@@ -263,18 +267,18 @@ mod tests {
     fn tampered_ppk_is_reported_as_corrupted() {
         let original = std::fs::read_to_string(fixture("ed25519-v3-plain.ppk")).unwrap();
         let tampered = original.replace("Comment: poros-ed25519", "Comment: tampered");
-        let err = decode_private_key(tampered.as_bytes(), None).unwrap_err();
-        assert!(err.message.contains("corrupted"), "{}", err.message);
+        let error = decode_private_key(tampered.as_bytes(), None).unwrap_err();
+        assert!(error.message.contains("corrupted"), "{}", error.message);
     }
 
     #[test]
     fn unsupported_ppk_types_get_clear_errors() {
-        let err = load_private_key(&fixture("dsa-v3-plain.ppk"), None).unwrap_err();
-        assert!(err.message.contains("DSA"), "{}", err.message);
-        let err = load_private_key(&fixture("ed448-v3-plain.ppk"), None).unwrap_err();
-        assert!(err.message.contains("Ed448"), "{}", err.message);
-        let err = decode_private_key(b"PuTTY-User-Key-File-1: ssh-rsa\n", None).unwrap_err();
-        assert!(err.message.contains("version 1"), "{}", err.message);
+        let error = load_private_key(&fixture("dsa-v3-plain.ppk"), None).unwrap_err();
+        assert!(error.message.contains("DSA"), "{}", error.message);
+        let error = load_private_key(&fixture("ed448-v3-plain.ppk"), None).unwrap_err();
+        assert!(error.message.contains("Ed448"), "{}", error.message);
+        let error = decode_private_key(b"PuTTY-User-Key-File-1: ssh-rsa\n", None).unwrap_err();
+        assert!(error.message.contains("version 1"), "{}", error.message);
     }
 
     #[test]
@@ -295,16 +299,16 @@ mod tests {
     #[test]
     fn encrypted_openssh_keys_ask_for_passphrase() {
         for file in ["openssh-ed25519-enc", "pem-rsa-enc"] {
-            let err = load_private_key(&fixture(file), None).unwrap_err();
-            assert_eq!(err.kind, ErrorKind::PassphraseRequired, "{file}");
-            let err = load_private_key(&fixture(file), Some("nope")).unwrap_err();
-            assert_eq!(err.kind, ErrorKind::PassphraseRequired, "{file}");
+            let error = load_private_key(&fixture(file), None).unwrap_err();
+            assert_eq!(error.kind, ErrorKind::PassphraseRequired, "{file}");
+            let error = load_private_key(&fixture(file), Some("nope")).unwrap_err();
+            assert_eq!(error.kind, ErrorKind::PassphraseRequired, "{file}");
         }
     }
 
     #[test]
     fn public_key_file_is_rejected_with_hint() {
-        let err = load_private_key(&fixture("ed25519.pub"), None).unwrap_err();
-        assert!(err.message.contains("public key"), "{}", err.message);
+        let error = load_private_key(&fixture("ed25519.pub"), None).unwrap_err();
+        assert!(error.message.contains("public key"), "{}", error.message);
     }
 }

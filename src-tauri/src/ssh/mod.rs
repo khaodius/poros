@@ -164,13 +164,13 @@ impl client::Handler for ClientHandler {
             client::DisconnectReason::ReceivedDisconnect(info) => {
                 format!("Server closed the connection: {}", info.message)
             }
-            client::DisconnectReason::Error(e) => format!("Connection lost: {e}"),
+            client::DisconnectReason::Error(error) => format!("Connection lost: {error}"),
         };
         self.log(LogLevel::Warn, text.clone());
         self.events.session_closed(&self.session_id, text);
         match reason {
             client::DisconnectReason::ReceivedDisconnect(_) => Ok(()),
-            client::DisconnectReason::Error(e) => Err(e),
+            client::DisconnectReason::Error(error) => Err(error),
         }
     }
 }
@@ -231,11 +231,11 @@ pub async fn connect(
                 ),
             ))
         }
-        Ok(Err(e)) => {
+        Ok(Err(error)) => {
             if let Some(rejected) = rejection.lock().unwrap().take() {
                 return Err(rejected);
             }
-            return Err(connection_error(e, profile));
+            return Err(connection_error(error, profile));
         }
         Ok(Ok(handle)) => handle,
     };

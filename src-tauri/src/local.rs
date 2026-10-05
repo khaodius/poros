@@ -202,12 +202,12 @@ mod tests {
 
     #[test]
     fn lists_files_dirs_and_hidden_entries() {
-        let tmp = tempfile::tempdir().unwrap();
-        fs::write(tmp.path().join("a.txt"), b"hello").unwrap();
-        fs::write(tmp.path().join(".hidden"), b"").unwrap();
-        fs::create_dir(tmp.path().join("sub")).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        fs::write(temp_dir.path().join("a.txt"), b"hello").unwrap();
+        fs::write(temp_dir.path().join(".hidden"), b"").unwrap();
+        fs::create_dir(temp_dir.path().join("sub")).unwrap();
 
-        let listing = list_dir(tmp.path().to_str().unwrap()).unwrap();
+        let listing = list_dir(temp_dir.path().to_str().unwrap()).unwrap();
         assert!(listing.parent.is_some());
         let find = |name: &str| {
             listing
@@ -226,12 +226,17 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn resolves_symlink_targets() {
-        let tmp = tempfile::tempdir().unwrap();
-        fs::create_dir(tmp.path().join("dir")).unwrap();
-        std::os::unix::fs::symlink(tmp.path().join("dir"), tmp.path().join("to-dir")).unwrap();
-        std::os::unix::fs::symlink(tmp.path().join("nope"), tmp.path().join("dangling")).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        fs::create_dir(temp_dir.path().join("dir")).unwrap();
+        std::os::unix::fs::symlink(temp_dir.path().join("dir"), temp_dir.path().join("to-dir"))
+            .unwrap();
+        std::os::unix::fs::symlink(
+            temp_dir.path().join("nope"),
+            temp_dir.path().join("dangling"),
+        )
+        .unwrap();
 
-        let listing = list_dir(tmp.path().to_str().unwrap()).unwrap();
+        let listing = list_dir(temp_dir.path().to_str().unwrap()).unwrap();
         let find = |name: &str| {
             listing
                 .entries
@@ -246,8 +251,8 @@ mod tests {
 
     #[test]
     fn mkdir_rename_delete_roundtrip() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path().to_str().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let root = temp_dir.path().to_str().unwrap();
         let made = make_dir(root, "new").unwrap();
         fs::write(Path::new(&made).join("f"), b"x").unwrap();
         let renamed = rename(&made, "renamed").unwrap();
@@ -259,12 +264,12 @@ mod tests {
 
     #[test]
     fn rename_refuses_to_overwrite() {
-        let tmp = tempfile::tempdir().unwrap();
-        fs::write(tmp.path().join("a"), b"a").unwrap();
-        fs::write(tmp.path().join("b"), b"b").unwrap();
-        let err = rename(tmp.path().join("a").to_str().unwrap(), "b").unwrap_err();
-        assert_eq!(err.kind, crate::error::ErrorKind::AlreadyExists);
-        assert_eq!(fs::read(tmp.path().join("b")).unwrap(), b"b");
+        let temp_dir = tempfile::tempdir().unwrap();
+        fs::write(temp_dir.path().join("a"), b"a").unwrap();
+        fs::write(temp_dir.path().join("b"), b"b").unwrap();
+        let error = rename(temp_dir.path().join("a").to_str().unwrap(), "b").unwrap_err();
+        assert_eq!(error.kind, crate::error::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(temp_dir.path().join("b")).unwrap(), b"b");
     }
 
     #[test]

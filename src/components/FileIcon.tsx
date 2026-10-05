@@ -16,28 +16,25 @@ import {
 } from "lucide-react";
 import type { FileEntry } from "../lib/types";
 
-const EXTENSION_GROUPS: [LucideIcon, string, string[]][] = [
-  [FileImage, "image", ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "tif", "tiff", "heic", "avif"]],
-  [FileVideo, "video", ["mp4", "mkv", "mov", "avi", "webm", "m4v", "wmv", "flv"]],
-  [FileAudio, "audio", ["mp3", "flac", "wav", "ogg", "m4a", "aac", "opus"]],
-  [FileArchive, "archive", ["zip", "tar", "gz", "tgz", "bz2", "xz", "zst", "7z", "rar", "iso", "deb", "rpm"]],
-  [FileSpreadsheet, "data", ["csv", "tsv", "xls", "xlsx", "ods", "parquet"]],
-  [FileKey, "key", ["pem", "key", "ppk", "pub", "crt", "cer", "p12", "pfx", "gpg", "asc"]],
+const EXTENSION_GROUPS: [LucideIcon, string, string][] = [
+  [FileImage, "image", "png jpg jpeg gif webp svg bmp ico tif tiff heic avif"],
+  [FileVideo, "video", "mp4 mkv mov avi webm m4v wmv flv"],
+  [FileAudio, "audio", "mp3 flac wav ogg m4a aac opus"],
+  [FileArchive, "archive", "zip tar gz tgz bz2 xz zst 7z rar iso deb rpm"],
+  [FileSpreadsheet, "data", "csv tsv xls xlsx ods parquet"],
+  [FileKey, "key", "pem key ppk pub crt cer p12 pfx gpg asc"],
   [
     FileCode,
     "code",
-    [
-      "rs", "ts", "tsx", "js", "jsx", "mjs", "py", "go", "c", "h", "cpp", "hpp", "cs", "java",
-      "kt", "rb", "php", "sh", "bash", "zsh", "ps1", "lua", "sql", "html", "css", "scss",
-      "json", "yaml", "yml", "toml", "xml", "ini", "conf", "dockerfile",
-    ],
+    "rs ts tsx js jsx mjs py go c h cpp hpp cs java kt rb php sh bash zsh ps1 lua sql " +
+      "html css scss json yaml yml toml xml ini conf dockerfile",
   ],
-  [FileText, "text", ["txt", "md", "log", "rst", "pdf", "doc", "docx", "odt", "rtf"]],
+  [FileText, "text", "txt md log rst pdf doc docx odt rtf"],
 ];
 
 const ICON_BY_EXTENSION = new Map<string, [LucideIcon, string]>(
   EXTENSION_GROUPS.flatMap(([icon, group, extensions]) =>
-    extensions.map((extension) => [extension, [icon, group]] as const),
+    extensions.split(" ").map((extension) => [extension, [icon, group]] as const),
   ),
 );
 

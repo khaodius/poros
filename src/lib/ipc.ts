@@ -1,5 +1,3 @@
-// Typed wrappers for the Tauri commands in src-tauri/src/commands.rs.
-
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
@@ -15,19 +13,19 @@ import type {
 export const LOG_EVENT = "poros://log";
 export const SESSION_CLOSED_EVENT = "poros://session-closed";
 
-/** Normalizes anything a command can reject with into an `AppError`. */
-export function toAppError(e: unknown): AppError {
-  if (e && typeof e === "object" && "kind" in e && "message" in e) {
-    return e as AppError;
+export function toAppError(rejection: unknown): AppError {
+  if (rejection && typeof rejection === "object" && "kind" in rejection && "message" in rejection) {
+    return rejection as AppError;
   }
-  return { kind: "io", message: e instanceof Error ? e.message : String(e) };
+  const message = rejection instanceof Error ? rejection.message : String(rejection);
+  return { kind: "io", message };
 }
 
-async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   try {
-    return await invoke<T>(cmd, args);
-  } catch (e) {
-    throw toAppError(e);
+    return await invoke<T>(command, args);
+  } catch (rejection) {
+    throw toAppError(rejection);
   }
 }
 
@@ -49,8 +47,7 @@ export const remote = {
     call<string>("remote_mkdir", { sessionId, parent, name }),
   rename: (sessionId: string, path: string, newName: string) =>
     call<string>("remote_rename", { sessionId, path, newName }),
-  remove: (sessionId: string, paths: string[]) =>
-    call<void>("remote_delete", { sessionId, paths }),
+  remove: (sessionId: string, paths: string[]) => call<void>("remote_delete", { sessionId, paths }),
 };
 
 export function onLog(handler: (record: LogRecord) => void): Promise<UnlistenFn> {

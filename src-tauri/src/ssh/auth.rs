@@ -19,7 +19,7 @@ pub(super) async fn authenticate(
     session_id: &str,
 ) -> AppResult<()> {
     let user = profile.username.trim();
-    let log = |level, msg: String| events.log(level, Some(session_id), msg);
+    let log = |level, message: String| events.log(level, Some(session_id), message);
 
     let remaining = match &profile.auth {
         AuthMethod::Password { password } => {

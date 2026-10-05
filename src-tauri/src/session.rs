@@ -5,7 +5,7 @@ use std::sync::Arc;
 use serde::Serialize;
 use tokio::sync::RwLock;
 
-use crate::error::{AppError, AppResult};
+use crate::error::{AppError, AppResult, ErrorKind};
 use crate::events::{Events, LogLevel};
 use crate::sftp::RemoteFs;
 use crate::ssh::known_hosts::KnownHosts;
@@ -54,8 +54,11 @@ impl SessionManager {
         let id = uuid::Uuid::new_v4().to_string();
         let result = self.open(&id, profile, approval).await;
         if let Err(error) = &result {
-            self.events
-                .log(LogLevel::Error, Some(&id), error.message.clone());
+            let level = match error.kind {
+                ErrorKind::HostKeyUnknown | ErrorKind::PassphraseRequired => LogLevel::Warn,
+                _ => LogLevel::Error,
+            };
+            self.events.log(level, Some(&id), error.message.clone());
         }
         result
     }

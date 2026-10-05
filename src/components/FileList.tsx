@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, type KeyboardEvent, type MouseEvent } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown, ArrowUp, CornerLeftUp } from "lucide-react";
+import { useElementWidth } from "../hooks/useElementWidth";
 import type { PaneController } from "../hooks/usePane";
 import { formatDate, formatPermissions, formatSize } from "../lib/format";
 import { isDirLike, type SortKey } from "../lib/sort";
@@ -8,6 +9,7 @@ import type { FileEntry } from "../lib/types";
 import { FileIcon } from "./FileIcon";
 
 const ROW_HEIGHT = 24;
+const SCROLLBAR_GUTTER = 10;
 const TYPE_AHEAD_RESET_MILLIS = 800;
 
 export interface FileListActions {
@@ -18,12 +20,14 @@ export interface FileListActions {
   onNewFolder: () => void;
   onEditPath: () => void;
   onFocusFilter: () => void;
+  onSwitchPane: () => void;
 }
 
 interface Column {
   key: SortKey;
   label: string;
-  width: string;
+  /** Pixels; the name column uses this as its minimum and takes the remaining space. */
+  width: number;
   align?: "end";
   render: (entry: FileEntry) => string;
 }
@@ -31,32 +35,32 @@ interface Column {
 const NAME_COLUMN: Column = {
   key: "name",
   label: "Name",
-  width: "minmax(180px, 1fr)",
+  width: 180,
   render: (entry) => entry.name,
 };
 const SIZE_COLUMN: Column = {
   key: "size",
   label: "Size",
-  width: "88px",
+  width: 88,
   align: "end",
   render: (entry) => (isDirLike(entry) ? "" : formatSize(entry.size)),
 };
 const MODIFIED_COLUMN: Column = {
   key: "modified",
   label: "Modified",
-  width: "136px",
+  width: 136,
   render: (entry) => formatDate(entry.modified),
 };
 const PERMISSIONS_COLUMN: Column = {
   key: "permissions",
   label: "Permissions",
-  width: "96px",
+  width: 108,
   render: formatPermissions,
 };
 const OWNER_COLUMN: Column = {
   key: "owner",
   label: "Owner",
-  width: "120px",
+  width: 120,
   render: (entry) => [entry.owner, entry.group].filter(Boolean).join(":"),
 };
 
@@ -66,7 +70,9 @@ interface FileListProps extends FileListActions {
 }
 
 export function FileList({ pane, active, ...actions }: FileListProps) {
+  const rootRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const listWidth = useElementWidth(rootRef);
   const typeAhead = useRef({ text: "", lastKeyAt: 0 });
   const entries = pane.visibleEntries;
   const showParentRow = pane.canGoUp && pane.filter === "";
@@ -74,15 +80,26 @@ export function FileList({ pane, active, ...actions }: FileListProps) {
 
   const columns = useMemo(() => {
     const all = pane.listing?.entries ?? [];
-    return [
-      NAME_COLUMN,
+    const detailColumns = [
       SIZE_COLUMN,
       MODIFIED_COLUMN,
       ...(all.some((entry) => entry.permissions !== null) ? [PERMISSIONS_COLUMN] : []),
       ...(all.some((entry) => entry.owner !== null) ? [OWNER_COLUMN] : []),
     ];
-  }, [pane.listing]);
-  const gridTemplateColumns = columns.map((column) => column.width).join(" ");
+    const visible = [NAME_COLUMN];
+    let remaining = listWidth - SCROLLBAR_GUTTER - NAME_COLUMN.width;
+    for (const column of detailColumns) {
+      if (column.width > remaining) break;
+      visible.push(column);
+      remaining -= column.width;
+    }
+    return visible;
+  }, [pane.listing, listWidth]);
+  const gridTemplateColumns = columns
+    .map((column) =>
+      column === NAME_COLUMN ? `minmax(${column.width}px, 1fr)` : `${column.width}px`,
+    )
+    .join(" ");
 
   const virtualizer = useVirtualizer({
     count: entries.length + rowOffset,
@@ -101,13 +118,26 @@ export function FileList({ pane, active, ...actions }: FileListProps) {
     scrollRef.current?.scrollTo({ top: 0 });
   }, [pane.listing?.path]);
 
-  const pageSize = Math.max(1, Math.floor((scrollRef.current?.clientHeight ?? 400) / ROW_HEIGHT) - 1);
+  useEffect(() => {
+    scrollRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  const pageSize = Math.max(
+    1,
+    Math.floor((scrollRef.current?.clientHeight ?? 400) / ROW_HEIGHT) - 1,
+  );
+  const emptyMessage = pane.filter
+    ? "Nothing matches the filter"
+    : pane.hiddenCount > 0
+      ? "Only hidden items here"
+      : "This folder is empty";
   const cursorIndex = entries.findIndex((entry) => entry.path === pane.cursorPath);
 
   const jumpToTypedPrefix = (character: string) => {
     const now = Date.now();
     const state = typeAhead.current;
-    state.text = now - state.lastKeyAt > TYPE_AHEAD_RESET_MILLIS ? character : state.text + character;
+    state.text =
+      now - state.lastKeyAt > TYPE_AHEAD_RESET_MILLIS ? character : state.text + character;
     state.lastKeyAt = now;
     const prefix = state.text.toLowerCase();
     const match = entries.findIndex((entry) => entry.name.toLowerCase().startsWith(prefix));
@@ -168,6 +198,10 @@ export function FileList({ pane, active, ...actions }: FileListProps) {
         case "Escape":
           pane.clearSelection();
           return true;
+        case "Tab":
+          if (primary || event.altKey) return false;
+          actions.onSwitchPane();
+          return true;
       }
       if (primary && event.key.toLowerCase() === "a") {
         pane.selectAll();
@@ -215,7 +249,7 @@ export function FileList({ pane, active, ...actions }: FileListProps) {
   };
 
   return (
-    <div className={`file-list ${active ? "is-active" : ""}`}>
+    <div ref={rootRef} className={`file-list ${active ? "is-active" : ""}`}>
       <div className="file-list-header" style={{ gridTemplateColumns }} role="row">
         {columns.map((column) => {
           const sorted = pane.sort.key === column.key;
@@ -325,6 +359,7 @@ export function FileList({ pane, active, ...actions }: FileListProps) {
             );
           })}
         </div>
+        {entries.length === 0 && <p className="file-list-empty">{emptyMessage}</p>}
       </div>
     </div>
   );

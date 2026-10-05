@@ -13,6 +13,7 @@ interface PathBarProps {
 export function PathBar({ path, pathStyle, editRequest, onNavigate }: PathBarProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
+  const [handledEditRequest, setHandledEditRequest] = useState(editRequest);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const startEditing = () => {
@@ -20,11 +21,10 @@ export function PathBar({ path, pathStyle, editRequest, onNavigate }: PathBarPro
     setEditing(true);
   };
 
-  useEffect(() => {
-    if (editRequest > 0) startEditing();
-    // Only a new edit request should open the editor.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editRequest]);
+  if (editRequest !== handledEditRequest) {
+    setHandledEditRequest(editRequest);
+    startEditing();
+  }
 
   useEffect(() => {
     if (editing) inputRef.current?.select();

@@ -12,27 +12,26 @@ export function isDirLike(entry: FileEntry): boolean {
   return entry.kind === "dir" || entry.linkTarget === "dir";
 }
 
-/** Folders always first, then by the chosen column; ties broken by natural name order. */
 export function sortEntries(entries: FileEntry[], spec: SortSpec): FileEntry[] {
-  const byName = (a: FileEntry, b: FileEntry) => collator.compare(a.name, b.name);
-  const column = (a: FileEntry, b: FileEntry): number => {
+  const byName = (left: FileEntry, right: FileEntry) => collator.compare(left.name, right.name);
+  const column = (left: FileEntry, right: FileEntry): number => {
     switch (spec.key) {
       case "size":
-        return a.size - b.size;
+        return left.size - right.size;
       case "modified":
-        return (a.modified ?? 0) - (b.modified ?? 0);
+        return (left.modified ?? 0) - (right.modified ?? 0);
       case "permissions":
-        return (a.permissions ?? 0) - (b.permissions ?? 0);
+        return (left.permissions ?? 0) - (right.permissions ?? 0);
       case "owner":
-        return collator.compare(a.owner ?? "", b.owner ?? "");
+        return collator.compare(left.owner ?? "", right.owner ?? "");
       case "name":
         return 0;
     }
   };
-  return [...entries].sort((a, b) => {
-    const dirs = Number(isDirLike(b)) - Number(isDirLike(a));
-    if (dirs !== 0) return dirs;
-    return (column(a, b) || byName(a, b)) * spec.direction;
+  return [...entries].sort((left, right) => {
+    const foldersFirst = Number(isDirLike(right)) - Number(isDirLike(left));
+    if (foldersFirst !== 0) return foldersFirst;
+    return (column(left, right) || byName(left, right)) * spec.direction;
   });
 }
 

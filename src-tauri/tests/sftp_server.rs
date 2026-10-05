@@ -2,7 +2,7 @@
 //!
 //! The server must listen on 127.0.0.1 and accept, for `POROS_TEST_SSH_USER`:
 //! the password in `POROS_TEST_SSH_PASSWORD`, and every `tests/fixtures/keys/*.pub` key.
-//! See CLAUDE.md for a throwaway `sshd` setup.
+//! The README describes a throwaway `sshd` setup.
 
 use std::path::PathBuf;
 
@@ -54,12 +54,12 @@ async fn trusted_manager(server: &Server) -> (tempfile::TempDir, SessionManager)
     let password = AuthMethod::Password {
         password: server.password.clone(),
     };
-    let err = manager
+    let error = manager
         .connect(profile(server, password.clone()), None)
         .await
         .err();
-    if let Some(err) = err {
-        let host_key = err
+    if let Some(error) = error {
+        let host_key = error
             .host_key
             .expect("first connect should ask about the host key");
         let info = manager
@@ -86,24 +86,24 @@ async fn host_key_prompt_then_remembered() {
         password: server.password.clone(),
     };
 
-    let err = manager
+    let error = manager
         .connect(profile(&server, auth.clone()), None)
         .await
         .unwrap_err();
     // The server may already be in ~/.ssh/known_hosts on a dev machine.
-    if err.kind == ErrorKind::HostKeyUnknown {
-        let host_key = err.host_key.unwrap();
+    if error.kind == ErrorKind::HostKeyUnknown {
+        let host_key = error.host_key.unwrap();
         assert!(host_key.fingerprint.starts_with("SHA256:"));
 
         let wrong = HostKeyApproval {
             fingerprint: "SHA256:not-it".into(),
             remember: true,
         };
-        let err = manager
+        let error = manager
             .connect(profile(&server, auth.clone()), Some(wrong))
             .await
             .unwrap_err();
-        assert_eq!(err.kind, ErrorKind::HostKeyUnknown);
+        assert_eq!(error.kind, ErrorKind::HostKeyUnknown);
 
         let ok = HostKeyApproval {
             fingerprint: host_key.fingerprint,
@@ -124,7 +124,7 @@ async fn host_key_prompt_then_remembered() {
 async fn password_auth_and_wrong_password() {
     let Some(server) = server() else { return };
     let (_dir, manager) = trusted_manager(&server).await;
-    let err = manager
+    let error = manager
         .connect(
             profile(
                 &server,
@@ -136,7 +136,7 @@ async fn password_auth_and_wrong_password() {
         )
         .await
         .unwrap_err();
-    assert_eq!(err.kind, ErrorKind::AuthFailed, "{}", err.message);
+    assert_eq!(error.kind, ErrorKind::AuthFailed, "{}", error.message);
 }
 
 #[tokio::test]
@@ -222,15 +222,19 @@ async fn browse_and_manage_files() {
         assert_eq!(link.kind, EntryKind::Symlink);
         assert_eq!(link.link_target, Some(LinkTarget::Dir));
     }
-    if let Some(link) = home.entries.iter().find(|entry| entry.name == "broken-link") {
+    if let Some(link) = home
+        .entries
+        .iter()
+        .find(|entry| entry.name == "broken-link")
+    {
         assert_eq!(link.link_target, Some(LinkTarget::Broken));
     }
 
     fs.delete(std::slice::from_ref(&root)).await.unwrap();
-    let err = fs.list_dir(&root).await.unwrap_err();
-    assert_eq!(err.kind, ErrorKind::NotFound);
+    let error = fs.list_dir(&root).await.unwrap_err();
+    assert_eq!(error.kind, ErrorKind::NotFound);
 
     manager.disconnect(&info.id).await.unwrap();
-    let err = manager.get(&info.id).await.err().unwrap();
-    assert_eq!(err.kind, ErrorKind::SessionNotFound);
+    let error = manager.get(&info.id).await.err().unwrap();
+    assert_eq!(error.kind, ErrorKind::SessionNotFound);
 }

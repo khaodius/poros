@@ -5,15 +5,15 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
 const host = process.env.TAURI_DEV_HOST;
-const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")) as {
-  version: string;
-};
+const packageJson = JSON.parse(
+  readFileSync(new URL("./package.json", import.meta.url), "utf8"),
+) as { version: string };
 
 // https://v2.tauri.app/start/frontend/vite/
 export default defineConfig(() => ({
   plugins: [react()],
   define: {
-    __APP_VERSION__: JSON.stringify(pkg.version),
+    __APP_VERSION__: JSON.stringify(packageJson.version),
   },
   // Keep Rust errors visible in `tauri dev` output.
   clearScreen: false,
@@ -29,7 +29,7 @@ export default defineConfig(() => ({
   build: {
     // Tauri uses Chromium on Windows (WebView2) and WebKit on macOS/Linux.
     target: process.env.TAURI_ENV_PLATFORM === "windows" ? "chrome105" : "safari15",
-    minify: process.env.TAURI_ENV_DEBUG ? false : ("esbuild" as const),
+    minify: !process.env.TAURI_ENV_DEBUG,
     sourcemap: !!process.env.TAURI_ENV_DEBUG,
   },
   test: {
