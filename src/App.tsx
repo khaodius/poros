@@ -131,6 +131,13 @@ function useAppliedTheme() {
     scheme.addEventListener("change", apply);
     return () => scheme.removeEventListener("change", apply);
   }, [themes, themeId, fontSize]);
+
+  // Theme files edited in another program apply when the user switches back.
+  useEffect(() => {
+    const reload = () => void useThemeStore.getState().load();
+    window.addEventListener("focus", reload);
+    return () => window.removeEventListener("focus", reload);
+  }, []);
 }
 
 // Windows reports drop positions in physical pixels; WebKitGTK and WKWebView in CSS pixels.
