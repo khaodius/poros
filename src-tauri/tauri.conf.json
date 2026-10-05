@@ -40,6 +40,14 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "wix": {
+        "upgradeCode": "e72f869c-e3b1-5624-bbc1-3466f84ff3af"
+      },
+      "nsis": {
+        "installerHooks": "windows/installer-hooks.nsh"
+      }
+    }
   }
 }
