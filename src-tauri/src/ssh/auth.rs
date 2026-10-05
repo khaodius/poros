@@ -5,10 +5,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use russh::client::KeyboardInteractiveAuthResponse;
-use russh::keys::{self, PrivateKeyWithHashAlg};
+use russh::keys::{self as russh_keys, PrivateKeyWithHashAlg};
 use russh::{MethodKind, MethodSet};
 
-use super::{AuthMethod, ConnectProfile, SshHandle};
+use super::{keys, AuthMethod, ConnectProfile, SshHandle};
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::events::{Events, LogLevel};
 
@@ -54,7 +54,7 @@ pub(super) async fn authenticate(
                 LogLevel::Info,
                 format!("Trying public key {}", path.display()),
             );
-            let key = load_key(&path, passphrase.as_deref())?;
+            let key = keys::load_private_key(&path, passphrase.as_deref())?;
             let hash = if key.algorithm().is_rsa() {
                 handle.best_supported_rsa_hash().await?.flatten()
             } else {
@@ -112,31 +112,6 @@ async fn keyboard_interactive(handle: &mut SshHandle, user: &str, password: &str
     Ok(false)
 }
 
-fn load_key(path: &PathBuf, passphrase: Option<&str>) -> AppResult<keys::PrivateKey> {
-    let passphrase = passphrase.filter(|p| !p.is_empty());
-    match keys::load_secret_key(path, passphrase) {
-        Ok(key) => Ok(key),
-        Err(keys::Error::IO(e)) => {
-            Err(AppError::from(e).with_path(path.to_string_lossy().into_owned()))
-        }
-        Err(keys::Error::KeyIsEncrypted) => Err(AppError::new(
-            ErrorKind::PassphraseRequired,
-            "This key is encrypted. Enter its passphrase.",
-        )
-        .with_path(path.to_string_lossy().into_owned())),
-        // With a passphrase supplied, a decode failure almost always means a wrong passphrase.
-        Err(_) if passphrase.is_some() => Err(AppError::new(
-            ErrorKind::PassphraseRequired,
-            "The passphrase is incorrect.",
-        )
-        .with_path(path.to_string_lossy().into_owned())),
-        Err(e) => Err(AppError::new(
-            ErrorKind::AuthFailed,
-            format!("Could not read private key {}: {e}", path.display()),
-        )),
-    }
-}
-
 /// Tries every identity the agent offers. `Ok(None)` on success, otherwise the
 /// methods the server still accepts.
 async fn agent_auth(
@@ -160,7 +135,7 @@ async fn agent_auth(
         let public = identity.public_key().into_owned();
         log(
             LogLevel::Info,
-            format!("Trying agent key {}", public.fingerprint(keys::HashAlg::Sha256)),
+            format!("Trying agent key {}", public.fingerprint(russh_keys::HashAlg::Sha256)),
         );
         let hash = if public.algorithm().is_rsa() {
             handle.best_supported_rsa_hash().await?.flatten()
@@ -181,13 +156,13 @@ async fn agent_auth(
     Ok(Some(remaining))
 }
 
-type DynAgent = keys::agent::client::AgentClient<
-    Box<dyn keys::agent::client::AgentStream + Send + Unpin + 'static>,
+type DynAgent = russh_keys::agent::client::AgentClient<
+    Box<dyn russh_keys::agent::client::AgentStream + Send + Unpin + 'static>,
 >;
 
 #[cfg(unix)]
 async fn connect_agent() -> AppResult<DynAgent> {
-    keys::agent::client::AgentClient::connect_env()
+    russh_keys::agent::client::AgentClient::connect_env()
         .await
         .map(|a| a.dynamic())
         .map_err(|e| {
@@ -201,7 +176,7 @@ async fn connect_agent() -> AppResult<DynAgent> {
 /// Windows: the OpenSSH agent service pipe first, then Pageant.
 #[cfg(windows)]
 async fn connect_agent() -> AppResult<DynAgent> {
-    use keys::agent::client::AgentClient;
+    use russh_keys::agent::client::AgentClient;
     if let Ok(agent) = AgentClient::connect_named_pipe(r"\\.\pipe\openssh-ssh-agent").await {
         return Ok(agent.dynamic());
     }

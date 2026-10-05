@@ -4,6 +4,7 @@
 //! transfer engine can open extra connections for parallel workers with the same profile.
 
 mod auth;
+pub mod keys;
 pub mod known_hosts;
 
 use std::sync::{Arc, Mutex};
