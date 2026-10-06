@@ -2,6 +2,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  type CSSProperties,
   type KeyboardEvent,
   type MouseEvent,
   type PointerEvent as ReactPointerEvent,
@@ -13,11 +14,15 @@ import type { PaneController } from "../hooks/usePane";
 import { formatDate, formatPermissions, formatSize } from "../lib/format";
 import { isDirLike, type SortKey } from "../lib/sort";
 import type { FileEntry } from "../lib/types";
+import { useDragStore } from "../state/dragStore";
 import { FileIcon } from "./FileIcon";
 
 export const ROW_HEIGHT = 24;
 export const COMPACT_ROW_HEIGHT = 21;
 const SCROLLBAR_GUTTER = 10;
+/** Empty space right of the last column that belongs to no row: dropping there targets the
+ * folder on show rather than the row under the pointer. */
+const DROP_STRIP_WIDTH = 44;
 const TYPE_AHEAD_RESET_MILLIS = 800;
 
 export interface FileListActions {
@@ -91,6 +96,7 @@ export function FileList({ pane, active, rowHeight, dropFolder, ...actions }: Fi
   const entries = pane.visibleEntries;
   const showParentRow = pane.canGoUp && pane.filter === "";
   const rowOffset = showParentRow ? 1 : 0;
+  const draggingFiles = useDragStore((state) => !!state.payload && state.payload.kind !== "tab");
 
   const detailColumns = useMemo(() => {
     const all = pane.listing?.entries ?? [];
@@ -102,7 +108,7 @@ export function FileList({ pane, active, rowHeight, dropFolder, ...actions }: Fi
     ];
   }, [pane.listing]);
   const widthNeeded = useMemo(() => {
-    let total = NAME_COLUMN.width + SCROLLBAR_GUTTER;
+    let total = NAME_COLUMN.width + SCROLLBAR_GUTTER + DROP_STRIP_WIDTH;
     return detailColumns.map((column) => (total += column.width));
   }, [detailColumns]);
   const fittingColumns = useFitCount(rootRef, widthNeeded);
@@ -282,8 +288,18 @@ export function FileList({ pane, active, rowHeight, dropFolder, ...actions }: Fi
   };
 
   return (
-    <div ref={rootRef} className={`file-list ${active ? "is-active" : ""}`}>
-      <div className="file-list-header" style={{ gridTemplateColumns }} role="row">
+    <div
+      ref={rootRef}
+      className={["file-list", active && "is-active", draggingFiles && "is-dragging-files"]
+        .filter(Boolean)
+        .join(" ")}
+      style={{ "--drop-strip-width": `${DROP_STRIP_WIDTH}px` } as CSSProperties}
+    >
+      <div
+        className="file-list-header"
+        style={{ gridTemplateColumns: `${gridTemplateColumns} ${DROP_STRIP_WIDTH}px` }}
+        role="row"
+      >
         {columns.map((column) => {
           const sorted = pane.sort.key === column.key;
           const SortIcon = pane.sort.direction === 1 ? ArrowUp : ArrowDown;
@@ -312,7 +328,7 @@ export function FileList({ pane, active, rowHeight, dropFolder, ...actions }: Fi
         onMouseDown={actions.onActivate}
         onKeyDown={handleKeyDown}
         onClick={(event) => {
-          if (event.target === event.currentTarget) pane.clearSelection();
+          if (!(event.target as Element).closest(".file-row")) pane.clearSelection();
         }}
         onContextMenu={(event) => {
           event.preventDefault();
@@ -324,6 +340,7 @@ export function FileList({ pane, active, rowHeight, dropFolder, ...actions }: Fi
           {virtualizer.getVirtualItems().map((item) => {
             const style = {
               transform: `translateY(${item.start}px)`,
+              width: `calc(100% - ${DROP_STRIP_WIDTH}px)`,
               height: rowHeight,
               gridTemplateColumns,
             };

@@ -349,6 +349,7 @@ pub async fn window_open(
     pending.0.lock().unwrap().insert(label.clone(), layout);
     let mut builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App("index.html".into()))
         .title("Poros")
+        .decorations(false)
         .inner_size(width, height)
         .min_inner_size(480.0, 360.0);
     builder = match (x, y) {

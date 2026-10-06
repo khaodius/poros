@@ -215,6 +215,10 @@ input.has-error {
   height: 100%;
 }
 
+.app.has-drawn-border {
+  border: 1px solid var(--border-strong);
+}
+
 .topbar {
   display: flex;
   flex: none;
@@ -259,6 +263,13 @@ input.has-error {
   text-align: center;
 }
 
+/* Small torn-out windows keep the connect button and drop the quick connect fields. */
+@media (max-width: 620px) {
+  .quick-connect {
+    display: none;
+  }
+}
+
 .topbar-actions {
   display: flex;
   flex: none;
@@ -270,6 +281,46 @@ input.has-error {
 .topbar-button {
   width: 30px;
   height: 30px;
+}
+
+.window-controls {
+  display: flex;
+  flex: none;
+  align-self: stretch;
+  margin: 0 -12px 0 -6px;
+}
+
+.window-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  padding: 0;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.window-control:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.window-control:active {
+  background: var(--surface-pressed);
+}
+
+.window-control-close:hover,
+.window-control-close:active {
+  color: var(--text-on-accent);
+  background: var(--danger);
+}
+
+.window-control-restore {
+  transform: scaleX(-1);
 }
 
 .workspace {
@@ -475,6 +526,10 @@ input.has-error {
   border-top-left-radius: 0;
 }
 
+.dock {
+  position: relative;
+}
+
 .dock-preview {
   position: absolute;
   z-index: 20;
@@ -482,26 +537,11 @@ input.has-error {
   border: 2px solid var(--accent);
   border-radius: var(--radius);
   pointer-events: none;
-}
-
-.dock-preview-center {
-  inset: 0;
-}
-
-.dock-preview-left {
-  inset: 0 50% 0 0;
-}
-
-.dock-preview-right {
-  inset: 0 0 0 50%;
-}
-
-.dock-preview-top {
-  inset: 0 0 50% 0;
-}
-
-.dock-preview-bottom {
-  inset: 50% 0 0 0;
+  transition:
+    left var(--transition-fast),
+    top var(--transition-fast),
+    width var(--transition-fast),
+    height var(--transition-fast);
 }
 
 /* Tab bar */
@@ -1046,6 +1086,13 @@ form.path-bar {
   contain: strict;
 }
 
+.file-list.is-dragging-files .file-list-body {
+  background-image: linear-gradient(var(--accent-softer), var(--accent-softer));
+  background-repeat: no-repeat;
+  background-position: right;
+  background-size: var(--drop-strip-width) 100%;
+}
+
 .file-list-empty {
   padding: 16px 10px;
   color: var(--text-faint);
@@ -1058,7 +1105,6 @@ form.path-bar {
   left: 0;
   display: grid;
   align-items: center;
-  width: 100%;
   cursor: default;
 }
 
@@ -1693,6 +1739,74 @@ option {
 }
 
 /* Transfer lists */
+
+.worker-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 auto 0 8px;
+  padding-left: 10px;
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+  white-space: nowrap;
+  border-left: 1px solid var(--border);
+}
+
+.worker-stepper {
+  display: flex;
+  align-items: stretch;
+  height: 22px;
+  overflow: hidden;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+}
+
+.worker-stepper:focus-within {
+  border-color: var(--border-focus);
+}
+
+.worker-stepper button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  padding: 0;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.worker-stepper button:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.worker-stepper button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.worker-stepper input:not([type="checkbox"], [type="radio"]) {
+  width: 28px;
+  height: auto;
+  padding: 0;
+  color: var(--text);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  background: none;
+  border: none;
+  border-inline: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+@media (max-width: 760px) {
+  .narrow-hidden {
+    display: none;
+  }
+}
 
 .panel-toolbar {
   display: flex;

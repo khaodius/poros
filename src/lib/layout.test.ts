@@ -11,6 +11,7 @@ import {
   normalize,
   parseLayout,
   persistableLayout,
+  placeGroup,
   removeTab,
   resizeShares,
   type LayoutNode,
@@ -105,6 +106,26 @@ describe("layout", () => {
     };
     const normalized = normalize(outer);
     expect(normalized?.type === "split" && normalized.sizes).toEqual([0.4, 0.6]);
+  });
+
+  it("places a docked tab where the layout will put it", () => {
+    const { root, right } = twoGroups();
+    const swapped = dockTab(root, "a", right, "right");
+    expect(placeGroup(swapped, groupOfTab(swapped, "a")!.id, 8)).toEqual({
+      left: { share: 0.5, pixels: 4 },
+      top: { share: 0, pixels: 0 },
+      width: { share: 0.5, pixels: -4 },
+      height: { share: 1, pixels: 0 },
+    });
+
+    const below = dockTab(root, "c", right, "bottom");
+    expect(placeGroup(below, groupOfTab(below, "c")!.id, 8)).toEqual({
+      left: { share: 0.5, pixels: 4 },
+      top: { share: 0.5, pixels: 4 },
+      width: { share: 0.5, pixels: -4 },
+      height: { share: 0.5, pixels: -4 },
+    });
+    expect(placeGroup(below, "missing", 8)).toBeNull();
   });
 
   it("round-trips through storage without remote tabs", () => {

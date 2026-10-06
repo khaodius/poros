@@ -230,6 +230,53 @@ export function resizeShares(sizes: number[], index: number, delta: number): num
   return next;
 }
 
+/** A length as a share of the whole dock plus a pixel offset, so it holds at any size. */
+export interface Extent {
+  share: number;
+  pixels: number;
+}
+
+export interface Placement {
+  left: Extent;
+  top: Extent;
+  width: Extent;
+  height: Extent;
+}
+
+const WHOLE: Placement = {
+  left: { share: 0, pixels: 0 },
+  top: { share: 0, pixels: 0 },
+  width: { share: 1, pixels: 0 },
+  height: { share: 1, pixels: 0 },
+};
+
+/** Where a group sits in the area the layout fills, with `gap` pixels between split children. */
+export function placeGroup(
+  node: LayoutNode,
+  groupId: string,
+  gap: number,
+  area: Placement = WHOLE,
+): Placement | null {
+  if (node.type === "group") return node.id === groupId ? area : null;
+  const row = node.direction === "row";
+  const along = row ? area.width : area.height;
+  const free = along.pixels - gap * (node.children.length - 1);
+  let offset = row ? area.left : area.top;
+  for (const [index, child] of node.children.entries()) {
+    const share = node.sizes[index];
+    const size = { share: along.share * share, pixels: free * share };
+    const found = placeGroup(
+      child,
+      groupId,
+      gap,
+      row ? { ...area, left: offset, width: size } : { ...area, top: offset, height: size },
+    );
+    if (found) return found;
+    offset = { share: offset.share + size.share, pixels: offset.pixels + size.pixels + gap };
+  }
+  return null;
+}
+
 function isTab(value: unknown): value is PaneTab {
   if (!value || typeof value !== "object") return false;
   const tab = value as Record<string, unknown>;

@@ -1,5 +1,15 @@
 import { Fragment, useRef, type PointerEvent as ReactPointerEvent } from "react";
-import { resizeShares, type GroupNode, type LayoutNode, type SplitNode } from "../lib/layout";
+import { useShallow } from "zustand/react/shallow";
+import {
+  dockTab,
+  groupOfTab,
+  placeGroup,
+  resizeShares,
+  type Extent,
+  type GroupNode,
+  type LayoutNode,
+  type SplitNode,
+} from "../lib/layout";
 import { useDragStore } from "../state/dragStore";
 import { useLayoutStore } from "../state/layoutStore";
 import { TabBar } from "./TabBar";
@@ -10,7 +20,40 @@ export function DockArea() {
   return (
     <div className="dock">
       <LayoutView node={root} />
+      <DockPreview root={root} />
     </div>
+  );
+}
+
+// Matches the width of .dock-resizer.
+const RESIZER_SIZE = 8;
+
+const cssLength = ({ share, pixels }: Extent) => `calc(${share * 100}% + ${pixels}px)`;
+
+/** Outlines where a dragged tab will end up, from the layout the drop would produce. */
+function DockPreview({ root }: { root: LayoutNode }) {
+  const drop = useDragStore(
+    useShallow(({ payload, target }) =>
+      payload?.kind === "tab" && target?.kind === "dock"
+        ? { tabId: payload.tabId, groupId: target.groupId, side: target.side }
+        : null,
+    ),
+  );
+  if (!drop) return null;
+  const next = dockTab(root, drop.tabId, drop.groupId, drop.side);
+  const owner = next === root ? null : groupOfTab(next, drop.tabId);
+  const placement = owner && placeGroup(next, owner.id, RESIZER_SIZE);
+  if (!placement) return null;
+  return (
+    <div
+      className="dock-preview"
+      style={{
+        left: cssLength(placement.left),
+        top: cssLength(placement.top),
+        width: cssLength(placement.width),
+        height: cssLength(placement.height),
+      }}
+    />
   );
 }
 
@@ -96,9 +139,6 @@ function DockSplit({ split }: { split: SplitNode }) {
 function TabGroup({ group }: { group: GroupNode }) {
   const focused = useLayoutStore((state) => state.activeGroupId === group.id);
   const focusGroup = useLayoutStore((state) => state.focusGroup);
-  const dockSide = useDragStore((state) =>
-    state.target?.kind === "dock" && state.target.groupId === group.id ? state.target.side : null,
-  );
 
   return (
     <section
@@ -117,7 +157,6 @@ function TabGroup({ group }: { group: GroupNode }) {
             </div>
           );
         })}
-        {dockSide && <div className={`dock-preview dock-preview-${dockSide}`} />}
       </div>
     </section>
   );

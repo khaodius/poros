@@ -3,13 +3,17 @@ import {
   ArrowDownToLine,
   ArrowUpToLine,
   Eraser,
+  Minus,
   Pause,
   Play,
+  Plus,
   RotateCw,
   Trash2,
 } from "lucide-react";
 import { transfers } from "../lib/ipc";
+import { MAX_WORKERS } from "../lib/settings";
 import { jobsIn, VIEW_STATES, type TransferViewKind } from "../lib/transfers";
+import { saveSettingsSection, useSettingsStore } from "../state/settingsStore";
 import { useTransferStore } from "../state/transferStore";
 import { LogView } from "./LogView";
 import { TransferView } from "./TransferView";
@@ -70,16 +74,18 @@ export function BottomPanel() {
             </button>
           ))}
         </div>
+        <WorkerControl />
         <div className="panel-toolbar">
           {tab === "queue" && (
             <>
               <button
                 type="button"
                 className={`button button-small ${queuePaused ? "button-primary" : ""}`}
+                title={queuePaused ? "Start queue" : "Pause queue"}
                 onClick={() => void transfers.setPaused(!queuePaused)}
               >
                 {queuePaused ? <Play size={13} /> : <Pause size={13} />}
-                {queuePaused ? "Start queue" : "Pause queue"}
+                <span className="narrow-hidden">{queuePaused ? "Start queue" : "Pause queue"}</span>
               </button>
               <span className="toolbar-divider" />
               <PanelButton
@@ -176,6 +182,65 @@ export function BottomPanel() {
         <TransferView view={tab} selection={selection} onSelectionChange={setSelection} />
       )}
     </section>
+  );
+}
+
+/** Changes how many transfers run at once; running workers above a lower count finish their
+ * current file first. */
+function WorkerControl() {
+  const workers = useSettingsStore((state) => state.settings.transfers.workers);
+  const [typed, setTyped] = useState<string | null>(null);
+  const apply = (count: number) => {
+    const next = Math.min(MAX_WORKERS, Math.max(1, count));
+    if (next !== workers) void saveSettingsSection("transfers", { workers: next });
+  };
+  const step = (by: number) => {
+    setTyped(null);
+    apply(workers + by);
+  };
+  const commitTyped = () => {
+    if (typed) apply(Number(typed));
+    setTyped(null);
+  };
+
+  return (
+    <div className="worker-control" title="Simultaneous transfers">
+      <span className="narrow-hidden">Workers</span>
+      <span className="worker-stepper" role="group" aria-label="Simultaneous transfers">
+        <button
+          type="button"
+          aria-label="Fewer workers"
+          disabled={workers <= 1}
+          onClick={() => step(-1)}
+        >
+          <Minus size={12} />
+        </button>
+        <input
+          value={typed ?? workers}
+          inputMode="numeric"
+          aria-label="Workers"
+          onFocus={(event) => event.currentTarget.select()}
+          onChange={(event) => setTyped(event.target.value.replace(/\D/g, "").slice(0, 2))}
+          onBlur={commitTyped}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.currentTarget.blur();
+            else if (event.key === "Escape") setTyped(null);
+            else if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+              event.preventDefault();
+              step(event.key === "ArrowUp" ? 1 : -1);
+            }
+          }}
+        />
+        <button
+          type="button"
+          aria-label="More workers"
+          disabled={workers >= MAX_WORKERS}
+          onClick={() => step(1)}
+        >
+          <Plus size={12} />
+        </button>
+      </span>
+    </div>
   );
 }
 

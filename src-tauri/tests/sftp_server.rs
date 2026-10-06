@@ -48,6 +48,8 @@ fn profile(server: &Server, auth: AuthMethod) -> ConnectProfile {
         timeout_secs: Some(10),
         keepalive_secs: None,
         compression: false,
+        receive_buffer_kib: None,
+        send_buffer_kib: None,
         saved_connection_id: None,
     }
 }
@@ -132,6 +134,28 @@ async fn host_key_prompt_then_remembered() {
 
     let info = manager
         .connect(profile(&server, auth), None, OWNER)
+        .await
+        .unwrap();
+    manager.disconnect(&info.id).await.unwrap();
+}
+
+#[tokio::test]
+async fn connects_with_fixed_socket_buffers() {
+    let Some(server) = server() else { return };
+    let (_dir, manager) = trusted_manager(&server).await;
+    let password = AuthMethod::Password {
+        password: server.password.clone(),
+    };
+    let info = manager
+        .connect(
+            ConnectProfile {
+                receive_buffer_kib: Some(128),
+                send_buffer_kib: Some(128),
+                ..profile(&server, password)
+            },
+            None,
+            OWNER,
+        )
         .await
         .unwrap();
     manager.disconnect(&info.id).await.unwrap();

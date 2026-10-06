@@ -34,6 +34,8 @@ function withConnectionSettings(profile: ConnectProfile): ConnectProfile {
     timeoutSecs: profile.timeoutSecs ?? connection.timeoutSecs,
     keepaliveSecs: profile.keepaliveSecs ?? connection.keepaliveSecs,
     compression: profile.compression ?? connection.compression,
+    receiveBufferKib: connection.autoTuneReceiveBuffer ? null : connection.receiveBufferKib,
+    sendBufferKib: connection.autoTuneSendBuffer ? null : connection.sendBufferKib,
   };
 }
 
