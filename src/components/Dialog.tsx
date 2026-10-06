@@ -1,5 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { X } from "lucide-react";
+import { dragWindowFromBackdrop } from "../lib/windowDrag";
 
 interface DialogProps {
   title: string;
@@ -28,6 +29,7 @@ export function Dialog({ title, onClose, children, footer, width = 440, tone }: 
       ref={dialogRef}
       className={`dialog ${tone === "danger" ? "dialog-danger" : ""}`}
       style={{ width }}
+      onMouseDown={dragWindowFromBackdrop}
       onCancel={(event) => {
         event.preventDefault();
         onClose();

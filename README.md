@@ -25,12 +25,13 @@ the network or the disk is Rust.
   them, drop one on the edge of another group to split the window left, right, up or down, and
   drag the dividers to resize. Pull a tab out of the window to give it a window of its own, and
   send it back from its menu.
-- **Transfer queue** with parallel workers, each on its own connection. Large files are split
-  across idle connections. Pause, resume, reorder, retry and remove transfers; failed and
-  completed transfers have their own lists. Upload and download speeds sit beside the version in
-  the status bar.
+- **Transfer queue** with parallel workers, each on its own connection, and a worker count you
+  can change from the queue header while transfers run. Large files are split across idle
+  connections. Pause, resume, reorder, retry and remove transfers; failed and completed transfers
+  have their own lists. Upload and download speeds sit beside the version in the status bar.
 - **Drag and drop** between a local and a server tab, onto a folder row to land inside it, or
-  from your file manager onto a server tab.
+  from your file manager onto a server tab. The strip right of the last column belongs to no row,
+  so dropping there always lands in the folder on show.
 - **Saved connections** with name, host, port, user, authentication method, key file and remote
   folder. Passwords and passphrases are only kept if you ask, and then in the system keychain,
   never in a file.
@@ -59,7 +60,7 @@ the network or the disk is Rust.
 - **Activity log** with server banners and every operation, filterable by level, session and
   text, and savable to a file.
 - **Native on Linux and Windows**, including Wayland sessions, Windows drive letters and UNC
-  paths.
+  paths. The top bar doubles as the title bar; settings can bring back the system one.
 
 ### Roadmap
 

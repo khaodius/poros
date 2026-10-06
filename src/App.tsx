@@ -12,7 +12,9 @@ import { SaveConnectionDialog } from "./components/SaveConnectionDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { StatusBar } from "./components/StatusBar";
 import { Toasts } from "./components/Toasts";
+import { WindowControls } from "./components/WindowControls";
 import { Workspace } from "./components/Workspace";
+import { useWindowMaximized } from "./hooks/useWindowMaximized";
 import { EMPTY_DRAFT } from "./lib/connectDraft";
 import {
   RETURN_TAB_EVENT,
@@ -24,6 +26,7 @@ import {
   windows,
 } from "./lib/ipc";
 import { findGroup, group, welcomeTab } from "./lib/layout";
+import { dragWindowFrom } from "./lib/windowDrag";
 import type { StoreName } from "./lib/types";
 import { hitTest, useDragStore, type DragPayload } from "./state/dragStore";
 import { persistLayout, restoreLayout, useLayoutStore } from "./state/layoutStore";
@@ -140,6 +143,20 @@ function useAppliedTheme() {
   }, []);
 }
 
+/** Shows the system title bar only when asked to; windows open without one. */
+function useSystemTitleBar(): boolean {
+  const systemTitleBar = useSettingsStore((state) => state.settings.interface.systemTitleBar);
+  useEffect(() => {
+    void getCurrentWindow()
+      .setDecorations(systemTitleBar)
+      .catch(() => undefined);
+  }, [systemTitleBar]);
+  return systemTitleBar;
+}
+
+// Windows gives frameless windows a system shadow and border; Linux window managers do not.
+const NEEDS_DRAWN_BORDER = navigator.userAgent.includes("Linux");
+
 // Windows reports drop positions in physical pixels; WebKitGTK and WKWebView in CSS pixels.
 const DROP_POSITION_SCALE = navigator.userAgent.includes("Windows")
   ? () => window.devicePixelRatio || 1
@@ -219,10 +236,17 @@ export function App() {
   useAppliedTheme();
   useSystemFileDrops();
   useShortcuts();
+  const systemTitleBar = useSystemTitleBar();
+  const maximized = useWindowMaximized();
+  const drawnBorder = NEEDS_DRAWN_BORDER && !systemTitleBar && !maximized;
 
   return (
-    <div className="app">
-      <header className="topbar">
+    <div className={`app ${drawnBorder ? "has-drawn-border" : ""}`}>
+      <header
+        className="topbar"
+        data-window-drag={systemTitleBar ? undefined : ""}
+        onMouseDown={systemTitleBar ? undefined : dragWindowFrom}
+      >
         <div className="brand">
           <img src="/poros.svg" alt="" width={20} height={20} />
           <span>Poros</span>
@@ -248,6 +272,7 @@ export function App() {
             <SlidersHorizontal size={15} />
           </button>
         </div>
+        {!systemTitleBar && <WindowControls maximized={maximized} />}
       </header>
 
       {ready ? <Workspace /> : <main className="workspace" />}

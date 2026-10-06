@@ -42,6 +42,8 @@ export interface InterfaceSettings {
   /** Adds every new quick connection to the saved connections. */
   saveQuickConnections: boolean;
   rememberLayout: boolean;
+  /** Off: Poros draws its own window buttons in the top bar. */
+  systemTitleBar: boolean;
 }
 
 export interface AppearanceSettings {
@@ -96,6 +98,7 @@ export const DEFAULT_SETTINGS: Settings = {
     confirmCloseWithTransfers: true,
     saveQuickConnections: false,
     rememberLayout: true,
+    systemTitleBar: false,
   },
   appearance: { theme: "builtin:system", fontSize: 13, compactRows: false },
   log: {

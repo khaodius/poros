@@ -293,6 +293,12 @@ function InterfaceSettingsPage({ settings }: { settings: Settings }) {
           checked={options.rememberLayout}
           onChange={(rememberLayout) => set({ rememberLayout })}
         />
+        <SwitchSetting
+          label="Use the system title bar"
+          hint="Off: the top bar holds the window buttons and drags the window."
+          checked={options.systemTitleBar}
+          onChange={(systemTitleBar) => set({ systemTitleBar })}
+        />
       </SettingGroup>
     </>
   );

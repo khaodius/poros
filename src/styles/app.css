@@ -215,6 +215,10 @@ input.has-error {
   height: 100%;
 }
 
+.app.has-drawn-border {
+  border: 1px solid var(--border-strong);
+}
+
 .topbar {
   display: flex;
   flex: none;
@@ -259,6 +263,13 @@ input.has-error {
   text-align: center;
 }
 
+/* Small torn-out windows keep the connect button and drop the quick connect fields. */
+@media (max-width: 620px) {
+  .quick-connect {
+    display: none;
+  }
+}
+
 .topbar-actions {
   display: flex;
   flex: none;
@@ -270,6 +281,46 @@ input.has-error {
 .topbar-button {
   width: 30px;
   height: 30px;
+}
+
+.window-controls {
+  display: flex;
+  flex: none;
+  align-self: stretch;
+  margin: 0 -12px 0 -6px;
+}
+
+.window-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  padding: 0;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.window-control:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.window-control:active {
+  background: var(--surface-pressed);
+}
+
+.window-control-close:hover,
+.window-control-close:active {
+  color: var(--text-on-accent);
+  background: var(--danger);
+}
+
+.window-control-restore {
+  transform: scaleX(-1);
 }
 
 .workspace {
