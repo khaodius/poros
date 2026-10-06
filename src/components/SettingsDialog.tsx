@@ -6,7 +6,7 @@ import {
   Palette,
   type LucideIcon,
 } from "lucide-react";
-import { MAX_WORKERS, LOG_LINE_LIMITS, type Settings } from "../lib/settings";
+import { MAX_WORKERS, LOG_LINE_LIMITS, SOCKET_BUFFER_LIMITS, type Settings } from "../lib/settings";
 import type { ExistsAction } from "../lib/types";
 import { saveSettingsSection, useSettingsStore } from "../state/settingsStore";
 import { useUiStore, type SettingsSection } from "../state/uiStore";
@@ -171,6 +171,7 @@ function TransferSettingsPage({ settings }: { settings: Settings }) {
           max={256}
           onChange={(requestsInFlight) => set({ requestsInFlight })}
         />
+        <SocketBufferSettings connection={settings.connection} />
       </SettingGroup>
 
       <SettingGroup title="Files">
@@ -205,6 +206,48 @@ function TransferSettingsPage({ settings }: { settings: Settings }) {
           onChange={(retryDelaySecs) => set({ retryDelaySecs })}
         />
       </SettingGroup>
+    </>
+  );
+}
+
+/** TCP socket buffers, kept with the connection settings since every connection uses them. */
+function SocketBufferSettings({ connection }: { connection: Settings["connection"] }) {
+  const set = (change: Partial<Settings["connection"]>) =>
+    void saveSettingsSection("connection", change);
+  return (
+    <>
+      <SwitchSetting
+        label="Auto-tune receive buffer"
+        hint="The system grows the TCP receive window to suit the connection. Applies to new connections."
+        checked={connection.autoTuneReceiveBuffer}
+        onChange={(autoTuneReceiveBuffer) => set({ autoTuneReceiveBuffer })}
+      />
+      <NumberSetting
+        label="Receive buffer size"
+        hint="SO_RCVBUF, used when auto-tuning is off."
+        value={connection.receiveBufferKib}
+        min={SOCKET_BUFFER_LIMITS.min}
+        max={SOCKET_BUFFER_LIMITS.max}
+        unit="KiB"
+        disabled={connection.autoTuneReceiveBuffer}
+        onChange={(receiveBufferKib) => set({ receiveBufferKib })}
+      />
+      <SwitchSetting
+        label="Auto-tune send buffer"
+        hint="The system sizes the TCP send buffer to suit the connection. Applies to new connections."
+        checked={connection.autoTuneSendBuffer}
+        onChange={(autoTuneSendBuffer) => set({ autoTuneSendBuffer })}
+      />
+      <NumberSetting
+        label="Send buffer size"
+        hint="SO_SNDBUF, used when auto-tuning is off."
+        value={connection.sendBufferKib}
+        min={SOCKET_BUFFER_LIMITS.min}
+        max={SOCKET_BUFFER_LIMITS.max}
+        unit="KiB"
+        disabled={connection.autoTuneSendBuffer}
+        onChange={(sendBufferKib) => set({ sendBufferKib })}
+      />
     </>
   );
 }

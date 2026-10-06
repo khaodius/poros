@@ -40,6 +40,10 @@ export interface ConnectProfile {
   timeoutSecs?: number | null;
   keepaliveSecs?: number | null;
   compression?: boolean;
+  /** A fixed TCP receive buffer; absent or null leaves it to the system. */
+  receiveBufferKib?: number | null;
+  /** A fixed TCP send buffer; absent or null leaves it to the system. */
+  sendBufferKib?: number | null;
   /** Lets the backend fill an empty password or passphrase from the system keychain. */
   savedConnectionId?: string | null;
 }

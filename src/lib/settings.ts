@@ -5,6 +5,7 @@
 import type { ExistsAction, LogLevel } from "./types";
 
 export const MAX_WORKERS = 16;
+export const SOCKET_BUFFER_LIMITS = { min: 4, max: 64 * 1024 };
 
 export interface TransferSettings {
   workers: number;
@@ -31,6 +32,12 @@ export interface ConnectionSettings {
   timeoutSecs: number;
   keepaliveSecs: number;
   compression: boolean;
+  /** Lets the system size the TCP receive buffer; off uses `receiveBufferKib`. */
+  autoTuneReceiveBuffer: boolean;
+  receiveBufferKib: number;
+  /** Lets the system size the TCP send buffer; off uses `sendBufferKib`. */
+  autoTuneSendBuffer: boolean;
+  sendBufferKib: number;
 }
 
 export type DoubleClickAction = "transfer" | "nothing";
@@ -91,7 +98,15 @@ export const DEFAULT_SETTINGS: Settings = {
     separateConnections: true,
     logEachFile: false,
   },
-  connection: { timeoutSecs: 20, keepaliveSecs: 30, compression: false },
+  connection: {
+    timeoutSecs: 20,
+    keepaliveSecs: 30,
+    compression: false,
+    autoTuneReceiveBuffer: true,
+    receiveBufferKib: 128,
+    autoTuneSendBuffer: true,
+    sendBufferKib: 128,
+  },
   interface: {
     doubleClickFile: "transfer",
     showHiddenFiles: false,

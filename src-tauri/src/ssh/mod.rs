@@ -12,9 +12,11 @@ use std::time::Duration;
 use russh::client::{self, Handle};
 use russh::keys::PublicKeyOrCertificate;
 use serde::Deserialize;
+use tokio::net::{TcpSocket, TcpStream};
 
 use crate::error::{AppError, AppResult, ErrorKind, HostKeyInfo};
 use crate::events::{Events, LogLevel};
+use crate::settings::{MAX_SOCKET_BUFFER_KIB, MIN_SOCKET_BUFFER_KIB};
 use known_hosts::{fingerprint, HostKeyStatus, KnownHosts};
 
 pub const DEFAULT_TIMEOUT_SECS: u64 = 20;
@@ -52,6 +54,12 @@ pub struct ConnectProfile {
     pub keepalive_secs: Option<u64>,
     #[serde(default)]
     pub compression: bool,
+    /// Fixed TCP receive buffer (SO_RCVBUF); `None` leaves it to the system's auto-tuning.
+    #[serde(default)]
+    pub receive_buffer_kib: Option<u32>,
+    /// Fixed TCP send buffer (SO_SNDBUF); `None` leaves it to the system's auto-tuning.
+    #[serde(default)]
+    pub send_buffer_kib: Option<u32>,
     /// Fills an empty password or passphrase from the system keychain.
     #[serde(default)]
     pub saved_connection_id: Option<String>,
@@ -268,8 +276,10 @@ pub async fn connect(
         Some(session_id),
         format!("Connecting to {}:{}", profile.host.trim(), profile.port),
     );
-    let address = (profile.host.trim().to_string(), profile.port);
-    let connecting = client::connect(Arc::new(config), address, handler);
+    let connecting = async {
+        let socket = open_socket(profile).await.map_err(russh::Error::IO)?;
+        client::connect_stream(Arc::new(config), socket, handler).await
+    };
     let mut handle = match tokio::time::timeout(timeout, connecting).await {
         Err(_) => {
             return Err(AppError::new(
@@ -313,6 +323,39 @@ pub async fn connect(
         handle,
         host_key_fingerprint,
     })
+}
+
+/// Connects to the first address that answers. Buffer sizes are set before connecting so the
+/// TCP window scale the handshake negotiates can use them.
+async fn open_socket(profile: &ConnectProfile) -> std::io::Result<TcpStream> {
+    let mut last_error = None;
+    for address in tokio::net::lookup_host((profile.host.trim(), profile.port)).await? {
+        let socket = if address.is_ipv4() {
+            TcpSocket::new_v4()?
+        } else {
+            TcpSocket::new_v6()?
+        };
+        if let Some(kib) = profile.receive_buffer_kib {
+            socket.set_recv_buffer_size(socket_buffer_bytes(kib))?;
+        }
+        if let Some(kib) = profile.send_buffer_kib {
+            socket.set_send_buffer_size(socket_buffer_bytes(kib))?;
+        }
+        match socket.connect(address).await {
+            Ok(stream) => {
+                stream.set_nodelay(true)?;
+                return Ok(stream);
+            }
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::NotFound, "the host name has no address")
+    }))
+}
+
+fn socket_buffer_bytes(kib: u32) -> u32 {
+    kib.clamp(MIN_SOCKET_BUFFER_KIB, MAX_SOCKET_BUFFER_KIB) * 1024
 }
 
 fn connection_error(e: russh::Error, profile: &ConnectProfile) -> AppError {

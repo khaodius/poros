@@ -36,8 +36,8 @@ the network or the disk is Rust.
   folder. Passwords and passphrases are only kept if you ask, and then in the system keychain,
   never in a file.
 - **Settings** for simultaneous transfers, connections per file, upload and download limits,
-  request size and requests in flight, what to do when a file exists, timestamps and
-  permissions, retries, timeouts, keepalives, compression, and the log.
+  request size and requests in flight, TCP socket buffers (auto-tuned or fixed), what to do when a
+  file exists, timestamps and permissions, retries, timeouts, keepalives, compression, and the log.
 - **Themes** as JSON files anyone can write and share, plus simple color pickers in settings.
   See [Themes](#themes).
 - **Every common key format**, including the ones other clients choke on:

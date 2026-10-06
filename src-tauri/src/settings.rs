@@ -12,6 +12,8 @@ use crate::storage;
 use crate::transfer::ExistsAction;
 
 pub const MAX_WORKERS: u32 = 16;
+pub const MIN_SOCKET_BUFFER_KIB: u32 = 4;
+pub const MAX_SOCKET_BUFFER_KIB: u32 = 64 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -90,6 +92,12 @@ pub struct ConnectionSettings {
     pub timeout_secs: u64,
     pub keepalive_secs: u64,
     pub compression: bool,
+    /// Lets the system grow the TCP receive window with the connection; off uses the size below.
+    pub auto_tune_receive_buffer: bool,
+    pub receive_buffer_kib: u32,
+    /// Lets the system size the send buffer; off uses the size below.
+    pub auto_tune_send_buffer: bool,
+    pub send_buffer_kib: u32,
 }
 
 impl Default for ConnectionSettings {
@@ -98,6 +106,10 @@ impl Default for ConnectionSettings {
             timeout_secs: crate::ssh::DEFAULT_TIMEOUT_SECS,
             keepalive_secs: crate::ssh::DEFAULT_KEEPALIVE_SECS,
             compression: false,
+            auto_tune_receive_buffer: true,
+            receive_buffer_kib: 128,
+            auto_tune_send_buffer: true,
+            send_buffer_kib: 128,
         }
     }
 }
@@ -106,6 +118,12 @@ impl ConnectionSettings {
     fn sanitize(&mut self) {
         self.timeout_secs = self.timeout_secs.clamp(3, 300);
         self.keepalive_secs = self.keepalive_secs.min(3600);
+        self.receive_buffer_kib = self
+            .receive_buffer_kib
+            .clamp(MIN_SOCKET_BUFFER_KIB, MAX_SOCKET_BUFFER_KIB);
+        self.send_buffer_kib = self
+            .send_buffer_kib
+            .clamp(MIN_SOCKET_BUFFER_KIB, MAX_SOCKET_BUFFER_KIB);
     }
 }
 
@@ -192,13 +210,19 @@ mod tests {
     #[test]
     fn missing_fields_take_defaults_and_values_are_clamped() {
         let parsed: Settings = serde_json::from_str(
-            r#"{"transfers": {"workers": 99, "requestSizeKib": 1}, "unknown": true}"#,
+            r#"{"transfers": {"workers": 99, "requestSizeKib": 1}, "connection": {"receiveBufferKib": 0}, "unknown": true}"#,
         )
         .unwrap();
         let settings = parsed.sanitize();
         assert_eq!(settings.transfers.workers, MAX_WORKERS);
         assert_eq!(settings.transfers.request_size_kib, 4);
         assert_eq!(settings.transfers.retry_attempts, 3);
+        assert_eq!(
+            settings.connection.receive_buffer_kib,
+            MIN_SOCKET_BUFFER_KIB
+        );
+        assert!(settings.connection.auto_tune_receive_buffer);
+        assert_eq!(settings.connection.send_buffer_kib, 128);
         assert!(settings.interface.is_object());
     }
 
