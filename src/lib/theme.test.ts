@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { BUILTIN_THEMES, deriveColors, mixHex, parseTheme, toInputColor, withColor } from "./theme";
+import {
+  BUILTIN_THEMES,
+  alphaOf,
+  deriveColors,
+  keepAlpha,
+  mixHex,
+  parseTheme,
+  serializeTheme,
+  toInputColor,
+  withColor,
+  withoutColor,
+} from "./theme";
 
 describe("parseTheme", () => {
   it("keeps valid colors and reports the rest", () => {
@@ -66,5 +77,31 @@ describe("colors", () => {
     expect(toInputColor("#abc")).toBe("#aabbcc");
     expect(toInputColor("rgb(255 0 16 / 0.5)")).toBe("#ff0010");
     expect(toInputColor("hsl(10 20% 30%)")).toBeNull();
+  });
+
+  it("reads and keeps transparency", () => {
+    expect(alphaOf("#3d7eff")).toBe(1);
+    expect(alphaOf("#3d7eff80")).toBe(0.5);
+    expect(alphaOf("#fff8")).toBe(0.53);
+    expect(alphaOf("rgb(61 126 255 / 0.16)")).toBe(0.16);
+    expect(alphaOf("rgba(61, 126, 255, 0.4)")).toBe(0.4);
+    expect(alphaOf("rgb(61 126 255 / 30%)")).toBe(0.3);
+    expect(alphaOf("rgb(61, 126, 255)")).toBe(1);
+    expect(keepAlpha("#ff0000", "rgb(61 126 255 / 0.22)")).toBe("rgb(255 0 0 / 0.22)");
+    expect(keepAlpha("#ff0000", "#3d7eff")).toBe("#ff0000");
+  });
+
+  it("removes a color so the base decides it again", () => {
+    const theme = { name: "t", base: "dark" as const, colors: { accent: "#3dbb76", text: "#fff" } };
+    expect(withoutColor(theme, "text").colors).toEqual({ accent: "#3dbb76" });
+    expect(theme.colors.text).toBe("#fff");
+  });
+});
+
+describe("built-in themes", () => {
+  it("use only known colors and valid values", () => {
+    for (const { theme } of BUILTIN_THEMES) {
+      expect(parseTheme(serializeTheme(theme), theme.name).problems).toEqual([]);
+    }
   });
 });

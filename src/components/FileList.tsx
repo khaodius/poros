@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -12,13 +13,13 @@ import { ArrowDown, ArrowUp, CornerLeftUp } from "lucide-react";
 import { useFitCount } from "../hooks/useFitCount";
 import type { PaneController } from "../hooks/usePane";
 import { formatDate, formatPermissions, formatSize } from "../lib/format";
-import { isDirLike, type SortKey } from "../lib/sort";
+import { COLUMN_LABELS, DETAIL_COLUMNS, availableColumns, type DetailColumn } from "../lib/columns";
+import type { DateFormat } from "../lib/settings";
+import { isDirLike, typeLabel, type SortKey } from "../lib/sort";
 import type { FileEntry } from "../lib/types";
 import { useDragStore } from "../state/dragStore";
 import { FileIcon } from "./FileIcon";
 
-export const ROW_HEIGHT = 24;
-export const COMPACT_ROW_HEIGHT = 21;
 const SCROLLBAR_GUTTER = 10;
 /** Empty space right of the last column that belongs to no row: dropping there targets the
  * folder on show rather than the row under the pointer. */
@@ -28,6 +29,7 @@ const TYPE_AHEAD_RESET_MILLIS = 800;
 export interface FileListActions {
   onActivate: () => void;
   onContextMenu: (event: MouseEvent, entry: FileEntry | null) => void;
+  onHeaderContextMenu: (event: MouseEvent) => void;
   onDelete: () => void;
   onRename: () => void;
   onNewFolder: () => void;
@@ -54,42 +56,68 @@ const NAME_COLUMN: Column = {
   width: 180,
   render: (entry) => entry.name,
 };
-const SIZE_COLUMN: Column = {
-  key: "size",
-  label: "Size",
-  width: 88,
-  align: "end",
-  render: (entry) => (isDirLike(entry) ? "" : formatSize(entry.size)),
-};
-const MODIFIED_COLUMN: Column = {
-  key: "modified",
-  label: "Modified",
-  width: 136,
-  render: (entry) => formatDate(entry.modified),
-};
-const PERMISSIONS_COLUMN: Column = {
-  key: "permissions",
-  label: "Permissions",
-  width: 108,
-  render: formatPermissions,
-};
-const OWNER_COLUMN: Column = {
-  key: "owner",
-  label: "Owner",
-  width: 120,
-  render: (entry) => [entry.owner, entry.group].filter(Boolean).join(":"),
-};
+const MODIFIED_WIDTHS: Record<DateFormat, number> = { minutes: 136, seconds: 160, locale: 180 };
+/** The font size the column widths are made for; they grow and shrink with it. */
+const BASE_FONT_SIZE = 13;
+
+function detailColumn(key: DetailColumn, dateFormat: DateFormat): Column {
+  switch (key) {
+    case "size":
+      return {
+        key,
+        label: COLUMN_LABELS.size,
+        width: 88,
+        align: "end",
+        render: (entry) => (isDirLike(entry) ? "" : formatSize(entry.size)),
+      };
+    case "type":
+      return { key, label: COLUMN_LABELS.type, width: 84, render: typeLabel };
+    case "modified":
+      return {
+        key,
+        label: COLUMN_LABELS.modified,
+        width: MODIFIED_WIDTHS[dateFormat],
+        render: (entry) => formatDate(entry.modified, dateFormat),
+      };
+    case "permissions":
+      return { key, label: COLUMN_LABELS.permissions, width: 108, render: formatPermissions };
+    case "owner":
+      return {
+        key,
+        label: COLUMN_LABELS.owner,
+        width: 120,
+        render: (entry) => [entry.owner, entry.group].filter(Boolean).join(":"),
+      };
+  }
+}
+
+/** Columns kept longest when the list gets narrow come first. */
+const FIT_PRIORITY: DetailColumn[] = ["size", "modified", "type", "permissions", "owner"];
 
 interface FileListProps extends FileListActions {
   pane: PaneController;
   active: boolean;
   rowHeight: number;
+  hiddenColumns: readonly DetailColumn[];
+  dateFormat: DateFormat;
+  striped: boolean;
+  fontSize: number;
   /** While files are dragged over this list: the folder under the pointer, or "" for the
    * list itself. */
   dropFolder?: string;
 }
 
-export function FileList({ pane, active, rowHeight, dropFolder, ...actions }: FileListProps) {
+export function FileList({
+  pane,
+  active,
+  rowHeight,
+  hiddenColumns,
+  dateFormat,
+  striped,
+  fontSize,
+  dropFolder,
+  ...actions
+}: FileListProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const typeAhead = useRef({ text: "", lastKeyAt: 0 });
@@ -99,26 +127,30 @@ export function FileList({ pane, active, rowHeight, dropFolder, ...actions }: Fi
   const draggingFiles = useDragStore((state) => !!state.payload && state.payload.kind !== "tab");
 
   const detailColumns = useMemo(() => {
-    const all = pane.listing?.entries ?? [];
-    return [
-      SIZE_COLUMN,
-      MODIFIED_COLUMN,
-      ...(all.some((entry) => entry.permissions !== null) ? [PERMISSIONS_COLUMN] : []),
-      ...(all.some((entry) => entry.owner !== null) ? [OWNER_COLUMN] : []),
-    ];
-  }, [pane.listing]);
-  const widthNeeded = useMemo(() => {
-    let total = NAME_COLUMN.width + SCROLLBAR_GUTTER + DROP_STRIP_WIDTH;
-    return detailColumns.map((column) => (total += column.width));
-  }, [detailColumns]);
-  const fittingColumns = useFitCount(rootRef, widthNeeded);
-  const columns = useMemo(
-    () => [NAME_COLUMN, ...detailColumns.slice(0, fittingColumns)],
-    [detailColumns, fittingColumns],
+    const shown = availableColumns(pane.listing?.entries ?? []).filter(
+      (key) => !hiddenColumns.includes(key),
+    );
+    return FIT_PRIORITY.filter((key) => shown.includes(key)).map((key) =>
+      detailColumn(key, dateFormat),
+    );
+  }, [pane.listing, hiddenColumns, dateFormat]);
+  const widthOf = useCallback(
+    (column: Column) => Math.round((column.width * fontSize) / BASE_FONT_SIZE),
+    [fontSize],
   );
+  const widthNeeded = useMemo(() => {
+    let total = widthOf(NAME_COLUMN) + SCROLLBAR_GUTTER + DROP_STRIP_WIDTH;
+    return detailColumns.map((column) => (total += widthOf(column)));
+  }, [detailColumns, widthOf]);
+  const fittingColumns = useFitCount(rootRef, widthNeeded);
+  const columns = useMemo(() => {
+    const fitting = detailColumns.slice(0, fittingColumns);
+    const inOrder = DETAIL_COLUMNS.flatMap((key) => fitting.filter((column) => column.key === key));
+    return [NAME_COLUMN, ...inOrder];
+  }, [detailColumns, fittingColumns]);
   const gridTemplateColumns = columns
     .map((column) =>
-      column === NAME_COLUMN ? `minmax(${column.width}px, 1fr)` : `${column.width}px`,
+      column === NAME_COLUMN ? `minmax(${widthOf(column)}px, 1fr)` : `${widthOf(column)}px`,
     )
     .join(" ");
 
@@ -290,7 +322,12 @@ export function FileList({ pane, active, rowHeight, dropFolder, ...actions }: Fi
   return (
     <div
       ref={rootRef}
-      className={["file-list", active && "is-active", draggingFiles && "is-dragging-files"]
+      className={[
+        "file-list",
+        active && "is-active",
+        draggingFiles && "is-dragging-files",
+        striped && "is-striped",
+      ]
         .filter(Boolean)
         .join(" ")}
       style={{ "--drop-strip-width": `${DROP_STRIP_WIDTH}px` } as CSSProperties}
@@ -299,6 +336,10 @@ export function FileList({ pane, active, rowHeight, dropFolder, ...actions }: Fi
         className="file-list-header"
         style={{ gridTemplateColumns: `${gridTemplateColumns} ${DROP_STRIP_WIDTH}px` }}
         role="row"
+        onContextMenu={(event) => {
+          event.preventDefault();
+          actions.onHeaderContextMenu(event);
+        }}
       >
         {columns.map((column) => {
           const sorted = pane.sort.key === column.key;
@@ -378,6 +419,7 @@ export function FileList({ pane, active, rowHeight, dropFolder, ...actions }: Fi
                 key={entry.path}
                 className={[
                   "file-row",
+                  item.index % 2 === 1 && "is-odd",
                   selected && "is-selected",
                   isCursor && "is-cursor",
                   entry.hidden && "is-hidden",

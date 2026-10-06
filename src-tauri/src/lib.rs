@@ -2,6 +2,7 @@ pub mod commands;
 pub mod connections;
 pub mod error;
 pub mod events;
+pub mod fonts;
 pub mod format;
 pub mod local;
 pub mod model;
@@ -106,6 +107,7 @@ pub fn run() {
             commands::theme_delete,
             commands::theme_import,
             commands::themes_open_folder,
+            commands::fonts_list,
             commands::save_text_file,
             commands::window_open,
             commands::window_initial_layout,

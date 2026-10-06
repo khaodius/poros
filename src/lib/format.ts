@@ -1,3 +1,4 @@
+import type { DateFormat } from "./settings";
 import type { FileEntry } from "./types";
 
 const UNITS = ["B", "KB", "MB", "GB", "TB", "PB"];
@@ -17,11 +18,22 @@ function pad(value: number): string {
   return value < 10 ? `0${value}` : String(value);
 }
 
-/** `YYYY-MM-DD HH:MM` in local time: sortable, unambiguous across locales. */
-export function formatDate(epochSeconds: number | null): string {
+const localeDateTime = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "short",
+});
+
+/**
+ * Local time as `YYYY-MM-DD HH:MM` (sortable and the same in every locale), with seconds, or in
+ * the system's own style.
+ */
+export function formatDate(epochSeconds: number | null, format: DateFormat = "minutes"): string {
   if (epochSeconds === null) return "";
   const date = new Date(epochSeconds * 1000);
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  if (format === "locale") return localeDateTime.format(date);
+  const day = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  const time = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  return format === "seconds" ? `${day} ${time}:${pad(date.getSeconds())}` : `${day} ${time}`;
 }
 
 export function formatTime(epochMillis: number): string {

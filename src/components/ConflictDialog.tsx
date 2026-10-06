@@ -3,6 +3,7 @@ import { formatDate, formatSize } from "../lib/format";
 import { transfers } from "../lib/ipc";
 import { jobsIn } from "../lib/transfers";
 import type { ExistsAction } from "../lib/types";
+import { useSettingsStore } from "../state/settingsStore";
 import { useTransferStore } from "../state/transferStore";
 import { Dialog } from "./Dialog";
 
@@ -33,6 +34,7 @@ export function ConflictDialog() {
   const snapshot = useTransferStore((state) => state.snapshot);
   const conflicts = useMemo(() => jobsIn(snapshot, ["conflict"]), [snapshot]);
   const focused = useWindowFocused();
+  const dateFormat = useSettingsStore((state) => state.settings.interface.dateFormat);
   const [applyToAll, setApplyToAll] = useState(false);
   const [answeredId, setAnsweredId] = useState<number | null>(null);
   const job = conflicts.find((candidate) => candidate.id !== answeredId);
@@ -63,12 +65,12 @@ export function ConflictDialog() {
             <tr>
               <th>{job.direction === "upload" ? "Local file" : "Server file"}</th>
               <td>{formatSize(info.sourceSize)}</td>
-              <td>{formatDate(info.sourceModified)}</td>
+              <td>{formatDate(info.sourceModified, dateFormat)}</td>
             </tr>
             <tr>
               <th>Existing file</th>
               <td>{formatSize(info.targetSize)}</td>
-              <td>{formatDate(info.targetModified)}</td>
+              <td>{formatDate(info.targetModified, dateFormat)}</td>
             </tr>
           </tbody>
         </table>

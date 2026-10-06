@@ -7,6 +7,7 @@ import type {
   EnqueueRequest,
   ExistsAction,
   FileEntry,
+  FontFamily,
   HostKeyApproval,
   JobState,
   LogRecord,
@@ -103,6 +104,10 @@ export const themeFiles = {
   remove: (id: string) => call<void>("theme_delete", { id }),
   importFile: (path: string) => call<string>("theme_import", { path }),
   openFolder: () => call<void>("themes_open_folder"),
+};
+
+export const fonts = {
+  list: () => call<FontFamily[]>("fonts_list"),
 };
 
 export const files = {

@@ -37,6 +37,9 @@ hmac = "0.12"
 sha1 = "0.10"
 # Saved passwords: Windows Credential Manager, or the Secret Service (GNOME Keyring, KWallet) on Linux.
 keyring = "4.2"
+# Installed font families for the appearance settings.
+fontdb = "0.24.0"
+ttf-parser = { version = "0.25.1", default-features = false, features = ["std", "glyph-names"] }
 
 [dev-dependencies]
 tempfile = "3"

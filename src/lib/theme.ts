@@ -17,22 +17,22 @@ export interface ColorToken {
   key: string;
   label: string;
   group: string;
-  /** Holds a solid color the simple editor can pick; others take alpha or are derived. */
-  editable: boolean;
+  /** Usually see-through, so the picker keeps the current transparency. */
+  translucent: boolean;
 }
 
-const token = (key: string, label: string, group: string, editable = true): ColorToken => ({
+const token = (key: string, label: string, group: string, translucent = false): ColorToken => ({
   key,
   label,
   group,
-  editable,
+  translucent,
 });
 
 export const COLOR_TOKENS: ColorToken[] = [
   token("accent", "Accent", "Accent"),
   token("accent-hover", "Accent hover", "Accent"),
-  token("accent-soft", "Accent tint", "Accent", false),
-  token("accent-softer", "Faint accent tint", "Accent", false),
+  token("accent-soft", "Accent tint", "Accent", true),
+  token("accent-softer", "Faint accent tint", "Accent", true),
   token("text-on-accent", "Text on accent", "Accent"),
   token("surface-base", "Window background", "Surfaces"),
   token("surface-raised", "Panels", "Surfaces"),
@@ -40,6 +40,11 @@ export const COLOR_TOKENS: ColorToken[] = [
   token("surface-overlay", "Menus and dialogs", "Surfaces"),
   token("surface-hover", "Hover", "Surfaces"),
   token("surface-pressed", "Pressed", "Surfaces"),
+  token("titlebar", "Top bar", "Window"),
+  token("statusbar", "Status bar", "Window"),
+  token("list-header", "Column headers", "Window"),
+  token("pane-border-active", "Active pane border", "Window"),
+  token("tab-indicator", "Tab indicator", "Window"),
   token("border", "Borders", "Borders"),
   token("border-strong", "Strong borders", "Borders"),
   token("border-focus", "Focus ring", "Borders"),
@@ -48,7 +53,7 @@ export const COLOR_TOKENS: ColorToken[] = [
   token("text-faint", "Faint text", "Text"),
   token("danger", "Danger", "Status"),
   token("danger-hover", "Danger hover", "Status"),
-  token("danger-soft", "Danger tint", "Status", false),
+  token("danger-soft", "Danger tint", "Status", true),
   token("warning", "Warning", "Status"),
   token("success", "Success", "Status"),
   token("icon-folder", "Folders", "File icons"),
@@ -61,11 +66,19 @@ export const COLOR_TOKENS: ColorToken[] = [
   token("icon-code", "Code", "File icons"),
   token("icon-text", "Documents", "File icons"),
   token("icon-file", "Other files", "File icons"),
-  token("row-selected", "Selected row", "Lists", false),
-  token("row-selected-inactive", "Selected row, inactive pane", "Lists", false),
-  token("row-hover", "Row hover", "Lists", false),
-  token("backdrop", "Dialog backdrop", "Lists", false),
+  token("row-selected", "Selected row", "Lists", true),
+  token("row-selected-inactive", "Selected row, inactive pane", "Lists", true),
+  token("row-hover", "Row hover", "Lists", true),
+  token("row-alternate", "Striped rows", "Lists", true),
+  token("scrollbar", "Scrollbars", "Lists"),
+  token("scrollbar-hover", "Scrollbar hover", "Lists"),
+  token("progress", "Progress bars", "Transfers"),
+  token("upload", "Uploads", "Transfers"),
+  token("download", "Downloads", "Transfers"),
+  token("backdrop", "Dialog backdrop", "Window", true),
 ];
+
+export const COLOR_GROUPS = [...new Set(COLOR_TOKENS.map((entry) => entry.group))];
 
 const TOKEN_KEYS = new Set(COLOR_TOKENS.map((entry) => entry.key));
 
@@ -85,12 +98,18 @@ export const SIMPLE_COLOR_KEYS = [
 
 export const ACCENT_PRESETS = [
   "#3d7eff",
+  "#5b6cf0",
   "#8a63e6",
+  "#b05ce0",
   "#d1478f",
   "#e5484d",
+  "#f07040",
   "#f0a33a",
+  "#c9b21c",
+  "#7cb342",
   "#3dbb76",
   "#14a8b8",
+  "#3fa7ff",
   "#8b95a5",
 ];
 
@@ -126,6 +145,110 @@ const BUILTIN_DEFINITIONS: Theme[] = [
       "text-muted": "#a69eb7",
       "text-faint": "#746b86",
     },
+  },
+  {
+    name: "Midnight",
+    base: "dark",
+    colors: {
+      accent: "#3fa7ff",
+      "surface-base": "#0b1220",
+      "surface-sunken": "#080e19",
+      "surface-raised": "#101a2c",
+      "surface-overlay": "#152238",
+      "surface-hover": "#1b2a44",
+      "surface-pressed": "#22344f",
+      border: "#1c2a40",
+      "border-strong": "#2b3d59",
+      text: "#dfe8f5",
+      "text-muted": "#8fa3bf",
+      "text-faint": "#5d708c",
+      titlebar: "#0e1727",
+    },
+  },
+  {
+    name: "Forest",
+    base: "dark",
+    colors: {
+      accent: "#4cc38a",
+      "text-on-accent": "#06140d",
+      "surface-base": "#0f1512",
+      "surface-sunken": "#0b100d",
+      "surface-raised": "#151d18",
+      "surface-overlay": "#1a241e",
+      "surface-hover": "#202c25",
+      "surface-pressed": "#27362d",
+      border: "#213028",
+      "border-strong": "#2f4237",
+      text: "#e2ebe5",
+      "text-muted": "#98ab9f",
+      "text-faint": "#66786c",
+      "icon-folder": "#d9b25a",
+      upload: "#e0b85a",
+    },
+    radius: 8,
+  },
+  {
+    name: "Ember",
+    base: "dark",
+    colors: {
+      accent: "#f08a4b",
+      "text-on-accent": "#1a0d05",
+      "surface-base": "#16120f",
+      "surface-sunken": "#110e0b",
+      "surface-raised": "#1d1814",
+      "surface-overlay": "#241e19",
+      "surface-hover": "#2b241e",
+      "surface-pressed": "#352c25",
+      border: "#2c241e",
+      "border-strong": "#3e342b",
+      text: "#f0e7df",
+      "text-muted": "#b3a497",
+      "text-faint": "#7f7064",
+      "icon-folder": "#e8a64b",
+    },
+  },
+  {
+    name: "Paper",
+    base: "light",
+    colors: {
+      accent: "#0f8b8d",
+      "surface-base": "#f5f1ea",
+      "surface-sunken": "#ebe5db",
+      "surface-raised": "#fbf8f3",
+      "surface-overlay": "#ffffff",
+      "surface-hover": "#ece6dc",
+      "surface-pressed": "#e1d9cc",
+      border: "#e0d8ca",
+      "border-strong": "#cbbfad",
+      text: "#2b2620",
+      "text-muted": "#6b6156",
+      "text-faint": "#9a8f82",
+      titlebar: "#efe9df",
+      "icon-folder": "#c48a1c",
+    },
+    radius: 8,
+  },
+  {
+    name: "Graphite",
+    base: "dark",
+    colors: {
+      accent: "#a0a8b8",
+      "text-on-accent": "#111316",
+      "surface-base": "#151618",
+      "surface-sunken": "#101113",
+      "surface-raised": "#1b1c1f",
+      "surface-overlay": "#222326",
+      "surface-hover": "#28292d",
+      "surface-pressed": "#303136",
+      border: "#2a2b2f",
+      "border-strong": "#3a3b40",
+      text: "#e6e6e8",
+      "text-muted": "#a2a3a8",
+      "text-faint": "#6e6f75",
+      progress: "#3dbb76",
+      upload: "#6aa6ff",
+    },
+    radius: 2,
   },
   {
     name: "High contrast",
@@ -222,6 +345,28 @@ function withAlpha(color: string, alpha: number): string | null {
   return channels ? `rgb(${channels.join(" ")} / ${alpha})` : null;
 }
 
+const SLASH_ALPHA = /\/\s*([\d.]+)(%?)\s*\)$/;
+const COMMA_ALPHA = /^(?:rgb|hsl)a\((?:[^,]+,){3}\s*([\d.]+)(%?)\s*\)$/i;
+
+/** The opacity of a color written with an alpha channel, or 1. */
+export function alphaOf(color: string): number {
+  const value = color.trim();
+  if (HEX_COLOR.test(value) && (value.length === 5 || value.length === 9)) {
+    const digits = value.length === 5 ? value[4] + value[4] : value.slice(7, 9);
+    return Math.round((parseInt(digits, 16) / 255) * 100) / 100;
+  }
+  const match = value.match(SLASH_ALPHA) ?? value.match(COMMA_ALPHA);
+  if (!match) return 1;
+  const alpha = Number(match[1]) / (match[2] ? 100 : 1);
+  return Number.isFinite(alpha) ? Math.min(1, Math.max(0, alpha)) : 1;
+}
+
+/** A picked solid color with the transparency `previous` had. */
+export function keepAlpha(picked: string, previous: string): string {
+  const alpha = alphaOf(previous);
+  return alpha < 1 ? (withAlpha(picked, alpha) ?? picked) : picked;
+}
+
 /** Moves a color toward white or black by `amount` (0 to 1). */
 export function mixHex(color: string, toward: "white" | "black", amount: number): string {
   const channels = hexChannels(color);
@@ -233,7 +378,6 @@ export function mixHex(color: string, toward: "white" | "black", amount: number)
     .join("")}`;
 }
 
-/** Fills tokens that follow from the ones a theme sets, such as tints of its accent. */
 /** Colors computed from another color unless a theme sets them itself. */
 const DERIVED_COLORS: Record<string, readonly string[]> = {
   accent: ["accent-hover", "accent-soft", "accent-softer", "border-focus", "row-selected"],
@@ -244,6 +388,13 @@ const DERIVED_COLORS: Record<string, readonly string[]> = {
 export function withColor(theme: Theme, key: string, value: string): Theme {
   const colors = { ...theme.colors, [key]: value };
   for (const derived of DERIVED_COLORS[key] ?? []) delete colors[derived];
+  return { ...theme, colors };
+}
+
+/** Removes a color so the base palette, or the color it derives from, decides it. */
+export function withoutColor(theme: Theme, key: string): Theme {
+  const colors = { ...theme.colors };
+  delete colors[key];
   return { ...theme, colors };
 }
 

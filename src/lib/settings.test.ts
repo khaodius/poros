@@ -15,10 +15,40 @@ describe("sanitizeSettings", () => {
       interface: { doubleClickFile: "explode" },
       log: { maxLines: 3, levels: { warn: false, error: "yes" } },
     });
-    expect(settings.appearance.fontSize).toBe(16);
+    expect(settings.appearance.fontSize).toBe(20);
     expect(settings.appearance.theme).toBe("builtin:system");
     expect(settings.interface.doubleClickFile).toBe("transfer");
     expect(settings.log.maxLines).toBe(200);
     expect(settings.log.levels).toEqual({ info: true, warn: false, error: true, server: true });
+  });
+
+  it("turns the old compact rows switch into a row height", () => {
+    expect(sanitizeSettings({ appearance: { compactRows: true } }).appearance.rowHeight).toBe(21);
+    expect(sanitizeSettings({ appearance: { compactRows: false } }).appearance.rowHeight).toBe(24);
+    expect(
+      sanitizeSettings({ appearance: { compactRows: true, rowHeight: 30 } }).appearance.rowHeight,
+    ).toBe(30);
+  });
+
+  it("keeps a corner radius only when it is a number", () => {
+    expect(sanitizeSettings({ appearance: { radius: 40 } }).appearance.radius).toBe(16);
+    expect(sanitizeSettings({ appearance: { radius: 3.4 } }).appearance.radius).toBe(3);
+    expect(sanitizeSettings({ appearance: { radius: "round" } }).appearance.radius).toBeNull();
+    expect(sanitizeSettings({ appearance: { radius: { size: 4 } } }).appearance.radius).toBeNull();
+  });
+
+  it("checks the file list options", () => {
+    const options = sanitizeSettings({
+      interface: {
+        hiddenColumns: ["owner", "bogus", 4, "type"],
+        sort: { key: "colour", direction: 1 },
+        dateFormat: "julian",
+      },
+    }).interface;
+    expect(options.hiddenColumns).toEqual(["type", "owner"]);
+    expect(options.sort).toEqual({ key: "name", direction: 1 });
+    expect(options.dateFormat).toBe("minutes");
+    const sorted = sanitizeSettings({ interface: { sort: { key: "type", direction: -1 } } });
+    expect(sorted.interface.sort).toEqual({ key: "type", direction: -1 });
   });
 });

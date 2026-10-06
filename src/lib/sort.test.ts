@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filterEntries, sortEntries } from "./sort";
+import { filterEntries, sortEntries, typeLabel } from "./sort";
 import type { FileEntry } from "./types";
 
 function entry(name: string, overrides: Partial<FileEntry> = {}): FileEntry {
@@ -56,6 +56,45 @@ describe("sortEntries", () => {
     expect(names(sortEntries(sized, { key: "size", direction: 1 }))).toEqual(["c", "a", "b"]);
   });
 
+  it("sorts by type, keeping names A to Z within a type either way", () => {
+    const mixed = [
+      entry("b.txt"),
+      entry("photo.PNG"),
+      entry("a.txt"),
+      entry("README"),
+      entry("docs", { kind: "dir" }),
+      entry("c.png"),
+      entry(".bashrc"),
+    ];
+    expect(names(sortEntries(mixed, { key: "type", direction: 1 }))).toEqual([
+      "docs",
+      ".bashrc",
+      "README",
+      "c.png",
+      "photo.PNG",
+      "a.txt",
+      "b.txt",
+    ]);
+    expect(names(sortEntries(mixed, { key: "type", direction: -1 }))).toEqual([
+      "docs",
+      "a.txt",
+      "b.txt",
+      "c.png",
+      "photo.PNG",
+      ".bashrc",
+      "README",
+    ]);
+  });
+
+  it("can mix folders in with files", () => {
+    const mixed = [entry("b.txt"), entry("a", { kind: "dir" }), entry("c", { kind: "dir" })];
+    expect(names(sortEntries(mixed, { key: "name", direction: 1 }, false))).toEqual([
+      "a",
+      "b.txt",
+      "c",
+    ]);
+  });
+
   it("does not mutate its input", () => {
     const original = names(entries);
     sortEntries(entries, { key: "size", direction: -1 });
@@ -80,5 +119,17 @@ describe("filterEntries", () => {
       "Notes.md",
       "notebook",
     ]);
+  });
+});
+
+describe("typeLabel", () => {
+  it("names folders, extensions and files without one", () => {
+    expect(typeLabel(entry("src", { kind: "dir" }))).toBe("Folder");
+    expect(typeLabel(entry("up", { kind: "symlink", linkTarget: "dir" }))).toBe("Folder");
+    expect(typeLabel(entry("gone", { kind: "symlink", linkTarget: "broken" }))).toBe("Broken link");
+    expect(typeLabel(entry("archive.tar.gz"))).toBe("GZ");
+    expect(typeLabel(entry(".profile"))).toBe("File");
+    expect(typeLabel(entry("Makefile"))).toBe("File");
+    expect(typeLabel(entry("trailing."))).toBe("File");
   });
 });

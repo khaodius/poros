@@ -6,13 +6,27 @@ import {
   Palette,
   type LucideIcon,
 } from "lucide-react";
-import { MAX_WORKERS, LOG_LINE_LIMITS, SOCKET_BUFFER_LIMITS, type Settings } from "../lib/settings";
+import { COLUMN_LABELS, DETAIL_COLUMNS } from "../lib/columns";
+import { formatDate } from "../lib/format";
+import {
+  DATE_FORMATS,
+  LOG_LINE_LIMITS,
+  MAX_WORKERS,
+  SOCKET_BUFFER_LIMITS,
+  type Settings,
+} from "../lib/settings";
 import type { ExistsAction } from "../lib/types";
 import { saveSettingsSection, useSettingsStore } from "../state/settingsStore";
 import { useUiStore, type SettingsSection } from "../state/uiStore";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { Dialog } from "./Dialog";
-import { NumberSetting, SelectSetting, SettingGroup, SwitchSetting } from "./settingsFields";
+import {
+  NumberSetting,
+  SelectSetting,
+  SettingGroup,
+  SettingRow,
+  SwitchSetting,
+} from "./settingsFields";
 
 const SECTIONS: { id: SettingsSection; label: string; icon: LucideIcon }[] = [
   { id: "transfers", label: "Transfers", icon: ArrowLeftRight },
@@ -21,6 +35,9 @@ const SECTIONS: { id: SettingsSection; label: string; icon: LucideIcon }[] = [
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "log", label: "Log", icon: FileText },
 ];
+
+/** 2026-10-06 14:05:09 local time, to show what each date format looks like. */
+const DATE_SAMPLE = new Date(2026, 9, 6, 14, 5, 9).getTime() / 1000;
 
 const EXISTS_ACTIONS: { value: ExistsAction; label: string }[] = [
   { value: "ask", label: "Ask me" },
@@ -319,10 +336,47 @@ function InterfaceSettingsPage({ settings }: { settings: Settings }) {
           onChange={(showHiddenFiles) => set({ showHiddenFiles })}
         />
         <SwitchSetting
-          label="Compact rows"
-          checked={settings.appearance.compactRows}
-          onChange={(compactRows) => void saveSettingsSection("appearance", { compactRows })}
+          label="Folders first"
+          hint="Keeps folders above files whatever the sort order."
+          checked={options.foldersFirst}
+          onChange={(foldersFirst) => set({ foldersFirst })}
         />
+        <SelectSetting
+          label="Dates"
+          value={options.dateFormat}
+          options={DATE_FORMATS.map((format) => ({
+            value: format,
+            label: formatDate(DATE_SAMPLE, format),
+          }))}
+          onChange={(dateFormat) => set({ dateFormat })}
+        />
+        <SettingRow
+          label="Columns"
+          hint="Right-click a column heading to show or hide columns and change the sort."
+        >
+          <div className="column-toggles">
+            {DETAIL_COLUMNS.map((column) => {
+              const shown = !options.hiddenColumns.includes(column);
+              return (
+                <button
+                  key={column}
+                  type="button"
+                  className={`toggle ${shown ? "is-on" : ""}`}
+                  aria-pressed={shown}
+                  onClick={() =>
+                    set({
+                      hiddenColumns: shown
+                        ? [...options.hiddenColumns, column]
+                        : options.hiddenColumns.filter((hidden) => hidden !== column),
+                    })
+                  }
+                >
+                  {COLUMN_LABELS[column]}
+                </button>
+              );
+            })}
+          </div>
+        </SettingRow>
       </SettingGroup>
       <SettingGroup title="Tabs and windows">
         <SwitchSetting

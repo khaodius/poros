@@ -32,7 +32,9 @@ export interface PaneController {
   goForward: () => void;
   goHome: () => void;
   open: (entry: FileEntry) => void;
+  /** Sorts by `key`, or flips the direction when already sorted by it. */
   setSortKey: (key: SortKey) => void;
+  setSort: (sort: SortSpec) => void;
   setFilter: (filter: string) => void;
   toggleHidden: () => void;
   selectOnly: (path: string) => void;
@@ -45,7 +47,23 @@ export interface PaneController {
   selectedEntries: () => FileEntry[];
 }
 
-export function usePane(source: FileSource, showHiddenByDefault = false): PaneController {
+export interface PaneOptions {
+  showHiddenByDefault?: boolean;
+  initialSort?: SortSpec;
+  foldersFirst?: boolean;
+  /** Called with each sort order picked in the pane. */
+  onSortChange?: (sort: SortSpec) => void;
+}
+
+export function usePane(
+  source: FileSource,
+  {
+    showHiddenByDefault = false,
+    initialSort = { key: "name", direction: 1 },
+    foldersFirst = true,
+    onSortChange,
+  }: PaneOptions = {},
+): PaneController {
   const [listing, setListing] = useState<DirListing | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<AppError | null>(null);
@@ -53,15 +71,20 @@ export function usePane(source: FileSource, showHiddenByDefault = false): PaneCo
   const [selection, setSelection] = useState<ReadonlySet<string>>(new Set());
   const [anchorPath, setAnchorPath] = useState<string | null>(null);
   const [cursorPath, setCursorPath] = useState<string | null>(null);
-  const [sort, setSort] = useState<SortSpec>({ key: "name", direction: 1 });
+  const [sort, setSortState] = useState<SortSpec>(initialSort);
   const [filter, setFilter] = useState("");
   const [showHidden, setShowHidden] = useState(showHiddenByDefault);
   const latestRequest = useRef(0);
   const listedPath = useRef<string | null>(null);
 
   const visibleEntries = useMemo(
-    () => sortEntries(filterEntries(listing?.entries ?? [], { showHidden, query: filter }), sort),
-    [listing, showHidden, filter, sort],
+    () =>
+      sortEntries(
+        filterEntries(listing?.entries ?? [], { showHidden, query: filter }),
+        sort,
+        foldersFirst,
+      ),
+    [listing, showHidden, filter, sort, foldersFirst],
   );
   const hiddenCount = useMemo(
     () => (showHidden ? 0 : (listing?.entries.filter((entry) => entry.hidden).length ?? 0)),
@@ -165,13 +188,23 @@ export function usePane(source: FileSource, showHiddenByDefault = false): PaneCo
     [navigate],
   );
 
-  const setSortKey = useCallback((key: SortKey) => {
-    setSort((current) =>
-      current.key === key
-        ? { key, direction: current.direction === 1 ? -1 : 1 }
-        : { key, direction: 1 },
-    );
-  }, []);
+  const setSort = useCallback(
+    (next: SortSpec) => {
+      setSortState(next);
+      onSortChange?.(next);
+    },
+    [onSortChange],
+  );
+
+  const setSortKey = useCallback(
+    (key: SortKey) =>
+      setSort(
+        sort.key === key
+          ? { key, direction: sort.direction === 1 ? -1 : 1 }
+          : { key, direction: 1 },
+      ),
+    [sort, setSort],
+  );
 
   const selectOnly = useCallback((path: string) => {
     setSelection(new Set([path]));
@@ -272,6 +305,7 @@ export function usePane(source: FileSource, showHiddenByDefault = false): PaneCo
     goHome,
     open,
     setSortKey,
+    setSort,
     setFilter,
     toggleHidden: () => setShowHidden((current) => !current),
     selectOnly,
