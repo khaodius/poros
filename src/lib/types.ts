@@ -1,5 +1,6 @@
 // Mirrors the serde types in src-tauri/src (model.rs, error.rs, ssh/mod.rs, session.rs,
-// events.rs, transfer/, connections.rs, themes.rs). Field names are camelCase on the wire.
+// events.rs, transfer/, connections.rs, themes.rs, fonts.rs). Field names are camelCase on the
+// wire.
 
 export type EntryKind = "dir" | "file" | "symlink" | "other";
 export type LinkTarget = "dir" | "file" | "broken";
@@ -215,6 +216,13 @@ export interface SavedConnection {
   saveSecret: boolean;
   /** Milliseconds since the Unix epoch. */
   lastUsed?: number | null;
+}
+
+export interface FontFamily {
+  name: string;
+  /** Older per-style names of the family, for web views that do not know its main name. */
+  alternates: string[];
+  monospaced: boolean;
 }
 
 export interface ThemeFile {

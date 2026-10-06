@@ -1,4 +1,6 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
+import { RotateCcw } from "lucide-react";
+import { Stepper } from "./Stepper";
 
 interface RowProps {
   label: string;
@@ -65,36 +67,27 @@ interface NumberProps {
   onChange: (value: number) => void;
 }
 
-export function NumberSetting(props: NumberProps) {
-  // Remounts with the stored value, so a clamped or reloaded value replaces what was typed.
-  return <NumberInput key={props.value} {...props} />;
-}
-
-function NumberInput({ label, hint, value, min, max, unit, disabled, onChange }: NumberProps) {
-  const [text, setText] = useState(String(value));
-  const commit = () => {
-    const parsed = Number(text);
-    const next = Number.isFinite(parsed) && text.trim() !== "" ? parsed : value;
-    const clamped = Math.min(max, Math.max(min, Math.round(next)));
-    setText(String(clamped));
-    if (clamped !== value) onChange(clamped);
-  };
+export function NumberSetting({
+  label,
+  hint,
+  value,
+  min,
+  max,
+  unit,
+  disabled,
+  onChange,
+}: NumberProps) {
   return (
     <SettingRow label={label} hint={hint} disabled={disabled}>
-      <span className="number-input">
-        <input
-          value={text}
-          inputMode="numeric"
-          aria-label={label}
-          disabled={disabled}
-          onChange={(event) => setText(event.target.value.replace(/[^\d]/g, ""))}
-          onBlur={commit}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") commit();
-          }}
-        />
-        <span className="number-unit">{unit}</span>
-      </span>
+      <Stepper
+        value={value}
+        min={min}
+        max={max}
+        label={label}
+        unit={unit}
+        disabled={disabled}
+        onChange={onChange}
+      />
     </SettingRow>
   );
 }
@@ -127,6 +120,90 @@ export function SelectSetting<T extends string>({
           </option>
         ))}
       </select>
+    </SettingRow>
+  );
+}
+
+const RANGE_SAVE_DELAY_MILLIS = 300;
+
+interface RangeProps {
+  label: string;
+  hint?: string;
+  value: number;
+  min: number;
+  max: number;
+  format: (value: number) => string;
+  /** Shows a value while the slider moves. */
+  onPreview: (value: number) => void;
+  /** Saves the value the slider settled on. */
+  onCommit: (value: number) => void;
+  /** Offered as a button when given. */
+  onReset?: () => void;
+  resetLabel?: string;
+}
+
+export function RangeSetting({
+  label,
+  hint,
+  value,
+  min,
+  max,
+  format,
+  onPreview,
+  onCommit,
+  onReset,
+  resetLabel,
+}: RangeProps) {
+  const pending = useRef<{ timer: number; value: number } | null>(null);
+  const commit = useRef(onCommit);
+  useLayoutEffect(() => {
+    commit.current = onCommit;
+  });
+  useEffect(
+    () => () => {
+      if (!pending.current) return;
+      window.clearTimeout(pending.current.timer);
+      commit.current(pending.current.value);
+    },
+    [],
+  );
+
+  const change = (next: number) => {
+    onPreview(next);
+    if (pending.current) window.clearTimeout(pending.current.timer);
+    pending.current = {
+      value: next,
+      timer: window.setTimeout(() => {
+        pending.current = null;
+        commit.current(next);
+      }, RANGE_SAVE_DELAY_MILLIS),
+    };
+  };
+
+  return (
+    <SettingRow label={label} hint={hint}>
+      <span className="range">
+        {onReset && (
+          <button
+            type="button"
+            className="icon-button"
+            title={resetLabel}
+            aria-label={resetLabel}
+            onClick={onReset}
+          >
+            <RotateCcw size={13} />
+          </button>
+        )}
+        <input
+          type="range"
+          min={min}
+          max={max}
+          value={value}
+          aria-label={label}
+          onChange={(event) => change(Number(event.target.value))}
+        />
+        <span className="range-value">{format(value)}</span>
+      </span>
     </SettingRow>
   );
 }

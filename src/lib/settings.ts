@@ -2,6 +2,8 @@
 // sections; the interface, appearance and log sections are stored as given, so they are
 // checked here.
 
+import { DETAIL_COLUMNS, type DetailColumn } from "./columns";
+import { SORT_KEYS, type SortSpec } from "./sort";
 import type { ExistsAction, LogLevel } from "./types";
 
 export const MAX_WORKERS = 16;
@@ -41,6 +43,8 @@ export interface ConnectionSettings {
 }
 
 export type DoubleClickAction = "transfer" | "nothing";
+export type DateFormat = "minutes" | "seconds" | "locale";
+export const DATE_FORMATS: DateFormat[] = ["minutes", "seconds", "locale"];
 
 export interface InterfaceSettings {
   doubleClickFile: DoubleClickAction;
@@ -51,13 +55,24 @@ export interface InterfaceSettings {
   rememberLayout: boolean;
   /** Off: Poros draws its own window buttons in the top bar. */
   systemTitleBar: boolean;
+  foldersFirst: boolean;
+  /** The order new panes start with: the last one picked in any pane. */
+  sort: SortSpec;
+  dateFormat: DateFormat;
+  hiddenColumns: DetailColumn[];
 }
 
 export interface AppearanceSettings {
   /** A built-in theme id (`builtin:...`) or the file name of a user theme. */
   theme: string;
   fontSize: number;
-  compactRows: boolean;
+  /** A font family name; empty uses the theme's font or the default. */
+  uiFont: string;
+  monoFont: string;
+  /** Corner radius in pixels; null uses the theme's. */
+  radius: number | null;
+  rowHeight: number;
+  stripedRows: boolean;
 }
 
 export interface LogSettings {
@@ -75,7 +90,10 @@ export interface Settings {
   log: LogSettings;
 }
 
-export const FONT_SIZES = [11, 12, 13, 14, 15, 16];
+export const FONT_SIZE_LIMITS = { min: 10, max: 20 };
+export const RADIUS_LIMITS = { min: 0, max: 16 };
+export const ROW_HEIGHT_LIMITS = { min: 18, max: 36 };
+const COMPACT_ROW_HEIGHT = 21;
 export const LOG_LINE_LIMITS = { min: 200, max: 50000 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -114,8 +132,20 @@ export const DEFAULT_SETTINGS: Settings = {
     saveQuickConnections: false,
     rememberLayout: true,
     systemTitleBar: false,
+    foldersFirst: true,
+    sort: { key: "name", direction: 1 },
+    dateFormat: "minutes",
+    hiddenColumns: [],
   },
-  appearance: { theme: "builtin:system", fontSize: 13, compactRows: false },
+  appearance: {
+    theme: "builtin:system",
+    fontSize: 13,
+    uiFont: "",
+    monoFont: "",
+    radius: null,
+    rowHeight: 24,
+    stripedRows: false,
+  },
   log: {
     maxLines: 5000,
     timestamps: true,
@@ -136,7 +166,9 @@ function mergeSection<T extends object>(defaults: T, stored: unknown): T {
   const merged = { ...defaults } as Record<string, unknown>;
   for (const [key, fallback] of Object.entries(defaults)) {
     const value = source[key];
-    if (fallback !== null && typeof fallback === "object") {
+    if (Array.isArray(fallback)) {
+      if (Array.isArray(value)) merged[key] = value;
+    } else if (fallback !== null && typeof fallback === "object") {
       merged[key] = mergeSection(fallback as object, value);
     } else if (typeof value === typeof fallback && !Number.isNaN(value)) {
       merged[key] = value;
@@ -158,14 +190,32 @@ export function sanitizeSettings(stored: unknown): Settings {
     appearance: mergeSection(DEFAULT_SETTINGS.appearance, source.appearance),
     log: mergeSection(DEFAULT_SETTINGS.log, source.log),
   };
-  if (!["transfer", "nothing"].includes(settings.interface.doubleClickFile)) {
-    settings.interface.doubleClickFile = DEFAULT_SETTINGS.interface.doubleClickFile;
+  const options = settings.interface;
+  if (!["transfer", "nothing"].includes(options.doubleClickFile)) {
+    options.doubleClickFile = DEFAULT_SETTINGS.interface.doubleClickFile;
   }
-  settings.appearance.fontSize = clamp(
-    settings.appearance.fontSize,
-    FONT_SIZES[0],
-    FONT_SIZES[FONT_SIZES.length - 1],
-  );
+  if (!DATE_FORMATS.includes(options.dateFormat)) {
+    options.dateFormat = DEFAULT_SETTINGS.interface.dateFormat;
+  }
+  if (!SORT_KEYS.includes(options.sort.key) || ![1, -1].includes(options.sort.direction)) {
+    options.sort = DEFAULT_SETTINGS.interface.sort;
+  }
+  options.hiddenColumns = DETAIL_COLUMNS.filter((column) => options.hiddenColumns.includes(column));
+
+  const appearance = settings.appearance;
+  const storedAppearance = asSection(source.appearance);
+  appearance.fontSize = clamp(appearance.fontSize, FONT_SIZE_LIMITS.min, FONT_SIZE_LIMITS.max);
+  appearance.uiFont = appearance.uiFont.trim();
+  appearance.monoFont = appearance.monoFont.trim();
+  appearance.radius =
+    typeof storedAppearance.radius === "number" && Number.isFinite(storedAppearance.radius)
+      ? clamp(storedAppearance.radius, RADIUS_LIMITS.min, RADIUS_LIMITS.max)
+      : null;
+  // Before row heights could be picked, a switch chose between two.
+  if (storedAppearance.rowHeight === undefined && storedAppearance.compactRows === true) {
+    appearance.rowHeight = COMPACT_ROW_HEIGHT;
+  }
+  appearance.rowHeight = clamp(appearance.rowHeight, ROW_HEIGHT_LIMITS.min, ROW_HEIGHT_LIMITS.max);
   settings.log.maxLines = clamp(settings.log.maxLines, LOG_LINE_LIMITS.min, LOG_LINE_LIMITS.max);
   return settings;
 }

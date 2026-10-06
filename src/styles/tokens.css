@@ -1,12 +1,14 @@
 :root {
   color-scheme: dark;
 
-  --font-ui:
+  --font-ui-default:
     "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Cantarell", "Ubuntu",
     sans-serif;
-  --font-mono:
+  --font-mono-default:
     "JetBrains Mono", "Cascadia Mono", "Cascadia Code", "SF Mono", "Consolas", "DejaVu Sans Mono",
     monospace;
+  --font-ui: var(--font-ui-default);
+  --font-mono: var(--font-mono-default);
   --font-size: 13px;
   --font-size-small: 12px;
   --font-size-tiny: 11px;
@@ -56,10 +58,23 @@
   --row-selected: rgb(61 126 255 / 0.22);
   --row-selected-inactive: rgb(154 163 178 / 0.14);
   --row-hover: rgb(255 255 255 / 0.035);
+  --row-alternate: rgb(255 255 255 / 0.022);
 
   --shadow-popover: 0 8px 28px rgb(0 0 0 / 0.45), 0 0 0 1px var(--border-strong);
   --shadow-dialog: 0 24px 64px rgb(0 0 0 / 0.55), 0 0 0 1px var(--border-strong);
   --backdrop: rgb(5 6 8 / 0.6);
+
+  /* Follow the palette above unless a theme sets them. */
+  --titlebar: var(--surface-raised);
+  --statusbar: var(--surface-base);
+  --list-header: var(--surface-raised);
+  --pane-border-active: var(--border-strong);
+  --tab-indicator: var(--accent);
+  --scrollbar: var(--border-strong);
+  --scrollbar-hover: var(--text-faint);
+  --progress: var(--accent);
+  --upload: var(--accent);
+  --download: var(--success);
 
   --transition-fast: 90ms ease-out;
 }
@@ -108,6 +123,7 @@
     --row-selected: rgb(47 111 234 / 0.18);
     --row-selected-inactive: rgb(91 101 117 / 0.13);
     --row-hover: rgb(0 0 0 / 0.035);
+    --row-alternate: rgb(0 0 0 / 0.025);
 
     --shadow-popover: 0 8px 24px rgb(20 30 50 / 0.16), 0 0 0 1px var(--border-strong);
     --shadow-dialog: 0 24px 64px rgb(20 30 50 / 0.22), 0 0 0 1px var(--border-strong);
@@ -158,6 +174,7 @@
   --row-selected: rgb(47 111 234 / 0.18);
   --row-selected-inactive: rgb(91 101 117 / 0.13);
   --row-hover: rgb(0 0 0 / 0.035);
+  --row-alternate: rgb(0 0 0 / 0.025);
 
   --shadow-popover: 0 8px 24px rgb(20 30 50 / 0.16), 0 0 0 1px var(--border-strong);
   --shadow-dialog: 0 24px 64px rgb(20 30 50 / 0.22), 0 0 0 1px var(--border-strong);

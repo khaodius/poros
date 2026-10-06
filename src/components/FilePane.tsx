@@ -11,6 +11,7 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowUp,
+  ArrowUpDown,
   Bookmark,
   ClipboardCopy,
   Download,
@@ -28,22 +29,23 @@ import {
   X,
 } from "lucide-react";
 import { usePane } from "../hooks/usePane";
+import { COLUMN_LABELS, availableColumns, type DetailColumn } from "../lib/columns";
 import type { FileSource } from "../lib/fileSource";
 import { formatSize, pluralize } from "../lib/format";
 import { stemLength } from "../lib/path";
-import { isDirLike } from "../lib/sort";
+import { isDirLike, type SortKey, type SortSpec } from "../lib/sort";
 import type { FileEntry } from "../lib/types";
 import { beginDrag, useDragStore } from "../state/dragStore";
 import { useLogStore } from "../state/logStore";
 import { lastActivePane, registerPane, updatePane } from "../state/paneRegistry";
 import { useSessionStore } from "../state/sessionStore";
-import { useSettingsStore } from "../state/settingsStore";
+import { saveSettingsSection, useSettingsStore } from "../state/settingsStore";
 import { useToastStore } from "../state/toastStore";
 import { transferFromPane, transferToOtherSide } from "../state/transferActions";
 import { useUiStore } from "../state/uiStore";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
-import { COMPACT_ROW_HEIGHT, FileList, ROW_HEIGHT } from "./FileList";
+import { FileList } from "./FileList";
 import { PathBar } from "./PathBar";
 import { PromptDialog } from "./PromptDialog";
 
@@ -83,6 +85,11 @@ function focusNextPane(from: HTMLElement | null) {
   lists[(current + 1) % lists.length].focus();
 }
 
+/** Keeps rows from getting shorter than their text when the font is large. */
+const MIN_ROW_PADDING = 6;
+
+const rememberSort = (sort: SortSpec) => void saveSettingsSection("interface", { sort });
+
 export function FilePane({
   tabId,
   title,
@@ -95,8 +102,18 @@ export function FilePane({
 }: FilePaneProps) {
   const showHiddenByDefault = useSettingsStore((state) => state.settings.interface.showHiddenFiles);
   const doubleClickFile = useSettingsStore((state) => state.settings.interface.doubleClickFile);
-  const compactRows = useSettingsStore((state) => state.settings.appearance.compactRows);
-  const pane = usePane(source, showHiddenByDefault);
+  const foldersFirst = useSettingsStore((state) => state.settings.interface.foldersFirst);
+  const hiddenColumns = useSettingsStore((state) => state.settings.interface.hiddenColumns);
+  const dateFormat = useSettingsStore((state) => state.settings.interface.dateFormat);
+  const rowHeight = useSettingsStore((state) => state.settings.appearance.rowHeight);
+  const stripedRows = useSettingsStore((state) => state.settings.appearance.stripedRows);
+  const fontSize = useSettingsStore((state) => state.settings.appearance.fontSize);
+  const pane = usePane(source, {
+    showHiddenByDefault,
+    initialSort: useSettingsStore.getState().settings.interface.sort,
+    foldersFirst,
+    onSortChange: rememberSort,
+  });
   const [dialog, setDialog] = useState<PaneDialog | null>(null);
   const [menu, setMenu] = useState<OpenMenu | null>(null);
   const [pathEditRequest, setPathEditRequest] = useState(0);
@@ -218,6 +235,54 @@ export function FilePane({
     });
   };
 
+  const columns = availableColumns(pane.listing?.entries ?? []);
+
+  const sortMenu = (): MenuItem => ({
+    label: "Sort by",
+    icon: <ArrowUpDown size={14} />,
+    items: [
+      ...(["name", ...columns] as SortKey[]).map((key) => ({
+        label: key === "name" ? "Name" : COLUMN_LABELS[key],
+        checked: pane.sort.key === key,
+        onSelect: () => pane.setSort({ key, direction: pane.sort.direction }),
+      })),
+      "separator",
+      ...([1, -1] as const).map((direction) => ({
+        label: direction === 1 ? "Ascending" : "Descending",
+        checked: pane.sort.direction === direction,
+        onSelect: () => pane.setSort({ key: pane.sort.key, direction }),
+      })),
+      "separator",
+      {
+        label: "Folders first",
+        checked: foldersFirst,
+        onSelect: () => void saveSettingsSection("interface", { foldersFirst: !foldersFirst }),
+      },
+    ],
+  });
+
+  const showHeaderMenu = (event: MouseEvent) => {
+    const toggleColumn = (key: DetailColumn) =>
+      void saveSettingsSection("interface", {
+        hiddenColumns: hiddenColumns.includes(key)
+          ? hiddenColumns.filter((hidden) => hidden !== key)
+          : [...hiddenColumns, key],
+      });
+    setMenu({
+      x: event.clientX,
+      y: event.clientY,
+      items: [
+        ...columns.map((key) => ({
+          label: COLUMN_LABELS[key],
+          checked: !hiddenColumns.includes(key),
+          onSelect: () => toggleColumn(key),
+        })),
+        "separator",
+        sortMenu(),
+      ],
+    });
+  };
+
   const contextMenuItems = (entry: FileEntry | null): MenuItem[] => {
     const targets = entry ? (pane.selection.has(entry.path) ? selected : [entry]) : [];
     return [
@@ -244,6 +309,7 @@ export function FilePane({
         shortcut: "F7",
         onSelect: openNewFolder,
       },
+      ...(entry ? [] : [sortMenu()]),
       "separator",
       {
         label: "Rename",
@@ -372,10 +438,15 @@ export function FilePane({
         <FileList
           pane={pane}
           active={active}
-          rowHeight={compactRows ? COMPACT_ROW_HEIGHT : ROW_HEIGHT}
+          rowHeight={Math.max(rowHeight, fontSize + MIN_ROW_PADDING)}
+          hiddenColumns={hiddenColumns}
+          dateFormat={dateFormat}
+          striped={stripedRows}
+          fontSize={fontSize}
           dropFolder={dropFolder}
           onActivate={markActive}
           onContextMenu={showContextMenu}
+          onHeaderContextMenu={showHeaderMenu}
           onDelete={openDelete}
           onRename={openRename}
           onNewFolder={openNewFolder}

@@ -26,6 +26,7 @@ import {
   windows,
 } from "./lib/ipc";
 import { findGroup, group, welcomeTab } from "./lib/layout";
+import { DEFAULT_SETTINGS, FONT_SIZE_LIMITS } from "./lib/settings";
 import { dragWindowFrom } from "./lib/windowDrag";
 import type { StoreName } from "./lib/types";
 import { hitTest, useDragStore, type DragPayload } from "./state/dragStore";
@@ -33,7 +34,7 @@ import { persistLayout, restoreLayout, useLayoutStore } from "./state/layoutStor
 import { useLogStore } from "./state/logStore";
 import { useSavedConnections } from "./state/savedConnectionsStore";
 import { useSessionStore } from "./state/sessionStore";
-import { useSettingsStore } from "./state/settingsStore";
+import { saveSettingsSection, useSettingsStore } from "./state/settingsStore";
 import { adoptHandoff, isMainWindow, requestCloseTab } from "./state/tabActions";
 import { applyTheme, findTheme, useThemeStore } from "./state/themeStore";
 import { uploadDroppedPaths } from "./state/transferActions";
@@ -123,17 +124,16 @@ function useBackendEvents() {
 }
 
 function useAppliedTheme() {
-  const themeId = useSettingsStore((state) => state.settings.appearance.theme);
-  const fontSize = useSettingsStore((state) => state.settings.appearance.fontSize);
+  const appearance = useSettingsStore((state) => state.settings.appearance);
   const themes = useThemeStore((state) => state.files);
   useEffect(() => {
-    const { theme } = findTheme(themes, themeId);
-    const apply = () => applyTheme(theme, fontSize);
+    const { theme } = findTheme(themes, appearance.theme);
+    const apply = () => applyTheme(theme, appearance);
     apply();
     const scheme = window.matchMedia("(prefers-color-scheme: dark)");
     scheme.addEventListener("change", apply);
     return () => scheme.removeEventListener("change", apply);
-  }, [themes, themeId, fontSize]);
+  }, [themes, appearance]);
 
   // Theme files edited in another program apply when the user switches back.
   useEffect(() => {
@@ -223,6 +223,54 @@ function useShortcuts() {
   }, []);
 }
 
+const FONT_SIZE_KEYS: Record<string, number> = { "=": 1, "+": 1, "-": -1, _: -1 };
+/** Wheel distance, in pixels, that changes the font size by one step on a touchpad. */
+const WHEEL_STEP = 50;
+const WHEEL_IDLE_MILLIS = 300;
+
+function changeFontSize(change: (size: number) => number): void {
+  const current = useSettingsStore.getState().settings.appearance.fontSize;
+  const next = Math.min(FONT_SIZE_LIMITS.max, Math.max(FONT_SIZE_LIMITS.min, change(current)));
+  if (next !== current) void saveSettingsSection("appearance", { fontSize: next });
+}
+
+/** Ctrl with +, - or 0, or with the mouse wheel, changes the text size like a browser zoom. */
+function useFontSizeShortcuts() {
+  useEffect(() => {
+    const handleKey = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+      if (event.key in FONT_SIZE_KEYS) {
+        changeFontSize((size) => size + FONT_SIZE_KEYS[event.key]);
+      } else if (event.key === "0" && !event.shiftKey) {
+        changeFontSize(() => DEFAULT_SETTINGS.appearance.fontSize);
+      } else {
+        return;
+      }
+      event.preventDefault();
+    };
+    let wheelDistance = 0;
+    let lastWheelAt = 0;
+    const handleWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey) return;
+      event.preventDefault();
+      if (event.timeStamp - lastWheelAt > WHEEL_IDLE_MILLIS) wheelDistance = 0;
+      lastWheelAt = event.timeStamp;
+      wheelDistance +=
+        event.deltaMode === WheelEvent.DOM_DELTA_PIXEL ? event.deltaY : event.deltaY * WHEEL_STEP;
+      // One step per wheel notch, however far the system scrolls for one.
+      if (Math.abs(wheelDistance) < WHEEL_STEP) return;
+      changeFontSize((size) => size - Math.sign(wheelDistance));
+      wheelDistance = 0;
+    };
+    window.addEventListener("keydown", handleKey);
+    window.addEventListener("wheel", handleWheel, { passive: false });
+    return () => {
+      window.removeEventListener("keydown", handleKey);
+      window.removeEventListener("wheel", handleWheel);
+    };
+  }, []);
+}
+
 export function App() {
   const [ready, setReady] = useState(false);
   const openDialog = useUiStore((state) => state.open);
@@ -236,6 +284,7 @@ export function App() {
   useAppliedTheme();
   useSystemFileDrops();
   useShortcuts();
+  useFontSizeShortcuts();
   const systemTitleBar = useSystemTitleBar();
   const maximized = useWindowMaximized();
   const drawnBorder = NEEDS_DRAWN_BORDER && !systemTitleBar && !maximized;

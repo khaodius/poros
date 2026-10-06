@@ -32,3 +32,13 @@ export function saveSettingsSection<K extends keyof Settings>(
   const { settings, save } = useSettingsStore.getState();
   return save({ ...settings, [section]: { ...settings[section], ...change } });
 }
+
+/** Shows a change in this window without saving it, for sliders while they move. */
+export function previewSettingsSection<K extends keyof Settings>(
+  section: K,
+  change: Partial<Settings[K]>,
+): void {
+  useSettingsStore.setState(({ settings }) => ({
+    settings: { ...settings, [section]: { ...settings[section], ...change } },
+  }));
+}

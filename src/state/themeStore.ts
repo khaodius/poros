@@ -9,6 +9,8 @@ import {
   type Theme,
   type ThemeEntry,
 } from "../lib/theme";
+import { quoteFamily, type FontKind } from "../lib/fonts";
+import type { AppearanceSettings } from "../lib/settings";
 import { saveSettingsSection, useSettingsStore } from "./settingsStore";
 
 const SAVE_DELAY_MILLIS = 300;
@@ -99,8 +101,16 @@ export async function editActiveTheme(change: (theme: Theme) => Theme): Promise<
 
 const FONT_SIZE_STEPS = { small: 1, tiny: 2 };
 
-/** Sets the theme's custom properties on the document, clearing the previous theme's. */
-export function applyTheme(theme: Theme, fontSize: number): void {
+/** A font family name in front of the default stack, so missing glyphs still show. */
+export function fontStack(family: string, kind: FontKind): string {
+  return `${quoteFamily(family)}, var(--font-${kind}-default)`;
+}
+
+/**
+ * Sets the theme's custom properties on the document, clearing the previous theme's. Fonts and
+ * corner radius picked in the settings win over the theme's.
+ */
+export function applyTheme(theme: Theme, appearance: AppearanceSettings): void {
   const root = document.documentElement;
   if (theme.base === "system") delete root.dataset.theme;
   else root.dataset.theme = theme.base;
@@ -116,17 +126,25 @@ export function applyTheme(theme: Theme, fontSize: number): void {
     if (value) style.setProperty(property, value);
     else style.removeProperty(property);
   };
-  setOptional("--font-ui", theme.fonts?.ui);
-  setOptional("--font-mono", theme.fonts?.mono);
-  if (theme.radius === undefined) {
+  setOptional(
+    "--font-ui",
+    appearance.uiFont ? fontStack(appearance.uiFont, "ui") : theme.fonts?.ui,
+  );
+  setOptional(
+    "--font-mono",
+    appearance.monoFont ? fontStack(appearance.monoFont, "mono") : theme.fonts?.mono,
+  );
+  const radius = appearance.radius ?? theme.radius;
+  if (radius === undefined) {
     for (const property of ["--radius-small", "--radius", "--radius-large"]) {
       style.removeProperty(property);
     }
   } else {
-    style.setProperty("--radius-small", `${Math.round(theme.radius * 0.67)}px`);
-    style.setProperty("--radius", `${theme.radius}px`);
-    style.setProperty("--radius-large", `${Math.round(theme.radius * 1.67)}px`);
+    style.setProperty("--radius-small", `${Math.round(radius * 0.67)}px`);
+    style.setProperty("--radius", `${radius}px`);
+    style.setProperty("--radius-large", `${Math.round(radius * 1.67)}px`);
   }
+  const { fontSize } = appearance;
   style.setProperty("--font-size", `${fontSize}px`);
   style.setProperty("--font-size-small", `${fontSize - FONT_SIZE_STEPS.small}px`);
   style.setProperty("--font-size-tiny", `${fontSize - FONT_SIZE_STEPS.tiny}px`);

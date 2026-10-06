@@ -26,7 +26,8 @@ the network or the disk is Rust.
   drag the dividers to resize. Pull a tab out of the window to give it a window of its own, and
   send it back from its menu.
 - **Transfer queue** with parallel workers, each on its own connection, and a worker count you
-  can change from the queue header while transfers run. Large files are split across idle
+  can change from the queue header while transfers run; holding **-** or **+** counts faster
+  every ten steps, as do the number fields in settings. Large files are split across idle
   connections. Pause, resume, reorder, retry and remove transfers; failed and completed transfers
   have their own lists. Upload and download speeds sit beside the version in the status bar.
 - **Drag and drop** between a local and a server tab, onto a folder row to land inside it, or
@@ -38,8 +39,12 @@ the network or the disk is Rust.
 - **Settings** for simultaneous transfers, connections per file, upload and download limits,
   request size and requests in flight, TCP socket buffers (auto-tuned or fixed), what to do when a
   file exists, timestamps and permissions, retries, timeouts, keepalives, compression, and the log.
-- **Themes** as JSON files anyone can write and share, plus simple color pickers in settings.
-  See [Themes](#themes).
+- **Themes** as JSON files anyone can write and share, ten built in, and a picker in settings for
+  every color, down to the top bar, scrollbars, progress bars and striped rows. See
+  [Themes](#themes).
+- **Appearance** settings for the interface font and the monospace font, picked from the fonts
+  installed on your computer with good screen fonts suggested first, plus text size, corner
+  roundness, file list row height and striped rows.
 - **Every common key format**, including the ones other clients choke on:
   - OpenSSH, PEM (PKCS#1) and PKCS#8 private keys, encrypted or not.
   - PuTTY `.ppk` files, version 2 and 3, encrypted (Argon2id, Argon2i, Argon2d) or not, with
@@ -54,8 +59,10 @@ the network or the disk is Rust.
   wildcards, `@revoked` markers and non-standard ports included) and asks before trusting a new
   or changed key. Poros never writes to your OpenSSH files.
 - **File browsing and management** on both sides: breadcrumbs, a typed path bar, history,
-  sorting, filtering, hidden files, new folder, rename, recursive delete with confirmation and
-  copy path. Lists are virtualized, so large folders stay responsive.
+  filtering, hidden files, new folder, rename, recursive delete with confirmation and copy path.
+  Sort by name, size, type, date, permissions or owner, with folders on top or mixed in; sorting
+  by type keeps names A to Z within each type. Right-click a column heading to show or hide
+  columns. Lists are virtualized, so large folders stay responsive.
 - **Symlink aware**: links to folders can be opened, broken links are marked.
 - **Activity log** with server banners and every operation, filterable by level, session and
   text, and savable to a file.
@@ -174,6 +181,8 @@ connect** to remember it, or **Connect once** to trust it for this session only.
 | Ctrl + T                                | New tab                 |
 | Ctrl + W, middle click on a tab         | Close the tab           |
 | Ctrl + ,                                | Settings                |
+| Ctrl + =, Ctrl + -, Ctrl + mouse wheel  | Larger, smaller text    |
+| Ctrl + 0                                | Default text size       |
 
 ### Where Poros keeps its data
 
@@ -201,7 +210,7 @@ settings writes to the active theme file, and editing a built-in theme saves a c
 
 ```json
 {
-  "name": "Midnight",
+  "name": "Plum",
   "base": "dark",
   "colors": {
     "accent": "#8a63e6",
@@ -225,9 +234,15 @@ settings writes to the active theme file, and editing a built-in theme saves a c
   - Status: `danger`, `danger-hover`, `danger-soft`, `warning`, `success`
   - File icons: `icon-folder`, `icon-image`, `icon-video`, `icon-audio`, `icon-archive`,
     `icon-data`, `icon-key`, `icon-code`, `icon-text`, `icon-file`
-  - Lists: `row-selected`, `row-selected-inactive`, `row-hover`, `backdrop`
+  - Window: `titlebar`, `statusbar`, `list-header`, `pane-border-active`, `tab-indicator`,
+    `backdrop`
+  - Lists: `row-selected`, `row-selected-inactive`, `row-hover`, `row-alternate`, `scrollbar`,
+    `scrollbar-hover`
+  - Transfers: `progress`, `upload`, `download`
 - `fonts.ui` and `fonts.mono` are CSS font lists.
 - `radius` is the corner radius in pixels, from 0 to 16.
+
+Fonts and corner roundness picked in Settings > Appearance take the place of the theme's.
 
 Unknown keys and invalid values are ignored and listed under the theme in settings.
 

@@ -7,6 +7,7 @@ use tauri::{AppHandle, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use crate::connections::{ConnectionStore, SavedConnection};
 use crate::error::{AppError, AppResult};
 use crate::events::{Events, LogLevel, Store};
+use crate::fonts::{self, FontFamily};
 use crate::local;
 use crate::model::{DirListing, FileEntry};
 use crate::session::{SessionInfo, SessionManager};
@@ -318,6 +319,11 @@ pub fn theme_import(
 #[tauri::command]
 pub fn themes_open_folder(themes: State<'_, ThemeStore>) -> AppResult<()> {
     themes::open_folder(themes.dir())
+}
+
+#[tauri::command]
+pub async fn fonts_list() -> AppResult<Vec<FontFamily>> {
+    Ok(tokio::task::spawn_blocking(fonts::installed_families).await?)
 }
 
 #[tauri::command]
