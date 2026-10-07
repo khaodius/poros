@@ -1,6 +1,6 @@
 // Mirrors the serde types in src-tauri/src (model.rs, error.rs, ssh/mod.rs, session.rs,
-// events.rs, transfer/, connections.rs, themes.rs, fonts.rs). Field names are camelCase on the
-// wire.
+// events.rs, transfer/, sync/, connections.rs, themes.rs, fonts.rs). Field names are camelCase on
+// the wire.
 
 export type EntryKind = "dir" | "file" | "symlink" | "other";
 export type LinkTarget = "dir" | "file" | "broken";
@@ -149,6 +149,8 @@ export interface JobSnapshot {
   error?: string;
   conflict?: ConflictInfo;
   attempts: number;
+  /** File data sent so far when rsync updates the file; absent for whole-file copies. */
+  deltaBytes?: number;
 }
 
 export interface QueueCounts {
@@ -199,6 +201,102 @@ export interface EnqueueRequest {
   direction: Direction;
   targetDirectory: string;
   items: TransferItem[];
+}
+
+export type SyncDirection = "upload" | "download" | "both";
+export type CompareMode = "sizeAndTime" | "sizeOnly" | "checksum" | "always";
+export type SyncAction = "upload" | "download" | "deleteLocal" | "deleteRemote" | "conflict";
+export type SyncReason =
+  | "new"
+  | "changed"
+  | "contentDiffers"
+  | "always"
+  | "newer"
+  | "extraneous"
+  | "typeDiffers"
+  | "bothChanged";
+
+export interface SyncRequest {
+  /** Names the comparison for progress events and cancelling. */
+  requestId: string;
+  sessionId: string;
+  localPath: string;
+  remotePath: string;
+  direction: SyncDirection;
+  compare: CompareMode;
+  deleteExtraneous: boolean;
+  skipNewerOnTarget: boolean;
+  ignoreExisting: boolean;
+  timeToleranceSecs: number;
+  excludes: string[];
+}
+
+export interface SyncFacts {
+  isDir: boolean;
+  size: number;
+  /** Seconds since the Unix epoch. */
+  modified: number | null;
+}
+
+export interface SyncItem {
+  id: number;
+  /** Relative to the synchronized folders, with `/` between components. */
+  path: string;
+  isDir: boolean;
+  action: SyncAction;
+  reason: SyncReason;
+  /** 1 for a file; for a folder, the files inside it. */
+  files: number;
+  bytes: number;
+  local?: SyncFacts;
+  remote?: SyncFacts;
+}
+
+export interface SyncCounts {
+  unchanged: number;
+  /** Left alone because the target's copy is newer, or because existing files are kept. */
+  kept: number;
+  /** Only on the target, and kept because deleting is off. */
+  extraOnTarget: number;
+  excluded: number;
+  passedOver: number;
+}
+
+export interface SyncPlanView {
+  planId: string;
+  localRoot: string;
+  remoteRoot: string;
+  items: SyncItem[];
+  counts: SyncCounts;
+  /** A sample of the paths that were passed over. */
+  passedOver: string[];
+}
+
+export interface SyncProgress {
+  requestId: string;
+  stage: "listing" | "comparing";
+  localEntries: number;
+  remoteEntries: number;
+  compared: number;
+  toCompare: number;
+}
+
+export interface SyncChoice {
+  id: number;
+  action: SyncAction;
+}
+
+export interface SyncRunRequest {
+  planId: string;
+  choices: SyncChoice[];
+}
+
+export interface SyncRunSummary {
+  queuedFiles: number;
+  queuedBytes: number;
+  deleted: number;
+  createdFolders: number;
+  failures: string[];
 }
 
 export type AuthType = AuthMethod["type"];

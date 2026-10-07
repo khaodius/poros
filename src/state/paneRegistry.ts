@@ -31,11 +31,16 @@ export function getPane(tabId: string): PaneHandle | undefined {
   return panes.get(tabId);
 }
 
+export function listPanes(): PaneHandle[] {
+  return [...panes.values()];
+}
+
 /** The pane of a kind the user looked at last, preferring ones on screen. */
-export function lastActivePane(kind: "local" | "remote"): PaneHandle | null {
+export function lastActivePane(kind: "local" | "remote", sessionId?: string): PaneHandle | null {
   let best: PaneHandle | null = null;
   for (const handle of panes.values()) {
     if (handle.kind !== kind || handle.path() === null) continue;
+    if (sessionId !== undefined && handle.sessionId !== sessionId) continue;
     const better =
       !best ||
       (handle.visible && !best.visible) ||

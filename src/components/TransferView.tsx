@@ -42,6 +42,9 @@ function statusText(job: JobSnapshot): string {
       return job.attempts > 0 ? `Waiting to retry (attempt ${job.attempts + 1})` : "Queued";
     case "running":
       if (job.kind === "folder") return "Listing folder";
+      if (job.deltaBytes !== undefined) {
+        return `Updating with rsync, ${formatSize(job.deltaBytes)} sent`;
+      }
       return job.connections > 1
         ? `Transferring on ${job.connections} connections`
         : "Transferring";
@@ -50,7 +53,9 @@ function statusText(job: JobSnapshot): string {
     case "conflict":
       return "Already exists, waiting for your choice";
     case "done":
-      return "Done";
+      return job.deltaBytes === undefined
+        ? "Done"
+        : `Done with rsync, sent ${formatSize(job.deltaBytes)} of ${formatSize(job.size)}`;
     case "skipped":
       return job.error ? `Skipped: ${job.error}` : "Skipped";
     case "failed":

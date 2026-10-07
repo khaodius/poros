@@ -19,6 +19,7 @@ import {
   EyeOff,
   FolderOpen,
   FolderPlus,
+  FolderSync,
   HardDrive,
   Home,
   Pencil,
@@ -216,6 +217,22 @@ export function FilePane({
     };
   };
 
+  /** Synchronizes the folder clicked, or the one shown, with the other side. */
+  const syncMenuItem = (entry: FileEntry | null): MenuItem => {
+    const folder = entry && isDirLike(entry) ? entry.path : (pane.listing?.path ?? "");
+    return {
+      label: "Synchronize folder...",
+      icon: <FolderSync size={14} />,
+      disabled: !folder,
+      onSelect: () =>
+        openDialog(
+          source.kind === "local"
+            ? { kind: "sync", localPath: folder }
+            : { kind: "sync", sessionId, remotePath: folder },
+        ),
+    };
+  };
+
   const showContextMenu = (event: MouseEvent, entry: FileEntry | null) => {
     setMenu({ x: event.clientX, y: event.clientY, items: contextMenuItems(entry) });
   };
@@ -310,6 +327,7 @@ export function FilePane({
         onSelect: openNewFolder,
       },
       ...(entry ? [] : [sortMenu()]),
+      syncMenuItem(entry),
       "separator",
       {
         label: "Rename",

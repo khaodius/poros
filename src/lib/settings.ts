@@ -1,10 +1,10 @@
 // Mirrors src-tauri/src/settings.rs. The backend owns and clamps the transfer and connection
-// sections; the interface, appearance and log sections are stored as given, so they are
+// sections; the interface, appearance, log and sync sections are stored as given, so they are
 // checked here.
 
 import { DETAIL_COLUMNS, type DetailColumn } from "./columns";
 import { SORT_KEYS, type SortSpec } from "./sort";
-import type { ExistsAction, LogLevel } from "./types";
+import type { CompareMode, ExistsAction, LogLevel, SyncDirection } from "./types";
 
 export const MAX_WORKERS = 16;
 export const SOCKET_BUFFER_LIMITS = { min: 4, max: 64 * 1024 };
@@ -28,6 +28,12 @@ export interface TransferSettings {
   keepCompleted: boolean;
   separateConnections: boolean;
   logEachFile: boolean;
+  /** Sends only the changed parts of files the other side already has, through rsync. */
+  deltaTransfers: boolean;
+  /** Smaller files are copied whole. */
+  deltaThresholdKib: number;
+  /** The command that starts rsync on the server. */
+  rsyncPath: string;
 }
 
 export interface ConnectionSettings {
@@ -82,12 +88,25 @@ export interface LogSettings {
   levels: Record<LogLevel, boolean>;
 }
 
+/** What a new folder synchronization starts with: the options used last. */
+export interface SyncSettings {
+  direction: SyncDirection;
+  compare: CompareMode;
+  deleteExtraneous: boolean;
+  skipNewerOnTarget: boolean;
+  ignoreExisting: boolean;
+  timeToleranceSecs: number;
+  /** rsync-style patterns, one per line. */
+  excludes: string;
+}
+
 export interface Settings {
   transfers: TransferSettings;
   connection: ConnectionSettings;
   interface: InterfaceSettings;
   appearance: AppearanceSettings;
   log: LogSettings;
+  sync: SyncSettings;
 }
 
 export const FONT_SIZE_LIMITS = { min: 10, max: 20 };
@@ -95,6 +114,9 @@ export const RADIUS_LIMITS = { min: 0, max: 16 };
 export const ROW_HEIGHT_LIMITS = { min: 18, max: 36 };
 const COMPACT_ROW_HEIGHT = 21;
 export const LOG_LINE_LIMITS = { min: 200, max: 50000 };
+export const TIME_TOLERANCE_LIMITS = { min: 0, max: 24 * 60 * 60 };
+export const SYNC_DIRECTIONS: SyncDirection[] = ["upload", "download", "both"];
+export const COMPARE_MODES: CompareMode[] = ["sizeAndTime", "sizeOnly", "checksum", "always"];
 
 export const DEFAULT_SETTINGS: Settings = {
   transfers: {
@@ -115,6 +137,9 @@ export const DEFAULT_SETTINGS: Settings = {
     keepCompleted: true,
     separateConnections: true,
     logEachFile: false,
+    deltaTransfers: true,
+    deltaThresholdKib: 1024,
+    rsyncPath: "rsync",
   },
   connection: {
     timeoutSecs: 20,
@@ -151,6 +176,15 @@ export const DEFAULT_SETTINGS: Settings = {
     timestamps: true,
     wrapLines: true,
     levels: { info: true, warn: true, error: true, server: true },
+  },
+  sync: {
+    direction: "upload",
+    compare: "sizeAndTime",
+    deleteExtraneous: false,
+    skipNewerOnTarget: false,
+    ignoreExisting: false,
+    timeToleranceSecs: 2,
+    excludes: "",
   },
 };
 
@@ -189,6 +223,7 @@ export function sanitizeSettings(stored: unknown): Settings {
     interface: mergeSection(DEFAULT_SETTINGS.interface, source.interface),
     appearance: mergeSection(DEFAULT_SETTINGS.appearance, source.appearance),
     log: mergeSection(DEFAULT_SETTINGS.log, source.log),
+    sync: mergeSection(DEFAULT_SETTINGS.sync, source.sync),
   };
   const options = settings.interface;
   if (!["transfer", "nothing"].includes(options.doubleClickFile)) {
@@ -217,5 +252,14 @@ export function sanitizeSettings(stored: unknown): Settings {
   }
   appearance.rowHeight = clamp(appearance.rowHeight, ROW_HEIGHT_LIMITS.min, ROW_HEIGHT_LIMITS.max);
   settings.log.maxLines = clamp(settings.log.maxLines, LOG_LINE_LIMITS.min, LOG_LINE_LIMITS.max);
+
+  const sync = settings.sync;
+  if (!SYNC_DIRECTIONS.includes(sync.direction)) sync.direction = DEFAULT_SETTINGS.sync.direction;
+  if (!COMPARE_MODES.includes(sync.compare)) sync.compare = DEFAULT_SETTINGS.sync.compare;
+  sync.timeToleranceSecs = clamp(
+    sync.timeToleranceSecs,
+    TIME_TOLERANCE_LIMITS.min,
+    TIME_TOLERANCE_LIMITS.max,
+  );
   return settings;
 }

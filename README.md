@@ -5,7 +5,7 @@
 <h1 align="center">Poros</h1>
 
 <p align="center">
-  A fast, keyboard-friendly SFTP client for Linux and Windows.
+  A fast, keyboard-friendly SFTP and rsync client for Linux and Windows.
 </p>
 
 <p align="center">
@@ -30,6 +30,15 @@ the network or the disk is Rust.
   every ten steps, as do the number fields in settings. Large files are split across idle
   connections. Pause, resume, reorder, retry and remove transfers; failed and completed transfers
   have their own lists. Upload and download speeds sit beside the version in the status bar.
+- **Folder sync** in the manner of rsync: compare a local folder with a server folder one way or
+  both ways, by size and modification time, size alone or contents, with rsync-style exclude
+  patterns. A preview lists every upload, download, deletion and conflict before anything changes,
+  and you untick whatever should be left alone. See
+  [Synchronizing folders](#synchronizing-folders).
+- **rsync delta transfers**: when a file you copy already exists on the other side, only the parts
+  that changed cross the network, in both directions. Poros speaks the rsync protocol itself over
+  its own SSH connection, so nothing needs installing on your computer, Windows included. Servers
+  without rsync get the whole file over SFTP as before.
 - **Drag and drop** between a local and a server tab, onto a folder row to land inside it, or
   from your file manager onto a server tab. The strip right of the last column belongs to no row,
   so dropping there always lands in the folder on show.
@@ -38,7 +47,8 @@ the network or the disk is Rust.
   never in a file.
 - **Settings** for simultaneous transfers, connections per file, upload and download limits,
   request size and requests in flight, TCP socket buffers (auto-tuned or fixed), what to do when a
-  file exists, timestamps and permissions, retries, timeouts, keepalives, compression, and the log.
+  file exists, timestamps and permissions, retries, timeouts, keepalives, compression, delta
+  transfers, folder sync defaults, and the log.
 - **Themes** as JSON files anyone can write and share, ten built in, and a picker in settings for
   every color, down to the top bar, scrollbars, progress bars and striped rows. See
   [Themes](#themes).
@@ -68,10 +78,6 @@ the network or the disk is Rust.
   text, and savable to a file.
 - **Native on Linux and Windows**, including Wayland sessions, Windows drive letters and UNC
   paths. The top bar doubles as the title bar; settings can bring back the system one.
-
-### Roadmap
-
-- Folder sync built on rsync.
 
 ## Install
 
@@ -148,8 +154,9 @@ npm run tauri build    # installers in src-tauri/target/release/bundle
 
 Type a host into the bar at the top and press Enter. It accepts `host`, `user@host`,
 `user@host:port` and `sftp://user@host:port/path`. The **+** button at the top right opens the
-connection dialog for key files, SSH agents and saved connections; the button beside it opens
-settings. The **+** at the end of a tab bar opens a new tab with your saved connections.
+connection dialog for key files, SSH agents and saved connections, the button beside it
+synchronizes folders, and the last one opens settings. The **+** at the end of a tab bar opens a
+new tab with your saved connections.
 
 To transfer, drag files from a local tab to a server tab or the other way, or right-click them and
 choose **Upload** or **Download**. Double-clicking a file sends it to the other side too; settings
@@ -157,6 +164,30 @@ can turn that off.
 
 The first time you connect to a server, Poros shows its key fingerprint. Choose **Trust and
 connect** to remember it, or **Connect once** to trust it for this session only.
+
+### Synchronizing folders
+
+![The synchronize dialog listing uploads and deletions before a run](.github/assets/sync.png)
+
+Open **Synchronize folders** with its button at the top right, or right-click a folder and choose
+**Synchronize folder...**. Pick the local folder, the server and its folder, and a direction:
+
+- **Local to server** makes the server folder match the local one, and **Server to local** does
+  the reverse. Either can also delete what the target has and the source does not.
+- **Both ways** copies what is missing on either side; where both sides have a file, the newer one
+  wins. Files that differ but carry the same time are listed as conflicts for you to settle.
+
+**Compare** lists both folders and shows what would change, without changing anything. Untick
+items to leave them alone, pick a side for each conflict, then press **Synchronize**. Deletions
+and new folders happen at once, and files join the transfer queue. Comparing by contents reads
+every file that has the same size on both sides, using `md5sum` on the server when it has one.
+
+Exclude patterns work as in rsync: `*.log` skips matching names anywhere, `cache/` skips folders
+named `cache`, `/build` skips only the `build` at the top, and `**` matches across folders.
+
+Delta transfers apply to every upload and download that overwrites a file, synchronized or not.
+They need rsync 2.6.4 or newer on the server, and are tuned in Settings > Sync: the smallest file
+they are used for, and the rsync command for servers where it is not on the `PATH`.
 
 ### Keyboard
 
@@ -267,10 +298,10 @@ CI runs all of the above on Linux and Windows and builds installers for both.
 ### End-to-end tests
 
 `src-tauri/tests/sftp_server.rs` connects to a real OpenSSH server and is skipped unless
-`POROS_TEST_SSH_PORT` is set. It expects a server on `127.0.0.1` that accepts the user
-`POROS_TEST_SSH_USER` (default `poros`) with the password `POROS_TEST_SSH_PASSWORD` (default
-`poros-pass`) and every key in `src-tauri/tests/fixtures/keys/*.pub`. A throwaway server on
-Linux:
+`POROS_TEST_SSH_PORT` is set. It expects a server on `127.0.0.1` with rsync installed that accepts
+the user `POROS_TEST_SSH_USER` (default `poros`) with the password `POROS_TEST_SSH_PASSWORD`
+(default `poros-pass`) and every key in `src-tauri/tests/fixtures/keys/*.pub`. A throwaway server
+on Linux:
 
 ```sh
 sudo useradd --create-home poros && echo 'poros:poros-pass' | sudo chpasswd

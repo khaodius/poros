@@ -2922,6 +2922,327 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   }
 }
 
+/* Folder synchronization */
+
+textarea {
+  min-height: 64px;
+  padding: 6px 8px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-small);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  outline: none;
+  resize: vertical;
+  transition: border-color var(--transition-fast);
+}
+
+textarea:hover {
+  border-color: var(--border-strong);
+}
+
+textarea:focus {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+textarea::placeholder {
+  color: var(--text-faint);
+}
+
+.field.is-disabled > span {
+  opacity: 0.5;
+}
+
+.setting-textarea {
+  padding: 6px 0;
+}
+
+.sync-form {
+  gap: 12px;
+}
+
+.sync-server {
+  flex: 0 0 220px;
+}
+
+.sync-compare {
+  align-items: flex-end;
+}
+
+.sync-compare .stepper {
+  align-self: flex-start;
+  height: 28px;
+}
+
+.sync-compare .stepper button {
+  width: 26px;
+}
+
+.sync-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: var(--font-size-small);
+}
+
+.sync-warning > svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.sync-comparing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 28px 0 0;
+  color: var(--text-muted);
+}
+
+.sync-comparing > .dialog-actions {
+  align-self: stretch;
+}
+
+.sync-comparing-track {
+  flex: none;
+  width: 60%;
+}
+
+.sync-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sync-roots {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-muted);
+}
+
+.sync-roots > span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sync-roots > svg {
+  flex: none;
+  color: var(--text-faint);
+}
+
+.sync-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.sync-counts {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: var(--font-size-small);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sync-list {
+  display: flex;
+  flex-direction: column;
+  height: min(360px, calc(100vh - 340px));
+  min-height: 160px;
+  overflow: hidden;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.sync-header,
+.sync-row {
+  display: grid;
+  grid-template-columns: 30px 170px minmax(0, 1fr) 80px minmax(120px, 210px);
+  gap: 8px;
+  align-items: center;
+  padding-right: 10px;
+}
+
+.sync-header {
+  flex: none;
+  height: 26px;
+  color: var(--text-muted);
+  font-size: var(--font-size-tiny);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  background: var(--list-header);
+  border-bottom: 1px solid var(--border);
+}
+
+.sync-header > span,
+.sync-row > span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sync-header > .align-end,
+.sync-row > .align-end {
+  text-align: right;
+}
+
+.sync-body {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  contain: strict;
+}
+
+.sync-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  font-size: var(--font-size-small);
+  font-variant-numeric: tabular-nums;
+}
+
+.sync-row:hover {
+  background: var(--row-hover);
+}
+
+.sync-row.is-off {
+  color: var(--text-faint);
+}
+
+.sync-header > .sync-check,
+.sync-row > .sync-check {
+  display: flex;
+  justify-content: center;
+}
+
+.sync-check input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.sync-row > .sync-action {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sync-action > svg {
+  flex: none;
+}
+
+.sync-action select {
+  width: 100%;
+  height: 22px;
+  font-size: var(--font-size-small);
+}
+
+.action-upload .sync-action > svg {
+  color: var(--upload);
+}
+
+.action-download .sync-action > svg {
+  color: var(--download);
+}
+
+.action-deleteLocal .sync-action,
+.action-deleteRemote .sync-action {
+  color: var(--danger);
+}
+
+.action-conflict .sync-action {
+  color: var(--warning);
+}
+
+.sync-row.is-off .sync-action,
+.sync-row.is-off .sync-action > svg {
+  color: var(--text-faint);
+}
+
+.sync-row > .sync-path {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sync-path > .file-icon {
+  flex: none;
+}
+
+.sync-path-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sync-path-count {
+  flex: none;
+  color: var(--text-faint);
+}
+
+.sync-reason {
+  color: var(--text-muted);
+}
+
+.sync-row.is-off .sync-reason {
+  color: var(--text-faint);
+}
+
+.sync-empty {
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+}
+
+.sync-empty-title {
+  color: var(--text);
+  font-size: var(--font-size);
+  font-weight: 500;
+}
+
+.sync-passed-over {
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+}
+
+.sync-passed-over > summary {
+  cursor: pointer;
+}
+
+.sync-passed-over > .delete-preview {
+  margin-top: 6px;
+}
+
+.sync-preview > .dialog-actions {
+  align-items: center;
+  margin-top: 6px;
+}
+
+.sync-planned {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

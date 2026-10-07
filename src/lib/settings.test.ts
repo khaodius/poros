@@ -51,4 +51,17 @@ describe("sanitizeSettings", () => {
     const sorted = sanitizeSettings({ interface: { sort: { key: "type", direction: -1 } } });
     expect(sorted.interface.sort).toEqual({ key: "type", direction: -1 });
   });
+
+  it("checks the synchronization defaults", () => {
+    const sync = sanitizeSettings({
+      sync: { direction: "sideways", compare: "checksum", timeToleranceSecs: -5, excludes: 3 },
+    }).sync;
+    expect(sync.direction).toBe("upload");
+    expect(sync.compare).toBe("checksum");
+    expect(sync.timeToleranceSecs).toBe(0);
+    expect(sync.excludes).toBe("");
+    expect(sanitizeSettings({ sync: { timeToleranceSecs: 1e9 } }).sync.timeToleranceSecs).toBe(
+      86400,
+    );
+  });
 });

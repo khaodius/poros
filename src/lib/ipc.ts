@@ -15,6 +15,11 @@ import type {
   SessionClosed,
   SessionInfo,
   StoreName,
+  SyncPlanView,
+  SyncProgress,
+  SyncRequest,
+  SyncRunRequest,
+  SyncRunSummary,
   ThemeFile,
   TransferList,
   TransferUpdate,
@@ -25,6 +30,7 @@ export const LOG_EVENT = "poros://log";
 export const SESSION_CLOSED_EVENT = "poros://session-closed";
 export const TRANSFERS_EVENT = "poros://transfers";
 export const STORE_CHANGED_EVENT = "poros://store-changed";
+export const SYNC_PROGRESS_EVENT = "poros://sync-progress";
 /** Sent by a torn-out window to hand a tab back to the main window. */
 export const RETURN_TAB_EVENT = "poros://return-tab";
 
@@ -84,6 +90,14 @@ export const transfers = {
   pauseSession: (sessionId: string) => call<number>("transfer_pause_session", { sessionId }),
 };
 
+export const sync = {
+  compare: (request: SyncRequest) => call<SyncPlanView>("sync_compare", { request }),
+  cancel: (requestId: string) => call<void>("sync_cancel", { requestId }),
+  /** Forgets a comparison that will not be run. */
+  discard: (planId: string) => call<void>("sync_discard", { planId }),
+  run: (request: SyncRunRequest) => call<SyncRunSummary>("sync_run", { request }),
+};
+
 export const settingsStore = {
   get: () => call<unknown>("settings_get"),
   set: (value: unknown) => call<unknown>("settings_set", { value }),
@@ -132,3 +146,5 @@ export const onTransfers = (handler: (update: TransferUpdate) => void) =>
   subscribe(TRANSFERS_EVENT, handler);
 export const onStoreChanged = (handler: (store: StoreName) => void) =>
   subscribe(STORE_CHANGED_EVENT, handler);
+export const onSyncProgress = (handler: (progress: SyncProgress) => void) =>
+  subscribe(SYNC_PROGRESS_EVENT, handler);
