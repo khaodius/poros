@@ -6,12 +6,12 @@ import {
   dockTab,
   group,
   groupOfTab,
+  layoutPlacements,
   localTab,
   moveTab,
   normalize,
   parseLayout,
   persistableLayout,
-  placeGroup,
   removeTab,
   resizeShares,
   type LayoutNode,
@@ -111,7 +111,7 @@ describe("layout", () => {
   it("places a docked tab where the layout will put it", () => {
     const { root, right } = twoGroups();
     const swapped = dockTab(root, "a", right, "right");
-    expect(placeGroup(swapped, groupOfTab(swapped, "a")!.id, 8)).toEqual({
+    expect(layoutPlacements(swapped, 8).get(groupOfTab(swapped, "a")!.id)).toEqual({
       left: { share: 0.5, pixels: 4 },
       top: { share: 0, pixels: 0 },
       width: { share: 0.5, pixels: -4 },
@@ -119,13 +119,20 @@ describe("layout", () => {
     });
 
     const below = dockTab(root, "c", right, "bottom");
-    expect(placeGroup(below, groupOfTab(below, "c")!.id, 8)).toEqual({
+    const placements = layoutPlacements(below, 8);
+    expect(placements.get(groupOfTab(below, "c")!.id)).toEqual({
       left: { share: 0.5, pixels: 4 },
       top: { share: 0.5, pixels: 4 },
       width: { share: 0.5, pixels: -4 },
       height: { share: 0.5, pixels: -4 },
     });
-    expect(placeGroup(below, "missing", 8)).toBeNull();
+    expect(placements.get(below.id)).toEqual({
+      left: { share: 0, pixels: 0 },
+      top: { share: 0, pixels: 0 },
+      width: { share: 1, pixels: 0 },
+      height: { share: 1, pixels: 0 },
+    });
+    expect(placements.get("missing")).toBeUndefined();
   });
 
   it("round-trips through storage without remote tabs", () => {

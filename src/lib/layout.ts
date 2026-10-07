@@ -250,14 +250,22 @@ const WHOLE: Placement = {
   height: { share: 1, pixels: 0 },
 };
 
-/** Where a group sits in the area the layout fills, with `gap` pixels between split children. */
-export function placeGroup(
+export function addExtents(first: Extent, second: Extent): Extent {
+  return { share: first.share + second.share, pixels: first.pixels + second.pixels };
+}
+
+/**
+ * Where every group and split sits in the area the layout fills, keyed by node id, with `gap`
+ * pixels between split children.
+ */
+export function layoutPlacements(
   node: LayoutNode,
-  groupId: string,
   gap: number,
   area: Placement = WHOLE,
-): Placement | null {
-  if (node.type === "group") return node.id === groupId ? area : null;
+  placements = new Map<string, Placement>(),
+): Map<string, Placement> {
+  placements.set(node.id, area);
+  if (node.type === "group") return placements;
   const row = node.direction === "row";
   const along = row ? area.width : area.height;
   const free = along.pixels - gap * (node.children.length - 1);
@@ -265,16 +273,15 @@ export function placeGroup(
   for (const [index, child] of node.children.entries()) {
     const share = node.sizes[index];
     const size = { share: along.share * share, pixels: free * share };
-    const found = placeGroup(
+    layoutPlacements(
       child,
-      groupId,
       gap,
       row ? { ...area, left: offset, width: size } : { ...area, top: offset, height: size },
+      placements,
     );
-    if (found) return found;
-    offset = { share: offset.share + size.share, pixels: offset.pixels + size.pixels + gap };
+    offset = addExtents(offset, { share: size.share, pixels: size.pixels + gap });
   }
-  return null;
+  return placements;
 }
 
 function isTab(value: unknown): value is PaneTab {

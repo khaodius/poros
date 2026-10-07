@@ -3,12 +3,38 @@
 
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { create } from "zustand";
+import {
+  coveredGroup,
+  floatingFrame,
+  floatingRect,
+  groupRects,
+  nearCenter,
+  sideToMakeRoom,
+  sideWithin,
+  TAB_BAR_HEIGHT,
+  type Point,
+  type Rect,
+  type Size,
+} from "../lib/docking";
 import type { DropSide } from "../lib/layout";
 import type { FileEntry } from "../lib/types";
+import { useLayoutStore } from "./layoutStore";
+
+export interface TabDrag {
+  kind: "tab";
+  tabId: string;
+  label: string;
+  sourceGroupId: string;
+  /** Where the dock sits in the window. */
+  dock: Rect;
+  /** Where the pointer holds the lifted pane, from its top left corner. */
+  grab: Point;
+  size: Size;
+}
 
 export type DragPayload =
   | { kind: "files"; sourceTabId: string; entries: FileEntry[] }
-  | { kind: "tab"; tabId: string; label: string }
+  | TabDrag
   /** Files dragged in from the operating system. */
   | { kind: "external"; paths: string[] };
 
@@ -31,13 +57,84 @@ export const useDragStore = create<DragState>(() => ({
 }));
 
 const DRAG_THRESHOLD = 5;
-const DOCK_EDGE_SHARE = 0.28;
 
 interface PointerPosition {
   clientX: number;
   clientY: number;
   screenX: number;
   screenY: number;
+}
+
+/** Builds a tab drag from the pressed tab button; the pane lifts out at its own size. */
+export function tabDrag(
+  button: HTMLElement,
+  tabId: string,
+  label: string,
+  start: Point,
+): TabDrag | null {
+  const frame = button.closest<HTMLElement>("[data-dock-group]");
+  const dock = button.closest<HTMLElement>(".dock");
+  if (!frame || !dock) return null;
+  const { left, top, width, height } = dock.getBoundingClientRect();
+  const dockBounds = { left, top, width, height };
+  return {
+    kind: "tab",
+    tabId,
+    label,
+    sourceGroupId: frame.dataset.dockGroup!,
+    dock: dockBounds,
+    ...floatingFrame(frame.getBoundingClientRect(), dockBounds, start),
+  };
+}
+
+/** A dragged tab's pane stays in place while the pointer is on its own tab bar. */
+export function isLifted(payload: TabDrag, target: DropTarget | null): boolean {
+  return !(target?.kind === "tabBar" && target.groupId === payload.sourceGroupId);
+}
+
+/** The insertion index for a pointer `offset` pixels from the left of a group's tab bar. */
+function tabIndexAt(groupId: string, offset: number): number {
+  const bar = document.querySelector<HTMLElement>(`[data-tab-bar="${CSS.escape(groupId)}"]`);
+  if (!bar) return 0;
+  const tabs = [...bar.querySelectorAll<HTMLElement>("[data-tab-id]")];
+  const index = tabs.findIndex(
+    (tab) => offset + bar.scrollLeft < tab.offsetLeft + tab.offsetWidth / 2,
+  );
+  return index < 0 ? tabs.length : index;
+}
+
+/**
+ * A tab bar under the pointer, else the group the lifted pane covers enough to make room.
+ * Measured against the layout as it stands, not as previewed, so the preview cannot move the
+ * target out from under the pointer.
+ */
+function tabTarget(
+  { clientX: x, clientY: y }: PointerPosition,
+  payload: TabDrag,
+): DropTarget | null {
+  const { root } = useLayoutStore.getState();
+  const groups = groupRects(root, payload.dock);
+  const bar = groups.find(
+    ({ rect }) =>
+      x >= rect.left &&
+      x < rect.left + rect.width &&
+      y >= rect.top &&
+      y < rect.top + TAB_BAR_HEIGHT,
+  );
+  if (bar) {
+    return {
+      kind: "tabBar",
+      groupId: bar.groupId,
+      index: tabIndexAt(bar.groupId, x - bar.rect.left),
+    };
+  }
+  const floating = floatingRect(payload, { x, y });
+  const covered = coveredGroup(groups, floating);
+  if (!covered) return null;
+  const { groupId, rect } = covered;
+  if (groupId === payload.sourceGroupId && nearCenter(rect, floating)) return null;
+  const side = sideToMakeRoom(root, payload.tabId, groupId, sideWithin(rect, floating));
+  return { kind: "dock", groupId, side };
 }
 
 /** Finds what is under the pointer: a folder row, a pane, a tab bar slot or a dock zone. */
@@ -48,44 +145,9 @@ export function hitTest(position: PointerPosition, payload: DragPayload): DropTa
       ? { kind: "outside", screenX: position.screenX, screenY: position.screenY }
       : null;
   }
+  if (payload.kind === "tab") return tabTarget(position, payload);
   const element = document.elementFromPoint(x, y);
   if (!element) return null;
-
-  if (payload.kind === "tab") {
-    const bar = element.closest<HTMLElement>("[data-tab-bar]");
-    if (bar) {
-      const tabs = [...bar.querySelectorAll<HTMLElement>("[data-tab-id]")];
-      const index = tabs.findIndex((tab) => {
-        const bounds = tab.getBoundingClientRect();
-        return x < bounds.left + bounds.width / 2;
-      });
-      return {
-        kind: "tabBar",
-        groupId: bar.dataset.tabBar!,
-        index: index < 0 ? tabs.length : index,
-      };
-    }
-    const dock = element.closest<HTMLElement>("[data-dock-group]");
-    if (!dock) return null;
-    const bounds = dock.getBoundingClientRect();
-    const horizontal = (x - bounds.left) / bounds.width;
-    const vertical = (y - bounds.top) / bounds.height;
-    const edges: [DropSide, number][] = [
-      ["left", horizontal],
-      ["right", 1 - horizontal],
-      ["top", vertical],
-      ["bottom", 1 - vertical],
-    ];
-    const [side, distance] = edges.reduce((nearest, edge) =>
-      edge[1] < nearest[1] ? edge : nearest,
-    );
-    return {
-      kind: "dock",
-      groupId: dock.dataset.dockGroup!,
-      side: distance < DOCK_EDGE_SHARE ? side : "center",
-    };
-  }
-
   const pane = element.closest<HTMLElement>("[data-drop-pane]");
   if (!pane) return null;
   const folder = element.closest<HTMLElement>("[data-drop-folder]")?.dataset.dropFolder ?? null;
@@ -112,7 +174,6 @@ export function beginDrag(
   onDrop: (target: DropTarget, payload: DragPayload) => void,
 ): void {
   if (event.button !== 0) return;
-  const source = event.currentTarget;
   const pointerId = event.pointerId;
   const startX = event.clientX;
   const startY = event.clientY;
@@ -130,9 +191,10 @@ export function beginDrag(
         return;
       }
       try {
-        source.setPointerCapture(pointerId);
+        // The body, since the source can unmount while the layout previews a drop.
+        document.body.setPointerCapture(pointerId);
       } catch {
-        // The source may have left the document; window listeners still see the pointer.
+        // The pointer may already be up; window listeners still see the release.
       }
     }
     useDragStore.setState({

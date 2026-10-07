@@ -75,11 +75,17 @@ interface OpenMenu {
   items: MenuItem[];
 }
 
-/** Moves keyboard focus to the next file list on screen. */
+/** Moves keyboard focus to the next file list on screen, left to right, then top to bottom. */
 function focusNextPane(from: HTMLElement | null) {
   const lists = [
     ...document.querySelectorAll<HTMLElement>(".tab-panel:not([hidden]) .file-list-body"),
-  ];
+  ]
+    .map((list) => ({ list, bounds: list.getBoundingClientRect() }))
+    .sort(
+      (first, second) =>
+        first.bounds.left - second.bounds.left || first.bounds.top - second.bounds.top,
+    )
+    .map(({ list }) => list);
   if (lists.length < 2) return;
   const current = lists.findIndex((list) => list === from || list.contains(from));
   lists[(current + 1) % lists.length].focus();

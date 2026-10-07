@@ -1,4 +1,4 @@
-import { Ban, Download, File, Folder, PanelTop, SquareArrowOutUpRight, Upload } from "lucide-react";
+import { Ban, Download, File, Folder, Upload } from "lucide-react";
 import { isDirLike } from "../lib/sort";
 import { useDragStore, type DragPayload, type DropTarget } from "../state/dragStore";
 import { getPane } from "../state/paneRegistry";
@@ -9,13 +9,6 @@ type Hint = { icon: typeof Upload; text: string; blocked?: boolean };
 
 function hintFor(payload: DragPayload, target: DropTarget | null): Hint | null {
   if (!target) return null;
-  if (payload.kind === "tab") {
-    if (target.kind === "outside") return { icon: SquareArrowOutUpRight, text: "New window" };
-    if (target.kind === "dock" && target.side !== "center") {
-      return { icon: PanelTop, text: `Dock ${target.side}` };
-    }
-    return null;
-  }
   if (payload.kind !== "files" || target.kind !== "pane") return null;
   const source = getPane(payload.sourceTabId);
   const destination = getPane(target.tabId);
@@ -37,16 +30,14 @@ export function DragGhost() {
   const payload = useDragStore((state) => state.payload);
   const target = useDragStore((state) => state.target);
   const pointer = useDragStore((state) => state.pointer);
-  // Files from the operating system already show the system's drag image.
-  if (!payload || payload.kind === "external") return null;
+  // Files from the operating system already show the system's drag image, and a dragged tab
+  // carries its whole pane.
+  if (!payload || payload.kind !== "files") return null;
 
   const hint = hintFor(payload, target);
   let label: string;
   let Icon = File;
-  if (payload.kind === "tab") {
-    label = payload.label;
-    Icon = PanelTop;
-  } else if (payload.entries.length === 1) {
+  if (payload.entries.length === 1) {
     label = payload.entries[0].name;
     if (isDirLike(payload.entries[0])) Icon = Folder;
   } else {

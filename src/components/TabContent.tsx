@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { HardDrive, RotateCw, Server, Unplug } from "lucide-react";
 import { localSource, remoteSource, startingAt } from "../lib/fileSource";
 import type { PaneTab } from "../lib/layout";
@@ -15,11 +15,12 @@ interface TabContentProps {
   active: boolean;
 }
 
-export function TabContent({ tab, visible, active }: TabContentProps) {
+/** Memoized, since the dock re-renders on every pointer move while a pane is dragged. */
+export const TabContent = memo(function TabContent({ tab, visible, active }: TabContentProps) {
   if (tab.kind === "local") return <LocalTab tab={tab} visible={visible} active={active} />;
   if (tab.kind === "remote") return <RemoteTab tab={tab} visible={visible} active={active} />;
   return <WelcomePanel tabId={tab.id} />;
-}
+});
 
 function LocalTab({ tab, visible, active }: TabContentProps) {
   const path = tab.kind === "local" ? tab.path : undefined;

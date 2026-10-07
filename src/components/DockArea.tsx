@@ -1,98 +1,161 @@
-import { Fragment, useRef, type PointerEvent as ReactPointerEvent } from "react";
+import { useMemo, useRef, useState, type CSSProperties, type PointerEvent } from "react";
+import { HardDrive, Server, Sparkles, SquareArrowOutUpRight } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import {
+  DOCK_GAP,
+  TAB_BAR_HEIGHT,
+  floatingRect,
+  resolveExtent,
+  type Point,
+  type Rect,
+} from "../lib/docking";
+import {
+  addExtents,
+  allGroups,
+  allTabs,
   dockTab,
-  groupOfTab,
-  placeGroup,
+  layoutPlacements,
   resizeShares,
+  setSizes,
   type Extent,
   type GroupNode,
   type LayoutNode,
+  type PaneTab,
+  type Placement,
   type SplitNode,
 } from "../lib/layout";
-import { useDragStore } from "../state/dragStore";
+import { isLifted, useDragStore, type TabDrag } from "../state/dragStore";
 import { useLayoutStore } from "../state/layoutStore";
 import { TabBar } from "./TabBar";
 import { TabContent } from "./TabContent";
 
-export function DockArea() {
-  const root = useLayoutStore((state) => state.root);
-  return (
-    <div className="dock">
-      <LayoutView node={root} />
-      <DockPreview root={root} />
-    </div>
-  );
-}
-
-// Matches the width of .dock-resizer.
-const RESIZER_SIZE = 8;
-
 const cssLength = ({ share, pixels }: Extent) => `calc(${share * 100}% + ${pixels}px)`;
 
-/** Outlines where a dragged tab will end up, from the layout the drop would produce. */
-function DockPreview({ root }: { root: LayoutNode }) {
-  const drop = useDragStore(
-    useShallow(({ payload, target }) =>
-      payload?.kind === "tab" && target?.kind === "dock"
-        ? { tabId: payload.tabId, groupId: target.groupId, side: target.side }
-        : null,
+function placementStyle({ left, top, width, height }: Placement): CSSProperties {
+  return {
+    left: cssLength(left),
+    top: cssLength(top),
+    width: cssLength(width),
+    height: cssLength(height),
+  };
+}
+
+/** The part of a group below its tab bar, overlapping the bar's bottom border. */
+function belowTabBar(placement: Placement): Placement {
+  const offset = TAB_BAR_HEIGHT - 1;
+  return {
+    ...placement,
+    top: addExtents(placement.top, { share: 0, pixels: offset }),
+    height: addExtents(placement.height, { share: 0, pixels: -offset }),
+  };
+}
+
+function allSplits(node: LayoutNode): SplitNode[] {
+  return node.type === "group" ? [] : [node, ...node.children.flatMap(allSplits)];
+}
+
+/** The handle in the gap after the split's child at `index`. */
+function resizerPlacement(
+  split: SplitNode,
+  index: number,
+  placements: Map<string, Placement>,
+): Placement {
+  const area = placements.get(split.id)!;
+  const before = placements.get(split.children[index].id)!;
+  const gap = { share: 0, pixels: DOCK_GAP };
+  return split.direction === "row"
+    ? { ...area, left: addExtents(before.left, before.width), width: gap }
+    : { ...area, top: addExtents(before.top, before.height), height: gap };
+}
+
+/** Where the lifted pane floats in the dock; held inside it while a drop would leave the
+ * window, so the pane can say so. */
+function floatingIn(payload: TabDrag, pointer: Point, leaving: boolean): Rect {
+  const { dock } = payload;
+  const rect = floatingRect(payload, { x: pointer.x - dock.left, y: pointer.y - dock.top });
+  if (!leaving) return rect;
+  const clamp = (value: number, room: number) => Math.min(Math.max(0, value), Math.max(0, room));
+  return {
+    ...rect,
+    left: clamp(rect.left, dock.width - rect.width),
+    top: clamp(rect.top, dock.height - rect.height),
+  };
+}
+
+interface Resizing {
+  splitId: string;
+  sizes: number[];
+}
+
+/**
+ * Groups, resize handles and tab panes are all placed absolutely in one flat list, so moving a
+ * tab between groups never remounts its pane, and position changes animate. A dragged tab
+ * lifts its pane under the pointer while the other groups make room where it would land.
+ */
+export function DockArea() {
+  const root = useLayoutStore((state) => state.root);
+  const activeGroupId = useLayoutStore((state) => state.activeGroupId);
+  const commitSizes = useLayoutStore((state) => state.setSizes);
+  const dockRef = useRef<HTMLDivElement>(null);
+  const [resizing, setResizing] = useState<Resizing | null>(null);
+  const drag = useDragStore(
+    useShallow(({ payload, target, pointer }) =>
+      payload?.kind === "tab" ? { payload, target, pointer } : null,
     ),
   );
-  if (!drop) return null;
-  const next = dockTab(root, drop.tabId, drop.groupId, drop.side);
-  const owner = next === root ? null : groupOfTab(next, drop.tabId);
-  const placement = owner && placeGroup(next, owner.id, RESIZER_SIZE);
-  if (!placement) return null;
-  return (
-    <div
-      className="dock-preview"
-      style={{
-        left: cssLength(placement.left),
-        top: cssLength(placement.top),
-        width: cssLength(placement.width),
-        height: cssLength(placement.height),
-      }}
-    />
+
+  const liftedTabId = drag && isLifted(drag.payload, drag.target) ? drag.payload.tabId : null;
+  const dockTarget = drag?.target?.kind === "dock" ? drag.target : null;
+  const roomGroupId = dockTarget?.groupId;
+  const roomSide = dockTarget?.side;
+
+  const sized = useMemo(
+    () => (resizing ? setSizes(root, resizing.splitId, resizing.sizes) : root),
+    [root, resizing],
   );
-}
+  const layout = useMemo(
+    () =>
+      liftedTabId && roomGroupId && roomSide
+        ? dockTab(sized, liftedTabId, roomGroupId, roomSide)
+        : sized,
+    [sized, liftedTabId, roomGroupId, roomSide],
+  );
+  const placements = useMemo(() => layoutPlacements(layout, DOCK_GAP), [layout]);
+  const groups = allGroups(layout);
+  // Sorted by id rather than layout order: moving a DOM node restarts its transitions.
+  const tabs = allTabs(layout).sort((first, second) => (first.id < second.id ? -1 : 1));
+  const groupOf = new Map<string, GroupNode>(
+    groups.flatMap((entry) => entry.tabs.map((tab) => [tab.id, entry] as const)),
+  );
 
-function LayoutView({ node }: { node: LayoutNode }) {
-  return node.type === "group" ? <TabGroup group={node} /> : <DockSplit split={node} />;
-}
+  const leaving = drag?.target?.kind === "outside";
+  const floating = drag && liftedTabId ? floatingIn(drag.payload, drag.pointer, leaving) : null;
 
-function DockSplit({ split }: { split: SplitNode }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const setSizes = useLayoutStore((state) => state.setSizes);
-  const row = split.direction === "row";
-
-  // Dragging writes flex-grow straight to the two panels and commits on release, so the
-  // panes do not re-render on every pointer move.
-  const startResize = (index: number, event: ReactPointerEvent<HTMLDivElement>) => {
-    const container = containerRef.current;
-    if (!container || event.button !== 0) return;
+  // Dragging a handle previews the sizes in this component only and commits on release.
+  const startResize = (split: SplitNode, index: number, event: PointerEvent<HTMLDivElement>) => {
+    const dock = dockRef.current;
+    if (!dock || event.button !== 0) return;
     event.preventDefault();
     const handle = event.currentTarget;
     handle.setPointerCapture(event.pointerId);
-    const panels = [...container.children].filter((child): child is HTMLElement =>
-      child.classList.contains("dock-panel"),
-    );
-    const handles = container.children.length - panels.length;
-    const bounds = container.getBoundingClientRect();
-    const handleSize = row ? handle.offsetWidth : handle.offsetHeight;
-    const extent = (row ? bounds.width : bounds.height) - handles * handleSize;
+    const row = split.direction === "row";
+    const bounds = dock.getBoundingClientRect();
+    const area = placements.get(split.id)!;
+    const along = row
+      ? resolveExtent(area.width, bounds.width)
+      : resolveExtent(area.height, bounds.height);
+    const free = Math.max(1, along - DOCK_GAP * (split.children.length - 1));
     const origin = row ? event.clientX : event.clientY;
     let sizes = split.sizes;
     let frame = 0;
 
-    const move = (moveEvent: PointerEvent) => {
+    const move = (moveEvent: globalThis.PointerEvent) => {
       const position = row ? moveEvent.clientX : moveEvent.clientY;
-      sizes = resizeShares(split.sizes, index, (position - origin) / Math.max(1, extent));
+      sizes = resizeShares(split.sizes, index, (position - origin) / free);
       if (frame) return;
       frame = requestAnimationFrame(() => {
         frame = 0;
-        panels[index].style.flexGrow = String(sizes[index]);
-        panels[index + 1].style.flexGrow = String(sizes[index + 1]);
+        setResizing({ splitId: split.id, sizes });
       });
     };
     const stop = () => {
@@ -100,64 +163,163 @@ function DockSplit({ split }: { split: SplitNode }) {
       handle.removeEventListener("pointermove", move);
       handle.removeEventListener("pointerup", stop);
       handle.removeEventListener("pointercancel", stop);
-      setSizes(split.id, sizes);
+      commitSizes(split.id, sizes);
+      setResizing(null);
     };
     handle.addEventListener("pointermove", move);
     handle.addEventListener("pointerup", stop);
     handle.addEventListener("pointercancel", stop);
   };
 
-  const equalize = () =>
-    setSizes(
-      split.id,
-      split.children.map(() => 1 / split.children.length),
-    );
-
+  const className = ["dock", resizing && "is-resizing"].filter(Boolean).join(" ");
   return (
-    <div ref={containerRef} className={`dock-split dock-${split.direction}`}>
-      {split.children.map((child, index) => (
-        <Fragment key={child.id}>
-          {index > 0 && (
-            <div
-              className="dock-resizer"
-              role="separator"
-              aria-orientation={row ? "vertical" : "horizontal"}
-              title="Drag to resize, double-click to even out"
-              onPointerDown={(event) => startResize(index - 1, event)}
-              onDoubleClick={equalize}
-            />
-          )}
-          <div className="dock-panel" style={{ flexGrow: split.sizes[index] }}>
-            <LayoutView node={child} />
-          </div>
-        </Fragment>
-      ))}
+    <div ref={dockRef} className={className}>
+      {groups.map((entry) =>
+        entry.tabs.every((tab) => tab.id === liftedTabId) ? (
+          <div
+            key={entry.id}
+            className="dock-slot"
+            style={placementStyle(placements.get(entry.id)!)}
+          />
+        ) : (
+          <TabGroup
+            key={entry.id}
+            group={entry}
+            style={placementStyle(placements.get(entry.id)!)}
+            focused={entry.id === activeGroupId}
+            emptied={liftedTabId !== null && entry.activeTabId === liftedTabId}
+          />
+        ),
+      )}
+      {allSplits(layout).flatMap((split) =>
+        split.children.slice(1).map((child, index) => (
+          <div
+            key={`${split.id}:${child.id}`}
+            className={`dock-resizer is-${split.direction}`}
+            role="separator"
+            aria-orientation={split.direction === "row" ? "vertical" : "horizontal"}
+            title="Drag to resize, double-click to even out"
+            style={placementStyle(resizerPlacement(split, index, placements))}
+            onPointerDown={(event) => startResize(split, index, event)}
+            onDoubleClick={() =>
+              commitSizes(
+                split.id,
+                split.children.map(() => 1 / split.children.length),
+              )
+            }
+          />
+        )),
+      )}
+      {tabs.map((tab) => {
+        const owner = groupOf.get(tab.id)!;
+        const lifted = tab.id === liftedTabId;
+        const visible = lifted || tab.id === owner.activeTabId;
+        return (
+          <TabPanel
+            key={tab.id}
+            tab={tab}
+            groupId={owner.id}
+            visible={visible}
+            active={visible && owner.id === activeGroupId}
+            floating={lifted}
+            style={
+              floating && lifted
+                ? {
+                    left: floating.left,
+                    top: floating.top + TAB_BAR_HEIGHT - 1,
+                    width: floating.width,
+                    height: floating.height - TAB_BAR_HEIGHT + 1,
+                  }
+                : placementStyle(belowTabBar(placements.get(owner.id)!))
+            }
+          />
+        );
+      })}
+      {floating && drag && (
+        <FloatingFrame
+          tab={tabs.find((tab) => tab.id === liftedTabId)}
+          label={drag.payload.label}
+          leaving={leaving}
+          style={floating}
+        />
+      )}
     </div>
   );
 }
 
-function TabGroup({ group }: { group: GroupNode }) {
-  const focused = useLayoutStore((state) => state.activeGroupId === group.id);
-  const focusGroup = useLayoutStore((state) => state.focusGroup);
+interface TabGroupProps {
+  group: GroupNode;
+  style: CSSProperties;
+  focused: boolean;
+  /** The group's shown tab is being dragged away. */
+  emptied: boolean;
+}
 
+function TabGroup({ group, style, focused, emptied }: TabGroupProps) {
+  const focusGroup = useLayoutStore((state) => state.focusGroup);
+  const className = ["tab-group", focused && "is-focused", emptied && "is-emptied"]
+    .filter(Boolean)
+    .join(" ");
   return (
     <section
-      className={`tab-group ${focused ? "is-focused" : ""}`}
+      className={className}
+      style={style}
       data-dock-group={group.id}
       onPointerDownCapture={() => focusGroup(group.id)}
       onFocusCapture={() => focusGroup(group.id)}
     >
       <TabBar group={group} />
-      <div className="tab-content">
-        {group.tabs.map((tab) => {
-          const visible = tab.id === group.activeTabId;
-          return (
-            <div key={tab.id} className="tab-panel" hidden={!visible}>
-              <TabContent tab={tab} visible={visible} active={visible && focused} />
-            </div>
-          );
-        })}
-      </div>
+      <div className="tab-content" />
     </section>
+  );
+}
+
+interface TabPanelProps {
+  tab: PaneTab;
+  groupId: string;
+  visible: boolean;
+  active: boolean;
+  floating: boolean;
+  style: CSSProperties;
+}
+
+function TabPanel({ tab, groupId, visible, active, floating, style }: TabPanelProps) {
+  const focusGroup = useLayoutStore((state) => state.focusGroup);
+  return (
+    <div
+      className={`tab-panel ${floating ? "is-floating" : ""}`}
+      style={style}
+      hidden={!visible}
+      onPointerDownCapture={() => focusGroup(groupId)}
+      onFocusCapture={() => focusGroup(groupId)}
+    >
+      <TabContent tab={tab} visible={visible} active={active} />
+    </div>
+  );
+}
+
+interface FloatingFrameProps {
+  tab: PaneTab | undefined;
+  label: string;
+  /** The pointer is outside the window, so a drop opens a new one. */
+  leaving: boolean;
+  style: CSSProperties;
+}
+
+function FloatingFrame({ tab, label, leaving, style }: FloatingFrameProps) {
+  const Icon = tab?.kind === "local" ? HardDrive : tab?.kind === "remote" ? Server : Sparkles;
+  return (
+    <div className="dock-floating" style={style}>
+      <div className="dock-floating-title">
+        <Icon size={14} className={`tab-icon tab-icon-${tab?.kind}`} />
+        <span className="tab-label">{label}</span>
+        {leaving && (
+          <span className="dock-floating-hint">
+            <SquareArrowOutUpRight size={12} />
+            New window
+          </span>
+        )}
+      </div>
+    </div>
   );
 }

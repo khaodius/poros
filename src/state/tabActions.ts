@@ -61,28 +61,25 @@ export function showSession(session: SessionInfo, targetTabId?: string): void {
   layout.addTab(remoteTab, lastRemote ? groupOfTab(layout.root, lastRemote.tabId)?.id : undefined);
 }
 
-/** The tab with the folder its pane shows now, so it reopens there after moving. */
+/** The tab with the folder its pane shows now. */
 function withCurrentPath(tab: PaneTab): PaneTab {
   if (tab.kind === "welcome") return tab;
   const path = getPane(tab.id)?.path();
   return path ? { ...tab, path } : tab;
 }
 
-function rememberPath(tabId: string): PaneTab | null {
-  const layout = useLayoutStore.getState();
-  const tab = findTab(layout.root, tabId);
-  if (!tab) return null;
-  const updated = withCurrentPath(tab);
-  if (updated !== tab) layout.replaceTab(tabId, updated);
-  return updated;
+/** A tab about to leave this window, with the folder to reopen in the next. */
+function departingTab(tabId: string): PaneTab | null {
+  const tab = findTab(useLayoutStore.getState().root, tabId);
+  return tab && withCurrentPath(tab);
 }
 
 export function moveTabTo(tabId: string, groupId: string, index?: number): void {
-  if (rememberPath(tabId)) useLayoutStore.getState().moveTab(tabId, groupId, index);
+  useLayoutStore.getState().moveTab(tabId, groupId, index);
 }
 
 export function dockTabBeside(tabId: string, groupId: string, side: DropSide): void {
-  if (rememberPath(tabId)) useLayoutStore.getState().dockTab(tabId, groupId, side);
+  useLayoutStore.getState().dockTab(tabId, groupId, side);
 }
 
 /** Moves a tab to one side of its group, or opens a new tab there when it is alone. */
@@ -149,7 +146,7 @@ function detach(tab: PaneTab): void {
 
 /** Opens a tab in a window of its own, near the given screen point when the system allows. */
 export async function tearOutTab(tabId: string, screenX?: number, screenY?: number) {
-  const tab = rememberPath(tabId);
+  const tab = departingTab(tabId);
   if (!tab) return;
   const width = Math.max(TORN_OUT_MIN.width, Math.round(window.innerWidth * TORN_OUT_SHARE));
   const height = Math.max(TORN_OUT_MIN.height, Math.round(window.innerHeight * TORN_OUT_SHARE));
@@ -170,7 +167,7 @@ export async function tearOutTab(tabId: string, screenX?: number, screenY?: numb
 
 /** Sends a tab from a torn-out window back to the main window. */
 export async function returnTabToMain(tabId: string): Promise<void> {
-  const tab = rememberPath(tabId);
+  const tab = departingTab(tabId);
   if (!tab) return;
   await emitTo(MAIN_WINDOW, RETURN_TAB_EVENT, handoffFor(tab));
   detach(tab);
