@@ -18,6 +18,7 @@ pub enum ErrorKind {
     Io,
     Sftp,
     Ssh,
+    Rsync,
     Cancelled,
     Keychain,
 }

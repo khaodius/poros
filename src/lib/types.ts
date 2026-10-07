@@ -88,6 +88,7 @@ export type ErrorKind =
   | "io"
   | "sftp"
   | "ssh"
+  | "rsync"
   | "cancelled"
   | "keychain";
 

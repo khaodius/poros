@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use russh::client::Msg;
+use russh::Channel;
 use serde::Serialize;
 use tokio::sync::RwLock;
 
@@ -28,6 +30,11 @@ impl Session {
     /// when the server refuses extra connections.
     pub async fn open_channel(&self) -> AppResult<RemoteFs> {
         open_sftp(&self.handle).await
+    }
+
+    /// A channel on this session's connection for running a command on the server.
+    pub async fn open_command_channel(&self) -> AppResult<Channel<Msg>> {
+        Ok(self.handle.channel_open_session().await?)
     }
 }
 

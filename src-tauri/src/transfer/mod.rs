@@ -4,6 +4,7 @@
 
 mod conflict;
 mod copy;
+mod delta;
 mod limiter;
 mod pieces;
 mod queue;
@@ -27,7 +28,7 @@ pub use queue::{
 use crate::error::{AppError, AppResult};
 use crate::events::{Events, LogLevel};
 use crate::format::{format_duration, format_size};
-use crate::session::SessionManager;
+use crate::session::{Session, SessionManager};
 use crate::settings::TransferSettings;
 use crate::ssh::ConnectProfile;
 use crate::{local, remote_path};
@@ -55,6 +56,17 @@ pub struct EnqueueRequest {
     pub direction: Direction,
     pub target_directory: String,
     pub items: Vec<TransferItem>,
+}
+
+/// One file to copy, for callers that choose the files themselves.
+#[derive(Debug, Clone)]
+pub struct FileTransfer {
+    pub direction: Direction,
+    pub name: String,
+    pub source: String,
+    pub target: String,
+    pub target_directory: String,
+    pub size: u64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
@@ -94,6 +106,8 @@ pub(crate) struct SessionTarget {
     /// Set once the server refuses extra connections; workers then open channels on the
     /// browsing connection instead.
     pub channels_only: AtomicBool,
+    /// Whether the server ran the configured rsync command, once a worker has tried.
+    pub rsync: tokio::sync::Mutex<Option<delta::RsyncCheck>>,
 }
 
 pub(crate) struct Shared {
@@ -222,12 +236,42 @@ impl TransferManager {
                 ancestors: Arc::from([]),
             });
         }
+        self.add_jobs(&session, specs, None);
+        Ok(request.items.len())
+    }
 
+    /// Queues single files that replace whatever is at their targets.
+    pub async fn enqueue_files(
+        &self,
+        session_id: &str,
+        files: Vec<FileTransfer>,
+    ) -> AppResult<usize> {
+        let session = self.shared.sessions.get(session_id).await?;
+        let count = files.len();
+        let specs = files
+            .into_iter()
+            .map(|file| JobSpec {
+                session_id: session_id.to_string(),
+                direction: file.direction,
+                kind: JobKind::File,
+                name: file.name,
+                source: file.source,
+                target: file.target,
+                target_directory: file.target_directory,
+                size: file.size,
+                ancestors: Arc::from([]),
+            })
+            .collect();
+        self.add_jobs(&session, specs, Some(ExistsAction::Overwrite));
+        Ok(count)
+    }
+
+    fn add_jobs(&self, session: &Session, specs: Vec<JobSpec>, resolution: Option<ExistsAction>) {
         self.shared
             .targets
             .lock()
             .unwrap()
-            .entry(request.session_id.clone())
+            .entry(session.id.clone())
             .or_insert_with(|| {
                 Arc::new(SessionTarget {
                     session_id: session.id.clone(),
@@ -235,10 +279,10 @@ impl TransferManager {
                     profile: session.profile.clone(),
                     host_key_fingerprint: session.host_key_fingerprint.clone(),
                     channels_only: AtomicBool::new(false),
+                    rsync: tokio::sync::Mutex::new(None),
                 })
             });
 
-        let count = specs.len();
         let auto_start = self.shared.settings().auto_start;
         {
             let mut queue = self.shared.queue.lock().unwrap();
@@ -246,11 +290,13 @@ impl TransferManager {
                 queue.paused = true;
             }
             for spec in specs {
-                queue.add(spec);
+                match resolution {
+                    Some(resolution) => queue.add_resolved(spec, resolution),
+                    None => queue.add(spec),
+                };
             }
         }
         self.shared.work.notify_waiters();
-        Ok(count)
     }
 
     pub fn list(&self) -> TransferList {

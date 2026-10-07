@@ -13,6 +13,7 @@ use crate::model::{DirListing, FileEntry};
 use crate::session::{SessionInfo, SessionManager};
 use crate::settings::{Settings, SettingsStore};
 use crate::ssh::{ConnectProfile, HostKeyApproval};
+use crate::sync::{SyncManager, SyncPlanView, SyncRequest, SyncRunRequest, SyncRunSummary};
 use crate::themes::{self, ThemeFile, ThemeStore};
 use crate::transfer::{
     EnqueueRequest, ExistsAction, JobId, JobState, TransferList, TransferManager,
@@ -224,6 +225,33 @@ pub fn transfer_session_jobs(transfers: State<'_, TransferManager>, session_id: 
 #[tauri::command]
 pub fn transfer_pause_session(transfers: State<'_, TransferManager>, session_id: String) -> usize {
     transfers.pause_session(&session_id)
+}
+
+#[tauri::command]
+pub async fn sync_compare(
+    sync: State<'_, SyncManager>,
+    request: SyncRequest,
+) -> AppResult<SyncPlanView> {
+    sync.compare(request).await
+}
+
+#[tauri::command]
+pub fn sync_cancel(sync: State<'_, SyncManager>, request_id: String) {
+    sync.cancel(&request_id);
+}
+
+#[tauri::command]
+pub fn sync_discard(sync: State<'_, SyncManager>, plan_id: String) {
+    sync.discard(&plan_id);
+}
+
+#[tauri::command]
+pub async fn sync_run(
+    sync: State<'_, SyncManager>,
+    transfers: State<'_, TransferManager>,
+    request: SyncRunRequest,
+) -> AppResult<SyncRunSummary> {
+    sync.run(&transfers, request).await
 }
 
 #[tauri::command]
