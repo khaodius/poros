@@ -1,6 +1,6 @@
 //! Persisted in `settings.json` in the app config folder. The backend reads the transfer and
-//! connection sections; the interface, appearance and log sections belong to the frontend and
-//! are stored as given. Mirrored in `src/lib/settings.ts`.
+//! connection sections; the interface, appearance, log and sync sections belong to the
+//! frontend and are stored as given. Mirrored in `src/lib/settings.ts`.
 
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
@@ -14,6 +14,8 @@ use crate::transfer::ExistsAction;
 pub const MAX_WORKERS: u32 = 16;
 pub const MIN_SOCKET_BUFFER_KIB: u32 = 4;
 pub const MAX_SOCKET_BUFFER_KIB: u32 = 64 * 1024;
+const DEFAULT_RSYNC_PATH: &str = "rsync";
+const MAX_RSYNC_PATH_CHARS: usize = 1024;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -40,6 +42,13 @@ pub struct TransferSettings {
     pub keep_completed: bool,
     pub separate_connections: bool,
     pub log_each_file: bool,
+    /// Sends only the changed parts of a file the other side already has, through rsync on
+    /// the server.
+    pub delta_transfers: bool,
+    /// Smaller files are always sent whole.
+    pub delta_threshold_kib: u32,
+    /// The command that starts rsync on the server.
+    pub rsync_path: String,
 }
 
 impl Default for TransferSettings {
@@ -62,6 +71,9 @@ impl Default for TransferSettings {
             keep_completed: true,
             separate_connections: true,
             log_each_file: false,
+            delta_transfers: true,
+            delta_threshold_kib: 1024,
+            rsync_path: DEFAULT_RSYNC_PATH.to_string(),
         }
     }
 }
@@ -75,6 +87,13 @@ impl TransferSettings {
         self.requests_in_flight = self.requests_in_flight.clamp(1, 256);
         self.retry_attempts = self.retry_attempts.min(20);
         self.retry_delay_secs = self.retry_delay_secs.min(600);
+        // The path becomes part of a shell command, so it stays on one line.
+        let rsync_path = self.rsync_path.lines().next().unwrap_or("").trim();
+        self.rsync_path = if rsync_path.is_empty() {
+            DEFAULT_RSYNC_PATH.to_string()
+        } else {
+            rsync_path.chars().take(MAX_RSYNC_PATH_CHARS).collect()
+        };
     }
 
     pub fn request_size(&self) -> u32 {
@@ -83,6 +102,10 @@ impl TransferSettings {
 
     pub fn segment_threshold(&self) -> u64 {
         u64::from(self.segment_threshold_mib) * 1024 * 1024
+    }
+
+    pub fn delta_threshold(&self) -> u64 {
+        u64::from(self.delta_threshold_kib) * 1024
     }
 }
 
@@ -135,6 +158,8 @@ pub struct Settings {
     pub interface: serde_json::Value,
     pub appearance: serde_json::Value,
     pub log: serde_json::Value,
+    /// Defaults for folder synchronization.
+    pub sync: serde_json::Value,
 }
 
 impl Default for Settings {
@@ -146,6 +171,7 @@ impl Default for Settings {
             interface: empty(),
             appearance: empty(),
             log: empty(),
+            sync: empty(),
         }
     }
 }
@@ -154,7 +180,12 @@ impl Settings {
     fn sanitize(mut self) -> Self {
         self.transfers.sanitize();
         self.connection.sanitize();
-        for section in [&mut self.interface, &mut self.appearance, &mut self.log] {
+        for section in [
+            &mut self.interface,
+            &mut self.appearance,
+            &mut self.log,
+            &mut self.sync,
+        ] {
             if !section.is_object() {
                 *section = serde_json::Value::Object(Default::default());
             }
@@ -224,6 +255,21 @@ mod tests {
         assert!(settings.connection.auto_tune_receive_buffer);
         assert_eq!(settings.connection.send_buffer_kib, 128);
         assert!(settings.interface.is_object());
+        assert!(settings.transfers.delta_transfers);
+        assert_eq!(settings.transfers.rsync_path, "rsync");
+    }
+
+    #[test]
+    fn rsync_path_stays_on_one_line() {
+        let mut transfers = TransferSettings {
+            rsync_path: "  /opt/bin/rsync \nrm -rf ~".into(),
+            ..TransferSettings::default()
+        };
+        transfers.sanitize();
+        assert_eq!(transfers.rsync_path, "/opt/bin/rsync");
+        transfers.rsync_path = " ".into();
+        transfers.sanitize();
+        assert_eq!(transfers.rsync_path, "rsync");
     }
 
     #[test]

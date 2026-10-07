@@ -14,6 +14,10 @@ use poros_lib::model::{EntryKind, LinkTarget};
 use poros_lib::session::{SessionInfo, SessionManager};
 use poros_lib::settings::TransferSettings;
 use poros_lib::ssh::{AuthMethod, ConnectProfile, HostKeyApproval};
+use poros_lib::sync::{
+    CompareMode, SyncAction, SyncChoice, SyncDirection, SyncManager, SyncPlanView, SyncReason,
+    SyncRequest, SyncRunRequest,
+};
 use poros_lib::transfer::{
     Direction, EnqueueRequest, ExistsAction, JobSnapshot, JobState, TransferItem, TransferList,
     TransferManager,
@@ -654,6 +658,260 @@ async fn transfer_conflicts_and_resume() {
     assert_eq!(
         std::fs::read(downloads.join("large.bin")).unwrap(),
         large_bytes
+    );
+    drop(transfers);
+    fixture.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delta_transfers_send_only_the_changes() {
+    let Some(server) = server() else { return };
+    let fixture = TransferFixture::new(&server, "delta").await;
+    let local = fixture.local.path().join("local");
+    std::fs::create_dir_all(&local).unwrap();
+    let file = local.join("data.bin");
+    let original = pattern(6 * MEBIBYTE + 777, 9);
+    std::fs::write(&file, &original).unwrap();
+    let transfers = fixture.transfers(transfer_settings());
+    fixture
+        .upload(&transfers, std::slice::from_ref(&file), &fixture.remote)
+        .await;
+    let (list, _) = wait_until_settled(&transfers).await;
+    assert_all_done(&list);
+    assert_eq!(list.jobs[0].delta_bytes, None);
+    transfers.clear(&[JobState::Done]);
+
+    // A few edits in the middle and a longer tail.
+    let mut edited = original.clone();
+    edited[MEBIBYTE..MEBIBYTE + 100].fill(7);
+    edited.splice(3 * MEBIBYTE..3 * MEBIBYTE, pattern(5000, 10));
+    edited.extend(pattern(20_000, 11));
+    std::fs::write(&file, &edited).unwrap();
+    fixture
+        .upload(&transfers, std::slice::from_ref(&file), &fixture.remote)
+        .await;
+    let (list, _) = wait_until_settled(&transfers).await;
+    assert_all_done(&list);
+    let sent = list.jobs[0]
+        .delta_bytes
+        .expect("the upload did not use rsync");
+    assert!(sent < 200_000, "sent {sent} bytes");
+    assert_eq!(list.jobs[0].transferred, edited.len() as u64);
+    let remote_file = remote_path_join(&fixture.remote, "data.bin");
+    let fs = &fixture.manager.get(&fixture.session.id).await.unwrap().fs;
+    let local_modified = std::fs::metadata(&file)
+        .unwrap()
+        .modified()
+        .unwrap()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    assert_eq!(
+        fs.stat(&remote_file).await.unwrap().unwrap().modified,
+        Some(local_modified)
+    );
+    transfers.clear(&[JobState::Done]);
+
+    // Downloading over the old version rebuilds the new one from it.
+    std::fs::write(&file, &original).unwrap();
+    fixture.download(&transfers, &[&remote_file], &local).await;
+    let (list, _) = wait_until_settled(&transfers).await;
+    assert_all_done(&list);
+    let received = list.jobs[0]
+        .delta_bytes
+        .expect("the download did not use rsync");
+    assert!(received < 200_000, "received {received} bytes");
+    assert_eq!(std::fs::read(&file).unwrap(), edited);
+    let leftovers: Vec<_> = std::fs::read_dir(&local)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(leftovers, vec![std::ffi::OsString::from("data.bin")]);
+    drop(transfers);
+
+    // Workers sharing the browsing connection run rsync on it too.
+    std::fs::write(&file, &original).unwrap();
+    let transfers = fixture.transfers(TransferSettings {
+        separate_connections: false,
+        ..transfer_settings()
+    });
+    fixture.download(&transfers, &[&remote_file], &local).await;
+    let (list, _) = wait_until_settled(&transfers).await;
+    assert_all_done(&list);
+    assert!(list.jobs[0].delta_bytes.is_some());
+    assert_eq!(std::fs::read(&file).unwrap(), edited);
+    drop(transfers);
+
+    // Without rsync on the server the whole file is copied.
+    std::fs::write(&file, &original).unwrap();
+    let transfers = fixture.transfers(TransferSettings {
+        rsync_path: "/nonexistent/rsync".into(),
+        ..transfer_settings()
+    });
+    fixture
+        .upload(&transfers, std::slice::from_ref(&file), &fixture.remote)
+        .await;
+    let (list, _) = wait_until_settled(&transfers).await;
+    assert_all_done(&list);
+    assert_eq!(list.jobs[0].delta_bytes, None);
+    assert_eq!(fixture.remote_bytes(&remote_file).await, original);
+    drop(transfers);
+    fixture.close().await;
+}
+
+fn sync_request(
+    fixture: &TransferFixture,
+    local: &Path,
+    remote: &str,
+    direction: SyncDirection,
+    compare: CompareMode,
+) -> SyncRequest {
+    SyncRequest {
+        request_id: "test".into(),
+        session_id: fixture.session.id.clone(),
+        local_path: local.to_string_lossy().into_owned(),
+        remote_path: remote.to_string(),
+        direction,
+        compare,
+        delete_extraneous: true,
+        skip_newer_on_target: false,
+        ignore_existing: false,
+        time_tolerance_secs: 2,
+        excludes: vec!["*.log".into()],
+    }
+}
+
+fn planned(plan: &SyncPlanView) -> Vec<(String, SyncAction, SyncReason)> {
+    plan.items
+        .iter()
+        .map(|item| (item.path.clone(), item.action, item.reason))
+        .collect()
+}
+
+async fn run_everything(sync: &SyncManager, transfers: &TransferManager, plan: &SyncPlanView) {
+    let choices = plan
+        .items
+        .iter()
+        .map(|item| SyncChoice {
+            id: item.id,
+            action: item.action,
+        })
+        .collect();
+    let summary = sync
+        .run(
+            transfers,
+            SyncRunRequest {
+                plan_id: plan.plan_id.clone(),
+                choices,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(summary.failures.is_empty(), "{:?}", summary.failures);
+    assert_all_done(&wait_until_settled(transfers).await.0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sync_mirrors_folders_both_ways() {
+    let Some(server) = server() else { return };
+    let fixture = TransferFixture::new(&server, "sync").await;
+    let local = fixture.local.path().join("site");
+    write_tree(&local);
+    std::fs::write(local.join("debug.log"), b"log").unwrap();
+    let sync = SyncManager::new(fixture.manager.clone(), Events::default());
+    let transfers = fixture.transfers(transfer_settings());
+    let upload = sync_request(
+        &fixture,
+        &local,
+        &fixture.remote,
+        SyncDirection::Upload,
+        CompareMode::SizeAndTime,
+    );
+
+    let plan = sync.compare(upload.clone()).await.unwrap();
+    use SyncAction::{DeleteRemote, Download, Upload};
+    use SyncReason::{ContentDiffers, Extraneous, New};
+    assert_eq!(
+        planned(&plan),
+        [
+            ("a.txt".into(), Upload, New),
+            ("empty folder".into(), Upload, New),
+            ("empty.bin".into(), Upload, New),
+            ("large.bin".into(), Upload, New),
+            ("nested".into(), Upload, New),
+        ]
+    );
+    assert_eq!(plan.counts.excluded, 1);
+    assert_eq!(plan.items[4].files, 2);
+    run_everything(&sync, &transfers, &plan).await;
+    transfers.clear(&[JobState::Done]);
+    let plan = sync.compare(upload.clone()).await.unwrap();
+    assert!(plan.items.is_empty(), "{:?}", planned(&plan));
+    assert_eq!(plan.counts.unchanged, 5);
+
+    // A changed file, a folder only on the server, and an excluded file there that stays.
+    std::fs::write(local.join("a.txt"), pattern(2000, 5)).unwrap();
+    let fs = &fixture.manager.get(&fixture.session.id).await.unwrap().fs;
+    fs.make_dir(&fixture.remote, "old").await.unwrap();
+    let kept_log = remote_path_join(&fixture.remote, "keep.log");
+    let handle = fs.open_for_write(&kept_log, true, None).await.unwrap();
+    fs.write_chunk(&handle, 0, b"server log".to_vec())
+        .await
+        .unwrap();
+    fs.close_handle(handle).await.unwrap();
+    let plan = sync.compare(upload.clone()).await.unwrap();
+    assert_eq!(
+        planned(&plan),
+        [
+            ("a.txt".into(), Upload, SyncReason::Changed),
+            ("old".into(), DeleteRemote, Extraneous),
+        ]
+    );
+    run_everything(&sync, &transfers, &plan).await;
+    transfers.clear(&[JobState::Done]);
+    assert!(fs.stat(&kept_log).await.unwrap().is_some());
+
+    // Mirroring the server into an empty folder brings everything but excluded files.
+    let mirror = fixture.local.path().join("mirror");
+    std::fs::create_dir_all(&mirror).unwrap();
+    let download = sync_request(
+        &fixture,
+        &mirror,
+        &fixture.remote,
+        SyncDirection::Download,
+        CompareMode::SizeAndTime,
+    );
+    let plan = sync.compare(download.clone()).await.unwrap();
+    assert!(plan.items.iter().all(|item| item.action == Download));
+    run_everything(&sync, &transfers, &plan).await;
+    transfers.clear(&[JobState::Done]);
+    std::fs::remove_file(local.join("debug.log")).unwrap();
+    assert_eq!(read_tree(&mirror), read_tree(&local));
+    assert!(sync.compare(download).await.unwrap().items.is_empty());
+
+    // Same size and time, different bytes: only a content comparison notices.
+    let changed = local.join("nested/b.txt");
+    let modified = std::fs::metadata(&changed).unwrap().modified().unwrap();
+    let mut bytes = std::fs::read(&changed).unwrap();
+    bytes[100] ^= 0xff;
+    std::fs::write(&changed, &bytes).unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&changed)
+        .unwrap()
+        .set_modified(modified)
+        .unwrap();
+    assert!(sync.compare(upload.clone()).await.unwrap().items.is_empty());
+    let plan = sync
+        .compare(SyncRequest {
+            compare: CompareMode::Checksum,
+            ..upload
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        planned(&plan),
+        [("nested/b.txt".into(), Upload, ContentDiffers)]
     );
     drop(transfers);
     fixture.close().await;

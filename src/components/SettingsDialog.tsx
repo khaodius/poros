@@ -1,6 +1,7 @@
 import {
   ArrowLeftRight,
   FileText,
+  FolderSync,
   LayoutPanelLeft,
   Network,
   Palette,
@@ -20,6 +21,7 @@ import { saveSettingsSection, useSettingsStore } from "../state/settingsStore";
 import { useUiStore, type SettingsSection } from "../state/uiStore";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { Dialog } from "./Dialog";
+import { SyncSettingsPage } from "./SyncSettings";
 import {
   NumberSetting,
   SelectSetting,
@@ -30,6 +32,7 @@ import {
 
 const SECTIONS: { id: SettingsSection; label: string; icon: LucideIcon }[] = [
   { id: "transfers", label: "Transfers", icon: ArrowLeftRight },
+  { id: "sync", label: "Sync", icon: FolderSync },
   { id: "connection", label: "Connection", icon: Network },
   { id: "interface", label: "Interface", icon: LayoutPanelLeft },
   { id: "appearance", label: "Appearance", icon: Palette },
@@ -73,6 +76,7 @@ export function SettingsDialog({ section }: { section: SettingsSection }) {
         </nav>
         <div className="settings-page">
           {section === "transfers" && <TransferSettingsPage settings={settings} />}
+          {section === "sync" && <SyncSettingsPage settings={settings} />}
           {section === "connection" && <ConnectionSettingsPage settings={settings} />}
           {section === "interface" && <InterfaceSettingsPage settings={settings} />}
           {section === "appearance" && <AppearanceSettings />}

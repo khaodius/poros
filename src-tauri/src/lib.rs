@@ -7,11 +7,13 @@ pub mod format;
 pub mod local;
 pub mod model;
 pub mod remote_path;
+pub mod rsync;
 pub mod session;
 pub mod settings;
 pub mod sftp;
 pub mod ssh;
 pub mod storage;
+pub mod sync;
 pub mod themes;
 pub mod transfer;
 
@@ -24,6 +26,7 @@ use connections::{ConnectionStore, Keychain};
 use events::Events;
 use session::SessionManager;
 use settings::SettingsStore;
+use sync::SyncManager;
 use themes::ThemeStore;
 use transfer::TransferManager;
 
@@ -45,6 +48,7 @@ pub fn run() {
             let transfers =
                 TransferManager::new(sessions.clone(), events.clone(), settings.get().transfers);
             app.manage(transfers);
+            app.manage(SyncManager::new(sessions.clone(), events.clone()));
             app.manage(sessions);
             app.manage(settings);
             app.manage(Arc::new(ConnectionStore::new(
@@ -97,6 +101,10 @@ pub fn run() {
             commands::transfer_resolve,
             commands::transfer_session_jobs,
             commands::transfer_pause_session,
+            commands::sync_compare,
+            commands::sync_cancel,
+            commands::sync_discard,
+            commands::sync_run,
             commands::settings_get,
             commands::settings_set,
             commands::connections_list,

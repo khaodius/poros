@@ -162,6 +162,7 @@ impl RemoteFs {
                     });
                     if !is_dir {
                         entry.size = attributes.size.unwrap_or(0);
+                        entry.modified = attributes.mtime.map(i64::from).or(entry.modified);
                     }
                 }
                 None => entry.link_target = Some(LinkTarget::Broken),
@@ -272,6 +273,20 @@ impl RemoteFs {
             Ok(reply) => Ok(Some(RemoteStat::from(&reply.attrs))),
             Err(SftpError::Status(status)) if status.status_code == StatusCode::NoSuchFile => {
                 Ok(None)
+            }
+            Err(error) => Err(AppError::from(error).with_path(path)),
+        }
+    }
+
+    /// Whether `path` is a symbolic link; false when nothing is there.
+    pub async fn is_symlink(&self, path: &str) -> AppResult<bool> {
+        match self.raw.lstat(path).await {
+            Ok(reply) => Ok(reply
+                .attrs
+                .permissions
+                .is_some_and(|mode| kind_from_mode(mode) == EntryKind::Symlink)),
+            Err(SftpError::Status(status)) if status.status_code == StatusCode::NoSuchFile => {
+                Ok(false)
             }
             Err(error) => Err(AppError::from(error).with_path(path)),
         }

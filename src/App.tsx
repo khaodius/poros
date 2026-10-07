@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Plus, SlidersHorizontal } from "lucide-react";
+import { FolderSync, Plus, SlidersHorizontal } from "lucide-react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { CloseTabDialog } from "./components/CloseTabDialog";
@@ -11,6 +11,7 @@ import { QuickConnectBar } from "./components/QuickConnectBar";
 import { SaveConnectionDialog } from "./components/SaveConnectionDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { StatusBar } from "./components/StatusBar";
+import { SyncDialog } from "./components/SyncDialog";
 import { Toasts } from "./components/Toasts";
 import { WindowControls } from "./components/WindowControls";
 import { Workspace } from "./components/Workspace";
@@ -314,6 +315,15 @@ export function App() {
           <button
             type="button"
             className="icon-button topbar-button"
+            title="Synchronize folders"
+            aria-label="Synchronize folders"
+            onClick={() => openDialog({ kind: "sync" })}
+          >
+            <FolderSync size={15} />
+          </button>
+          <button
+            type="button"
+            className="icon-button topbar-button"
             title="Settings (Ctrl+,)"
             aria-label="Settings"
             onClick={() => openDialog({ kind: "settings", section: "transfers" })}
@@ -353,6 +363,15 @@ function AppDialog() {
       return <SettingsDialog section={dialog.section} />;
     case "saveConnection":
       return <SaveConnectionDialog sessionId={dialog.sessionId} onClose={close} />;
+    case "sync":
+      return (
+        <SyncDialog
+          localPath={dialog.localPath}
+          sessionId={dialog.sessionId}
+          remotePath={dialog.remotePath}
+          onClose={close}
+        />
+      );
     case "closeTab":
       return (
         <CloseTabDialog

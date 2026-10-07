@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -104,6 +104,10 @@ pub struct JobRun {
     pub transferred: AtomicU64,
     pub pieces: Mutex<Option<Pieces>>,
     pub plan: OnceLock<Plan>,
+    /// Set while rsync moves the file, sending only what changed.
+    pub delta: AtomicBool,
+    /// File data a delta transfer sent over the network.
+    pub delta_bytes: AtomicU64,
     max_workers: AtomicU32,
 }
 
@@ -114,6 +118,8 @@ impl JobRun {
             transferred: AtomicU64::new(start),
             pieces: Mutex::new(None),
             plan: OnceLock::new(),
+            delta: AtomicBool::new(false),
+            delta_bytes: AtomicU64::new(0),
             max_workers: AtomicU32::new(1),
         }
     }
@@ -195,6 +201,8 @@ pub struct Job {
     pub resume_offset: Option<u64>,
     pub transferred: u64,
     pub speed: u64,
+    /// Bytes sent over the network when rsync moved only the changes.
+    pub delta_bytes: Option<u64>,
     run: Option<Arc<JobRun>>,
     workers: u32,
     stop: Option<StopReason>,
@@ -232,6 +240,7 @@ impl Job {
             error: self.error.clone(),
             conflict: self.conflict.clone(),
             attempts: self.attempts,
+            delta_bytes: self.delta_bytes,
         }
     }
 }
@@ -259,6 +268,8 @@ pub struct JobSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub conflict: Option<ConflictInfo>,
     pub attempts: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delta_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
@@ -360,6 +371,15 @@ impl Queue {
         self.insert(rank, spec)
     }
 
+    /// Queues a job that already knows what to do if its target exists.
+    pub fn add_resolved(&mut self, spec: JobSpec, resolution: ExistsAction) -> JobId {
+        let id = self.add(spec);
+        if let Some(job) = self.jobs.get_mut(&id) {
+            job.resolution = Some(resolution);
+        }
+        id
+    }
+
     fn insert(&mut self, rank: String, spec: JobSpec) -> JobId {
         let id = self.next_id;
         self.next_id += 1;
@@ -379,6 +399,7 @@ impl Queue {
                 resume_offset: None,
                 transferred: 0,
                 speed: 0,
+                delta_bytes: None,
                 run: None,
                 workers: 0,
                 stop: None,
@@ -443,6 +464,7 @@ impl Queue {
         job.not_before = None;
         job.conflict = None;
         job.speed = 0;
+        job.delta_bytes = None;
         job.sample = Some((now, job.resume_offset.unwrap_or(0)));
         self.dirty.insert(id);
         Some(Claim {
@@ -522,6 +544,10 @@ impl Queue {
             if let Some(prefix) = run.complete_prefix() {
                 job.resume_offset = Some(prefix);
             }
+            job.delta_bytes = run
+                .delta
+                .load(Ordering::Relaxed)
+                .then(|| run.delta_bytes.load(Ordering::Relaxed));
         }
         self.dirty.insert(id);
 
@@ -784,9 +810,17 @@ impl Queue {
             } else {
                 (job.speed * 2 + instant_speed) / 3
             };
-            if transferred != job.transferred || speed != job.speed {
+            let delta_bytes = run
+                .delta
+                .load(Ordering::Relaxed)
+                .then(|| run.delta_bytes.load(Ordering::Relaxed));
+            if transferred != job.transferred
+                || speed != job.speed
+                || delta_bytes != job.delta_bytes
+            {
                 job.transferred = transferred;
                 job.speed = speed;
+                job.delta_bytes = delta_bytes;
                 self.dirty.insert(job.id);
             }
             job.sample = Some((now, transferred));

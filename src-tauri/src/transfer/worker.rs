@@ -8,6 +8,7 @@ use tokio::fs::{File, OpenOptions};
 
 use super::conflict::{decide, numbered_name, Decision, ExistsAction, FileFacts};
 use super::copy::{self, CopyContext};
+use super::delta;
 use super::pieces::Pieces;
 use super::queue::{
     Claim, ConflictInfo, Direction, JobId, JobKind, JobRun, JobSpec, JobState, Plan, Release, Role,
@@ -54,7 +55,7 @@ struct Connections {
 }
 
 impl Connections {
-    async fn get(&mut self, shared: &Shared, session_id: &str) -> AppResult<&RemoteFs> {
+    async fn get(&mut self, shared: &Shared, session_id: &str) -> AppResult<&WorkerConnection> {
         self.last_used = Instant::now();
         let closed = self.open.get(session_id).is_some_and(|connection| {
             connection
@@ -70,7 +71,7 @@ impl Connections {
             let connection = open_connection(shared, &target, self.worker_index).await?;
             self.open.insert(session_id.to_string(), connection);
         }
-        Ok(&self.open[session_id].fs)
+        Ok(&self.open[session_id])
     }
 
     fn existing(&self, session_id: &str) -> Option<&RemoteFs> {
@@ -182,13 +183,15 @@ pub(super) async fn run(shared: Arc<Shared>, index: usize) {
     connections.close_all().await;
 }
 
-struct JobContext<'a> {
-    shared: &'a Shared,
-    fs: &'a RemoteFs,
+pub(super) struct JobContext<'a> {
+    pub shared: &'a Shared,
+    pub fs: &'a RemoteFs,
+    /// This worker's own connection; `None` when it borrows a channel of the browsing one.
+    pub handle: Option<&'a SshHandle>,
     id: JobId,
-    run: &'a JobRun,
-    spec: &'a JobSpec,
-    settings: &'a TransferSettings,
+    pub run: &'a JobRun,
+    pub spec: &'a JobSpec,
+    pub settings: &'a TransferSettings,
 }
 
 impl JobContext<'_> {
@@ -255,10 +258,11 @@ async fn execute(shared: &Shared, connections: &mut Connections, claim: Claim) {
 
     let outcome = match connections.get(shared, &spec.session_id).await {
         Err(error) => RunOutcome::Failed(error),
-        Ok(fs) => {
+        Ok(connection) => {
             let context = JobContext {
                 shared,
-                fs,
+                fs: &connection.fs,
+                handle: connection.handle.as_ref(),
                 id,
                 run: &run,
                 spec: &spec,
@@ -297,7 +301,9 @@ async fn execute(shared: &Shared, connections: &mut Connections, claim: Claim) {
             let finalized = match spec.direction {
                 Direction::Download => finalize_download(&run, &settings).await,
                 Direction::Upload => match connections.get(shared, &spec.session_id).await {
-                    Ok(fs) => finalize_upload(shared, fs, &run, &spec, &settings).await,
+                    Ok(connection) => {
+                        finalize_upload(shared, &connection.fs, &run, &spec, &settings).await
+                    }
                     Err(error) => Err(error),
                 },
             };
@@ -503,6 +509,14 @@ async fn download(
                     context.retarget(&target, name);
                     (target, 0)
                 }
+                Decision::Write { offset: 0 } => {
+                    if let Some(outcome) =
+                        delta::try_download(context, &source, target_facts).await?
+                    {
+                        return Ok(outcome);
+                    }
+                    (spec.target.clone(), 0)
+                }
                 Decision::Write { offset } => (spec.target.clone(), offset),
             }
         }
@@ -576,6 +590,14 @@ async fn upload(
                     let (target, name) = free_remote_name(context.fs, &spec.target).await?;
                     context.retarget(&target, name);
                     (target, 0)
+                }
+                Decision::Write { offset: 0 } => {
+                    if let Some(outcome) =
+                        delta::try_upload(context, &metadata, source_facts, &stat).await?
+                    {
+                        return Ok(outcome);
+                    }
+                    (spec.target.clone(), 0)
                 }
                 Decision::Write { offset } => (spec.target.clone(), offset),
             }
@@ -780,18 +802,21 @@ fn modified_seconds(metadata: &std::fs::Metadata) -> Option<i64> {
 }
 
 #[cfg(unix)]
-fn local_permissions(metadata: &std::fs::Metadata) -> Option<u32> {
+pub(super) fn local_permissions(metadata: &std::fs::Metadata) -> Option<u32> {
     use std::os::unix::fs::PermissionsExt;
     Some(metadata.permissions().mode() & 0o7777)
 }
 
 #[cfg(not(unix))]
-fn local_permissions(_metadata: &std::fs::Metadata) -> Option<u32> {
+pub(super) fn local_permissions(_metadata: &std::fs::Metadata) -> Option<u32> {
     None
 }
 
 #[cfg(unix)]
-fn set_local_permissions(file: &std::fs::File, mode: Option<u32>) -> std::io::Result<()> {
+pub(super) fn set_local_permissions(
+    file: &std::fs::File,
+    mode: Option<u32>,
+) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     match mode {
         Some(mode) => file.set_permissions(std::fs::Permissions::from_mode(mode)),
@@ -800,7 +825,10 @@ fn set_local_permissions(file: &std::fs::File, mode: Option<u32>) -> std::io::Re
 }
 
 #[cfg(not(unix))]
-fn set_local_permissions(_file: &std::fs::File, _mode: Option<u32>) -> std::io::Result<()> {
+pub(super) fn set_local_permissions(
+    _file: &std::fs::File,
+    _mode: Option<u32>,
+) -> std::io::Result<()> {
     Ok(())
 }
 

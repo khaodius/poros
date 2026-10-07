@@ -38,7 +38,9 @@ const ICON_BY_EXTENSION = new Map<string, [LucideIcon, string]>(
   ),
 );
 
-function iconFor(entry: FileEntry): [LucideIcon, string] {
+type IconSubject = Pick<FileEntry, "name" | "kind" | "linkTarget">;
+
+function iconFor(entry: IconSubject): [LucideIcon, string] {
   if (entry.kind === "dir") return [Folder, "folder"];
   if (entry.kind === "symlink") {
     if (entry.linkTarget === "dir") return [FolderSymlink, "folder"];
@@ -51,7 +53,7 @@ function iconFor(entry: FileEntry): [LucideIcon, string] {
   return ICON_BY_EXTENSION.get(extension) ?? [File, "file"];
 }
 
-export function FileIcon({ entry }: { entry: FileEntry }) {
+export function FileIcon({ entry }: { entry: IconSubject }) {
   const [Icon, group] = iconFor(entry);
   return <Icon size={16} className={`file-icon file-icon-${group}`} aria-hidden />;
 }
