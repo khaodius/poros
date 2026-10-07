@@ -22,9 +22,11 @@ the network or the disk is Rust.
 ## Features
 
 - **Tabs and docking**: every local folder and server session is a tab. Drag tabs to reorder
-  them, drop one on the edge of another group to split the window left, right, up or down, and
-  drag the dividers to resize. Pull a tab out of the window to give it a window of its own, and
-  send it back from its menu.
+  them, or onto another tab bar to join it. Pull a tab off its bar and its pane follows the
+  pointer; once it covers half of another pane, the panes move aside to open the spot it will
+  drop into, beside that pane or in its place. Moving a pane does not reload it. Drag the
+  dividers to resize, and pull a tab out of the window to give it a window of its own, then send
+  it back from its menu.
 - **Transfer queue** with parallel workers, each on its own connection, and a worker count you
   can change from the queue header while transfers run; holding **-** or **+** counts faster
   every ten steps, as do the number fields in settings. Large files are split across idle

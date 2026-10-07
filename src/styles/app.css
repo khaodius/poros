@@ -423,22 +423,12 @@ input.has-error {
   min-height: 96px;
 }
 
-.workspace-resizer,
-.dock-resizer {
+.workspace-resizer {
   position: relative;
   flex: none;
-  touch-action: none;
-}
-
-.workspace-resizer,
-.dock-column > .dock-resizer {
   height: 8px;
   cursor: row-resize;
-}
-
-.dock-row > .dock-resizer {
-  width: 8px;
-  cursor: col-resize;
+  touch-action: none;
 }
 
 .workspace-resizer::after,
@@ -452,11 +442,11 @@ input.has-error {
 }
 
 .workspace-resizer::after,
-.dock-column > .dock-resizer::after {
+.dock-resizer.is-column::after {
   inset: 3px 25%;
 }
 
-.dock-row > .dock-resizer::after {
+.dock-resizer.is-row::after {
   inset: 25% 3px;
 }
 
@@ -467,46 +457,57 @@ input.has-error {
   opacity: 0.6;
 }
 
-.dock,
-.dock-split {
-  display: flex;
+/* Everything in the dock is placed absolutely, so layout changes animate. */
+.dock {
+  position: relative;
   flex: 1;
   min-width: 0;
   min-height: 0;
 }
 
-.dock-column {
-  flex-direction: column;
+.dock > .tab-group,
+.dock > .tab-panel,
+.dock-slot,
+.dock-resizer {
+  position: absolute;
+  transition:
+    left var(--transition-layout),
+    top var(--transition-layout),
+    width var(--transition-layout),
+    height var(--transition-layout);
 }
 
-.dock-row > .dock-panel {
-  min-width: 200px;
+.dock.is-resizing > *,
+.dock > .tab-panel.is-floating {
+  transition: none;
 }
 
-.dock-column > .dock-panel {
-  min-height: 110px;
+@media (prefers-reduced-motion: reduce) {
+  .dock > * {
+    transition: none;
+  }
 }
 
-.dock-panel {
-  display: flex;
-  flex-shrink: 1;
-  flex-basis: 0;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
+.dock-resizer {
+  touch-action: none;
+}
+
+.dock-resizer.is-row {
+  cursor: col-resize;
+}
+
+.dock-resizer.is-column {
+  cursor: row-resize;
 }
 
 .tab-group {
   display: flex;
-  flex: 1;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
 }
 
 .tab-content {
-  position: relative;
-  display: flex;
   flex: 1;
   min-height: 0;
   margin-top: -1px;
@@ -514,7 +515,6 @@ input.has-error {
 
 .tab-panel {
   display: flex;
-  flex: 1;
   min-width: 0;
   min-height: 0;
 }
@@ -527,22 +527,50 @@ input.has-error {
   border-top-left-radius: 0;
 }
 
-.dock {
-  position: relative;
+/* Where a dragged pane will land, and the space it left. */
+.dock-slot,
+.tab-group.is-emptied > .tab-content {
+  background: var(--accent-soft);
+  border: 2px dashed color-mix(in srgb, var(--accent) 70%, transparent);
+  border-radius: var(--radius);
 }
 
-.dock-preview {
+.dock-floating {
   position: absolute;
-  z-index: 20;
-  background: var(--accent-soft);
-  border: 2px solid var(--accent);
+  z-index: 30;
+  background: var(--surface-raised);
   border-radius: var(--radius);
+  box-shadow: var(--shadow-popover);
   pointer-events: none;
-  transition:
-    left var(--transition-fast),
-    top var(--transition-fast),
-    width var(--transition-fast),
-    height var(--transition-fast);
+}
+
+.dock > .tab-panel.is-floating {
+  z-index: 31;
+  pointer-events: none;
+}
+
+.dock-floating-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 10px;
+  color: var(--text);
+  font-size: var(--font-size-small);
+}
+
+.dock-floating-title .tab-icon {
+  color: var(--accent);
+}
+
+.dock-floating-hint {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  color: var(--accent);
+  font-size: var(--font-size-tiny);
+  font-weight: 500;
 }
 
 /* Tab bar */
@@ -603,6 +631,10 @@ input.has-error {
   background: var(--tab-indicator);
   border-radius: 0 0 2px 2px;
   content: "";
+}
+
+.tab-button.is-lifted {
+  opacity: 0.45;
 }
 
 .tab-button.drop-before::after,

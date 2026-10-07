@@ -12,7 +12,7 @@ import {
   XSquare,
 } from "lucide-react";
 import { welcomeTab, type GroupNode, type PaneTab } from "../lib/layout";
-import { beginDrag, useDragStore } from "../state/dragStore";
+import { beginDrag, isLifted, tabDrag, useDragStore } from "../state/dragStore";
 import { useLayoutStore } from "../state/layoutStore";
 import { useTabLabel } from "../hooks/useTabLabel";
 import { useSessionStore } from "../state/sessionStore";
@@ -36,10 +36,11 @@ interface TabMenu {
 export function TabBar({ group }: { group: GroupNode }) {
   const addTab = useLayoutStore((state) => state.addTab);
   const [menu, setMenu] = useState<TabMenu | null>(null);
-  const dropIndex = useDragStore((state) =>
-    state.target?.kind === "tabBar" && state.target.groupId === group.id
-      ? state.target.index
-      : null,
+  const dropIndex = useDragStore(({ target }) =>
+    target?.kind === "tabBar" && target.groupId === group.id ? target.index : null,
+  );
+  const liftedTabId = useDragStore(({ payload, target }) =>
+    payload?.kind === "tab" && isLifted(payload, target) ? payload.tabId : null,
   );
 
   const menuItems = (tab: PaneTab): MenuItem[] => {
@@ -93,6 +94,7 @@ export function TabBar({ group }: { group: GroupNode }) {
           key={tab.id}
           tab={tab}
           selected={tab.id === group.activeTabId}
+          lifted={tab.id === liftedTabId}
           dropBefore={dropIndex === index}
           dropAfter={dropIndex === group.tabs.length && index === group.tabs.length - 1}
           onContextMenu={(event) => {
@@ -125,12 +127,20 @@ export function TabBar({ group }: { group: GroupNode }) {
 interface TabButtonProps {
   tab: PaneTab;
   selected: boolean;
+  lifted: boolean;
   dropBefore: boolean;
   dropAfter: boolean;
   onContextMenu: (event: MouseEvent) => void;
 }
 
-function TabButton({ tab, selected, dropBefore, dropAfter, onContextMenu }: TabButtonProps) {
+function TabButton({
+  tab,
+  selected,
+  lifted,
+  dropBefore,
+  dropAfter,
+  onContextMenu,
+}: TabButtonProps) {
   const label = useTabLabel(tab);
   const activateTab = useLayoutStore((state) => state.activateTab);
   const lost = useSessionStore((state) =>
@@ -143,6 +153,7 @@ function TabButton({ tab, selected, dropBefore, dropAfter, onContextMenu }: TabB
       className={[
         "tab-button",
         selected && "is-selected",
+        lifted && "is-lifted",
         dropBefore && "drop-before",
         dropAfter && "drop-after",
       ]
@@ -155,9 +166,11 @@ function TabButton({ tab, selected, dropBefore, dropAfter, onContextMenu }: TabB
       onPointerDown={(event) => {
         if ((event.target as HTMLElement).closest(".tab-close")) return;
         activateTab(tab.id);
+        const button = event.currentTarget;
+        const start = { x: event.clientX, y: event.clientY };
         beginDrag(
           event,
-          () => ({ kind: "tab", tabId: tab.id, label }),
+          () => tabDrag(button, tab.id, label, start),
           (target) => {
             if (target.kind === "tabBar") moveTabTo(tab.id, target.groupId, target.index);
             else if (target.kind === "dock") dockTabBeside(tab.id, target.groupId, target.side);
