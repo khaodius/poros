@@ -104,9 +104,8 @@ fn utf16(bytes: &[u8], read_unit: fn([u8; 2]) -> u16) -> AppResult<String> {
             "The file is marked as UTF-16 but has an odd number of bytes",
         ));
     }
-    let units = bytes
-        .chunks_exact(2)
-        .map(|pair| read_unit([pair[0], pair[1]]));
+    let (pairs, _) = bytes.as_chunks::<2>();
+    let units = pairs.iter().map(|&pair| read_unit(pair));
     char::decode_utf16(units)
         .collect::<Result<String, _>>()
         .map_err(|_| AppError::invalid("The file is marked as UTF-16 but is not valid UTF-16"))
