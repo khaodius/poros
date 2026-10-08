@@ -7,15 +7,17 @@ mod conflict;
 mod copy;
 mod delta;
 mod limiter;
+mod persist;
 mod pieces;
 mod queue;
 mod streamed;
+mod verify;
 mod worker;
 
 use std::collections::{BTreeSet, HashMap, VecDeque};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, RwLock, Weak};
+use std::sync::{Arc, Mutex, OnceLock, RwLock, Weak};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -27,6 +29,7 @@ pub use queue::{
     ChangedDirectory, Direction, JobId, JobKind, JobSnapshot, JobState, QueueCounts, Side,
 };
 
+use crate::checksum::Algorithm;
 use crate::error::{AppError, AppResult};
 use crate::events::{Events, LogLevel};
 use crate::format::{format_duration, format_size};
@@ -36,9 +39,12 @@ use crate::settings::TransferSettings;
 use crate::ssh::ConnectProfile;
 use crate::{local, remote_path};
 use limiter::RateLimiter;
-use queue::{JobSpec, Queue};
+use queue::{Abandoned, JobSpec, Queue};
 
 const TICK: Duration = Duration::from_millis(250);
+/// A change to the queue is saved this long after it happens, gathering the ones that follow.
+const SAVE_DELAY: Duration = Duration::from_secs(2);
+const SAVE_PROGRESS_EVERY: Duration = Duration::from_secs(10);
 /// The overall speed averages over this many ticks.
 const SPEED_WINDOW_TICKS: usize = 8;
 
@@ -108,37 +114,103 @@ pub struct TransferList {
 pub(crate) struct SessionTarget {
     pub session_id: String,
     pub label: String,
-    pub profile: ConnectProfile,
-    pub host_key_fingerprint: String,
+    login: Mutex<Login>,
     /// Set once the server refuses extra connections; workers then open channels on the
     /// browsing connection instead.
     pub channels_only: AtomicBool,
     /// Whether the server ran the configured rsync command, once a worker has tried.
     pub rsync: tokio::sync::Mutex<Option<delta::RsyncCheck>>,
-    /// The browsing session's files for protocols other than SFTP. Cloud workers share them,
-    /// and FTP workers fall back to them when the server refuses more connections.
-    pub files: Option<Arc<dyn RemoteFileSystem>>,
+    /// The server's checksum command once a worker has looked; `Some(None)` when it has none.
+    pub checksum: tokio::sync::Mutex<Option<Option<Algorithm>>>,
+    /// Saved by an earlier run of the app, without the password, passphrase or sign-in.
+    restored: AtomicBool,
     /// Sessions this FTP server would not send files to directly, so relays to them skip
     /// trying FXP again.
     pub fxp_refused: Mutex<BTreeSet<String>>,
 }
 
-impl SessionTarget {
-    fn new(session: &Session) -> Self {
+#[derive(Clone)]
+pub(crate) struct Login {
+    pub profile: ConnectProfile,
+    pub host_key_fingerprint: String,
+    /// The session whose connection carries channels when the server refuses more connections.
+    pub browsing_session: String,
+    /// That session's files for protocols other than SFTP. Cloud workers share them, and FTP
+    /// workers fall back to them when the server refuses more connections.
+    pub browsing_files: Option<Arc<dyn RemoteFileSystem>>,
+}
+
+impl Login {
+    fn of(session: &Session) -> Self {
         Self {
-            session_id: session.id.clone(),
-            label: session.profile.label(),
             profile: session.profile.clone(),
             host_key_fingerprint: session.host_key_fingerprint.clone(),
+            browsing_session: session.id.clone(),
+            browsing_files: (session.protocol() != Protocol::Sftp).then(|| session.files()),
+        }
+    }
+}
+
+impl SessionTarget {
+    fn new(session_id: String, login: Login, restored: bool) -> Self {
+        Self {
+            session_id,
+            label: login.profile.label(),
+            login: Mutex::new(login),
             channels_only: AtomicBool::new(false),
             rsync: tokio::sync::Mutex::new(None),
-            files: (session.protocol() != Protocol::Sftp).then(|| session.files()),
+            checksum: tokio::sync::Mutex::new(None),
+            restored: AtomicBool::new(restored),
             fxp_refused: Mutex::new(BTreeSet::new()),
         }
     }
 
+    fn for_session(session: &Session) -> Self {
+        Self::new(session.id.clone(), Login::of(session), false)
+    }
+
+    pub fn login(&self) -> Login {
+        self.login.lock().unwrap().clone()
+    }
+
+    pub fn protocol(&self) -> Protocol {
+        self.login.lock().unwrap().profile.protocol
+    }
+
     pub fn browsing_files(&self) -> AppResult<Arc<dyn RemoteFileSystem>> {
-        self.files.clone().ok_or_else(AppError::session_not_found)
+        self.login
+            .lock()
+            .unwrap()
+            .browsing_files
+            .clone()
+            .ok_or_else(AppError::session_not_found)
+    }
+
+    pub fn is_restored(&self) -> bool {
+        self.restored.load(Ordering::Relaxed)
+    }
+
+    /// Takes over a session the user has open to the same server when the browsing session
+    /// is gone, for its connection, or this target was restored, for its password, sign-in and
+    /// host key.
+    pub async fn adopt_live_session(&self, sessions: &SessionManager) {
+        let login = self.login();
+        let restored = self.is_restored();
+        if !restored && sessions.is_live(&login.browsing_session).await {
+            return;
+        }
+        let Some(live) = sessions.find_live(&login.profile, None).await else {
+            return;
+        };
+        let adopted = Login::of(&live);
+        let mut current = self.login.lock().unwrap();
+        current.browsing_session = adopted.browsing_session;
+        current.browsing_files = adopted.browsing_files;
+        if restored {
+            current.profile = adopted.profile;
+            current.host_key_fingerprint = adopted.host_key_fingerprint;
+            self.restored.store(false, Ordering::Relaxed);
+        }
     }
 }
 
@@ -158,6 +230,9 @@ pub(crate) struct Shared {
     /// Taken by a relay that borrows the browsing connections of two FTP servers, so two
     /// relays in opposite directions cannot each hold one server while waiting for the other.
     borrowed_relays: tokio::sync::Mutex<()>,
+    /// Where unfinished transfers are saved between runs; unset in tests.
+    queue_file: OnceLock<PathBuf>,
+    saving: AtomicBool,
 }
 
 impl Shared {
@@ -212,6 +287,8 @@ impl TransferManager {
             live_workers: Mutex::new(BTreeSet::new()),
             stopping: AtomicBool::new(false),
             borrowed_relays: tokio::sync::Mutex::new(()),
+            queue_file: OnceLock::new(),
+            saving: AtomicBool::new(false),
         });
         let manager = Self { shared };
         manager.configure(settings);
@@ -327,7 +404,7 @@ impl TransferManager {
             .lock()
             .unwrap()
             .entry(session.id.clone())
-            .or_insert_with(|| Arc::new(SessionTarget::new(session)));
+            .or_insert_with(|| Arc::new(SessionTarget::for_session(session)));
     }
 
     fn add_jobs(&self, specs: Vec<JobSpec>, resolution: Option<ExistsAction>) {
@@ -361,8 +438,57 @@ impl TransferManager {
     }
 
     fn update_queue(&self, change: impl FnOnce(&mut Queue)) {
-        change(&mut self.shared.queue.lock().unwrap());
+        let abandoned = {
+            let mut queue = self.shared.queue.lock().unwrap();
+            change(&mut queue);
+            queue.take_abandoned()
+        };
         self.shared.work.notify_waiters();
+        if !abandoned.is_empty() {
+            let shared = self.shared.clone();
+            tauri::async_runtime::spawn(async move {
+                for partial in abandoned {
+                    match partial.direction {
+                        Direction::Download => {
+                            let _ = tokio::fs::remove_file(&partial.path).await;
+                        }
+                        Direction::Upload | Direction::Relay => {
+                            discard_with_browsing_session(&shared, &partial).await
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    /// Restores the transfers saved in `file` by the last run, paused, and keeps saving there.
+    pub fn keep_queue_in(&self, file: PathBuf) {
+        if self.shared.queue_file.set(file.clone()).is_err() {
+            return;
+        }
+        if !self.shared.settings().keep_queue {
+            return;
+        }
+        let restored = persist::restore(&self.shared, &file);
+        if restored > 0 {
+            self.shared.events.log(
+                LogLevel::Info,
+                None,
+                format!(
+                    "Restored {restored} unfinished {} from last time, paused in the queue",
+                    if restored == 1 {
+                        "transfer"
+                    } else {
+                        "transfers"
+                    },
+                ),
+            );
+        }
+    }
+
+    /// Saves unfinished transfers now, as the app closes.
+    pub fn save_queue(&self) {
+        persist::save(&self.shared);
     }
 
     pub fn set_paused(&self, paused: bool) {
@@ -429,6 +555,8 @@ async fn report_progress(shared: Weak<Shared>) {
     let mut speed_samples: VecDeque<(Instant, u64, u64)> = VecDeque::new();
     let mut last_stats = TransferStats::default();
     let mut batch: Option<Batch> = None;
+    let mut persist_due: Option<Instant> = None;
+    let mut last_saved = Instant::now();
     loop {
         tokio::time::sleep(TICK).await;
         let Some(shared) = shared.upgrade() else {
@@ -458,6 +586,7 @@ async fn report_progress(shared: Weak<Shared>) {
             let counts = queue.counts();
             if counts.is_idle() {
                 queue.conflict_override = None;
+                queue.forget_outages();
             }
             let stats = TransferStats {
                 counts,
@@ -469,6 +598,9 @@ async fn report_progress(shared: Weak<Shared>) {
             if stats.counts.is_idle() {
                 let mut targets = shared.targets.lock().unwrap();
                 targets.retain(|session_id, _| queue.has_session_jobs(session_id));
+            }
+            if queue.unsaved {
+                persist_due.get_or_insert(now);
             }
             (
                 jobs,
@@ -511,8 +643,60 @@ async fn report_progress(shared: Weak<Shared>) {
         }
         if has_delayed {
             shared.work.notify_waiters();
+            end_outages_reached_again(&shared).await;
+        }
+        // Saved at most every few seconds, and while files move, often enough that a crash
+        // loses little progress.
+        let progress_due = busy && now.saturating_duration_since(last_saved) >= SAVE_PROGRESS_EVERY;
+        let change_due =
+            persist_due.is_some_and(|since| now.saturating_duration_since(since) >= SAVE_DELAY);
+        if change_due || progress_due {
+            persist_due = None;
+            last_saved = now;
+            persist::save_in_background(&shared);
         }
     }
+}
+
+/// Lets a server's transfers continue as soon as a new session reaches it, such as a tab
+/// reconnecting, instead of at the end of their current delay.
+async fn end_outages_reached_again(shared: &Shared) {
+    let waiting = shared.queue.lock().unwrap().waiting_servers();
+    for (session_id, since) in waiting {
+        let Ok(target) = shared.target(&session_id) else {
+            continue;
+        };
+        let profile = target.login().profile;
+        let reached = shared
+            .sessions
+            .find_live(&profile, Some(since))
+            .await
+            .is_some();
+        if reached && shared.queue.lock().unwrap().end_outage(&session_id) {
+            shared.events.log(
+                LogLevel::Info,
+                Some(&session_id),
+                format!("Reconnected to {}; its transfers continue", target.label),
+            );
+            shared.work.notify_waiters();
+        }
+    }
+}
+
+/// Deletes a server-side temporary file through the session the user browses with, if open.
+pub(super) async fn discard_with_browsing_session(shared: &Shared, partial: &Abandoned) {
+    let Ok(target) = shared.target(&partial.session_id) else {
+        return;
+    };
+    target.adopt_live_session(&shared.sessions).await;
+    let files = match target.browsing_files() {
+        Ok(files) => files,
+        Err(_) => match shared.sessions.get(&target.login().browsing_session).await {
+            Ok(session) => session.files(),
+            Err(_) => return,
+        },
+    };
+    let _ = files.delete(std::slice::from_ref(&partial.path)).await;
 }
 
 fn log_summary(events: &Events, batch: &Batch, totals: Totals, bytes: u64, now: Instant) {

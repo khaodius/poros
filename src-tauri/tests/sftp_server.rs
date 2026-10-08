@@ -2,7 +2,7 @@
 //!
 //! The server must listen on 127.0.0.1 and accept, for `POROS_TEST_SSH_USER`:
 //! the password in `POROS_TEST_SSH_PASSWORD`, and every `tests/fixtures/keys/*.pub` key.
-//! The README describes a throwaway `sshd` setup.
+//! The end-to-end step in `.github/workflows/ci.yml` starts a suitable throwaway `sshd`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -672,7 +672,9 @@ async fn transfer_conflicts_and_resume() {
     transfers.pause(&[id]);
     let (list, _) = wait_until_settled(&transfers).await;
     assert_eq!(list.jobs[0].state, JobState::Paused);
-    let kept = std::fs::read(downloads.join("large.bin")).unwrap();
+    // The unfinished file waits under a temporary name.
+    assert!(!downloads.join("large.bin").exists());
+    let kept = std::fs::read(downloads.join(".large.bin.poros-part")).unwrap();
     assert!(!kept.is_empty() && kept.len() < large_bytes.len());
     assert_eq!(kept[..], large_bytes[..kept.len()]);
 
@@ -683,6 +685,118 @@ async fn transfer_conflicts_and_resume() {
         std::fs::read(downloads.join("large.bin")).unwrap(),
         large_bytes
     );
+    assert!(!downloads.join(".large.bin.poros-part").exists());
+    drop(transfers);
+    fixture.close().await;
+}
+
+/// Waits for a running upload to pass `bytes`, then pauses it.
+async fn pause_after(transfers: &TransferManager, bytes: u64) {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let id = loop {
+        let list = transfers.list();
+        if let Some(job) = list.jobs.iter().find(|job| job.transferred > bytes) {
+            break job.id;
+        }
+        assert!(Instant::now() < deadline, "the transfer did not start");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    transfers.pause(&[id]);
+    let (list, _) = wait_until_settled(transfers).await;
+    assert_eq!(list.jobs[0].state, JobState::Paused);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn replaced_files_stay_whole_and_the_queue_survives_a_restart() {
+    let Some(server) = server() else { return };
+    let fixture = TransferFixture::new(&server, "replace").await;
+    let session = fixture.manager.get(&fixture.session.id).await.unwrap();
+    let fs = session.sftp().unwrap();
+    let source = fixture.local.path().join("source");
+    std::fs::create_dir_all(&source).unwrap();
+    let file = source.join("data.bin");
+    let old_bytes = pattern(3 * MEBIBYTE + 99, 4);
+    let new_bytes = pattern(12 * MEBIBYTE + 4321, 5);
+    let remote_file = remote_path_join(&fixture.remote, "data.bin");
+    let remote_partial = remote_path_join(&fixture.remote, ".data.bin.poros-part");
+    // Whole files over SFTP; rsync keeps its own temporary files.
+    let checked = TransferSettings {
+        verify_checksums: true,
+        delta_transfers: false,
+        ..transfer_settings()
+    };
+
+    // Uploads and downloads checked against the server's sha256sum.
+    std::fs::write(&file, &old_bytes).unwrap();
+    let transfers = fixture.transfers(checked.clone());
+    fixture
+        .upload(&transfers, std::slice::from_ref(&file), &fixture.remote)
+        .await;
+    assert_all_done(&wait_until_settled(&transfers).await.0);
+    let downloads = fixture.local.path().join("downloads");
+    std::fs::create_dir_all(&downloads).unwrap();
+    fixture
+        .download(&transfers, &[&remote_file], &downloads)
+        .await;
+    assert_all_done(&wait_until_settled(&transfers).await.0);
+    assert_eq!(
+        std::fs::read(downloads.join("data.bin")).unwrap(),
+        old_bytes
+    );
+    drop(transfers);
+
+    // While a replacement is unfinished, the old file stays whole under its name.
+    std::fs::write(&file, &new_bytes).unwrap();
+    let queue_file = fixture.local.path().join("transfers.json");
+    let transfers = fixture.transfers(TransferSettings {
+        upload_limit_kib: 4 * 1024,
+        ..checked.clone()
+    });
+    transfers.keep_queue_in(queue_file.clone());
+    fixture
+        .upload(&transfers, std::slice::from_ref(&file), &fixture.remote)
+        .await;
+    pause_after(&transfers, 4 * MEBIBYTE as u64).await;
+    assert!(fs.stat(&remote_partial).await.unwrap().is_some());
+    assert_eq!(fixture.remote_bytes(&remote_file).await, old_bytes);
+    transfers.save_queue();
+    drop(transfers);
+
+    // The next start finds the paused upload and continues it.
+    let transfers = fixture.transfers(checked.clone());
+    transfers.keep_queue_in(queue_file.clone());
+    let list = transfers.list();
+    assert_eq!(list.jobs.len(), 1);
+    assert_eq!(list.jobs[0].state, JobState::Paused);
+    assert!(list.jobs[0].transferred > 0);
+    transfers.resume(&[list.jobs[0].id]);
+    assert_all_done(&wait_until_settled(&transfers).await.0);
+    assert_eq!(fixture.remote_bytes(&remote_file).await, new_bytes);
+    assert!(fs.stat(&remote_partial).await.unwrap().is_none());
+    transfers.clear(&[JobState::Done]);
+    transfers.save_queue();
+    assert!(!queue_file.exists());
+
+    // Removing an unfinished upload deletes its temporary file.
+    transfers.configure(TransferSettings {
+        upload_limit_kib: 4 * 1024,
+        ..checked
+    });
+    fixture
+        .upload(&transfers, std::slice::from_ref(&file), &fixture.remote)
+        .await;
+    pause_after(&transfers, MEBIBYTE as u64).await;
+    assert!(fs.stat(&remote_partial).await.unwrap().is_some());
+    transfers.remove(&[transfers.list().jobs[0].id]);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while fs.stat(&remote_partial).await.unwrap().is_some() {
+        assert!(
+            Instant::now() < deadline,
+            "the temporary file was left behind"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(fixture.remote_bytes(&remote_file).await, new_bytes);
     drop(transfers);
     fixture.close().await;
 }

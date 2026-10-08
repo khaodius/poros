@@ -24,6 +24,8 @@ pub enum ErrorKind {
     Cloud,
     /// The connection's protocol cannot do what was asked, such as rsync over FTP.
     Unsupported,
+    /// A finished file failed a size, change or checksum check.
+    Integrity,
     Cancelled,
     Keychain,
 }
@@ -84,6 +86,10 @@ impl AppError {
         Self::new(ErrorKind::Unsupported, message)
     }
 
+    pub fn integrity(message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::Integrity, message)
+    }
+
     /// Network trouble that a later attempt, on a fresh connection, may not hit.
     pub fn is_retryable(&self) -> bool {
         matches!(
@@ -95,6 +101,7 @@ impl AppError {
                 | ErrorKind::Sftp
                 | ErrorKind::Ftp
                 | ErrorKind::Cloud
+                | ErrorKind::Integrity
         )
     }
 

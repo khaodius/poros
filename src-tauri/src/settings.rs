@@ -16,6 +16,7 @@ pub const MIN_SOCKET_BUFFER_KIB: u32 = 4;
 pub const MAX_SOCKET_BUFFER_KIB: u32 = 64 * 1024;
 const DEFAULT_RSYNC_PATH: &str = "rsync";
 const MAX_RSYNC_PATH_CHARS: usize = 1024;
+const MAX_RECONNECT_MINUTES: u32 = 24 * 60;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -39,7 +40,20 @@ pub struct TransferSettings {
     pub preserve_permissions: bool,
     pub retry_attempts: u32,
     pub retry_delay_secs: u32,
+    /// How long transfers wait for a server whose connection dropped, without using up their
+    /// retries. Zero treats a dropped connection like any other failure.
+    pub reconnect_minutes: u32,
     pub keep_completed: bool,
+    /// Saves unfinished transfers so they come back, paused, the next time the app starts.
+    pub keep_queue: bool,
+    /// Writes each file under a temporary name beside the target and renames it into place
+    /// once complete, so a partial file never sits under the real name.
+    pub temporary_files: bool,
+    /// Compares a checksum of both copies after each file, using the server's own command.
+    pub verify_checksums: bool,
+    /// Has the server, and this computer for downloads, write each file to disk before it
+    /// counts as done.
+    pub flush_to_disk: bool,
     pub separate_connections: bool,
     pub log_each_file: bool,
     /// Sends only the changed parts of a file the other side already has, through rsync on
@@ -70,7 +84,12 @@ impl Default for TransferSettings {
             preserve_permissions: false,
             retry_attempts: 3,
             retry_delay_secs: 5,
+            reconnect_minutes: 10,
             keep_completed: true,
+            keep_queue: true,
+            temporary_files: true,
+            verify_checksums: false,
+            flush_to_disk: false,
             separate_connections: true,
             log_each_file: false,
             delta_transfers: true,
@@ -90,6 +109,7 @@ impl TransferSettings {
         self.requests_in_flight = self.requests_in_flight.clamp(1, 256);
         self.retry_attempts = self.retry_attempts.min(20);
         self.retry_delay_secs = self.retry_delay_secs.min(600);
+        self.reconnect_minutes = self.reconnect_minutes.min(MAX_RECONNECT_MINUTES);
         // The path becomes part of a shell command, so it stays on one line.
         let rsync_path = self.rsync_path.lines().next().unwrap_or("").trim();
         self.rsync_path = if rsync_path.is_empty() {
@@ -110,6 +130,10 @@ impl TransferSettings {
     pub fn delta_threshold(&self) -> u64 {
         u64::from(self.delta_threshold_kib) * 1024
     }
+
+    pub fn reconnect_window(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(u64::from(self.reconnect_minutes) * 60)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -118,6 +142,8 @@ pub struct ConnectionSettings {
     pub timeout_secs: u64,
     pub keepalive_secs: u64,
     pub compression: bool,
+    /// Server tabs whose connection drops reconnect on their own. Read by the frontend.
+    pub auto_reconnect: bool,
     /// Lets the system grow the TCP receive window with the connection; off uses the size below.
     pub auto_tune_receive_buffer: bool,
     pub receive_buffer_kib: u32,
@@ -132,6 +158,7 @@ impl Default for ConnectionSettings {
             timeout_secs: crate::ssh::DEFAULT_TIMEOUT_SECS,
             keepalive_secs: crate::ssh::DEFAULT_KEEPALIVE_SECS,
             compression: false,
+            auto_reconnect: true,
             auto_tune_receive_buffer: true,
             receive_buffer_kib: 128,
             auto_tune_send_buffer: true,
@@ -298,6 +325,10 @@ mod tests {
         assert!(settings.interface.is_object());
         assert!(settings.transfers.delta_transfers);
         assert_eq!(settings.transfers.rsync_path, "rsync");
+        assert!(settings.transfers.temporary_files);
+        assert!(!settings.transfers.verify_checksums);
+        assert_eq!(settings.transfers.reconnect_minutes, 10);
+        assert!(settings.connection.auto_reconnect);
     }
 
     #[test]

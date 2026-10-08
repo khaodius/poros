@@ -107,6 +107,7 @@ export type ErrorKind =
   | "ftp"
   | "cloud"
   | "unsupported"
+  | "integrity"
   | "cancelled"
   | "keychain";
 
@@ -175,6 +176,8 @@ export interface JobSnapshot {
   deltaBytes?: number;
   /** Two FTP servers sent the file straight to each other (FXP). */
   direct?: boolean;
+  /** Queued while its server is out of reach after a dropped connection. */
+  reconnecting?: boolean;
 }
 
 export interface QueueCounts {

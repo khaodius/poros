@@ -3,6 +3,10 @@
 //! Downloads from servers that can read from an offset still split large files between
 //! workers; uploads and copies go in order. Two FTP servers that allow it send a file to each
 //! other directly (FXP), and otherwise the copy streams through this computer.
+//!
+//! Downloads go through a temporary file like SFTP ones. Uploads and copies write the target
+//! itself: cloud uploads appear only once complete anyway, and FTP servers differ on whether a
+//! rename may replace a file.
 
 use std::future::Future;
 use std::io::SeekFrom;
@@ -16,8 +20,8 @@ use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use super::conflict::{decide, Decision, ExistsAction, FileFacts};
 use super::copy::read_up_to;
 use super::limiter::RateLimiter;
-use super::queue::{Direction, JobKind, JobRun, JobSpec, Plan, Role, RunOutcome};
-use super::worker::{self, Connections, JobRef};
+use super::queue::{Direction, JobKind, JobRun, JobSpec, Plan, ResumePoint, Role, RunOutcome};
+use super::worker::{self, Connections, Destination, JobRef};
 use super::Shared;
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::events::LogLevel;
@@ -35,7 +39,7 @@ pub(super) fn applies(shared: &Shared, spec: &JobSpec) -> bool {
     spec.direction == Direction::Relay
         || shared
             .target(&spec.session_id)
-            .is_ok_and(|target| target.profile.protocol != Protocol::Sftp)
+            .is_ok_and(|target| target.protocol() != Protocol::Sftp)
 }
 
 /// The connection a relay reads from: its source session's, or a second one when source and
@@ -103,7 +107,7 @@ pub(super) async fn run(
     connections: &mut Connections,
     role: Role,
     resolution: Option<ExistsAction>,
-    resume_offset: Option<u64>,
+    resume: Option<ResumePoint>,
 ) -> AppResult<RunOutcome> {
     let endpoints = endpoints(job, connections).await?;
     let spec = job.spec;
@@ -112,10 +116,10 @@ pub(super) async fn run(
             worker::expand_folder(job, endpoints.remote.as_ref(), endpoints.source.as_deref()).await
         }
         (JobKind::File, Role::Primary, Direction::Download) => {
-            download(job, endpoints.remote, resolution, resume_offset).await
+            download(job, endpoints.remote, resolution, resume).await
         }
         (JobKind::File, Role::Primary, Direction::Upload) => {
-            upload(job, endpoints.remote, resolution, resume_offset).await
+            upload(job, endpoints.remote, resolution, resume).await
         }
         (JobKind::File, Role::Primary, Direction::Relay) => {
             let _turn = match endpoints.borrows_both {
@@ -125,7 +129,7 @@ pub(super) async fn run(
                 }),
                 false => None,
             };
-            relay(job, endpoints, resolution, resume_offset).await
+            relay(job, endpoints, resolution, resume).await
         }
         (JobKind::File, Role::Helper, _) => help(job, endpoints.remote).await,
     }
@@ -135,23 +139,31 @@ async fn download(
     job: &JobRef<'_>,
     files: Arc<dyn RemoteFileSystem>,
     resolution: Option<ExistsAction>,
-    resume_offset: Option<u64>,
+    resume: Option<ResumePoint>,
 ) -> AppResult<RunOutcome> {
     let spec = job.spec;
     let source = remote_file(files.as_ref(), &spec.source).await?;
     let source_facts = facts(&source);
     let can_resume = files.capabilities().ranged_reads;
+    let fresh = |target: String| worker::fresh_download(job.settings, target);
     let existing = worker::local_facts(&spec.target).await?;
-    let (target, start) = match (resume_offset, existing) {
-        (Some(offset), existing) => {
-            let on_disk = existing.map_or(0, |(_, facts)| facts.size);
-            let start = match can_resume {
-                true => offset.min(on_disk).min(source.size),
-                false => 0,
-            };
-            (spec.target.clone(), start)
+    let mut destination = match (resume, existing) {
+        (Some(resume), _) if !can_resume || worker::source_changed(&resume, source_facts) => {
+            fresh(spec.target.clone()).await
         }
-        (None, None) => (spec.target.clone(), 0),
+        (Some(resume), existing) => {
+            let written = match &resume.partial {
+                Some(partial) => worker::local_facts(partial).await?,
+                None => existing,
+            };
+            let on_disk = written.map_or(0, |(_, facts)| facts.size);
+            Destination {
+                target: spec.target.clone(),
+                partial: resume.partial,
+                start: resume.offset.min(on_disk).min(source.size),
+            }
+        }
+        (None, None) => fresh(spec.target.clone()).await,
         (None, Some((true, _))) => return Err(worker::folder_in_the_way(spec)),
         (None, Some((false, target_facts))) => {
             match decide(job.exists_action(resolution), source_facts, target_facts) {
@@ -160,11 +172,12 @@ async fn download(
                 Decision::Rename => {
                     let (target, name) = worker::free_local_name(&spec.target).await?;
                     job.retarget(&target, name);
-                    (target, 0)
+                    fresh(target).await
                 }
-                Decision::Write { offset } => {
-                    (spec.target.clone(), if can_resume { offset } else { 0 })
+                Decision::Write { offset } if offset > 0 && can_resume => {
+                    Destination::in_place(&spec.target, offset)
                 }
+                Decision::Write { .. } => fresh(spec.target.clone()).await,
             }
         }
     };
@@ -178,21 +191,35 @@ async fn download(
             .await?;
     }
 
+    let write_path = destination.write_path().to_string();
     let mut file = OpenOptions::new()
         .write(true)
+        .read(true)
         .create(true)
-        .truncate(start == 0)
-        .open(&target)
+        .truncate(destination.start == 0)
+        .open(&write_path)
         .await
-        .map_err(|error| AppError::from(error).with_path(target.clone()))?;
+        .map_err(|error| AppError::from(error).with_path(write_path.clone()))?;
+    if destination.start > 0 {
+        let window = worker::check_window(destination.start);
+        let theirs = read_remote_range(job, &files, &spec.source, window.start, window.len).await?;
+        let ours = worker::read_local_range(&mut file, window.start, window.len).await?;
+        if theirs != ours {
+            job.log_starting_over();
+            file.set_len(0).await?;
+            destination.start = 0;
+        }
+    }
     job.begin(
         Plan {
-            target,
+            target: write_path,
+            rename_to: destination.partial.is_some().then_some(destination.target),
+            source_size: source.size,
             source_modified: source.modified,
             source_permissions: source.permissions,
-            resumed: start > 0,
+            replaced_permissions: None,
         },
-        start,
+        destination.start,
         source.size,
         can_resume,
     );
@@ -204,7 +231,7 @@ async fn upload(
     job: &JobRef<'_>,
     files: Arc<dyn RemoteFileSystem>,
     resolution: Option<ExistsAction>,
-    resume_offset: Option<u64>,
+    resume: Option<ResumePoint>,
 ) -> AppResult<RunOutcome> {
     let spec = job.spec;
     let metadata = tokio::fs::metadata(&spec.source)
@@ -217,13 +244,15 @@ async fn upload(
         size: metadata.len(),
         modified: worker::modified_seconds(&metadata),
     };
-    let can_resume = files.capabilities().resumable_writes;
-    let (target, start) = match prepare_remote_target(
+    let capabilities = files.capabilities();
+    // The bytes before a resume point are compared first, which takes reading them back.
+    let can_resume = capabilities.resumable_writes && capabilities.ranged_reads;
+    let (target, mut start) = match prepare_remote_target(
         job,
         files.as_ref(),
         source_facts,
         resolution,
-        resume_offset,
+        resume,
         can_resume,
     )
     .await?
@@ -237,8 +266,15 @@ async fn upload(
         .await
         .map_err(|error| AppError::from(error).with_path(spec.source.clone()))?;
     if start > 0 {
-        file.seek(SeekFrom::Start(start)).await?;
+        let window = worker::check_window(start);
+        let theirs = read_remote_range(job, &files, &target, window.start, window.len).await?;
+        let ours = worker::read_local_range(&mut file, window.start, window.len).await?;
+        if theirs != ours {
+            job.log_starting_over();
+            start = 0;
+        }
     }
+    file.seek(SeekFrom::Start(start)).await?;
     let writer = files
         .clone()
         .open_write(WriteRequest {
@@ -252,9 +288,11 @@ async fn upload(
     job.begin(
         Plan {
             target,
+            rename_to: None,
+            source_size: source_facts.size,
             source_modified: source_facts.modified,
             source_permissions,
-            resumed: start > 0,
+            replaced_permissions: None,
         },
         start,
         source_facts.size,
@@ -268,20 +306,22 @@ async fn relay(
     job: &JobRef<'_>,
     endpoints: Endpoints,
     resolution: Option<ExistsAction>,
-    resume_offset: Option<u64>,
+    resume: Option<ResumePoint>,
 ) -> AppResult<RunOutcome> {
     let spec = job.spec;
     let source_files = endpoints.source.ok_or_else(AppError::session_not_found)?;
     let target_files = endpoints.remote;
     let source = remote_file(source_files.as_ref(), &spec.source).await?;
-    let can_resume =
-        source_files.capabilities().ranged_reads && target_files.capabilities().resumable_writes;
-    let (target, start) = match prepare_remote_target(
+    let target_capabilities = target_files.capabilities();
+    let can_resume = source_files.capabilities().ranged_reads
+        && target_capabilities.resumable_writes
+        && target_capabilities.ranged_reads;
+    let (target, mut start) = match prepare_remote_target(
         job,
         target_files.as_ref(),
         facts(&source),
         resolution,
-        resume_offset,
+        resume,
         can_resume,
     )
     .await?
@@ -289,12 +329,25 @@ async fn relay(
         Prepared::Write { target, start } => (target, start),
         Prepared::Finished(outcome) => return Ok(outcome),
     };
+    if start > 0 {
+        let window = worker::check_window(start);
+        let theirs =
+            read_remote_range(job, &target_files, &target, window.start, window.len).await?;
+        let ours =
+            read_remote_range(job, &source_files, &spec.source, window.start, window.len).await?;
+        if theirs != ours {
+            job.log_starting_over();
+            start = 0;
+        }
+    }
     job.begin(
         Plan {
             target: target.clone(),
+            rename_to: None,
+            source_size: source.size,
             source_modified: source.modified,
             source_permissions: source.permissions,
-            resumed: start > 0,
+            replaced_permissions: None,
         },
         start,
         source.size,
@@ -349,10 +402,7 @@ async fn help(job: &JobRef<'_>, files: Arc<dyn RemoteFileSystem>) -> AppResult<R
 /// not take them while writing.
 pub(super) async fn finalize(job: &JobRef<'_>, connections: &mut Connections) -> AppResult<()> {
     let spec = job.spec;
-    if spec.direction == Direction::Download {
-        return worker::finalize_download(job.run, job.settings).await;
-    }
-    let Some(plan) = job.run.plan.get() else {
+    let Some(plan) = job.run.plan.get().cloned() else {
         return Ok(());
     };
     let files = connections
@@ -360,21 +410,34 @@ pub(super) async fn finalize(job: &JobRef<'_>, connections: &mut Connections) ->
         .await?
         .files
         .clone();
+    if spec.direction == Direction::Download {
+        let source = files.stat(&spec.source).await?;
+        let end = worker::downloaded_end(job, &plan, source)?;
+        return worker::complete_download(job.settings, plan, end, true).await;
+    }
+
     let expected = job.run.end().unwrap_or(0);
     // A server that cannot find what it just stored gives nothing to compare.
     if let Some(stored) = files.stat(&plan.target).await? {
         if stored.is_dir || stored.size != expected {
-            return Err(AppError::new(
-                ErrorKind::Connection,
-                format!(
-                    "{} arrived incomplete: {} of {}",
-                    spec.name,
-                    format_size(stored.size),
-                    format_size(expected)
-                ),
-            )
-            .with_path(plan.target.clone()));
+            return Err(job.restart(format!(
+                "The server holds {} of the {} sent for {}",
+                format_size(stored.size),
+                format_size(expected),
+                spec.name
+            )));
         }
+    }
+    if source_changed(job, connections, &plan).await? {
+        return Err(job.restart(format!(
+            "{} changed while it was being {}",
+            spec.name,
+            if spec.direction == Direction::Upload {
+                "uploaded"
+            } else {
+                "copied"
+            }
+        )));
     }
     if files.protocol().is_cloud() {
         return Ok(());
@@ -401,6 +464,29 @@ pub(super) async fn finalize(job: &JobRef<'_>, connections: &mut Connections) ->
     Ok(())
 }
 
+/// Whether the source of an upload or copy differs from when it started.
+async fn source_changed(
+    job: &JobRef<'_>,
+    connections: &mut Connections,
+    plan: &Plan,
+) -> AppResult<bool> {
+    let spec = job.spec;
+    let now = match (&spec.source_session_id, source_key(spec)) {
+        (Some(source_id), Some(key)) => {
+            let source = connections.get(job.shared, source_id, &key).await?;
+            source
+                .files
+                .stat(&spec.source)
+                .await?
+                .map(|stat| facts(&stat))
+        }
+        _ => worker::local_facts(&spec.source)
+            .await?
+            .map(|(_, facts)| facts),
+    };
+    Ok(now.is_none_or(|now| now.size != plan.source_size || now.modified != plan.source_modified))
+}
+
 enum Prepared {
     Write { target: String, start: u64 },
     Finished(RunOutcome),
@@ -412,20 +498,20 @@ async fn prepare_remote_target(
     files: &dyn RemoteFileSystem,
     source: FileFacts,
     resolution: Option<ExistsAction>,
-    resume_offset: Option<u64>,
+    resume: Option<ResumePoint>,
     can_resume: bool,
 ) -> AppResult<Prepared> {
     let spec = job.spec;
     let existing = files.stat(&spec.target).await?;
-    let (target, start) = match (resume_offset, existing) {
-        (Some(offset), existing) => {
+    let (target, start) = match (resume, existing) {
+        (Some(resume), existing) if can_resume && !worker::source_changed(&resume, source) => {
             let on_server = existing.map_or(0, |stat| stat.size);
-            let start = match can_resume {
-                true => offset.min(on_server).min(source.size),
-                false => 0,
-            };
-            (spec.target.clone(), start)
+            (
+                spec.target.clone(),
+                resume.offset.min(on_server).min(source.size),
+            )
         }
+        (Some(_), _) => (spec.target.clone(), 0),
         (None, None) => (spec.target.clone(), 0),
         (None, Some(stat)) if stat.is_dir => return Err(worker::folder_in_the_way(spec)),
         (None, Some(stat)) => {
@@ -638,6 +724,31 @@ async fn pipe(
     }
     source.stream.finish().await?;
     cancellable(run, writer.finish()).await
+}
+
+/// Reads `len` bytes from `offset`, or fewer where the file ends.
+async fn read_remote_range(
+    job: &JobRef<'_>,
+    files: &Arc<dyn RemoteFileSystem>,
+    path: &str,
+    offset: u64,
+    len: u32,
+) -> AppResult<Vec<u8>> {
+    let wanted = len as usize;
+    let mut stream = files
+        .clone()
+        .open_read(path, offset..offset + u64::from(len))
+        .await?;
+    let mut data = Vec::with_capacity(wanted);
+    while data.len() < wanted {
+        match cancellable(job.run, stream.next_chunk()).await? {
+            Some(chunk) => data.extend_from_slice(&chunk),
+            None => break,
+        }
+    }
+    data.truncate(wanted);
+    stream.finish().await?;
+    Ok(data)
 }
 
 /// A read stream, and what it has delivered beyond the piece being written.

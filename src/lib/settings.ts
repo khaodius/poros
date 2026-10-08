@@ -7,6 +7,7 @@ import { SORT_KEYS, type SortSpec } from "./sort";
 import type { CompareMode, ExistsAction, LogLevel, SyncDirection } from "./types";
 
 export const MAX_WORKERS = 16;
+export const MAX_RECONNECT_MINUTES = 24 * 60;
 export const SOCKET_BUFFER_LIMITS = { min: 4, max: 64 * 1024 };
 
 export interface TransferSettings {
@@ -25,7 +26,16 @@ export interface TransferSettings {
   preservePermissions: boolean;
   retryAttempts: number;
   retryDelaySecs: number;
+  /** How long transfers wait for a server whose connection dropped; zero treats it as a failure. */
+  reconnectMinutes: number;
   keepCompleted: boolean;
+  /** Saves unfinished transfers so they come back, paused, at the next start. */
+  keepQueue: boolean;
+  /** Writes under a temporary name and renames into place once complete. */
+  temporaryFiles: boolean;
+  /** Compares checksums of both copies after each file, using the server's own command. */
+  verifyChecksums: boolean;
+  flushToDisk: boolean;
   separateConnections: boolean;
   logEachFile: boolean;
   /** Sends only the changed parts of files the other side already has, through rsync. */
@@ -42,6 +52,8 @@ export interface ConnectionSettings {
   timeoutSecs: number;
   keepaliveSecs: number;
   compression: boolean;
+  /** Server tabs whose connection drops reconnect on their own, for `reconnectMinutes`. */
+  autoReconnect: boolean;
   /** Lets the system size the TCP receive buffer; off uses `receiveBufferKib`. */
   autoTuneReceiveBuffer: boolean;
   receiveBufferKib: number;
@@ -146,7 +158,12 @@ export const DEFAULT_SETTINGS: Settings = {
     preservePermissions: false,
     retryAttempts: 3,
     retryDelaySecs: 5,
+    reconnectMinutes: 10,
     keepCompleted: true,
+    keepQueue: true,
+    temporaryFiles: true,
+    verifyChecksums: false,
+    flushToDisk: false,
     separateConnections: true,
     logEachFile: false,
     deltaTransfers: true,
@@ -158,6 +175,7 @@ export const DEFAULT_SETTINGS: Settings = {
     timeoutSecs: 20,
     keepaliveSecs: 30,
     compression: false,
+    autoReconnect: true,
     autoTuneReceiveBuffer: true,
     receiveBufferKib: 128,
     autoTuneSendBuffer: true,

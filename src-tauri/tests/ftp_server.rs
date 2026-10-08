@@ -897,7 +897,35 @@ async fn resumes_interrupted_transfers() {
     assert_eq!(read_remote(&files, &remote_large).await, large_bytes);
     transfers.clear(&[JobState::Done]);
 
-    // A paused download keeps its complete part and continues from there.
+    // A part on the server that no longer matches the file is not continued but replaced.
+    files
+        .delete(std::slice::from_ref(&remote_large))
+        .await
+        .unwrap();
+    transfers.configure(TransferSettings {
+        upload_limit_kib: 4 * 1024,
+        ..transfer_settings()
+    });
+    fixture
+        .upload(&transfers, index, std::slice::from_ref(&large), &remote)
+        .await;
+    let id = wait_for_progress(&transfers, 3 * MEBIBYTE as u64).await;
+    transfers.pause(&[id]);
+    let (list, _) = wait_until_settled(&transfers).await;
+    assert_eq!(list.jobs[0].state, JobState::Paused);
+    let changed: Vec<u8> = read_remote(&files, &remote_large)
+        .await
+        .iter()
+        .map(|byte| !byte)
+        .collect();
+    write_remote(&files, &remote_large, &changed).await;
+    transfers.configure(transfer_settings());
+    transfers.resume(&[id]);
+    assert_all_done(&wait_until_settled(&transfers).await.0);
+    assert_eq!(read_remote(&files, &remote_large).await, large_bytes);
+    transfers.clear(&[JobState::Done]);
+
+    // A paused download keeps its complete part in a temporary file and continues from there.
     std::fs::remove_file(downloads.join("large.bin")).unwrap();
     transfers.configure(TransferSettings {
         download_limit_kib: 4 * 1024,
@@ -910,7 +938,8 @@ async fn resumes_interrupted_transfers() {
     transfers.pause(&[id]);
     let (list, _) = wait_until_settled(&transfers).await;
     assert_eq!(list.jobs[0].state, JobState::Paused);
-    let kept = std::fs::read(downloads.join("large.bin")).unwrap();
+    assert!(!downloads.join("large.bin").exists());
+    let kept = std::fs::read(downloads.join(".large.bin.poros-part")).unwrap();
     assert!(!kept.is_empty() && kept.len() < large_bytes.len());
     assert_eq!(kept[..], large_bytes[..kept.len()]);
     transfers.configure(transfer_settings());
@@ -920,6 +949,7 @@ async fn resumes_interrupted_transfers() {
         std::fs::read(downloads.join("large.bin")).unwrap(),
         large_bytes
     );
+    assert!(!downloads.join(".large.bin.poros-part").exists());
     drop(transfers);
     fixture.close().await;
 }

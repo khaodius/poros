@@ -38,6 +38,8 @@ sha1 = "0.10"
 # rsync block and file checksums (protocol 29 uses MD4), and file hashes for sync comparisons.
 md4 = "0.10"
 md-5 = "0.10"
+# Transfer checks against the server's sha256sum.
+sha2 = "0.10"
 bytes = "1"
 # Saved passwords: Windows Credential Manager, or the Secret Service (GNOME Keyring, KWallet) on Linux.
 keyring = "4.2"

@@ -14,7 +14,7 @@ use russh_sftp::client::error::Error as SftpError;
 use russh_sftp::client::rawsession::Limits;
 use russh_sftp::client::{Config, RawSftpSession};
 use russh_sftp::extensions;
-use russh_sftp::protocol::{FileAttributes, OpenFlags, StatusCode};
+use russh_sftp::protocol::{FileAttributes, OpenFlags, Packet, StatusCode};
 
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::model::{kind_from_mode, DirListing, EntryKind, FileEntry, LinkTarget};
@@ -29,6 +29,8 @@ const REQUEST_TIMEOUT_SECS: u64 = 30;
 /// Requests kept in flight by the streams other protocols' transfers read and write through.
 const STREAM_REQUESTS: usize = 32;
 const STREAM_CHUNK: u32 = 32 * 1024;
+/// Renames over an existing file in one step, unlike a plain SFTP v3 rename.
+const POSIX_RENAME: &str = "posix-rename@openssh.com";
 
 pub struct RemoteFs {
     raw: RawSftpSession,
@@ -36,6 +38,8 @@ pub struct RemoteFs {
     /// Largest read and write payloads the server accepts (`limits@openssh.com`).
     read_limit: Option<u32>,
     write_limit: Option<u32>,
+    posix_rename: bool,
+    fsync: bool,
 }
 
 pub enum ReadChunk {
@@ -64,6 +68,9 @@ impl RemoteFs {
         let mut raw = RawSftpSession::new_with_config(channel.into_stream(), config);
         let version = raw.init().await?;
         let mut limits = Limits::default();
+        let offers = |name: &str| version.extensions.contains_key(name);
+        let posix_rename = offers(POSIX_RENAME);
+        let fsync = offers(extensions::FSYNC);
         if version
             .extensions
             .get(extensions::LIMITS)
@@ -82,7 +89,14 @@ impl RemoteFs {
             home,
             read_limit: clamp(limits.read_len),
             write_limit: clamp(limits.write_len),
+            posix_rename,
+            fsync,
         })
+    }
+
+    /// Whether the server can flush a file to its disk (`fsync@openssh.com`).
+    pub fn can_sync(&self) -> bool {
+        self.fsync
     }
 
     pub fn read_size(&self, requested: u32) -> u32 {
@@ -369,6 +383,99 @@ impl RemoteFs {
     pub async fn close_handle(&self, handle: String) -> AppResult<()> {
         self.raw.close(handle).await?;
         Ok(())
+    }
+
+    /// Closes a handle, reading its attributes in the same round trip and, when asked and
+    /// offered, flushing the file to the server's disk first. The attributes are `None` when
+    /// the server would not report them.
+    pub async fn close_and_stat(
+        &self,
+        handle: String,
+        sync: bool,
+    ) -> (Option<RemoteStat>, AppResult<()>) {
+        let synced = async {
+            if sync && self.fsync {
+                self.raw.fsync(handle.as_str()).await.map(|_| ())
+            } else {
+                Ok(())
+            }
+        };
+        // Sent back to back: servers handle one file's requests in order, so the attributes
+        // follow every acknowledged write.
+        let (synced, stat, closed) = tokio::join!(
+            synced,
+            self.raw.fstat(handle.as_str()),
+            self.raw.close(handle.as_str())
+        );
+        let stat = stat.ok().map(|reply| RemoteStat::from(&reply.attrs));
+        let result = synced.and(closed.map(|_| ())).map_err(AppError::from);
+        (stat, result)
+    }
+
+    /// Reads `len` bytes at `offset`, or fewer where the file ends.
+    pub async fn read_range(&self, path: &str, offset: u64, len: u32) -> AppResult<Vec<u8>> {
+        let handle = self.open_for_read(path).await?;
+        let mut data = Vec::with_capacity(len as usize);
+        let result = loop {
+            if data.len() >= len as usize {
+                break Ok(());
+            }
+            let missing = self.read_size(len - data.len() as u32);
+            match self
+                .read_chunk(&handle, offset + data.len() as u64, missing)
+                .await
+            {
+                Ok(ReadChunk::Data(more)) => data.extend_from_slice(&more),
+                Ok(ReadChunk::Eof) => break Ok(()),
+                Err(error) => break Err(error),
+            }
+        };
+        let _ = self.close_handle(handle).await;
+        result.map(|_| data)
+    }
+
+    /// Moves `from` over `to`, replacing a file there: in one step where the server offers
+    /// `posix-rename@openssh.com` (OpenSSH), with a plain rename where that replaces files
+    /// (SFTPGo), and otherwise by removing the old file just before the rename.
+    pub async fn replace(&self, from: &str, to: &str) -> AppResult<()> {
+        if self.posix_rename {
+            return self.posix_rename(from, to).await;
+        }
+        let Err(refused) = self.raw.rename(from, to).await else {
+            return Ok(());
+        };
+        if !matches!(self.stat(to).await, Ok(Some(existing)) if !existing.is_dir) {
+            return Err(AppError::from(refused).with_path(from));
+        }
+        self.raw
+            .remove(to)
+            .await
+            .map_err(|error| AppError::from(error).with_path(to))?;
+        self.raw
+            .rename(from, to)
+            .await
+            .map(|_| ())
+            .map_err(|error| AppError::from(error).with_path(from))
+    }
+
+    async fn posix_rename(&self, from: &str, to: &str) -> AppResult<()> {
+        let mut data = Vec::with_capacity(8 + from.len() + to.len());
+        for path in [from, to] {
+            data.extend_from_slice(&(path.len() as u32).to_be_bytes());
+            data.extend_from_slice(path.as_bytes());
+        }
+        match self.raw.extended(POSIX_RENAME, data).await {
+            Ok(Packet::Status(status)) if status.status_code == StatusCode::Ok => Ok(()),
+            Ok(Packet::Status(status)) => {
+                Err(AppError::from(SftpError::from(status)).with_path(from))
+            }
+            Ok(_) => Err(AppError::new(
+                ErrorKind::Sftp,
+                "The server answered a rename unexpectedly",
+            )
+            .with_path(from)),
+            Err(error) => Err(AppError::from(error).with_path(from)),
+        }
     }
 
     pub async fn set_attributes(
