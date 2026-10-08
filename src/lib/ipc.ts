@@ -33,6 +33,11 @@ export const STORE_CHANGED_EVENT = "poros://store-changed";
 export const SYNC_PROGRESS_EVENT = "poros://sync-progress";
 /** Sent by a torn-out window to hand a tab back to the main window. */
 export const RETURN_TAB_EVENT = "poros://return-tab";
+/** Sent by the window a tab is dragged out of to the window under the pointer. */
+export const TAB_DRAG_EVENT = "poros://tab-drag";
+
+/** The label of the window Poros starts with; windows torn out of it get others. */
+export const MAIN_WINDOW = "main";
 
 export function toAppError(rejection: unknown): AppError {
   if (rejection && typeof rejection === "object" && "kind" in rejection && "message" in rejection) {

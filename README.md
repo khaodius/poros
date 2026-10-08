@@ -26,7 +26,9 @@ the network or the disk is Rust.
   pointer while the other panes stay put. Drop it over the middle of another pane to merge it in
   as a tab, or toward one of that pane's edges to split the pane there; a highlight marks which
   before you let go. Moving a pane does not reload it. Drag the dividers to resize, and pull a
-  tab out of the window to give it a window of its own, then send it back from its menu.
+  tab out of the window to give it a window of its own. Drag a tab over another Poros window to
+  move it in there, onto that window's tab bar or into the pane under the pointer; a window left
+  without tabs closes.
 - **Transfer queue** with parallel workers, each on its own connection, and a worker count you
   can change from the queue header while transfers run; holding **-** or **+** counts faster
   every ten steps, as do the number fields in settings. Large files are split across idle

@@ -1,6 +1,6 @@
 import { emitTo } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { RETURN_TAB_EVENT, transfers, windows } from "../lib/ipc";
+import { MAIN_WINDOW, RETURN_TAB_EVENT, TAB_DRAG_EVENT, transfers, windows } from "../lib/ipc";
 import {
   allGroups,
   allTabs,
@@ -17,6 +17,7 @@ import {
   type PaneTab,
 } from "../lib/layout";
 import type { ConnectProfile, SessionInfo } from "../lib/types";
+import type { DropTarget } from "./dragStore";
 import { useLayoutStore } from "./layoutStore";
 import { getPane, lastActivePane } from "./paneRegistry";
 import { useSessionStore, withoutSecrets } from "./sessionStore";
@@ -24,7 +25,6 @@ import { useSettingsStore } from "./settingsStore";
 import { useToastStore } from "./toastStore";
 import { useUiStore } from "./uiStore";
 
-export const MAIN_WINDOW = "main";
 const TORN_OUT_SHARE = 0.6;
 const TORN_OUT_MIN = { width: 640, height: 420 };
 
@@ -33,6 +33,15 @@ export interface TabHandoff {
   layout: unknown;
   sessions: Record<string, ConnectProfile | null>;
 }
+
+/**
+ * Sent by the window a tab is dragged out of to the window under the pointer, with the pointer
+ * in that window's coordinates: it marks where the tab would land, and takes the tab on a drop.
+ */
+export type TabDragMessage =
+  | { phase: "over"; x: number; y: number; label: string; kind: PaneTab["kind"] }
+  | { phase: "leave" }
+  | { phase: "drop"; x: number; y: number; handoff: TabHandoff };
 
 export function isMainWindow(): boolean {
   return getCurrentWindow().label === MAIN_WINDOW;
@@ -165,16 +174,55 @@ export async function tearOutTab(tabId: string, screenX?: number, screenY?: numb
   }
 }
 
+/** A torn-out window closes once the last of its tabs has left. */
+async function closeIfEmptied(): Promise<void> {
+  if (isMainWindow()) return;
+  const remaining = allTabs(useLayoutStore.getState().root);
+  if (remaining.length === 1 && remaining[0].kind === "welcome") {
+    await getCurrentWindow().close();
+  }
+}
+
 /** Sends a tab from a torn-out window back to the main window. */
 export async function returnTabToMain(tabId: string): Promise<void> {
   const tab = departingTab(tabId);
   if (!tab) return;
   await emitTo(MAIN_WINDOW, RETURN_TAB_EVENT, handoffFor(tab));
   detach(tab);
-  const remaining = allTabs(useLayoutStore.getState().root);
-  if (remaining.length === 1 && remaining[0].kind === "welcome") {
-    await getCurrentWindow().close();
+  await closeIfEmptied();
+}
+
+/** Hands a tab dropped on another window to that window, at the point it was dropped. */
+export async function moveTabToWindow(tabId: string, label: string, x: number, y: number) {
+  const tab = departingTab(tabId);
+  if (!tab) return;
+  const message: TabDragMessage = { phase: "drop", x, y, handoff: handoffFor(tab) };
+  try {
+    await emitTo(label, TAB_DRAG_EVENT, message);
+  } catch (caught) {
+    useToastStore.getState().show("error", (caught as { message?: string }).message ?? "");
+    return;
   }
+  detach(tab);
+  await closeIfEmptied();
+}
+
+/**
+ * Adds tabs another window handed over where they were dropped, else to the active group, and
+ * brings this window forward.
+ */
+export async function receiveTabs(handoff: unknown, target: DropTarget | null): Promise<void> {
+  for (const [offset, tab] of (await adoptHandoff(handoff)).entries()) {
+    const layout = useLayoutStore.getState();
+    const groupId =
+      target?.kind === "tabBar" || target?.kind === "dock" ? target.groupId : undefined;
+    if (!groupId || !findGroup(layout.root, groupId)) layout.addTab(tab);
+    else if (target?.kind === "tabBar") layout.addTab(tab, groupId, target.index + offset);
+    else layout.addTab(tab, groupId);
+  }
+  await getCurrentWindow()
+    .setFocus()
+    .catch(() => undefined);
 }
 
 /** Takes over the sessions of tabs another window handed over; returns the usable tabs. */
