@@ -18,7 +18,7 @@
 ## Features
 
 - **Tabs and docking**: local folders and server sessions are tabs that can be merged, split,
-  resized or detached into their own windows.
+  resized, detached into their own windows and dragged from one window into another.
 - **Parallel transfers**: each worker uses its own SSH connection, large files are split across
   idle connections, and the worker count can change while transfers run.
 - **Folder sync** one way or both ways, by size and time, size alone or contents, with rsync-style
@@ -35,6 +35,8 @@
 - **Host key verification** against your existing `~/.ssh/known_hosts`, which Poros never modifies.
 - **Saved connections**, with passwords stored only on request and only in the system keychain.
 - **Themes** as shareable JSON files, ten built in, with every color editable in settings.
+- **Signed updates**: Poros checks for a new release at start-up and installs it only after
+  verifying its signature. Settings > Updates turns the check off.
 
 ## Performance
 
@@ -71,7 +73,8 @@ Download an installer from the [latest release](https://github.com/khaodius/poro
 | Windows  | `-setup.exe` (recommended) or `.msi` |
 | Linux    | `.deb`, `.rpm` or `.AppImage`        |
 
-Install a newer version over the old one to upgrade; settings and saved connections are kept.
+To upgrade 0.2.0, install the newer package over it; settings and saved connections are kept.
+Later versions update themselves.
 Changes are listed in the [changelog](CHANGELOG.md).
 
 ### Verifying a download
@@ -145,7 +148,10 @@ End-to-end tests in `src-tauri/tests/sftp_server.rs` run against a real SSH serv
 To release, set the new version in `package.json`, `src-tauri/Cargo.toml` and
 `src-tauri/tauri.conf.json`, update the lockfiles (`npm install`, then `cargo check` in
 `src-tauri`), add a section to [CHANGELOG.md](CHANGELOG.md) and merge to `main`. The release
-workflow builds, tags and publishes it.
+workflow builds, tags and publishes it, and signs the installers for the updater with the
+`TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` repository secrets, which
+hold the private key matching the public key in `src-tauri/tauri.conf.json`. Without them the
+release stops before building.
 
 ## License
 
