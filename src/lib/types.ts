@@ -89,6 +89,7 @@ export type ErrorKind =
   | "sftp"
   | "ssh"
   | "rsync"
+  | "integrity"
   | "cancelled"
   | "keychain";
 
@@ -151,6 +152,8 @@ export interface JobSnapshot {
   attempts: number;
   /** File data sent so far when rsync updates the file; absent for whole-file copies. */
   deltaBytes?: number;
+  /** Queued while its server is out of reach after a dropped connection. */
+  reconnecting?: boolean;
 }
 
 export interface QueueCounts {

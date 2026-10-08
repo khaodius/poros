@@ -11,8 +11,6 @@ use crate::model::{kind_from_mode, EntryKind};
 
 /// Copies a byte range between two open handles on the server (OpenSSH 9.0 and later).
 pub const COPY_DATA: &str = "copy-data";
-/// A rename that replaces an existing file in one step.
-pub const POSIX_RENAME: &str = "posix-rename@openssh.com";
 
 const READS_IN_FLIGHT: usize = 16;
 const READ_CHUNK: u32 = 256 * 1024;
@@ -81,21 +79,6 @@ impl RemoteFs {
             .await
             .map(|_| ())
             .map_err(|error| AppError::from(error).with_path(from))
-    }
-
-    /// Renames over an existing file, in one step where the server allows it.
-    pub async fn rename_replacing(&self, from: &str, to: &str) -> AppResult<()> {
-        if self.posix_rename {
-            let mut request = Vec::with_capacity(8 + from.len() + to.len());
-            put_string(&mut request, from.as_bytes());
-            put_string(&mut request, to.as_bytes());
-            let reply = self.raw.extended(POSIX_RENAME, request).await;
-            return status_reply(reply, from);
-        }
-        if self.lstat_entry(to).await?.is_some() {
-            self.remove_file(to).await?;
-        }
-        self.rename_path(from, to).await
     }
 
     pub async fn remove_file(&self, path: &str) -> AppResult<()> {
@@ -209,7 +192,7 @@ impl RemoteFs {
         // Reads cover one byte past the limit, so a larger file shows itself.
         while next_offset <= limit || !in_flight.is_empty() {
             while next_offset <= limit && in_flight.len() < READS_IN_FLIGHT {
-                in_flight.push_back(self.read_range(handle, next_offset, chunk));
+                in_flight.push_back(self.read_handle_range(handle, next_offset, chunk));
                 next_offset += u64::from(chunk);
             }
             let Some(bytes) = in_flight.next().await else {
@@ -228,8 +211,13 @@ impl RemoteFs {
         Ok(data)
     }
 
-    /// `len` bytes at `offset`, fewer only at the end of the file.
-    pub async fn read_range(&self, handle: &str, offset: u64, len: u32) -> AppResult<Vec<u8>> {
+    /// `len` bytes at `offset` of an open file, fewer only at the end of the file.
+    pub async fn read_handle_range(
+        &self,
+        handle: &str,
+        offset: u64,
+        len: u32,
+    ) -> AppResult<Vec<u8>> {
         let mut data = Vec::with_capacity(len as usize);
         while data.len() < len as usize {
             let position = offset + data.len() as u64;

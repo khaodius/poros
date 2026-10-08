@@ -246,7 +246,7 @@ impl<'a> Work<'a> {
             self.check_cancelled()?;
             let renamed = match destination {
                 Destination::Fresh(target) => self.fs.rename_path(source, target).await,
-                Destination::Replace(target) => self.fs.rename_replacing(source, target).await,
+                Destination::Replace(target) => self.fs.replace(source, target).await,
                 Destination::Merge(target) => return self.merge_into(source, target).await,
             };
             match renamed {
@@ -446,7 +446,7 @@ impl<'a> Work<'a> {
             .copy_file_contents(source, stat, &writing, commands)
             .await;
         let placed = match copied {
-            Ok(()) if writing != target => self.fs.rename_replacing(&writing, target).await,
+            Ok(()) if writing != target => self.fs.replace(&writing, target).await,
             other => other,
         };
         if placed.is_err() {
@@ -528,7 +528,7 @@ impl<'a> Work<'a> {
                     let (from, to) = (&from, &to);
                     async move {
                         let length = (stat.size - offset).min(u64::from(chunk)) as u32;
-                        let data = self.fs.read_range(from, offset, length).await?;
+                        let data = self.fs.read_handle_range(from, offset, length).await?;
                         let read = data.len() as u64;
                         if read > 0 {
                             self.fs.write_chunk(to, offset, data).await?;

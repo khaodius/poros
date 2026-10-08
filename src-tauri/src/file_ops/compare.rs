@@ -261,7 +261,7 @@ impl Reader<'_> {
             }
             Self::Remote { fs, handle } => {
                 let parts = (0..BLOCK_PARTS).map(|part| {
-                    fs.read_range(
+                    fs.read_handle_range(
                         handle,
                         offset + part * BLOCK_PART_BYTES,
                         BLOCK_PART_BYTES as u32,
