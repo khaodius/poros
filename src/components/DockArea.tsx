@@ -1,5 +1,13 @@
 import { useMemo, useRef, useState, type CSSProperties, type PointerEvent } from "react";
-import { HardDrive, Server, Sparkles, SquareArrowOutUpRight } from "lucide-react";
+import {
+  Columns2,
+  HardDrive,
+  Layers,
+  Rows2,
+  Server,
+  Sparkles,
+  SquareArrowOutUpRight,
+} from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import {
   DOCK_GAP,
@@ -13,10 +21,10 @@ import {
   addExtents,
   allGroups,
   allTabs,
-  dockTab,
   layoutPlacements,
   resizeShares,
   setSizes,
+  type DropSide,
   type Extent,
   type GroupNode,
   type LayoutNode,
@@ -68,6 +76,24 @@ function resizerPlacement(
     : { ...area, top: addExtents(before.top, before.height), height: gap };
 }
 
+/** The part of a group a pane dropped on `side` of it takes: all of it when merging. */
+function dropPlacement(placement: Placement, side: DropSide): Placement {
+  if (side === "center") return placement;
+  const halve = ({ share, pixels }: Extent) => ({
+    share: share / 2,
+    pixels: (pixels - DOCK_GAP) / 2,
+  });
+  const row = side === "left" || side === "right";
+  const length = halve(row ? placement.width : placement.height);
+  const shift = addExtents(length, { share: 0, pixels: DOCK_GAP });
+  if (side === "left") return { ...placement, width: length };
+  if (side === "right") {
+    return { ...placement, left: addExtents(placement.left, shift), width: length };
+  }
+  if (side === "top") return { ...placement, height: length };
+  return { ...placement, top: addExtents(placement.top, shift), height: length };
+}
+
 /** Where the lifted pane floats in the dock; held inside it while a drop would leave the
  * window, so the pane can say so. */
 function floatingIn(payload: TabDrag, pointer: Point, leaving: boolean): Rect {
@@ -90,7 +116,8 @@ interface Resizing {
 /**
  * Groups, resize handles and tab panes are all placed absolutely in one flat list, so moving a
  * tab between groups never remounts its pane, and position changes animate. A dragged tab
- * lifts its pane under the pointer while the other groups make room where it would land.
+ * lifts its pane under the pointer, and the groups stay put while a marker shows where it would
+ * land.
  */
 export function DockArea() {
   const root = useLayoutStore((state) => state.root);
@@ -105,20 +132,11 @@ export function DockArea() {
   );
 
   const liftedTabId = drag && isLifted(drag.payload, drag.target) ? drag.payload.tabId : null;
-  const dockTarget = drag?.target?.kind === "dock" ? drag.target : null;
-  const roomGroupId = dockTarget?.groupId;
-  const roomSide = dockTarget?.side;
+  const dropTarget = liftedTabId && drag?.target?.kind === "dock" ? drag.target : null;
 
-  const sized = useMemo(
+  const layout = useMemo(
     () => (resizing ? setSizes(root, resizing.splitId, resizing.sizes) : root),
     [root, resizing],
-  );
-  const layout = useMemo(
-    () =>
-      liftedTabId && roomGroupId && roomSide
-        ? dockTab(sized, liftedTabId, roomGroupId, roomSide)
-        : sized,
-    [sized, liftedTabId, roomGroupId, roomSide],
   );
   const placements = useMemo(() => layoutPlacements(layout, DOCK_GAP), [layout]);
   const groups = allGroups(layout);
@@ -243,6 +261,14 @@ export function DockArea() {
           style={floating}
         />
       )}
+      {dropTarget && placements.has(dropTarget.groupId) && (
+        <DropMarker
+          side={dropTarget.side}
+          style={placementStyle(
+            dropPlacement(placements.get(dropTarget.groupId)!, dropTarget.side),
+          )}
+        />
+      )}
     </div>
   );
 }
@@ -320,6 +346,26 @@ function FloatingFrame({ tab, label, leaving, style }: FloatingFrameProps) {
           </span>
         )}
       </div>
+    </div>
+  );
+}
+
+const DROP_LABELS: Record<DropSide, string> = {
+  center: "Merge as tab",
+  left: "Split left",
+  right: "Split right",
+  top: "Split up",
+  bottom: "Split down",
+};
+
+function DropMarker({ side, style }: { side: DropSide; style: CSSProperties }) {
+  const Icon = side === "center" ? Layers : side === "left" || side === "right" ? Columns2 : Rows2;
+  return (
+    <div className={`dock-drop is-${side === "center" ? "merge" : "split"}`} style={style}>
+      <span className="dock-drop-badge">
+        <Icon size={15} />
+        {DROP_LABELS[side]}
+      </span>
     </div>
   );
 }

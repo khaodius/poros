@@ -4,13 +4,13 @@
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { create } from "zustand";
 import {
-  coveredGroup,
+  changesLayout,
+  dropSide,
   floatingFrame,
   floatingRect,
+  groupNearest,
   groupRects,
-  nearCenter,
-  sideToMakeRoom,
-  sideWithin,
+  rectCenter,
   TAB_BAR_HEIGHT,
   type Point,
   type Rect,
@@ -104,9 +104,8 @@ function tabIndexAt(groupId: string, offset: number): number {
 }
 
 /**
- * A tab bar under the pointer, else the group the lifted pane covers enough to make room.
- * Measured against the layout as it stands, not as previewed, so the preview cannot move the
- * target out from under the pointer.
+ * A tab bar under the pointer, else the group under the middle of the lifted pane: dropped over
+ * the group's middle it joins the group's tabs, and toward an edge it splits the group there.
  */
 function tabTarget(
   { clientX: x, clientY: y }: PointerPosition,
@@ -128,13 +127,19 @@ function tabTarget(
       index: tabIndexAt(bar.groupId, x - bar.rect.left),
     };
   }
-  const floating = floatingRect(payload, { x, y });
-  const covered = coveredGroup(groups, floating);
-  if (!covered) return null;
-  const { groupId, rect } = covered;
-  if (groupId === payload.sourceGroupId && nearCenter(rect, floating)) return null;
-  const side = sideToMakeRoom(root, payload.tabId, groupId, sideWithin(rect, floating));
-  return { kind: "dock", groupId, side };
+  const { dock } = payload;
+  const center = rectCenter(floatingRect(payload, { x, y }));
+  const inDock =
+    center.x >= dock.left &&
+    center.x < dock.left + dock.width &&
+    center.y >= dock.top &&
+    center.y < dock.top + dock.height;
+  const under = inDock ? groupNearest(groups, center) : null;
+  if (!under) return null;
+  const side = dropSide(under.rect, center);
+  return changesLayout(root, payload.tabId, under.groupId, side)
+    ? { kind: "dock", groupId: under.groupId, side }
+    : null;
 }
 
 /** Finds what is under the pointer: a folder row, a pane, a tab bar slot or a dock zone. */

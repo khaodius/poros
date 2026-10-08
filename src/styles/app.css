@@ -527,12 +527,49 @@ input.has-error {
   border-top-left-radius: 0;
 }
 
-/* Where a dragged pane will land, and the space it left. */
+/* The space a dragged pane left. */
 .dock-slot,
 .tab-group.is-emptied > .tab-content {
-  background: var(--accent-soft);
-  border: 2px dashed color-mix(in srgb, var(--accent) 70%, transparent);
+  background: var(--surface-sunken);
+  border: 2px dashed var(--border-strong);
   border-radius: var(--radius);
+}
+
+/* Where a dragged pane will land, drawn over it. */
+.dock-drop {
+  position: absolute;
+  z-index: 32;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 2px solid var(--accent);
+  border-radius: var(--radius);
+  pointer-events: none;
+  transition:
+    left var(--transition-layout),
+    top var(--transition-layout),
+    width var(--transition-layout),
+    height var(--transition-layout);
+}
+
+.dock-drop.is-merge {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  border-width: 3px;
+}
+
+.dock-drop-badge {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 14px;
+  color: var(--text-on-accent);
+  font-size: var(--font-size-small);
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--accent);
+  border-radius: 999px;
+  box-shadow: var(--shadow-popover);
 }
 
 .dock-floating {
