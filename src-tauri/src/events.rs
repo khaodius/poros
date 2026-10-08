@@ -8,6 +8,7 @@ pub const TRANSFERS_EVENT: &str = "poros://transfers";
 /// Tells every window to reload settings, saved connections or themes another window changed.
 pub const STORE_CHANGED_EVENT: &str = "poros://store-changed";
 pub const SYNC_PROGRESS_EVENT: &str = "poros://sync-progress";
+pub const FILE_OPERATION_EVENT: &str = "poros://file-operation";
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -81,6 +82,12 @@ impl Events {
     pub fn sync_progress(&self, progress: &crate::sync::SyncProgress) {
         if let Some(app) = &self.app {
             let _ = app.emit(SYNC_PROGRESS_EVENT, progress);
+        }
+    }
+
+    pub fn file_operation(&self, progress: &crate::file_ops::OperationProgress) {
+        if let Some(app) = &self.app {
+            let _ = app.emit(FILE_OPERATION_EVENT, progress);
         }
     }
 

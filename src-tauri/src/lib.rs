@@ -2,6 +2,7 @@ pub mod commands;
 pub mod connections;
 pub mod error;
 pub mod events;
+pub mod file_ops;
 pub mod fonts;
 pub mod format;
 pub mod local;
@@ -26,6 +27,7 @@ use tauri::{Manager, RunEvent, WindowEvent};
 use commands::PendingWindows;
 use connections::{ConnectionStore, Keychain};
 use events::Events;
+use file_ops::FileOperations;
 use session::SessionManager;
 use settings::SettingsStore;
 use sync::SyncManager;
@@ -54,6 +56,7 @@ pub fn run() {
                 TransferManager::new(sessions.clone(), events.clone(), settings.get().transfers);
             app.manage(transfers);
             app.manage(SyncManager::new(sessions.clone(), events.clone()));
+            app.manage(FileOperations::new(sessions.clone(), events.clone()));
             app.manage(sessions);
             app.manage(settings);
             app.manage(Arc::new(ConnectionStore::new(
@@ -107,6 +110,13 @@ pub fn run() {
             commands::remote_mkdir,
             commands::remote_rename,
             commands::remote_delete,
+            commands::files_conflicts,
+            commands::files_move_or_copy,
+            commands::files_cancel,
+            commands::files_details,
+            commands::files_measure,
+            commands::files_set_permissions,
+            commands::files_compare,
             commands::transfer_enqueue,
             commands::transfer_list,
             commands::transfer_set_paused,

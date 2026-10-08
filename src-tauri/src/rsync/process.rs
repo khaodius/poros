@@ -242,13 +242,13 @@ impl RemoteProcess {
         }
     }
 
-    /// The exit status, once the process ends; `None` if it does not end in time.
-    pub async fn exit_status(mut self) -> Option<u32> {
+    /// How the process ended, once it does; empty if it does not end in time.
+    async fn end(mut self) -> Ending {
         if let Some(writer) = self.writer.as_ref() {
             let _ = writer.eof().await;
         }
         self.incoming.close();
-        self.wait_for_end().await.exit_status
+        self.wait_for_end().await
     }
 
     async fn read_raw(&mut self, mut buffer: &mut [u8]) -> AppResult<()> {
@@ -404,6 +404,8 @@ async fn relay(mut reader: ChannelReadHalf, sender: mpsc::Sender<Bytes>) -> Endi
 pub struct CommandOutput {
     pub exit_status: Option<u32>,
     pub output: Vec<u8>,
+    /// The start of what it wrote to stderr.
+    pub error_output: String,
 }
 
 /// Runs a command with no input and collects up to `limit` bytes of its output.
@@ -415,9 +417,11 @@ pub async fn run_command(
     let mut process = RemoteProcess::start(channel, command).await?;
     process.close_input().await;
     let output = process.read_to_end(limit).await;
+    let ending = process.end().await;
     Ok(CommandOutput {
-        exit_status: process.exit_status().await,
+        exit_status: ending.exit_status,
         output,
+        error_output: ending.error_output,
     })
 }
 

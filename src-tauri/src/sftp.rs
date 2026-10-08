@@ -15,6 +15,10 @@ use crate::error::{AppError, AppResult, ErrorKind};
 use crate::model::{kind_from_mode, DirListing, EntryKind, FileEntry, LinkTarget};
 use crate::remote_path;
 
+mod ops;
+
+pub use ops::EntryStat;
+
 const PARALLEL_REQUESTS: usize = 16;
 const REQUEST_TIMEOUT_SECS: u64 = 30;
 
@@ -24,6 +28,10 @@ pub struct RemoteFs {
     /// Largest read and write payloads the server accepts (`limits@openssh.com`).
     read_limit: Option<u32>,
     write_limit: Option<u32>,
+    /// The server copies data between its own files (`copy-data`).
+    copy_data: bool,
+    /// Renames may replace an existing file (`posix-rename@openssh.com`).
+    posix_rename: bool,
 }
 
 pub enum ReadChunk {
@@ -72,6 +80,9 @@ impl RemoteFs {
                 raw.set_limits(limits);
             }
         }
+        let advertises = |extension: &str| version.extensions.contains_key(extension);
+        let copy_data = advertises(ops::COPY_DATA);
+        let posix_rename = advertises(ops::POSIX_RENAME);
         let home = canonicalize(&raw, ".").await?;
         let clamp = |limit: Option<u64>| limit.map(|bytes| bytes.min(u64::from(u32::MAX)) as u32);
         Ok(Self {
@@ -79,6 +90,8 @@ impl RemoteFs {
             home,
             read_limit: clamp(limits.read_len),
             write_limit: clamp(limits.write_len),
+            copy_data,
+            posix_rename,
         })
     }
 
