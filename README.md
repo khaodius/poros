@@ -258,7 +258,8 @@ settings writes to the active theme file, and editing a built-in theme saves a c
 
 - `base` is `dark`, `light` or `system` and supplies every color the theme leaves out.
 - `colors` takes hex (`#rgb`, `#rrggbb`, with or without alpha) or `rgb()` and `hsl()` values.
-  Hover and tint colors follow `accent` and `danger` unless set. Keys:
+  Hover and tint colors follow `accent` and `danger` unless set, and the logo's gradient follows
+  `accent`. Keys:
   - Accent: `accent`, `accent-hover`, `accent-soft`, `accent-softer`, `text-on-accent`
   - Surfaces: `surface-base`, `surface-raised`, `surface-sunken`, `surface-overlay`,
     `surface-hover`, `surface-pressed`

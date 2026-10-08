@@ -18,7 +18,9 @@ pub mod themes;
 pub mod transfer;
 
 use std::sync::Arc;
+use std::time::Duration;
 
+use tauri::webview::PageLoadEvent;
 use tauri::{Manager, RunEvent, WindowEvent};
 
 use commands::PendingWindows;
@@ -31,6 +33,9 @@ use themes::ThemeStore;
 use transfer::TransferManager;
 
 const MAIN_WINDOW: &str = "main";
+/// Windows open hidden and their page shows them once its first frame is ready, so they never
+/// flash white. A page that fails before then still gets its window shown after this long.
+const REVEAL_FALLBACK: Duration = Duration::from_secs(2);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -59,6 +64,18 @@ pub fn run() {
             app.manage(PendingWindows::default());
             app.manage(events);
             Ok(())
+        })
+        .on_page_load(|webview, payload| {
+            if payload.event() != PageLoadEvent::Finished {
+                return;
+            }
+            let window = webview.window();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(REVEAL_FALLBACK).await;
+                if !window.is_visible().unwrap_or(true) {
+                    let _ = window.show();
+                }
+            });
         })
         .on_window_event(|window, event| match event {
             WindowEvent::CloseRequested { .. } if window.label() == MAIN_WINDOW => {

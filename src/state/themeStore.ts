@@ -5,15 +5,17 @@ import {
   deriveColors,
   parseTheme,
   serializeTheme,
+  withColor,
   COLOR_TOKENS,
   type Theme,
   type ThemeEntry,
 } from "../lib/theme";
 import { quoteFamily, type FontKind } from "../lib/fonts";
-import type { AppearanceSettings } from "../lib/settings";
+import { sanitizeSettings, type AppearanceSettings } from "../lib/settings";
 import { saveSettingsSection, useSettingsStore } from "./settingsStore";
 
 const SAVE_DELAY_MILLIS = 300;
+const REMEMBERED_THEME_KEY = "poros.appliedTheme";
 
 interface ThemeState {
   /** User themes, read from the themes folder. */
@@ -29,25 +31,28 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
   files: [],
   load: async () => {
     const listed = await themeFiles.list().catch(() => []);
-    const current = new Map(get().files.map((entry) => [entry.id, entry]));
-    set({
-      files: listed.map((file) => {
-        // An edit not yet written is newer than the file.
-        const unsaved = pendingSaves.has(file.id) ? current.get(file.id) : undefined;
-        if (unsaved) return unsaved;
-        if (file.error) {
-          return {
+    const previous = get().files;
+    const current = new Map(previous.map((entry) => [entry.id, entry]));
+    const files = listed.map((file): ThemeEntry => {
+      const known = current.get(file.id);
+      // An edit not yet written is newer than the file.
+      if (known && pendingSaves.has(file.id)) return known;
+      const entry: ThemeEntry = file.error
+        ? {
             id: file.id,
             path: file.path,
             builtin: false,
             theme: { name: file.id, base: "dark", colors: {} },
             problems: [file.error],
-          };
-        }
-        const { theme, problems } = parseTheme(file.theme, file.id);
-        return { id: file.id, path: file.path, builtin: false, theme, problems };
-      }),
+          }
+        : { id: file.id, path: file.path, builtin: false, ...parseTheme(file.theme, file.id) };
+      // Unchanged entries stay the same objects, so a reload that finds nothing new, such as
+      // the one each time the window gets focus, re-renders and re-applies nothing.
+      return known && JSON.stringify(known) === JSON.stringify(entry) ? known : entry;
     });
+    const unchanged =
+      files.length === previous.length && files.every((entry, index) => entry === previous[index]);
+    if (!unchanged) set({ files });
   },
   replaceFile: (id, theme) => {
     set((state) => ({
@@ -97,6 +102,38 @@ export async function editActiveTheme(change: (theme: Theme) => Theme): Promise<
   } finally {
     copying = null;
   }
+}
+
+/** Shows a color on the page without saving it, for color pickers while they move. */
+export function previewColor(key: string, value: string): void {
+  const appearance = useSettingsStore.getState().settings.appearance;
+  const active = findTheme(useThemeStore.getState().files, appearance.theme);
+  applyTheme(withColor(active.theme, key, value), appearance);
+}
+
+/** Keeps the applied look so the next start can show it before the settings load. */
+export function rememberTheme(theme: Theme, appearance: AppearanceSettings): void {
+  try {
+    const remembered = JSON.stringify({ theme: serializeTheme(theme), appearance });
+    if (localStorage.getItem(REMEMBERED_THEME_KEY) !== remembered) {
+      localStorage.setItem(REMEMBERED_THEME_KEY, remembered);
+    }
+  } catch {
+    // Storage can be unavailable; the next start then opens in the default colors.
+  }
+}
+
+/** Applies the look the last run used, so the first frame already matches the app. */
+export function applyRememberedTheme(): void {
+  let remembered: unknown;
+  try {
+    remembered = JSON.parse(localStorage.getItem(REMEMBERED_THEME_KEY) ?? "null");
+  } catch {
+    return;
+  }
+  if (!remembered || typeof remembered !== "object") return;
+  const { theme, appearance } = remembered as Record<string, unknown>;
+  applyTheme(parseTheme(theme, "").theme, sanitizeSettings({ appearance }).appearance);
 }
 
 const FONT_SIZE_STEPS = { small: 1, tiny: 2 };

@@ -6,6 +6,7 @@ import {
   keepAlpha,
   mixHex,
   parseTheme,
+  rgbChannels,
   serializeTheme,
   toInputColor,
   withColor,
@@ -77,6 +78,13 @@ describe("colors", () => {
     expect(toInputColor("#abc")).toBe("#aabbcc");
     expect(toInputColor("rgb(255 0 16 / 0.5)")).toBe("#ff0010");
     expect(toInputColor("hsl(10 20% 30%)")).toBeNull();
+  });
+
+  it("reads the channels of computed colors", () => {
+    expect(rgbChannels("rgb(17, 19, 23)")).toEqual([17, 19, 23]);
+    expect(rgbChannels("rgba(246, 247, 249, 0.5)")).toEqual([246, 247, 249]);
+    expect(rgbChannels("rgb(10.6 300 0)")).toEqual([11, 255, 0]);
+    expect(rgbChannels("transparent")).toBeNull();
   });
 
   it("reads and keeps transparency", () => {

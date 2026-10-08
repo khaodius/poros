@@ -454,6 +454,17 @@ export function toInputColor(color: string): string | null {
     .join("")}`;
 }
 
+/** The red, green and blue of a computed style color such as `rgb(17, 19, 23)`. */
+export function rgbChannels(color: string): [number, number, number] | null {
+  const match = color.trim().match(/^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/i);
+  if (!match) return null;
+  return match.slice(1, 4).map((channel) => Math.min(255, Math.round(Number(channel)))) as [
+    number,
+    number,
+    number,
+  ];
+}
+
 /** A theme as written to its file, without empty optional parts. */
 export function serializeTheme(theme: Theme): Record<string, unknown> {
   const output: Record<string, unknown> = {

@@ -32,7 +32,14 @@ import {
   saveSettingsSection,
   useSettingsStore,
 } from "../state/settingsStore";
-import { allThemes, editActiveTheme, findTheme, useThemeStore } from "../state/themeStore";
+import {
+  allThemes,
+  editActiveTheme,
+  findTheme,
+  previewColor,
+  useThemeStore,
+} from "../state/themeStore";
+import { ColorInput } from "./ColorInput";
 import { FontPicker } from "./FontPicker";
 import {
   RangeSetting,
@@ -244,22 +251,22 @@ export function AppearanceSettings() {
                 {colors.accent === preset && <Check size={12} />}
               </button>
             ))}
-            <input
-              type="color"
+            <ColorInput
               className="swatch-picker"
               aria-label="Custom accent"
               value={toInputColor(colors.accent ?? applied.accent ?? "") ?? "#000000"}
-              onChange={(event) => setColor("accent", event.target.value)}
+              onPreview={(color) => previewColor("accent", color)}
+              onCommit={(color) => setColor("accent", color)}
             />
           </div>
         </SettingRow>
         <div className="color-grid">
           {SIMPLE_COLOR_KEYS.map((key) => (
             <label key={key} className="color-field">
-              <input
-                type="color"
+              <ColorInput
                 value={toInputColor(colors[key] ?? applied[key] ?? "") ?? "#000000"}
-                onChange={(event) => setColor(key, event.target.value)}
+                onPreview={(color) => previewColor(key, color)}
+                onCommit={(color) => setColor(key, color)}
               />
               <span>{TOKENS.get(key)?.label}</span>
               {colors[key] && <span className="color-set" title="Set by this theme" />}
@@ -277,6 +284,7 @@ export function AppearanceSettings() {
                   token={token}
                   value={colors[token.key]}
                   applied={applied[token.key] ?? ""}
+                  onPreview={(value) => previewColor(token.key, value)}
                   onChange={(value) => setColor(token.key, value)}
                   onReset={() => resetColor(token.key)}
                 />
@@ -384,13 +392,22 @@ interface ColorTokenRowProps {
   value: string | undefined;
   /** What the page shows now. */
   applied: string;
+  onPreview: (value: string) => void;
   onChange: (value: string) => void;
   onReset: () => void;
 }
 
-function ColorTokenRow({ token, value, applied, onChange, onReset }: ColorTokenRowProps) {
+function ColorTokenRow({
+  token,
+  value,
+  applied,
+  onPreview,
+  onChange,
+  onReset,
+}: ColorTokenRowProps) {
   const [typed, setTyped] = useState<string | null>(null);
   const shown = value ?? applied;
+  const picked = (color: string) => (token.translucent ? keepAlpha(color, shown) : color);
   const commitTyped = () => {
     const next = typed?.trim();
     setTyped(null);
@@ -400,13 +417,11 @@ function ColorTokenRow({ token, value, applied, onChange, onReset }: ColorTokenR
   };
   return (
     <div className="color-token">
-      <input
-        type="color"
+      <ColorInput
         aria-label={token.label}
         value={toInputColor(shown) ?? "#000000"}
-        onChange={(event) =>
-          onChange(token.translucent ? keepAlpha(event.target.value, shown) : event.target.value)
-        }
+        onPreview={(color) => onPreview(picked(color))}
+        onCommit={(color) => onChange(picked(color))}
       />
       <span className="color-token-label">{token.label}</span>
       <input

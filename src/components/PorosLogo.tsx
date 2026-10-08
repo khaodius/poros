@@ -1,0 +1,45 @@
+import { useId } from "react";
+
+interface PorosLogoProps {
+  size: number;
+  className?: string;
+}
+
+/**
+ * The Poros mark, drawn inline so its gradient can follow the theme's accent color. The stop
+ * colors below are the original purple, kept for engines without `color-mix()`.
+ */
+export function PorosLogo({ size, className }: PorosLogoProps) {
+  const gradientId = useId();
+  return (
+    <svg
+      className={`poros-logo ${className ?? ""}`}
+      viewBox="0 0 1024 1024"
+      width={size}
+      height={size}
+      aria-hidden="true"
+    >
+      <defs>
+        <linearGradient
+          id={gradientId}
+          gradientUnits="userSpaceOnUse"
+          x1="91.5"
+          y1="0"
+          x2="810.5"
+          y2="0"
+        >
+          <stop offset="0" stopColor="#C4ADF7" className="poros-logo-tint" />
+          <stop offset="0.3" stopColor="#9C7BE6" className="poros-logo-light" />
+          <stop offset="0.65" stopColor="#7E57CF" className="poros-logo-dark" />
+          <stop offset="1" stopColor="#6A43B8" className="poros-logo-shade" />
+        </linearGradient>
+      </defs>
+      <path
+        fill={`url(#${gradientId})`}
+        fillRule="evenodd"
+        transform="translate(-52.5 -132.6) scale(1.2517)"
+        d="M160.6 230 L680.6 230 C771.7 230 829.9 303.9 810.5 395 C791.1 486.1 701.6 560 610.4 560 L530.4 560 L479.4 800 L339.4 800 L382.4 598 C362 598 251.7 508.8 231.9 506 L385.9 506 C394.7 506 403.4 498.8 405.3 490 C407.2 481.2 401.6 474 392.7 474 C355 474 128.8 415.8 91.5 414 L405.5 414 C414.3 414 423 406.8 424.9 398 C426.7 389.2 421.1 382 412.3 382 C390.2 382 262.7 323.8 241 322 L425 322 C433.9 322 442.5 314.8 444.4 306 C446.3 297.2 440.7 290 431.8 290 C397.7 290 194.3 231.8 160.6 230 Z M579.3 330 L651.3 330 C687.2 330 710.1 359.1 702.5 395 C694.9 430.9 659.6 460 623.7 460 L551.7 460 Z"
+      />
+    </svg>
+  );
+}
