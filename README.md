@@ -24,6 +24,12 @@
 - **Folder sync** one way or both ways, by size and time, size alone or contents, with rsync-style
   excludes and a preview of every change before it runs.
 - **rsync delta transfers** over Poros's own SSH connection, with nothing to install locally.
+- **Safe writes**: files are written under a temporary name and renamed into place once complete,
+  every file's size is checked with the server, and an optional setting compares checksums with
+  the server's copy.
+- **Automatic recovery**: transfers wait out a dropped connection for up to 10 minutes and resume
+  where they stopped, server tabs reconnect on their own, and unfinished transfers come back
+  paused after a restart.
 - **Authentication** with OpenSSH, PEM, PKCS#8 and PuTTY `.ppk` (v2, v3) keys, SSH agents,
   Pageant, password and keyboard-interactive login.
 - **Host key verification** against your existing `~/.ssh/known_hosts`, which Poros never modifies.
@@ -43,7 +49,9 @@ three runs over a 1 Gbit/s link:
 | OpenSSH sftp 9.6           | 17.6 s |   17.9 s |
 | rsync 3.2.7                | 13.6 s |   13.7 s |
 
-At 8 workers Poros sustains about 900 Mbit/s, 95% of the link's measured TCP throughput.
+At 8 workers Poros sustains about 900 Mbit/s, 95% of the link's measured TCP throughput. With
+Verify checksums turned on, a similar transfer over a 1 Gbit/s link with 1 ms latency took about
+30% longer; the default checks cost nothing measurable.
 
 Setup: Poros 0.2.0 release build and a stock OpenSSH 9.6 server on Ubuntu 24.04, in separate
 network namespaces joined by a link capped at 1 Gbit/s (941 Mbit/s measured with iperf3, no added
@@ -88,7 +96,8 @@ The Windows installers are not code-signed yet, so SmartScreen may warn about an
 - **rsync** runs over SSH only and needs rsync 2.6.4 or newer on the server. rsync daemons
   (`rsync://`, port 873) are not supported. Servers without rsync fall back to SFTP.
 - **Data** is stored in `~/.config/io.github.khaodius.poros/` on Linux and
-  `%APPDATA%\io.github.khaodius.poros\` on Windows. Themes live in its `themes/` folder.
+  `%APPDATA%\io.github.khaodius.poros\` on Windows. Themes live in its `themes/` folder, and
+  unfinished transfers in `transfers.json`, which never holds passwords.
 - **Wayland**: Poros sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` and `__NV_DISABLE_EXPLICIT_SYNC=1`
   at startup to avoid blank windows on some compositors and NVIDIA drivers. Set either variable
   to override.
