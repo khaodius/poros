@@ -18,6 +18,7 @@ import { Toasts } from "./components/Toasts";
 import { UpdateDialog } from "./components/UpdateDialog";
 import { WindowControls } from "./components/WindowControls";
 import { Workspace } from "./components/Workspace";
+import { useTabDragsBetweenWindows } from "./hooks/useTabDragsBetweenWindows";
 import { useWindowMaximized } from "./hooks/useWindowMaximized";
 import { EMPTY_DRAFT } from "./lib/connectDraft";
 import {
@@ -40,7 +41,7 @@ import { useLogStore } from "./state/logStore";
 import { useSavedConnections } from "./state/savedConnectionsStore";
 import { useSessionStore } from "./state/sessionStore";
 import { saveSettingsSection, useSettingsStore } from "./state/settingsStore";
-import { adoptHandoff, isMainWindow, requestCloseTab } from "./state/tabActions";
+import { adoptHandoff, isMainWindow, receiveTabs, requestCloseTab } from "./state/tabActions";
 import { applyTheme, findTheme, rememberTheme, useThemeStore } from "./state/themeStore";
 import { uploadDroppedPaths } from "./state/transferActions";
 import { useTransferStore } from "./state/transferStore";
@@ -93,14 +94,6 @@ function reloadStore(store: StoreName): Promise<void> {
   }
 }
 
-/** Adds tabs a torn-out window handed back, and brings this window forward. */
-async function receiveTabs(handoff: unknown): Promise<void> {
-  for (const tab of await adoptHandoff(handoff)) useLayoutStore.getState().addTab(tab);
-  await getCurrentWindow()
-    .setFocus()
-    .catch(() => undefined);
-}
-
 function activeTabId(): string | null {
   const { root, activeGroupId } = useLayoutStore.getState();
   return findGroup(root, activeGroupId)?.activeTabId ?? null;
@@ -119,7 +112,7 @@ function useBackendEvents() {
     if (isMainWindow()) {
       subscriptions.push(
         getCurrentWindow().listen<unknown>(RETURN_TAB_EVENT, (event) => {
-          void receiveTabs(event.payload);
+          void receiveTabs(event.payload, null);
         }),
       );
     }
@@ -310,6 +303,7 @@ export function App() {
       .finally(() => setReady(true));
   }, []);
   useBackendEvents();
+  useTabDragsBetweenWindows();
   useSystemFileDrops();
   useShortcuts();
   useFontSizeShortcuts();
