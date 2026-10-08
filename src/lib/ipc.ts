@@ -2,6 +2,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AppError,
+  CloudProvider,
+  CloudProviderStatus,
+  CommandRequest,
+  CommandResult,
   CompareRequest,
   Comparison,
   ConnectProfile,
@@ -19,17 +23,23 @@ import type {
   MoveCopyRequest,
   OperationProgress,
   OperationSummary,
+  OutputChunk,
   PermissionRequest,
   PermissionSummary,
+  PowerAction,
+  QueueFinished,
   SavedConnection,
+  ScheduledTask,
   SessionClosed,
   SessionInfo,
+  SignedIn,
   StoreName,
   SyncPlanView,
   SyncProgress,
   SyncRequest,
   SyncRunRequest,
   SyncRunSummary,
+  TaskView,
   ThemeFile,
   TransferList,
   TransferUpdate,
@@ -41,6 +51,8 @@ export const SESSION_CLOSED_EVENT = "poros://session-closed";
 export const TRANSFERS_EVENT = "poros://transfers";
 export const STORE_CHANGED_EVENT = "poros://store-changed";
 export const SYNC_PROGRESS_EVENT = "poros://sync-progress";
+export const QUEUE_FINISHED_EVENT = "poros://queue-finished";
+export const COMMAND_OUTPUT_EVENT = "poros://command-output";
 export const FILE_OPERATION_EVENT = "poros://file-operation";
 /** Sent by a torn-out window to hand a tab back to the main window. */
 export const RETURN_TAB_EVENT = "poros://return-tab";
@@ -134,14 +146,31 @@ export const sync = {
 export const settingsStore = {
   get: () => call<unknown>("settings_get"),
   set: (value: unknown) => call<unknown>("settings_set", { value }),
+  /** Keeps the proxy password in the system keychain; an empty one forgets it. */
+  setProxyPassword: (password: string) => call<unknown>("proxy_password_set", { password }),
 };
 
 export const savedConnections = {
   list: () => call<SavedConnection[]>("connections_list"),
-  /** `secret` replaces the stored password or passphrase; omitted keeps it. */
-  save: (connection: SavedConnection, secret?: string | null) =>
-    call<SavedConnection>("connections_save", { connection, secret: secret ?? null }),
+  /**
+   * `secret` replaces the stored password or passphrase, and `oauthGrant` the stored cloud
+   * account; omitted keeps what is stored.
+   */
+  save: (connection: SavedConnection, secret?: string | null, oauthGrant?: string | null) =>
+    call<SavedConnection>("connections_save", {
+      connection,
+      secret: secret ?? null,
+      oauthGrant: oauthGrant ?? null,
+    }),
   remove: (id: string) => call<void>("connections_delete", { id }),
+};
+
+export const cloud = {
+  providers: () => call<CloudProviderStatus[]>("cloud_providers"),
+  /** Opens the provider's sign-in page in the browser; resolves once the account is back. */
+  signIn: (requestId: string, provider: CloudProvider) =>
+    call<SignedIn>("cloud_sign_in", { requestId, provider }),
+  cancelSignIn: (requestId: string) => call<void>("cloud_cancel_sign_in", { requestId }),
 };
 
 export const themeFiles = {
@@ -151,6 +180,27 @@ export const themeFiles = {
   remove: (id: string) => call<void>("theme_delete", { id }),
   importFile: (path: string) => call<string>("theme_import", { path }),
   openFolder: () => call<void>("themes_open_folder"),
+};
+
+/** Commands run through the server's shell, with their output sent as events. */
+export const serverCommands = {
+  run: (request: CommandRequest) => call<CommandResult>("remote_command_run", { request }),
+  stop: (runId: string) => call<void>("remote_command_stop", { runId }),
+};
+
+export const system = {
+  powerAction: (action: PowerAction) => call<void>("power_action", { action }),
+  /** Runs a command through this computer's shell, with `environment` added. */
+  runCommand: (command: string, environment: Record<string, string>) =>
+    call<void>("local_command_run", { command, environment }),
+  exit: () => call<void>("app_exit"),
+};
+
+export const schedules = {
+  list: () => call<TaskView[]>("schedules_list"),
+  save: (task: ScheduledTask) => call<TaskView>("schedule_save", { task }),
+  remove: (id: string) => call<void>("schedule_delete", { id }),
+  runNow: (id: string) => call<void>("schedule_run_now", { id }),
 };
 
 export const fonts = {
@@ -186,5 +236,9 @@ export const onStoreChanged = (handler: (store: StoreName) => void) =>
   subscribe(STORE_CHANGED_EVENT, handler);
 export const onSyncProgress = (handler: (progress: SyncProgress) => void) =>
   subscribe(SYNC_PROGRESS_EVENT, handler);
+export const onQueueFinished = (handler: (finished: QueueFinished) => void) =>
+  subscribe(QUEUE_FINISHED_EVENT, handler);
+export const onCommandOutput = (handler: (chunk: OutputChunk) => void) =>
+  subscribe(COMMAND_OUTPUT_EVENT, handler);
 export const onFileOperation = (handler: (progress: OperationProgress) => void) =>
   subscribe(FILE_OPERATION_EVENT, handler);

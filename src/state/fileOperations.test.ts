@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
-import type { FileEntry } from "../lib/types";
+import type { FileEntry, Protocol } from "../lib/types";
 import { dropAction } from "./fileOperations";
 import { registerPane, type PaneHandle } from "./paneRegistry";
+import { useSessionStore } from "./sessionStore";
 
 function entry(path: string, kind: FileEntry["kind"] = "file"): FileEntry {
   return {
@@ -19,7 +20,28 @@ function entry(path: string, kind: FileEntry["kind"] = "file"): FileEntry {
 
 const unregister: (() => void)[] = [];
 
-function pane(tabId: string, kind: PaneHandle["kind"], path: string, sessionId?: string) {
+function pane(
+  tabId: string,
+  kind: PaneHandle["kind"],
+  path: string,
+  sessionId?: string,
+  protocol: Protocol = "sftp",
+) {
+  if (sessionId) {
+    const info = {
+      id: sessionId,
+      label: sessionId,
+      host: `${sessionId}.example.com`,
+      port: 22,
+      username: "deploy",
+      home: "/",
+      initialPath: "/",
+      protocol,
+    };
+    useSessionStore.setState((state) => ({
+      sessions: { ...state.sessions, [sessionId]: { info, profile: null, status: "connected" } },
+    }));
+  }
   unregister.push(
     registerPane({
       tabId,
@@ -35,7 +57,10 @@ function pane(tabId: string, kind: PaneHandle["kind"], path: string, sessionId?:
   );
 }
 
-afterEach(() => unregister.splice(0).forEach((remove) => remove()));
+afterEach(() => {
+  unregister.splice(0).forEach((remove) => remove());
+  useSessionStore.setState({ sessions: {} });
+});
 
 const onPane = (tabId: string, folder: string | null) => ({
   kind: "pane" as const,
@@ -91,11 +116,26 @@ describe("dropAction", () => {
     });
   });
 
-  it("refuses to go between two servers", () => {
+  it("copies between two servers through the transfer queue", () => {
     pane("first", "remote", "/srv", "s1");
     pane("second", "remote", "/srv", "s2");
-    expect(dropAction("first", [entry("/srv/a.txt")], onPane("second", null), false)).toMatchObject(
-      { kind: "blocked" },
-    );
+    expect(dropAction("first", [entry("/srv/a.txt")], onPane("second", null), false)).toEqual({
+      kind: "transfer",
+      direction: "relay",
+      folder: "/srv",
+    });
+  });
+
+  it("moves nothing on a server reached other than over SFTP", () => {
+    pane("ftp", "remote", "/srv", "s1", "ftp");
+    pane("other", "remote", "/srv/www", "s1", "ftp");
+    const files = [entry("/srv/a.txt")];
+    expect(dropAction("ftp", files, onPane("ftp", "/srv/www"), false)).toMatchObject({
+      kind: "blocked",
+    });
+    expect(dropAction("ftp", files, onPane("other", null), false)).toMatchObject({
+      kind: "transfer",
+      direction: "relay",
+    });
   });
 });

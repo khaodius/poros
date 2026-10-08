@@ -119,11 +119,12 @@ pub(crate) enum Channel<'a> {
 }
 
 impl<'a> Channel<'a> {
-    async fn open(session: &'a Session) -> Channel<'a> {
-        match session.open_channel().await {
+    async fn open(session: &'a Session) -> AppResult<Channel<'a>> {
+        let browsing = session.sftp()?;
+        Ok(match session.open_channel().await {
             Ok(fs) => Self::Own(fs),
-            Err(_) => Self::Shared(&session.fs),
-        }
+            Err(_) => Self::Shared(browsing),
+        })
     }
 }
 
@@ -337,7 +338,7 @@ impl FileOperations {
             }
             Location::Remote { session_id } => {
                 let session = self.sessions.get(&session_id).await?;
-                server::existing_names(&session.fs, &directory, &names).await
+                server::existing_names(session.sftp()?, &directory, &names).await
             }
         }
     }
@@ -357,7 +358,7 @@ impl FileOperations {
                 let session = self.sessions.get(session_id).await?;
                 let work =
                     server::Work::new(&session, self.features, &running.cancel, &running.progress)
-                        .await;
+                        .await?;
                 work.move_or_copy(&request).await
             }
         }
@@ -365,7 +366,7 @@ impl FileOperations {
 
     pub async fn details(&self, session_id: &str, path: &str) -> AppResult<Details> {
         let session = self.sessions.get(session_id).await?;
-        permissions::details(&session.fs, path).await
+        permissions::details(session.sftp()?, path).await
     }
 
     pub async fn measure(

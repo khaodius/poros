@@ -171,7 +171,7 @@ impl Side {
             Location::Local => Self::Local(PathBuf::from(&file.path)),
             Location::Remote { session_id } => {
                 let session = sessions.get(session_id).await?;
-                let path = session.fs.resolve(&file.path);
+                let path = session.sftp()?.resolve(&file.path);
                 Self::Remote { session, path }
             }
         })
@@ -198,7 +198,7 @@ impl Side {
                     Err(not_a_file())
                 }
             }
-            Self::Remote { session, path } => match session.fs.stat(path).await? {
+            Self::Remote { session, path } => match session.sftp()?.stat(path).await? {
                 Some(stat) if !stat.is_dir => Ok(stat.size),
                 Some(_) => Err(not_a_file()),
                 None => Err(
@@ -220,7 +220,7 @@ impl Side {
             }
             Self::Remote { session, path } => {
                 Channel::open(session)
-                    .await
+                    .await?
                     .read_to_end(path, MAX_TEXT_BYTES)
                     .await
             }
@@ -235,7 +235,7 @@ impl Side {
                     .map_err(|error| AppError::from(error).with_path(self.path()))?,
             ),
             Self::Remote { session, path } => {
-                let fs = Channel::open(session).await;
+                let fs = Channel::open(session).await?;
                 let handle = fs.open_for_read(path).await?;
                 Reader::Remote { fs, handle }
             }

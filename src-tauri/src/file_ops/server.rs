@@ -98,15 +98,15 @@ impl<'a> Work<'a> {
         features: ServerFeatures,
         cancel: &'a CancellationToken,
         progress: &'a Progress,
-    ) -> Work<'a> {
-        Self {
+    ) -> AppResult<Work<'a>> {
+        Ok(Self {
             session,
             features,
-            fs: Channel::open(session).await,
+            fs: Channel::open(session).await?,
             cancel,
             progress,
             runs_commands: OnceCell::new(),
-        }
+        })
     }
 
     pub async fn move_or_copy(&self, request: &MoveCopyRequest) -> AppResult<OperationSummary> {

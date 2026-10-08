@@ -45,9 +45,12 @@ describe("parseHostInput", () => {
     ["deploy@example.com:2222", { host: "example.com", username: "deploy", port: 2222 }],
     [
       "sftp://deploy@example.com:2222/var/www",
-      { host: "example.com", username: "deploy", port: 2222, path: "/var/www" },
+      { host: "example.com", username: "deploy", port: 2222, path: "/var/www", protocol: "sftp" },
     ],
-    ["SSH://example.com", { host: "example.com" }],
+    ["SSH://example.com", { host: "example.com", protocol: "sftp" }],
+    ["ftp://files.example.com/pub", { host: "files.example.com", path: "/pub", protocol: "ftp" }],
+    ["ftpes://example.com", { host: "example.com", protocol: "ftps" }],
+    ["FTPS://example.com:990", { host: "example.com", port: 990, protocol: "ftpsImplicit" }],
     ["user%40corp@example.com", { host: "example.com", username: "user@corp" }],
     ["broken%zz@example.com", { host: "example.com", username: "broken%zz" }],
     ["[2001:db8::1]:2200", { host: "2001:db8::1", port: 2200 }],
@@ -58,6 +61,7 @@ describe("parseHostInput", () => {
       username: undefined,
       port: undefined,
       path: undefined,
+      protocol: undefined,
       ...expected,
     });
   });

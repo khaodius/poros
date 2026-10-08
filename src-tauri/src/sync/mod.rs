@@ -303,7 +303,7 @@ impl SyncManager {
 
         // Deletions first, so a folder replaced by a file of the same name is gone in time.
         for path in &work.delete_remote {
-            match session.fs.delete(std::slice::from_ref(path)).await {
+            match session.files().delete(std::slice::from_ref(path)).await {
                 Ok(()) => summary.deleted += 1,
                 Err(error) => summary.failures.push(format!("{path}: {}", error.message)),
             }
@@ -324,7 +324,7 @@ impl SyncManager {
         summary.failures.extend(local_failures);
 
         for folder in &work.remote_folders {
-            match session.fs.ensure_dir(folder).await {
+            match session.files().ensure_dir(folder).await {
                 Ok(()) => summary.created_folders += 1,
                 Err(error) => summary
                     .failures

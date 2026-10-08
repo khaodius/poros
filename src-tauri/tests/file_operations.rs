@@ -9,9 +9,10 @@ use poros_lib::file_ops::{
     ModeChange, MoveCopyRequest, OperationSummary, PermissionRequest, ServerFeatures,
 };
 use poros_lib::model::EntryKind;
+use poros_lib::protocol::Protocol;
 use poros_lib::session::{Session, SessionInfo, SessionManager};
 use poros_lib::sftp::RemoteFs;
-use poros_lib::ssh::{AuthMethod, ConnectProfile, HostKeyApproval};
+use poros_lib::ssh::{AuthMethod, ConnectProfile, HostKeyApproval, Route};
 use serde_json::Value;
 
 const OWNER: &str = "main";
@@ -33,6 +34,7 @@ fn server() -> Option<Server> {
 
 fn profile(server: &Server) -> ConnectProfile {
     ConnectProfile {
+        protocol: Protocol::Sftp,
         host: "127.0.0.1".into(),
         port: server.port,
         username: server.user.clone(),
@@ -46,6 +48,10 @@ fn profile(server: &Server) -> ConnectProfile {
         receive_buffer_kib: None,
         send_buffer_kib: None,
         saved_connection_id: None,
+        ftp_active: false,
+        bypass_proxy: false,
+        jump_connection_id: None,
+        route: Route::default(),
     }
 }
 
@@ -92,10 +98,16 @@ impl Fixture {
         };
         let session = fixture.session().await;
         let _ = session
-            .fs
+            .sftp()
+            .unwrap()
             .delete(std::slice::from_ref(&fixture.remote))
             .await;
-        session.fs.make_dir_at(&fixture.remote, None).await.unwrap();
+        session
+            .sftp()
+            .unwrap()
+            .make_dir_at(&fixture.remote, None)
+            .await
+            .unwrap();
         fixture
     }
 
@@ -119,13 +131,14 @@ impl Fixture {
 
     async fn write(&self, relative: &str, contents: &[u8]) {
         let session = self.session().await;
-        write_file(&session.fs, &self.path(relative), contents).await;
+        write_file(session.sftp().unwrap(), &self.path(relative), contents).await;
     }
 
     async fn read(&self, relative: &str) -> Vec<u8> {
         let session = self.session().await;
         session
-            .fs
+            .sftp()
+            .unwrap()
             .read_to_end(&self.path(relative), u64::MAX)
             .await
             .unwrap()
@@ -134,7 +147,8 @@ impl Fixture {
     async fn exists(&self, relative: &str) -> bool {
         let session = self.session().await;
         session
-            .fs
+            .sftp()
+            .unwrap()
             .lstat_entry(&self.path(relative))
             .await
             .unwrap()
@@ -144,7 +158,8 @@ impl Fixture {
     async fn mkdir(&self, relative: &str) {
         let session = self.session().await;
         session
-            .fs
+            .sftp()
+            .unwrap()
             .make_dir_at(&self.path(relative), None)
             .await
             .unwrap();
@@ -174,7 +189,8 @@ impl Fixture {
     async fn close(self) {
         let session = self.session().await;
         session
-            .fs
+            .sftp()
+            .unwrap()
             .delete(std::slice::from_ref(&self.remote))
             .await
             .unwrap();
@@ -340,12 +356,14 @@ async fn copies_within_the_server_every_way() {
     {
         let session = fixture.session().await;
         session
-            .fs
+            .sftp()
+            .unwrap()
             .make_symlink(&fixture.path("source/link"), "nested/deeper/note.txt")
             .await
             .unwrap();
         session
-            .fs
+            .sftp()
+            .unwrap()
             .set_attributes(
                 &fixture.path("source/big.bin"),
                 Some(1_600_000_000),
@@ -354,7 +372,7 @@ async fn copies_within_the_server_every_way() {
             .await
             .unwrap();
     }
-    let copy_data = fixture.session().await.fs.supports_copy_data();
+    let copy_data = fixture.session().await.sftp().unwrap().supports_copy_data();
 
     for (index, features) in EVERY_WAY.into_iter().enumerate() {
         let operations = fixture.operations(features);
@@ -395,7 +413,8 @@ async fn copies_within_the_server_every_way() {
             assert_eq!(fixture.read(&copied).await, big, "{features:?} {copied}");
             let session = fixture.session().await;
             let stat = session
-                .fs
+                .sftp()
+                .unwrap()
                 .lstat_entry(&fixture.path(&copied))
                 .await
                 .unwrap()
@@ -413,11 +432,18 @@ async fn copies_within_the_server_every_way() {
         let session = fixture.session().await;
         let link = fixture.path(&format!("{target}/source/link"));
         assert_eq!(
-            session.fs.lstat_entry(&link).await.unwrap().unwrap().kind,
+            session
+                .sftp()
+                .unwrap()
+                .lstat_entry(&link)
+                .await
+                .unwrap()
+                .unwrap()
+                .kind,
             EntryKind::Symlink
         );
         assert_eq!(
-            session.fs.read_link(&link).await.unwrap(),
+            session.sftp().unwrap().read_link(&link).await.unwrap(),
             "nested/deeper/note.txt"
         );
 
@@ -473,8 +499,18 @@ async fn moves_across_disks() {
     let fixture = Fixture::new(&server, "disks").await;
     let other_disk = format!("/dev/shm/poros-fileops-{}", std::process::id());
     let session = fixture.session().await;
-    let _ = session.fs.delete(std::slice::from_ref(&other_disk)).await;
-    if session.fs.make_dir_at(&other_disk, None).await.is_err() {
+    let _ = session
+        .sftp()
+        .unwrap()
+        .delete(std::slice::from_ref(&other_disk))
+        .await;
+    if session
+        .sftp()
+        .unwrap()
+        .make_dir_at(&other_disk, None)
+        .await
+        .is_err()
+    {
         fixture.close().await;
         return;
     }
@@ -511,14 +547,16 @@ async fn moves_across_disks() {
         );
         assert!(!fixture.exists(&folder).await);
         let moved = session
-            .fs
+            .sftp()
+            .unwrap()
             .read_to_end(&format!("{other_disk}/{folder}/a.txt"), 16)
             .await
             .unwrap();
         assert_eq!(moved, b"a");
     }
     session
-        .fs
+        .sftp()
+        .unwrap()
         .delete(std::slice::from_ref(&other_disk))
         .await
         .unwrap();
@@ -536,7 +574,7 @@ async fn changes_permissions_and_owners() {
     fixture.write("site/assets/app.js", b"app").await;
     let session = fixture.session().await;
     let mode = |relative: &str| {
-        let fs = &session.fs;
+        let fs = session.sftp().unwrap();
         let path = fixture.path(relative);
         async move {
             fs.lstat_entry(&path)
@@ -548,7 +586,8 @@ async fn changes_permissions_and_owners() {
         }
     };
     session
-        .fs
+        .sftp()
+        .unwrap()
         .set_permissions(&fixture.path("site/index.html"), 0o600)
         .await
         .unwrap();
@@ -571,7 +610,8 @@ async fn changes_permissions_and_owners() {
                     server.user.clone()
                 } else {
                     session
-                        .fs
+                        .sftp()
+                        .unwrap()
                         .lstat_entry(&fixture.path("site"))
                         .await
                         .unwrap()

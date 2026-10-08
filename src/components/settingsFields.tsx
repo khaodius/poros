@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { RotateCcw } from "lucide-react";
 import { Stepper } from "./Stepper";
 
@@ -53,6 +53,50 @@ export function SwitchSetting({ label, hint, checked, disabled, onChange }: Swit
         <span className="switch-thumb" />
       </button>
     </SettingRow>
+  );
+}
+
+interface CommitInputProps {
+  value: string;
+  label: string;
+  placeholder?: string;
+  disabled?: boolean;
+  className?: string;
+  onCommit: (value: string) => void;
+}
+
+/** Saves when the box loses focus or Enter is pressed, so the backend's tidying does not fight typing. */
+export function CommitInput({
+  value,
+  label,
+  placeholder,
+  disabled,
+  className,
+  onCommit,
+}: CommitInputProps) {
+  const [typed, setTyped] = useState<string | null>(null);
+  const commit = () => {
+    if (typed !== null && typed !== value) onCommit(typed);
+    setTyped(null);
+  };
+  return (
+    <input
+      className={className}
+      value={typed ?? value}
+      aria-label={label}
+      placeholder={placeholder}
+      spellCheck={false}
+      disabled={disabled}
+      onChange={(event) => setTyped(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") commit();
+        if (event.key === "Escape" && typed !== null) {
+          event.preventDefault();
+          setTyped(null);
+        }
+      }}
+    />
   );
 }
 
@@ -120,6 +164,40 @@ export function SelectSetting<T extends string>({
           </option>
         ))}
       </select>
+    </SettingRow>
+  );
+}
+
+interface TextSettingProps {
+  label: string;
+  hint?: string;
+  value: string;
+  placeholder?: string;
+  disabled?: boolean;
+  /** For long values such as app IDs. */
+  wide?: boolean;
+  onCommit: (value: string) => void;
+}
+
+export function TextSetting({
+  label,
+  hint,
+  value,
+  placeholder,
+  disabled,
+  wide,
+  onCommit,
+}: TextSettingProps) {
+  return (
+    <SettingRow label={label} hint={hint} disabled={disabled}>
+      <CommitInput
+        value={value}
+        label={label}
+        placeholder={placeholder}
+        disabled={disabled}
+        className={wide ? "is-wide" : undefined}
+        onCommit={onCommit}
+      />
     </SettingRow>
   );
 }

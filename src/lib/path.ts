@@ -1,4 +1,6 @@
 import type { PathStyle } from "./fileSource";
+import { protocolForScheme } from "./protocols";
+import type { Protocol } from "./types";
 
 export interface Crumb {
   label: string;
@@ -88,14 +90,24 @@ function decodeUserInfo(encoded: string): string {
   }
 }
 
-/** Parses quick-connect host input: `user@host:port`, `sftp://user@host:port/path`. */
+/**
+ * Parses quick-connect host input: `user@host:port`, `sftp://user@host:port/path`, or another
+ * scheme quick connect understands, such as `ftp://`.
+ */
 export function parseHostInput(input: string): {
   host: string;
   username?: string;
   port?: number;
   path?: string;
+  protocol?: Protocol;
 } {
-  let rest = input.trim().replace(/^(sftp|ssh|scp):\/\//i, "");
+  let rest = input.trim();
+  let protocol: Protocol | undefined;
+  const scheme = rest.match(/^([a-z]+):\/\//i);
+  if (scheme) {
+    protocol = protocolForScheme(scheme[1]);
+    if (protocol) rest = rest.slice(scheme[0].length);
+  }
   let path: string | undefined;
   const slash = rest.indexOf("/");
   if (slash >= 0) {
@@ -122,5 +134,5 @@ export function parseHostInput(input: string): {
       rest = rest.slice(0, colon);
     }
   }
-  return { host: rest, username, port, path };
+  return { host: rest, username, port, path, protocol };
 }

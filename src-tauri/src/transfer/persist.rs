@@ -1,6 +1,8 @@
 //! Unfinished transfers saved in `transfers.json`, so closing Poros, a crash or a power cut does
-//! not lose the queue. They come back paused. Passwords and passphrases are never written: a
-//! restored server takes them from a session the user opens to it.
+//! not lose the queue. They come back paused. Passwords, passphrases and cloud sign-ins are never
+//! written: a restored server takes them from a session the user opens to it. Neither is the
+//! route, which is worked out again from the current settings before a restored server
+//! connects.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -12,7 +14,8 @@ use serde::{Deserialize, Serialize};
 use super::conflict::ExistsAction;
 use super::queue::{Direction, JobKind, JobSpec, JobState, ResumePoint, Unfinished};
 use super::{Login, SessionTarget, Shared};
-use crate::ssh::{AuthMethod, ConnectProfile};
+use crate::protocol::Protocol;
+use crate::ssh::{AuthMethod, ConnectProfile, Route};
 use crate::storage;
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -25,6 +28,8 @@ struct SavedQueue {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SavedServer {
+    #[serde(default)]
+    protocol: Protocol,
     host: String,
     port: u16,
     username: String,
@@ -35,6 +40,12 @@ struct SavedServer {
     receive_buffer_kib: Option<u32>,
     send_buffer_kib: Option<u32>,
     saved_connection_id: Option<String>,
+    #[serde(default)]
+    ftp_active: bool,
+    #[serde(default)]
+    bypass_proxy: bool,
+    #[serde(default)]
+    jump_connection_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -46,6 +57,8 @@ enum SavedAuth {
         key_path: String,
     },
     Agent,
+    #[serde(rename = "oauth")]
+    OAuth,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -53,6 +66,9 @@ enum SavedAuth {
 struct SavedJob {
     /// Index into `servers`.
     server: usize,
+    /// The server a copy between servers reads from, as an index into `servers`.
+    #[serde(default)]
+    source_server: Option<usize>,
     direction: Direction,
     kind: JobKind,
     name: String,
@@ -75,6 +91,7 @@ struct SavedJob {
 impl From<&ConnectProfile> for SavedServer {
     fn from(profile: &ConnectProfile) -> Self {
         Self {
+            protocol: profile.protocol,
             host: profile.host.clone(),
             port: profile.port,
             username: profile.username.clone(),
@@ -84,6 +101,7 @@ impl From<&ConnectProfile> for SavedServer {
                     key_path: key_path.clone(),
                 },
                 AuthMethod::Agent => SavedAuth::Agent,
+                AuthMethod::OAuth { .. } => SavedAuth::OAuth,
             },
             timeout_secs: profile.timeout_secs,
             keepalive_secs: profile.keepalive_secs,
@@ -91,6 +109,9 @@ impl From<&ConnectProfile> for SavedServer {
             receive_buffer_kib: profile.receive_buffer_kib,
             send_buffer_kib: profile.send_buffer_kib,
             saved_connection_id: profile.saved_connection_id.clone(),
+            ftp_active: profile.ftp_active,
+            bypass_proxy: profile.bypass_proxy,
+            jump_connection_id: profile.jump_connection_id.clone(),
         }
     }
 }
@@ -98,6 +119,7 @@ impl From<&ConnectProfile> for SavedServer {
 impl SavedServer {
     fn profile(&self) -> ConnectProfile {
         ConnectProfile {
+            protocol: self.protocol,
             host: self.host.clone(),
             port: self.port,
             username: self.username.clone(),
@@ -110,6 +132,11 @@ impl SavedServer {
                     passphrase: None,
                 },
                 SavedAuth::Agent => AuthMethod::Agent,
+                SavedAuth::OAuth => AuthMethod::OAuth {
+                    grant_id: None,
+                    refresh_token: String::new(),
+                    client: None,
+                },
             },
             initial_path: None,
             timeout_secs: self.timeout_secs,
@@ -118,6 +145,10 @@ impl SavedServer {
             receive_buffer_kib: self.receive_buffer_kib,
             send_buffer_kib: self.send_buffer_kib,
             saved_connection_id: self.saved_connection_id.clone(),
+            ftp_active: self.ftp_active,
+            bypass_proxy: self.bypass_proxy,
+            jump_connection_id: self.jump_connection_id.clone(),
+            route: Route::default(),
         }
     }
 }
@@ -135,26 +166,40 @@ fn snapshot(shared: &Shared) -> Option<(SavedQueue, &Path)> {
     };
     let targets = shared.targets.lock().unwrap();
     let mut saved = SavedQueue::default();
-    let mut server_index: HashMap<&str, usize> = HashMap::new();
+    let mut server_index: HashMap<String, usize> = HashMap::new();
+    let mut index_of = |session_id: &str| -> Option<usize> {
+        let target = targets.get(session_id)?;
+        Some(
+            *server_index
+                .entry(target.session_id.clone())
+                .or_insert_with(|| {
+                    let server = SavedServer::from(&target.login().profile);
+                    match saved.servers.iter().position(|known| *known == server) {
+                        Some(index) => index,
+                        None => {
+                            saved.servers.push(server);
+                            saved.servers.len() - 1
+                        }
+                    }
+                }),
+        )
+    };
+    let mut jobs = Vec::new();
     for job in unfinished {
-        let Some(target) = targets.get(&job.spec.session_id) else {
+        let Some(server) = index_of(&job.spec.session_id) else {
             continue;
         };
-        let server = *server_index
-            .entry(target.session_id.as_str())
-            .or_insert_with(|| {
-                let server = SavedServer::from(&target.login().profile);
-                match saved.servers.iter().position(|known| *known == server) {
-                    Some(index) => index,
-                    None => {
-                        saved.servers.push(server);
-                        saved.servers.len() - 1
-                    }
-                }
-            });
+        let source_server = match &job.spec.source_session_id {
+            Some(source_id) => match index_of(source_id) {
+                Some(index) => Some(index),
+                None => continue,
+            },
+            None => None,
+        };
         let spec = job.spec;
-        saved.jobs.push(SavedJob {
+        jobs.push(SavedJob {
             server,
+            source_server,
             direction: spec.direction,
             kind: spec.kind,
             name: spec.name,
@@ -169,6 +214,7 @@ fn snapshot(shared: &Shared) -> Option<(SavedQueue, &Path)> {
             resume: job.resume,
         });
     }
+    saved.jobs = jobs;
     Some((saved, file))
 }
 
@@ -234,6 +280,7 @@ pub(super) fn restore(shared: &Shared, file: &Path) -> usize {
             profile: server.profile(),
             host_key_fingerprint: String::new(),
             browsing_session: session_id.clone(),
+            browsing_files: None,
         };
         targets.insert(
             session_id.clone(),
@@ -248,9 +295,17 @@ pub(super) fn restore(shared: &Shared, file: &Path) -> usize {
         let Some(session_id) = session_ids.get(job.server) else {
             continue;
         };
+        let source_session_id = match job.source_server {
+            Some(index) => match session_ids.get(index) {
+                Some(source_id) => Some(source_id.clone()),
+                None => continue,
+            },
+            None => None,
+        };
         queue.restore(Unfinished {
             spec: JobSpec {
                 session_id: session_id.clone(),
+                source_session_id,
                 direction: job.direction,
                 kind: job.kind,
                 name: job.name,
@@ -279,10 +334,12 @@ pub(super) fn restore(shared: &Shared, file: &Path) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ssh::proxy::{Proxy, ProxyKind};
 
     #[test]
     fn saved_servers_never_hold_secrets() {
         let profile = ConnectProfile {
+            protocol: Protocol::Sftp,
             host: "example.com".into(),
             port: 22,
             username: "me".into(),
@@ -296,15 +353,33 @@ mod tests {
             receive_buffer_kib: None,
             send_buffer_kib: None,
             saved_connection_id: Some("saved".into()),
+            ftp_active: false,
+            bypass_proxy: true,
+            jump_connection_id: Some("bastion".into()),
+            route: Route {
+                proxy: Some(Proxy {
+                    kind: ProxyKind::Socks5,
+                    host: "proxy.local".into(),
+                    port: 1080,
+                    username: "alice".into(),
+                    password: "proxy-secret".into(),
+                    remote_dns: true,
+                }),
+                jump_hosts: Vec::new(),
+            },
         };
         let saved = SavedServer::from(&profile);
         let text = serde_json::to_string(&saved).unwrap();
         assert!(!text.contains("hunter2"));
+        assert!(!text.contains("proxy-secret"));
         let restored = serde_json::from_str::<SavedServer>(&text)
             .unwrap()
             .profile();
         assert_eq!(restored.host, "example.com");
         assert_eq!(restored.saved_connection_id.as_deref(), Some("saved"));
+        assert!(restored.bypass_proxy);
+        assert_eq!(restored.jump_connection_id.as_deref(), Some("bastion"));
+        assert!(restored.route.proxy.is_none());
         assert!(matches!(
             restored.auth,
             AuthMethod::Password { password } if password.is_empty()
@@ -320,5 +395,32 @@ mod tests {
         let text = serde_json::to_string(&SavedServer::from(&key)).unwrap();
         assert!(!text.contains("secret"));
         assert!(text.contains("/keys/id"));
+
+        let drive = ConnectProfile {
+            protocol: Protocol::GoogleDrive,
+            auth: AuthMethod::OAuth {
+                grant_id: None,
+                refresh_token: "refresh-token".into(),
+                client: None,
+            },
+            ..key
+        };
+        let text = serde_json::to_string(&SavedServer::from(&drive)).unwrap();
+        assert!(!text.contains("refresh-token"));
+        let restored = serde_json::from_str::<SavedServer>(&text)
+            .unwrap()
+            .profile();
+        assert_eq!(restored.protocol, Protocol::GoogleDrive);
+        assert!(restored.lacks_secret());
+    }
+
+    #[test]
+    fn servers_saved_before_other_protocols_load_as_sftp() {
+        let text = r#"{"host":"example.com","port":22,"username":"me","auth":{"type":"agent"},
+            "timeoutSecs":null,"keepaliveSecs":null,"compression":false,"receiveBufferKib":null,
+            "sendBufferKib":null,"savedConnectionId":null}"#;
+        let profile = serde_json::from_str::<SavedServer>(text).unwrap().profile();
+        assert_eq!(profile.protocol, Protocol::Sftp);
+        assert!(!profile.ftp_active);
     }
 }

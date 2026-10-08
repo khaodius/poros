@@ -39,7 +39,7 @@ import {
 } from "lucide-react";
 import { usePane } from "../hooks/usePane";
 import { COLUMN_LABELS, availableColumns, type DetailColumn } from "../lib/columns";
-import { sameFilesystem, toLocation } from "../lib/fileOrigin";
+import { sameFilesystem, toLocation, worksInPlace } from "../lib/fileOrigin";
 import type { FileSource } from "../lib/fileSource";
 import { formatSize, pluralize } from "../lib/format";
 import { stemLength } from "../lib/path";
@@ -75,6 +75,7 @@ import { FileList } from "./FileList";
 import { PathBar } from "./PathBar";
 import { PromptDialog } from "./PromptDialog";
 import { PropertiesDialog } from "./PropertiesDialog";
+import { serverCommandsMenu } from "./commandMenu";
 
 type PaneDialog =
   | { type: "newFolder" }
@@ -139,7 +140,7 @@ function compareSide(pane: PaneHandle, entry: FileEntry): CompareSide {
 function counterpartFile(tabId: string): { pane: PaneHandle; entry: FileEntry } | null {
   let best: { pane: PaneHandle; entry: FileEntry } | null = null;
   for (const pane of listPanes()) {
-    if (pane.tabId === tabId) continue;
+    if (pane.tabId === tabId || !worksInPlace(paneOrigin(pane))) continue;
     const selected = pane.selected();
     if (selected.length !== 1 || !isFileLike(selected[0])) continue;
     const better =
@@ -191,7 +192,13 @@ export function FilePane({
     const entry = sessionId ? state.sessions[sessionId] : undefined;
     return Boolean(entry?.profile && !entry.info.savedConnectionId);
   });
+  const protocol = useSessionStore((state) =>
+    sessionId ? state.sessions[sessionId]?.info.protocol : undefined,
+  );
   const where = source.kind === "remote" ? "remote" : "local";
+  // Moving, copying and comparing in place, and Properties, run over SFTP.
+  const overSftp = protocol === "sftp";
+  const worksHere = source.kind === "local" || overSftp;
   const paneRef = useRef(pane);
   useLayoutEffect(() => {
     paneRef.current = pane;
@@ -305,7 +312,7 @@ export function FilePane({
   };
 
   const openProperties = (entries: FileEntry[]) => {
-    if (source.kind === "remote" && entries.length > 0) setDialog({ type: "properties", entries });
+    if (overSftp && entries.length > 0) setDialog({ type: "properties", entries });
   };
 
   const activateFile = (entry: FileEntry) => {
@@ -329,10 +336,12 @@ export function FilePane({
   /** Synchronizes the folder clicked, or the one shown, with the other side. */
   const syncMenuItem = (entry: FileEntry | null): MenuItem => {
     const folder = entry && isDirLike(entry) ? entry.path : (pane.listing?.path ?? "");
+    // Synchronization runs over SSH.
+    const synchronizable = source.kind === "local" || protocol === "sftp";
     return {
-      label: "Synchronize folder...",
+      label: synchronizable ? "Synchronize folder..." : "Synchronize folder (SFTP only)",
       icon: <FolderSync size={14} />,
-      disabled: !folder,
+      disabled: !folder || !synchronizable,
       onSelect: () =>
         openDialog(
           source.kind === "local"
@@ -414,6 +423,14 @@ export function FilePane({
     if (!self || targets.length === 0 || targets.length > 2 || !targets.every(isFileLike)) {
       return null;
     }
+    if (!worksHere) {
+      return {
+        label: "Compare (SFTP only)",
+        icon: <FileDiff size={14} />,
+        disabled: true,
+        onSelect: () => undefined,
+      };
+    }
     if (targets.length === 2) {
       return {
         label: "Compare the two files",
@@ -464,15 +481,15 @@ export function FilePane({
       onSelect: () => pasteInto(entry),
     },
     {
-      label: "Move to...",
+      label: worksHere ? "Move to..." : "Move to (SFTP only)",
       icon: <FolderInput size={14} />,
-      disabled: targets.length === 0,
+      disabled: targets.length === 0 || !worksHere,
       onSelect: () => setDialog({ type: "placeTo", mode: "move", entries: targets }),
     },
     {
-      label: "Copy to...",
+      label: worksHere ? "Copy to..." : "Copy to (SFTP only)",
       icon: <CopyPlus size={14} />,
-      disabled: targets.length === 0,
+      disabled: targets.length === 0 || !worksHere,
       onSelect: () => setDialog({ type: "placeTo", mode: "copy", entries: targets }),
     },
   ];
@@ -506,6 +523,10 @@ export function FilePane({
       },
       ...(entry ? [] : [sortMenu()]),
       syncMenuItem(entry),
+      // Commands run over SSH.
+      ...(sessionId && protocol === "sftp" && pane.listing
+        ? [serverCommandsMenu(sessionId, { folder: pane.listing.path, items: targets })]
+        : []),
       "separator",
       ...clipboardMenuItems(entry, targets),
       "separator",
@@ -525,9 +546,10 @@ export function FilePane({
       ...(source.kind === "remote" && targets.length > 0
         ? [
             {
-              label: "Properties",
+              label: overSftp ? "Properties" : "Properties (SFTP only)",
               icon: <Info size={14} />,
-              shortcut: "Alt+Enter",
+              shortcut: overSftp ? "Alt+Enter" : undefined,
+              disabled: !overSftp,
               onSelect: () => openProperties(targets),
             },
           ]

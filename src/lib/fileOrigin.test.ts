@@ -1,7 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { sameFilesystem, toLocation, type FileOrigin } from "./fileOrigin";
+import {
+  sameFilesystem,
+  toLocation,
+  worksInPlace,
+  type FileOrigin,
+  type ServerIdentity,
+} from "./fileOrigin";
 
-const server = { host: "Files.example.com", port: 22, username: "deploy" };
+const server: ServerIdentity = {
+  protocol: "sftp",
+  host: "Files.example.com",
+  port: 22,
+  username: "deploy",
+};
 
 describe("sameFilesystem", () => {
   it("treats every local pane as one filesystem", () => {
@@ -27,6 +38,23 @@ describe("sameFilesystem", () => {
       }),
     ).toBe(false);
     expect(sameFilesystem(first, { kind: "remote", sessionId: "b" })).toBe(false);
+  });
+
+  it("tells a server's protocols apart", () => {
+    expect(
+      sameFilesystem(
+        { kind: "remote", sessionId: "a", server },
+        { kind: "remote", sessionId: "b", server: { ...server, protocol: "ftps" } },
+      ),
+    ).toBe(false);
+  });
+
+  it("works in place on this computer and over SFTP only", () => {
+    expect(worksInPlace({ kind: "local" })).toBe(true);
+    expect(worksInPlace({ kind: "remote", sessionId: "a", server })).toBe(true);
+    expect(
+      worksInPlace({ kind: "remote", sessionId: "a", server: { ...server, protocol: "ftp" } }),
+    ).toBe(false);
   });
 
   it("names the place an operation runs", () => {

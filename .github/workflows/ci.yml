@@ -34,7 +34,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev openssh-server rsync
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev openssh-server rsync vsftpd
 
       - uses: actions/setup-node@v5
         with:
@@ -95,6 +95,67 @@ jobs:
           sudo mkdir -p /run/sshd
           sudo /usr/sbin/sshd -f "$sshd_dir/sshd_config"
           echo "POROS_TEST_SSH_PORT=2222" >> "$GITHUB_ENV"
+
+      # Plain FTP, a second plain server that accepts files straight from the first (FXP),
+      # and explicit and implicit FTPS with a self-signed certificate, all for the poros user
+      # the SSH step created.
+      - name: Start throwaway FTP servers for end-to-end tests
+        if: runner.os == 'Linux'
+        run: |
+          sudo -u poros sh -c 'head -c 300000 /dev/urandom > /home/poros/data/linked.bin'
+          sudo -u poros ln -s data/linked.bin /home/poros/file-link
+          ftp_dir="$RUNNER_TEMP/vsftpd"
+          mkdir -p "$ftp_dir"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 30 -subj '/CN=poros-test' \
+            -keyout "$ftp_dir/server.key" -out "$ftp_dir/server.crt" 2> /dev/null
+          sudo mkdir -p /var/run/vsftpd/empty
+          start_vsftpd() {
+            name="$1"
+            port="$2"
+            passive_min="$3"
+            passive_max="$4"
+            extra="$5"
+            sudo tee "$ftp_dir/$name.conf" > /dev/null <<EOF
+          listen=YES
+          listen_ipv6=NO
+          listen_address=127.0.0.1
+          listen_port=$port
+          background=YES
+          anonymous_enable=NO
+          local_enable=YES
+          write_enable=YES
+          local_umask=022
+          pasv_enable=YES
+          pasv_min_port=$passive_min
+          pasv_max_port=$passive_max
+          pasv_promiscuous=YES
+          port_promiscuous=YES
+          connect_from_port_20=NO
+          seccomp_sandbox=NO
+          pam_service_name=vsftpd
+          secure_chroot_dir=/var/run/vsftpd/empty
+          $extra
+          EOF
+            sudo /usr/sbin/vsftpd "$ftp_dir/$name.conf"
+          }
+          tls="ssl_enable=YES
+          allow_anon_ssl=NO
+          force_local_logins_ssl=YES
+          force_local_data_ssl=YES
+          require_ssl_reuse=YES
+          rsa_cert_file=$ftp_dir/server.crt
+          rsa_private_key_file=$ftp_dir/server.key"
+          start_vsftpd plain 2121 30000 30049 ""
+          start_vsftpd second 2123 30050 30099 ""
+          start_vsftpd explicit 2122 30100 30149 "$tls"
+          start_vsftpd implicit 2990 30150 30199 "$tls
+          implicit_ssl=YES"
+          {
+            echo "POROS_TEST_FTP_PORT=2121"
+            echo "POROS_TEST_FTP_SECOND_PORT=2123"
+            echo "POROS_TEST_FTPS_PORT=2122"
+            echo "POROS_TEST_FTPS_IMPLICIT_PORT=2990"
+          } >> "$GITHUB_ENV"
 
       - name: Test
         run: cargo test --manifest-path ${{ env.MANIFEST }} --locked

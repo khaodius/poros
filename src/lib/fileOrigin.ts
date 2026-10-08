@@ -1,9 +1,10 @@
 // Where the files a pane shows live, so moves and copies can tell when two panes share a
 // filesystem and the work can happen in place instead of through a transfer.
 
-import type { FileLocation } from "./types";
+import type { FileLocation, Protocol } from "./types";
 
 export interface ServerIdentity {
+  protocol: Protocol;
   host: string;
   port: number;
   username: string;
@@ -26,10 +27,16 @@ export function sameFilesystem(first: FileOrigin, second: FileOrigin): boolean {
   return (
     !!one &&
     !!other &&
+    one.protocol === other.protocol &&
     one.host.toLowerCase() === other.host.toLowerCase() &&
     one.port === other.port &&
     one.username === other.username
   );
+}
+
+/** Files move and copy where they are on this computer, and on servers reached over SFTP. */
+export function worksInPlace(origin: FileOrigin): boolean {
+  return origin.kind === "local" || origin.server?.protocol === "sftp";
 }
 
 export function toLocation(origin: FileOrigin): FileLocation {

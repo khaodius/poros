@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
-import { CircleAlert, FolderOpen, LoaderCircle } from "lucide-react";
+import { CalendarClock, CircleAlert, FolderOpen, LoaderCircle } from "lucide-react";
 import { localSource } from "../lib/fileSource";
 import { pluralize } from "../lib/format";
 import { onSyncProgress, sync, toAppError } from "../lib/ipc";
+import { newTask, syncAction } from "../lib/schedule";
 import { TIME_TOLERANCE_LIMITS, type SyncSettings } from "../lib/settings";
 import {
   COMPARE_OPTIONS,
@@ -17,9 +18,10 @@ import {
 } from "../lib/sync";
 import type { SyncPlanView, SyncProgress } from "../lib/types";
 import { lastActivePane, listPanes } from "../state/paneRegistry";
-import { useSessionStore } from "../state/sessionStore";
+import { useSessionStore, type SessionEntry } from "../state/sessionStore";
 import { saveSettingsSection, useSettingsStore } from "../state/settingsStore";
 import { useToastStore } from "../state/toastStore";
+import { useUiStore } from "../state/uiStore";
 import { Dialog } from "./Dialog";
 import { Stepper } from "./Stepper";
 import { SyncPlanList } from "./SyncPlanList";
@@ -48,10 +50,15 @@ function remoteFolderOf(sessionId: string): string {
   return pane?.path() ?? useSessionStore.getState().sessions[sessionId]?.info.initialPath ?? "";
 }
 
+/** Synchronization lists and runs commands over SSH, so it needs an SFTP connection. */
+function canSynchronize(entry: SessionEntry): boolean {
+  return entry.status === "connected" && entry.info.protocol === "sftp";
+}
+
 /** The folders given, with the panes looked at last filling in the rest. */
 function startingFolders(given: Omit<SyncDialogProps, "onClose">): Folders {
   const connected = Object.values(useSessionStore.getState().sessions)
-    .filter((entry) => entry.status === "connected")
+    .filter(canSynchronize)
     .map((entry) => entry.info.id);
   const sessionId =
     [given.sessionId, lastActivePane("remote")?.sessionId, connected[0]].find(
@@ -84,7 +91,7 @@ export function SyncDialog({ onClose, ...given }: SyncDialogProps) {
   );
   const sessionEntries = useSessionStore((state) => state.sessions);
   const sessions = useMemo(
-    () => Object.values(sessionEntries).filter((entry) => entry.status === "connected"),
+    () => Object.values(sessionEntries).filter(canSynchronize),
     [sessionEntries],
   );
   const [folders, setFolders] = useState(() => startingFolders(given));
@@ -216,6 +223,25 @@ export function SyncDialog({ onClose, ...given }: SyncDialogProps) {
     folders.localPath.trim() !== "" &&
     folders.remotePath.trim() !== "" &&
     sessions.some((entry) => entry.info.id === folders.sessionId);
+  const savedConnectionId = sessions.find((entry) => entry.info.id === folders.sessionId)?.info
+    .savedConnectionId;
+
+  /** Moves on to a scheduled task that runs this synchronization through the saved connection. */
+  const schedule = () => {
+    if (!savedConnectionId) return;
+    void saveSettingsSection("sync", options);
+    useUiStore.getState().open({
+      kind: "schedules",
+      draft: newTask(
+        syncAction({
+          connectionId: savedConnectionId,
+          localPath: folders.localPath.trim(),
+          remotePath: folders.remotePath.trim(),
+          options,
+        }),
+      ),
+    });
+  };
 
   return (
     <Dialog title="Synchronize folders" onClose={onClose} width={860}>
@@ -232,6 +258,7 @@ export function SyncDialog({ onClose, ...given }: SyncDialogProps) {
           onBrowse={() => void browseLocal()}
           onOption={setOption}
           onSubmit={(event) => void compare(event)}
+          onSchedule={canCompare && savedConnectionId ? schedule : undefined}
           onCancel={onClose}
         />
       )}
@@ -265,6 +292,8 @@ interface SetupFormProps {
   onBrowse: () => void;
   onOption: <K extends keyof SyncSettings>(key: K, value: SyncSettings[K]) => void;
   onSubmit: (event: FormEvent) => void;
+  /** Absent while the folders are incomplete or the server's connection is not saved. */
+  onSchedule?: () => void;
   onCancel: () => void;
 }
 
@@ -280,6 +309,7 @@ function SetupForm({
   onBrowse,
   onOption,
   onSubmit,
+  onSchedule,
   onCancel,
 }: SetupFormProps) {
   const both = options.direction === "both";
@@ -313,7 +343,7 @@ function SetupForm({
             disabled={sessions.length === 0}
             onChange={(event) => onSession(event.target.value)}
           >
-            {sessions.length === 0 && <option value="">No server connected</option>}
+            {sessions.length === 0 && <option value="">No SFTP server connected</option>}
             {sessions.map((session) => (
               <option key={session.id} value={session.id}>
                 {session.label}
@@ -432,6 +462,19 @@ function SetupForm({
       {error && <p className="form-error">{error}</p>}
 
       <div className="dialog-actions">
+        <button
+          type="button"
+          className="button push-left"
+          disabled={!onSchedule}
+          title={
+            onSchedule
+              ? "Run this synchronization at set times"
+              : "Fill in both folders of a saved connection to schedule this"
+          }
+          onClick={onSchedule}
+        >
+          <CalendarClock size={14} /> Schedule...
+        </button>
         <button type="button" className="button" onClick={onCancel}>
           Cancel
         </button>

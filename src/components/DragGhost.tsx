@@ -1,4 +1,5 @@
 import {
+  ArrowLeftRight,
   Ban,
   Copy,
   Download,
@@ -26,10 +27,12 @@ function hintFor(payload: DragPayload, target: DropTarget | null, copy: boolean)
   switch (action.kind) {
     case "blocked":
       return { icon: Ban, text: action.reason, blocked: true };
-    case "transfer":
-      return action.direction === "upload"
-        ? { icon: Upload, text: `Upload to ${baseName(action.folder)}` }
-        : { icon: Download, text: `Download to ${baseName(action.folder)}` };
+    case "transfer": {
+      const folder = baseName(action.folder);
+      if (action.direction === "upload") return { icon: Upload, text: `Upload to ${folder}` };
+      if (action.direction === "download") return { icon: Download, text: `Download to ${folder}` };
+      return { icon: ArrowLeftRight, text: `Copy to ${folder}` };
+    }
     case "place":
       return action.mode === "copy"
         ? { icon: Copy, text: `Copy to ${baseName(action.folder)}` }

@@ -73,7 +73,7 @@ pub async fn measure(
     cancel: &CancellationToken,
     progress: &Progress,
 ) -> AppResult<Usage> {
-    let fs = &session.fs;
+    let fs = session.sftp()?;
     let counter = UsageCounter::default();
     let walk = async {
         for path in paths {
@@ -193,15 +193,16 @@ pub async fn apply(
             change_owner(session, features, request, owner, group, progress).await?;
         }
         if !request.files.is_empty() || !request.folders.is_empty() {
+            let fs = session.sftp()?;
             let walk = Walk {
-                fs: &session.fs,
+                fs,
                 request,
                 progress,
                 skipped_links: &skipped_links,
             };
             for path in &request.paths {
-                let path = session.fs.resolve(path);
-                match session.fs.lstat_entry(&path).await {
+                let path = fs.resolve(path);
+                match fs.lstat_entry(&path).await {
                     Ok(Some(stat)) => walk.change_mode(path, stat).await,
                     Ok(None) => progress.fail(
                         &path,
@@ -297,11 +298,8 @@ async fn change_owner(
             "\"{spec}\" is not a valid owner or group"
         )));
     }
-    let paths: Vec<String> = request
-        .paths
-        .iter()
-        .map(|path| session.fs.resolve(path))
-        .collect();
+    let fs = session.sftp()?;
+    let paths: Vec<String> = request.paths.iter().map(|path| fs.resolve(path)).collect();
     if !(features.commands && super::server::runs_commands(session).await) {
         return change_owner_by_number(session, &paths, owner, group, request, progress).await;
     }
@@ -363,16 +361,9 @@ async fn change_owner_by_number(
             .transpose()
     };
     let (uid, gid) = (parse(owner)?, parse(group)?);
+    let fs = session.sftp()?;
     for path in paths {
-        set_ids(
-            &session.fs,
-            path.clone(),
-            uid,
-            gid,
-            request.recursive,
-            progress,
-        )
-        .await;
+        set_ids(fs, path.clone(), uid, gid, request.recursive, progress).await;
     }
     Ok(())
 }

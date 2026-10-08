@@ -1,6 +1,7 @@
 //! Persisted in `settings.json` in the app config folder. The backend reads the transfer and
-//! connection sections; the interface, appearance, log, sync and updates sections belong to the
-//! frontend and are stored as given. Mirrored in `src/lib/settings.ts`.
+//! connection sections; the interface, appearance, log, sync, updates and automation
+//! sections belong to the frontend and are stored as given. Mirrored in
+//! `src/lib/settings.ts`.
 
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
@@ -8,6 +9,7 @@ use std::sync::RwLock;
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppResult;
+use crate::ssh::proxy::ProxyKind;
 use crate::storage;
 use crate::transfer::ExistsAction;
 
@@ -17,6 +19,7 @@ pub const MAX_SOCKET_BUFFER_KIB: u32 = 64 * 1024;
 const DEFAULT_RSYNC_PATH: &str = "rsync";
 const MAX_RSYNC_PATH_CHARS: usize = 1024;
 const MAX_RECONNECT_MINUTES: u32 = 24 * 60;
+const MAX_PROXY_FIELD_CHARS: usize = 255;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -63,6 +66,8 @@ pub struct TransferSettings {
     pub delta_threshold_kib: u32,
     /// The command that starts rsync on the server.
     pub rsync_path: String,
+    /// Copies between two FTP servers go straight from one to the other when both allow it.
+    pub fxp: bool,
 }
 
 impl Default for TransferSettings {
@@ -93,6 +98,7 @@ impl Default for TransferSettings {
             delta_transfers: true,
             delta_threshold_kib: 1024,
             rsync_path: DEFAULT_RSYNC_PATH.to_string(),
+            fxp: true,
         }
     }
 }
@@ -147,6 +153,57 @@ pub struct ConnectionSettings {
     /// Lets the system size the send buffer; off uses the size below.
     pub auto_tune_send_buffer: bool,
     pub send_buffer_kib: u32,
+    pub proxy: ProxySettings,
+}
+
+/// The proxy every SFTP connection goes through unless it is set to connect directly.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ProxySettings {
+    pub kind: ProxyKind,
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    /// The password is in the system keychain. Only the backend changes this.
+    pub has_password: bool,
+    /// The proxy looks up server names, so this computer's DNS never sees them.
+    pub remote_dns: bool,
+}
+
+impl Default for ProxySettings {
+    fn default() -> Self {
+        Self {
+            kind: ProxyKind::None,
+            host: String::new(),
+            port: ProxyKind::Socks5.default_port(),
+            username: String::new(),
+            has_password: false,
+            remote_dns: true,
+        }
+    }
+}
+
+impl ProxySettings {
+    fn sanitize(&mut self) {
+        let one_line = |text: &str| -> String {
+            text.lines()
+                .next()
+                .unwrap_or("")
+                .trim()
+                .chars()
+                .take(MAX_PROXY_FIELD_CHARS)
+                .collect()
+        };
+        self.host = one_line(&self.host);
+        self.username = one_line(&self.username);
+        if self.port == 0 {
+            self.port = self.kind.default_port();
+        }
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.kind != ProxyKind::None && !self.host.is_empty()
+    }
 }
 
 impl Default for ConnectionSettings {
@@ -160,6 +217,7 @@ impl Default for ConnectionSettings {
             receive_buffer_kib: 128,
             auto_tune_send_buffer: true,
             send_buffer_kib: 128,
+            proxy: ProxySettings::default(),
         }
     }
 }
@@ -174,6 +232,42 @@ impl ConnectionSettings {
         self.send_buffer_kib = self
             .send_buffer_kib
             .clamp(MIN_SOCKET_BUFFER_KIB, MAX_SOCKET_BUFFER_KIB);
+        self.proxy.sanitize();
+    }
+}
+
+/// The OAuth apps Poros signs in to Google Drive and OneDrive with. An empty client ID falls
+/// back to the app built into the release, if it has one.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct CloudSettings {
+    pub google_client_id: String,
+    /// Google issues one to desktop apps and expects it back, though it cannot stay secret in
+    /// an installed app.
+    pub google_client_secret: String,
+    pub microsoft_client_id: String,
+    /// `common` (any account), `consumers`, `organizations`, or a directory (tenant) ID.
+    pub microsoft_tenant: String,
+}
+
+impl CloudSettings {
+    fn sanitize(&mut self) {
+        for value in [
+            &mut self.google_client_id,
+            &mut self.google_client_secret,
+            &mut self.microsoft_client_id,
+            &mut self.microsoft_tenant,
+        ] {
+            *value = value.trim().to_string();
+        }
+        // The tenant becomes part of the sign-in address.
+        let tenant_is_valid = self
+            .microsoft_tenant
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '.'));
+        if !tenant_is_valid {
+            self.microsoft_tenant.clear();
+        }
     }
 }
 
@@ -182,12 +276,15 @@ impl ConnectionSettings {
 pub struct Settings {
     pub transfers: TransferSettings,
     pub connection: ConnectionSettings,
+    pub cloud: CloudSettings,
     pub interface: serde_json::Value,
     pub appearance: serde_json::Value,
     pub log: serde_json::Value,
     /// Defaults for folder synchronization.
     pub sync: serde_json::Value,
     pub updates: serde_json::Value,
+    /// What happens when the queue finishes, and the user's server commands.
+    pub automation: serde_json::Value,
 }
 
 impl Default for Settings {
@@ -196,11 +293,13 @@ impl Default for Settings {
         Self {
             transfers: TransferSettings::default(),
             connection: ConnectionSettings::default(),
+            cloud: CloudSettings::default(),
             interface: empty(),
             appearance: empty(),
             log: empty(),
             sync: empty(),
             updates: empty(),
+            automation: empty(),
         }
     }
 }
@@ -209,12 +308,14 @@ impl Settings {
     fn sanitize(mut self) -> Self {
         self.transfers.sanitize();
         self.connection.sanitize();
+        self.cloud.sanitize();
         for section in [
             &mut self.interface,
             &mut self.appearance,
             &mut self.log,
             &mut self.sync,
             &mut self.updates,
+            &mut self.automation,
         ] {
             if !section.is_object() {
                 *section = serde_json::Value::Object(Default::default());
@@ -247,9 +348,21 @@ impl SettingsStore {
     }
 
     pub fn set(&self, settings: Settings) -> AppResult<Settings> {
-        let settings = settings.sanitize();
+        let mut settings = settings.sanitize();
+        let mut current = self.current.write().unwrap();
+        settings.connection.proxy.has_password = current.connection.proxy.has_password;
         storage::write_json(&self.file, &settings)?;
-        *self.current.write().unwrap() = settings.clone();
+        *current = settings.clone();
+        Ok(settings)
+    }
+
+    /// Records whether the keychain holds a proxy password.
+    pub fn set_proxy_has_password(&self, has_password: bool) -> AppResult<Settings> {
+        let mut current = self.current.write().unwrap();
+        let mut settings = current.clone();
+        settings.connection.proxy.has_password = has_password;
+        storage::write_json(&self.file, &settings)?;
+        *current = settings.clone();
         Ok(settings)
     }
 }
@@ -291,6 +404,33 @@ mod tests {
         assert!(!settings.transfers.verify_checksums);
         assert_eq!(settings.transfers.reconnect_minutes, 10);
         assert!(settings.connection.auto_reconnect);
+        assert_eq!(settings.connection.proxy.kind, ProxyKind::None);
+        assert!(settings.automation.is_object());
+    }
+
+    #[test]
+    fn proxy_fields_are_tidied_and_the_password_flag_stays_with_the_backend() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store = SettingsStore::load(temp_dir.path().join("settings.json"));
+        let mut changed = store.get();
+        changed.connection.proxy = ProxySettings {
+            kind: ProxyKind::Http,
+            host: " proxy.local \nother".into(),
+            port: 0,
+            username: " alice ".into(),
+            has_password: true,
+            remote_dns: true,
+        };
+        let saved = store.set(changed).unwrap();
+        assert_eq!(saved.connection.proxy.host, "proxy.local");
+        assert_eq!(saved.connection.proxy.port, 8080);
+        assert_eq!(saved.connection.proxy.username, "alice");
+        assert!(!saved.connection.proxy.has_password);
+        assert!(saved.connection.proxy.is_enabled());
+
+        store.set_proxy_has_password(true).unwrap();
+        let resaved = store.set(store.get()).unwrap();
+        assert!(resaved.connection.proxy.has_password);
     }
 
     #[test]
@@ -304,6 +444,21 @@ mod tests {
         transfers.rsync_path = " ".into();
         transfers.sanitize();
         assert_eq!(transfers.rsync_path, "rsync");
+    }
+
+    #[test]
+    fn cloud_tenant_stays_a_single_name() {
+        let mut cloud = CloudSettings {
+            microsoft_client_id: "  id  ".into(),
+            microsoft_tenant: "contoso.onmicrosoft.com".into(),
+            ..CloudSettings::default()
+        };
+        cloud.sanitize();
+        assert_eq!(cloud.microsoft_client_id, "id");
+        assert_eq!(cloud.microsoft_tenant, "contoso.onmicrosoft.com");
+        cloud.microsoft_tenant = "common/../evil?x=1".into();
+        cloud.sanitize();
+        assert!(cloud.microsoft_tenant.is_empty());
     }
 
     #[test]

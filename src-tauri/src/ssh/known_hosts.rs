@@ -4,6 +4,7 @@
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
@@ -23,6 +24,8 @@ pub enum HostKeyStatus {
 pub struct KnownHosts {
     app_file: PathBuf,
     system_files: Vec<PathBuf>,
+    /// Keys trusted until Poros closes, shared by every clone.
+    trusted_until_exit: Arc<Mutex<Vec<(String, PublicKey)>>>,
 }
 
 impl KnownHosts {
@@ -30,6 +33,7 @@ impl KnownHosts {
         Self {
             app_file,
             system_files,
+            trusted_until_exit: Arc::default(),
         }
     }
 
@@ -42,6 +46,17 @@ impl KnownHosts {
 
     pub fn check(&self, host: &str, port: u16, key: &PublicKey) -> HostKeyStatus {
         let host_port = host_pattern(host, port);
+        let trusted_for_now =
+            self.trusted_until_exit
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(trusted_host, trusted_key)| {
+                    *trusted_host == host_port && trusted_key.key_data() == key.key_data()
+                });
+        if trusted_for_now {
+            return HostKeyStatus::Trusted;
+        }
         for file in std::iter::once(&self.app_file).chain(&self.system_files) {
             match check_file(file, &host_port, key) {
                 HostKeyStatus::Unknown => continue,
@@ -49,6 +64,15 @@ impl KnownHosts {
             }
         }
         HostKeyStatus::Unknown
+    }
+
+    /// Trusts a key without saving it. Used for jump hosts the user accepted once, which
+    /// every later connection through them has to pass again.
+    pub fn trust_until_exit(&self, host: &str, port: u16, key: &PublicKey) {
+        self.trusted_until_exit
+            .lock()
+            .unwrap()
+            .push((host_pattern(host, port), key.clone()));
     }
 
     /// Replaces any recorded key of the same algorithm for the host.
@@ -252,6 +276,26 @@ mod tests {
         fs::write(&system_file, system).unwrap();
         let known_hosts = KnownHosts::new(app_file, vec![system_file]);
         (temp_dir, known_hosts)
+    }
+
+    #[test]
+    fn keys_trusted_until_exit_are_shared_and_not_saved() {
+        let (_dir, known_hosts) = store("", "");
+        let clone = known_hosts.clone();
+        clone.trust_until_exit("bastion", 2222, &key(KEY_A));
+        assert_eq!(
+            known_hosts.check("bastion", 2222, &key(KEY_A)),
+            HostKeyStatus::Trusted
+        );
+        assert_eq!(
+            known_hosts.check("bastion", 22, &key(KEY_A)),
+            HostKeyStatus::Unknown
+        );
+        assert_eq!(
+            known_hosts.check("bastion", 2222, &key(KEY_B)),
+            HostKeyStatus::Unknown
+        );
+        assert_eq!(fs::read_to_string(&known_hosts.app_file).unwrap(), "");
     }
 
     #[test]
