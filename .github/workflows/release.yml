@@ -109,7 +109,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - run: npm ci
+      # The Google and Microsoft apps cloud storage signs in with by default. Without these
+      # secrets, users add their own app registrations in Settings.
       - run: npm run tauri build
+        env:
+          POROS_GOOGLE_CLIENT_ID: ${{ secrets.POROS_GOOGLE_CLIENT_ID }}
+          POROS_GOOGLE_CLIENT_SECRET: ${{ secrets.POROS_GOOGLE_CLIENT_SECRET }}
+          POROS_MICROSOFT_CLIENT_ID: ${{ secrets.POROS_MICROSOFT_CLIENT_ID }}
 
       - uses: actions/upload-artifact@v4
         with:

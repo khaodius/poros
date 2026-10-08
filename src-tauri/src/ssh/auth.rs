@@ -69,6 +69,11 @@ pub(super) async fn authenticate(
             None => return Ok(()),
             Some(remaining) => remaining,
         },
+        AuthMethod::OAuth { .. } => {
+            return Err(AppError::invalid(
+                "SFTP servers take a password, a key file or an SSH agent",
+            ))
+        }
     };
 
     Err(AppError::new(

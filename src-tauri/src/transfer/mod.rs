@@ -1,6 +1,7 @@
-//! The transfer queue, in the style of SmartFTP: several workers, each on its own SSH
-//! connection, take jobs in queue order. Many small files spread across the workers, and idle
-//! workers join a large file to move separate parts of it at once.
+//! The transfer queue, in the style of SmartFTP: several workers, each on its own connection,
+//! take jobs in queue order. Many small files spread across the workers, and idle workers join
+//! a large file to move separate parts of it at once. SFTP has a pipelined path of its own;
+//! other protocols, and copies between two servers, stream through `RemoteFileSystem`.
 
 mod conflict;
 mod copy;
@@ -8,6 +9,7 @@ mod delta;
 mod limiter;
 mod pieces;
 mod queue;
+mod streamed;
 mod worker;
 
 use std::collections::{BTreeSet, HashMap, VecDeque};
@@ -28,6 +30,7 @@ pub use queue::{
 use crate::error::{AppError, AppResult};
 use crate::events::{Events, LogLevel};
 use crate::format::{format_duration, format_size};
+use crate::protocol::{Protocol, RemoteFileSystem};
 use crate::session::{Session, SessionManager};
 use crate::settings::TransferSettings;
 use crate::ssh::ConnectProfile;
@@ -52,7 +55,11 @@ pub struct TransferItem {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EnqueueRequest {
+    /// The server written to, or read from for a download.
     pub session_id: String,
+    /// The server a relay reads from.
+    #[serde(default)]
+    pub source_session_id: Option<String>,
     pub direction: Direction,
     pub target_directory: String,
     pub items: Vec<TransferItem>,
@@ -108,6 +115,31 @@ pub(crate) struct SessionTarget {
     pub channels_only: AtomicBool,
     /// Whether the server ran the configured rsync command, once a worker has tried.
     pub rsync: tokio::sync::Mutex<Option<delta::RsyncCheck>>,
+    /// The browsing session's files for protocols other than SFTP. Cloud workers share them,
+    /// and FTP workers fall back to them when the server refuses more connections.
+    pub files: Option<Arc<dyn RemoteFileSystem>>,
+    /// Sessions this FTP server would not send files to directly, so relays to them skip
+    /// trying FXP again.
+    pub fxp_refused: Mutex<BTreeSet<String>>,
+}
+
+impl SessionTarget {
+    fn new(session: &Session) -> Self {
+        Self {
+            session_id: session.id.clone(),
+            label: session.profile.label(),
+            profile: session.profile.clone(),
+            host_key_fingerprint: session.host_key_fingerprint.clone(),
+            channels_only: AtomicBool::new(false),
+            rsync: tokio::sync::Mutex::new(None),
+            files: (session.protocol() != Protocol::Sftp).then(|| session.files()),
+            fxp_refused: Mutex::new(BTreeSet::new()),
+        }
+    }
+
+    pub fn browsing_files(&self) -> AppResult<Arc<dyn RemoteFileSystem>> {
+        self.files.clone().ok_or_else(AppError::session_not_found)
+    }
 }
 
 pub(crate) struct Shared {
@@ -139,17 +171,19 @@ impl Shared {
             .ok_or_else(AppError::session_not_found)
     }
 
+    /// A relay counts once, as data coming in, so batch totals do not count it twice.
     fn total_for(&self, direction: Direction) -> &AtomicU64 {
         match direction {
             Direction::Upload => &self.uploaded,
-            Direction::Download => &self.downloaded,
+            Direction::Download | Direction::Relay => &self.downloaded,
         }
     }
 
+    /// A relay is held to the download limit here and to the upload limit as it is sent on.
     fn limiter_for(&self, direction: Direction) -> &RateLimiter {
         match direction {
             Direction::Upload => &self.upload_limiter,
-            Direction::Download => &self.download_limiter,
+            Direction::Download | Direction::Relay => &self.download_limiter,
         }
     }
 }
@@ -204,6 +238,13 @@ impl TransferManager {
 
     pub async fn enqueue(&self, request: EnqueueRequest) -> AppResult<usize> {
         let session = self.shared.sessions.get(&request.session_id).await?;
+        let source_session = match (request.direction, &request.source_session_id) {
+            (Direction::Relay, Some(source_id)) => Some(self.shared.sessions.get(source_id).await?),
+            (Direction::Relay, None) => {
+                return Err(AppError::invalid("A copy between servers needs a source"))
+            }
+            _ => None,
+        };
         let mut specs = Vec::with_capacity(request.items.len());
         for item in &request.items {
             local::validate_name(&item.name)?;
@@ -214,7 +255,9 @@ impl TransferManager {
                 )));
             }
             let target = match request.direction {
-                Direction::Upload => remote_path::join(&request.target_directory, &item.name),
+                Direction::Upload | Direction::Relay => {
+                    remote_path::join(&request.target_directory, &item.name)
+                }
                 Direction::Download => Path::new(&request.target_directory)
                     .join(&item.name)
                     .to_string_lossy()
@@ -222,6 +265,7 @@ impl TransferManager {
             };
             specs.push(JobSpec {
                 session_id: request.session_id.clone(),
+                source_session_id: source_session.as_ref().map(|source| source.id.clone()),
                 direction: request.direction,
                 kind: if item.is_dir {
                     JobKind::Folder
@@ -236,7 +280,11 @@ impl TransferManager {
                 ancestors: Arc::from([]),
             });
         }
-        self.add_jobs(&session, specs, None);
+        if let Some(source_session) = &source_session {
+            self.register(source_session);
+        }
+        self.register(&session);
+        self.add_jobs(specs, None);
         Ok(request.items.len())
     }
 
@@ -252,6 +300,7 @@ impl TransferManager {
             .into_iter()
             .map(|file| JobSpec {
                 session_id: session_id.to_string(),
+                source_session_id: None,
                 direction: file.direction,
                 kind: JobKind::File,
                 name: file.name,
@@ -262,27 +311,22 @@ impl TransferManager {
                 ancestors: Arc::from([]),
             })
             .collect();
-        self.add_jobs(&session, specs, Some(ExistsAction::Overwrite));
+        self.register(&session);
+        self.add_jobs(specs, Some(ExistsAction::Overwrite));
         Ok(count)
     }
 
-    fn add_jobs(&self, session: &Session, specs: Vec<JobSpec>, resolution: Option<ExistsAction>) {
+    /// Keeps what workers need to reach the session's server.
+    fn register(&self, session: &Session) {
         self.shared
             .targets
             .lock()
             .unwrap()
             .entry(session.id.clone())
-            .or_insert_with(|| {
-                Arc::new(SessionTarget {
-                    session_id: session.id.clone(),
-                    label: session.profile.label(),
-                    profile: session.profile.clone(),
-                    host_key_fingerprint: session.host_key_fingerprint.clone(),
-                    channels_only: AtomicBool::new(false),
-                    rsync: tokio::sync::Mutex::new(None),
-                })
-            });
+            .or_insert_with(|| Arc::new(SessionTarget::new(session)));
+    }
 
+    fn add_jobs(&self, specs: Vec<JobSpec>, resolution: Option<ExistsAction>) {
         let auto_start = self.shared.settings().auto_start;
         {
             let mut queue = self.shared.queue.lock().unwrap();

@@ -6,8 +6,8 @@ import {
   NumberSetting,
   SelectSetting,
   SettingGroup,
-  SettingRow,
   SwitchSetting,
+  TextSetting,
 } from "./settingsFields";
 
 const MAX_DELTA_THRESHOLD_KIB = 1024 * 1024;
@@ -108,44 +108,6 @@ export function SyncSettingsPage({ settings }: { settings: Settings }) {
         />
       </SettingGroup>
     </>
-  );
-}
-
-interface TextSettingProps {
-  label: string;
-  hint?: string;
-  value: string;
-  placeholder?: string;
-  disabled?: boolean;
-  onCommit: (value: string) => void;
-}
-
-/** Saves when the box loses focus or Enter is pressed, so the backend's tidying does not fight typing. */
-function TextSetting({ label, hint, value, placeholder, disabled, onCommit }: TextSettingProps) {
-  const [typed, setTyped] = useState<string | null>(null);
-  const commit = () => {
-    if (typed !== null && typed !== value) onCommit(typed);
-    setTyped(null);
-  };
-  return (
-    <SettingRow label={label} hint={hint} disabled={disabled}>
-      <input
-        value={typed ?? value}
-        aria-label={label}
-        placeholder={placeholder}
-        spellCheck={false}
-        disabled={disabled}
-        onChange={(event) => setTyped(event.target.value)}
-        onBlur={commit}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") commit();
-          if (event.key === "Escape" && typed !== null) {
-            event.preventDefault();
-            setTyped(null);
-          }
-        }}
-      />
-    </SettingRow>
   );
 }
 

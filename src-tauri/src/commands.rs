@@ -2,8 +2,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use tauri::{AppHandle, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
+use crate::cloud::{self, CloudProvider, OAuthClient, OAuthVault, ProviderStatus, SignedIn};
 use crate::connections::{ConnectionStore, SavedConnection};
 use crate::error::{AppError, AppResult};
 use crate::events::{Events, LogLevel, Store};
@@ -12,7 +13,7 @@ use crate::local;
 use crate::model::{DirListing, FileEntry};
 use crate::session::{SessionInfo, SessionManager};
 use crate::settings::{Settings, SettingsStore};
-use crate::ssh::{ConnectProfile, HostKeyApproval};
+use crate::ssh::{AuthMethod, ConnectProfile, HostKeyApproval};
 use crate::sync::{SyncManager, SyncPlanView, SyncRequest, SyncRunRequest, SyncRunSummary};
 use crate::themes::{self, ThemeFile, ThemeStore};
 use crate::transfer::{
@@ -63,6 +64,7 @@ pub async fn connect(
     mut profile: ConnectProfile,
     host_key_approval: Option<HostKeyApproval>,
 ) -> AppResult<SessionInfo> {
+    prepare_cloud_sign_in(&window, &mut profile)?;
     if let Some(saved_id) = profile.saved_connection_id.clone() {
         if profile.lacks_secret() {
             let store = connections.inner().clone();
@@ -85,6 +87,29 @@ pub async fn connect(
         }
     }
     Ok(info)
+}
+
+/// Gives a cloud profile the app to sign in as and, after a fresh browser sign-in, its
+/// account. A saved account comes from the keychain like a password.
+fn prepare_cloud_sign_in(window: &WebviewWindow, profile: &mut ConnectProfile) -> AppResult<()> {
+    let Some(provider) = CloudProvider::for_protocol(profile.protocol) else {
+        return Ok(());
+    };
+    let AuthMethod::OAuth {
+        grant_id,
+        refresh_token,
+        client,
+    } = &mut profile.auth
+    else {
+        return Ok(());
+    };
+    if let Some(grant_id) = grant_id {
+        *refresh_token = window
+            .state::<OAuthVault>()
+            .refresh_token(grant_id, provider)?;
+    }
+    *client = OAuthClient::configured(provider, &window.state::<SettingsStore>().get().cloud);
+    Ok(())
 }
 
 #[tauri::command]
@@ -122,7 +147,12 @@ pub async fn remote_list(
     session_id: String,
     path: String,
 ) -> AppResult<DirListing> {
-    sessions.get(&session_id).await?.fs.list_dir(&path).await
+    sessions
+        .get(&session_id)
+        .await?
+        .files()
+        .list_dir(&path)
+        .await
 }
 
 #[tauri::command]
@@ -135,7 +165,7 @@ pub async fn remote_mkdir(
     sessions
         .get(&session_id)
         .await?
-        .fs
+        .files()
         .make_dir(&parent, &name)
         .await
 }
@@ -150,7 +180,7 @@ pub async fn remote_rename(
     sessions
         .get(&session_id)
         .await?
-        .fs
+        .files()
         .rename(&path, &new_name)
         .await
 }
@@ -161,7 +191,12 @@ pub async fn remote_delete(
     session_id: String,
     paths: Vec<String>,
 ) -> AppResult<()> {
-    sessions.get(&session_id).await?.fs.delete(&paths).await
+    sessions
+        .get(&session_id)
+        .await?
+        .files()
+        .delete(&paths)
+        .await
 }
 
 #[tauri::command]
@@ -280,13 +315,24 @@ pub async fn connections_list(
     tokio::task::spawn_blocking(move || store.list()).await?
 }
 
+/// `oauth_grant` names a browser sign-in whose account the connection keeps.
 #[tauri::command]
 pub async fn connections_save(
     connections: State<'_, Arc<ConnectionStore>>,
+    vault: State<'_, OAuthVault>,
     events: State<'_, Events>,
     connection: SavedConnection,
     secret: Option<String>,
+    oauth_grant: Option<String>,
 ) -> AppResult<SavedConnection> {
+    let secret = match oauth_grant {
+        Some(grant_id) => {
+            let provider = CloudProvider::for_protocol(connection.protocol)
+                .ok_or_else(|| AppError::invalid("Only cloud storage connections sign in"))?;
+            Some(vault.refresh_token(&grant_id, provider)?)
+        }
+        None => secret,
+    };
     let store = connections.inner().clone();
     let saved = tokio::task::spawn_blocking(move || store.save(connection, secret)).await??;
     events.store_changed(Store::Connections);
@@ -303,6 +349,38 @@ pub async fn connections_delete(
     tokio::task::spawn_blocking(move || store.delete(&id)).await??;
     events.store_changed(Store::Connections);
     Ok(())
+}
+
+/// Which cloud providers have an app to sign in with.
+#[tauri::command]
+pub fn cloud_providers(settings: State<'_, SettingsStore>) -> Vec<ProviderStatus> {
+    cloud::oauth::provider_statuses(&settings.get().cloud)
+}
+
+/// Opens the provider's sign-in page in the browser and waits for the account to come back.
+#[tauri::command]
+pub async fn cloud_sign_in(
+    settings: State<'_, SettingsStore>,
+    vault: State<'_, OAuthVault>,
+    request_id: String,
+    provider: CloudProvider,
+) -> AppResult<SignedIn> {
+    let client = OAuthClient::configured(provider, &settings.get().cloud)
+        .ok_or_else(|| cloud::missing_client(provider))?;
+    let cancel = vault.begin(&request_id);
+    let result = cloud::sign_in(&client, &cancel).await;
+    vault.end(&request_id);
+    let authorization = result?;
+    Ok(SignedIn {
+        grant_id: vault.add(provider, authorization.refresh_token),
+        provider,
+        account: authorization.account,
+    })
+}
+
+#[tauri::command]
+pub fn cloud_cancel_sign_in(vault: State<'_, OAuthVault>, request_id: String) {
+    vault.cancel(&request_id);
 }
 
 #[tauri::command]

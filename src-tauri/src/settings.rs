@@ -49,6 +49,8 @@ pub struct TransferSettings {
     pub delta_threshold_kib: u32,
     /// The command that starts rsync on the server.
     pub rsync_path: String,
+    /// Copies between two FTP servers go straight from one to the other when both allow it.
+    pub fxp: bool,
 }
 
 impl Default for TransferSettings {
@@ -74,6 +76,7 @@ impl Default for TransferSettings {
             delta_transfers: true,
             delta_threshold_kib: 1024,
             rsync_path: DEFAULT_RSYNC_PATH.to_string(),
+            fxp: true,
         }
     }
 }
@@ -150,11 +153,47 @@ impl ConnectionSettings {
     }
 }
 
+/// The OAuth apps Poros signs in to Google Drive and OneDrive with. An empty client ID falls
+/// back to the app built into the release, if it has one.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct CloudSettings {
+    pub google_client_id: String,
+    /// Google issues one to desktop apps and expects it back, though it cannot stay secret in
+    /// an installed app.
+    pub google_client_secret: String,
+    pub microsoft_client_id: String,
+    /// `common` (any account), `consumers`, `organizations`, or a directory (tenant) ID.
+    pub microsoft_tenant: String,
+}
+
+impl CloudSettings {
+    fn sanitize(&mut self) {
+        for value in [
+            &mut self.google_client_id,
+            &mut self.google_client_secret,
+            &mut self.microsoft_client_id,
+            &mut self.microsoft_tenant,
+        ] {
+            *value = value.trim().to_string();
+        }
+        // The tenant becomes part of the sign-in address.
+        let tenant_is_valid = self
+            .microsoft_tenant
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '.'));
+        if !tenant_is_valid {
+            self.microsoft_tenant.clear();
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Settings {
     pub transfers: TransferSettings,
     pub connection: ConnectionSettings,
+    pub cloud: CloudSettings,
     pub interface: serde_json::Value,
     pub appearance: serde_json::Value,
     pub log: serde_json::Value,
@@ -168,6 +207,7 @@ impl Default for Settings {
         Self {
             transfers: TransferSettings::default(),
             connection: ConnectionSettings::default(),
+            cloud: CloudSettings::default(),
             interface: empty(),
             appearance: empty(),
             log: empty(),
@@ -180,6 +220,7 @@ impl Settings {
     fn sanitize(mut self) -> Self {
         self.transfers.sanitize();
         self.connection.sanitize();
+        self.cloud.sanitize();
         for section in [
             &mut self.interface,
             &mut self.appearance,
@@ -270,6 +311,21 @@ mod tests {
         transfers.rsync_path = " ".into();
         transfers.sanitize();
         assert_eq!(transfers.rsync_path, "rsync");
+    }
+
+    #[test]
+    fn cloud_tenant_stays_a_single_name() {
+        let mut cloud = CloudSettings {
+            microsoft_client_id: "  id  ".into(),
+            microsoft_tenant: "contoso.onmicrosoft.com".into(),
+            ..CloudSettings::default()
+        };
+        cloud.sanitize();
+        assert_eq!(cloud.microsoft_client_id, "id");
+        assert_eq!(cloud.microsoft_tenant, "contoso.onmicrosoft.com");
+        cloud.microsoft_tenant = "common/../evil?x=1".into();
+        cloud.sanitize();
+        assert!(cloud.microsoft_tenant.is_empty());
     }
 
     #[test]

@@ -14,11 +14,14 @@ use super::queue::{
     Claim, ConflictInfo, Direction, JobId, JobKind, JobRun, JobSpec, JobState, Plan, Release, Role,
     RunOutcome,
 };
+use super::streamed;
 use super::{SessionTarget, Shared};
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::events::{Events, LogLevel};
 use crate::format::format_size;
+use crate::ftp::FtpFs;
 use crate::model::{EntryKind, LinkTarget};
+use crate::protocol::{Protocol, RemoteFileSystem};
 use crate::settings::TransferSettings;
 use crate::sftp::RemoteFs;
 use crate::ssh::{self, HostKeyApproval, SshHandle};
@@ -33,53 +36,90 @@ const MIN_SEGMENT_PIECE: u64 = 4 * MEBIBYTE;
 const MAX_SEGMENT_PIECE: u64 = 64 * MEBIBYTE;
 const MAX_RENAME_ATTEMPTS: u32 = 9999;
 
-struct WorkerConnection {
-    fs: RemoteFs,
-    /// `None` for a channel on the browsing connection, which is not this worker's to close.
-    handle: Option<SshHandle>,
+pub(super) struct WorkerConnection {
+    pub files: Arc<dyn RemoteFileSystem>,
+    /// The SFTP channel behind `files`, for the pipelined transfer path.
+    pub sftp: Option<Arc<RemoteFs>>,
+    /// This worker's own SSH connection; `None` for a channel on the browsing connection.
+    pub handle: Option<SshHandle>,
+    /// The worker opened `files` itself, as with an FTP connection, and so closes it.
+    owns_files: bool,
 }
 
 impl WorkerConnection {
+    fn sftp(fs: RemoteFs, handle: Option<SshHandle>) -> Self {
+        let fs = Arc::new(fs);
+        Self {
+            files: fs.clone(),
+            sftp: Some(fs),
+            handle,
+            owns_files: false,
+        }
+    }
+
+    fn files(files: Arc<dyn RemoteFileSystem>, owns_files: bool) -> Self {
+        Self {
+            files,
+            sftp: None,
+            handle: None,
+            owns_files,
+        }
+    }
+
     async fn close(self) {
-        self.fs.close();
+        if let Some(fs) = &self.sftp {
+            fs.close();
+        }
         if let Some(handle) = self.handle {
             ssh::disconnect(&handle).await;
+        }
+        if self.owns_files {
+            self.files.close().await;
         }
     }
 }
 
-struct Connections {
+pub(super) struct Connections {
     worker_index: usize,
     open: HashMap<String, WorkerConnection>,
     last_used: Instant,
 }
 
 impl Connections {
-    async fn get(&mut self, shared: &Shared, session_id: &str) -> AppResult<&WorkerConnection> {
+    /// This worker's connection to a session's server. `key` tells apart a second connection
+    /// to the same server, for copies within it.
+    pub async fn get(
+        &mut self,
+        shared: &Shared,
+        session_id: &str,
+        key: &str,
+    ) -> AppResult<&WorkerConnection> {
         self.last_used = Instant::now();
-        let closed = self.open.get(session_id).is_some_and(|connection| {
+        let closed = self.open.get(key).is_some_and(|connection| {
             connection
                 .handle
                 .as_ref()
                 .is_some_and(|handle| handle.is_closed())
         });
         if closed {
-            self.drop_connection(session_id).await;
+            self.drop_connection(key).await;
         }
-        if !self.open.contains_key(session_id) {
+        if !self.open.contains_key(key) {
             let target = shared.target(session_id)?;
             let connection = open_connection(shared, &target, self.worker_index).await?;
-            self.open.insert(session_id.to_string(), connection);
+            self.open.insert(key.to_string(), connection);
         }
-        Ok(&self.open[session_id])
+        Ok(&self.open[key])
     }
 
-    fn existing(&self, session_id: &str) -> Option<&RemoteFs> {
-        self.open.get(session_id).map(|connection| &connection.fs)
+    fn existing(&self, key: &str) -> Option<&RemoteFs> {
+        self.open
+            .get(key)
+            .and_then(|connection| connection.sftp.as_deref())
     }
 
-    async fn drop_connection(&mut self, session_id: &str) {
-        if let Some(connection) = self.open.remove(session_id) {
+    pub async fn drop_connection(&mut self, key: &str) {
+        if let Some(connection) = self.open.remove(key) {
             connection.close().await;
         }
     }
@@ -96,12 +136,53 @@ async fn open_connection(
     target: &SessionTarget,
     worker_index: usize,
 ) -> AppResult<WorkerConnection> {
+    match target.profile.protocol {
+        Protocol::Sftp => open_sftp_connection(shared, target, worker_index).await,
+        protocol if protocol.is_ftp() => open_ftp_connection(shared, target, worker_index).await,
+        // Cloud APIs take any number of requests over the browsing session's HTTP client.
+        _ => Ok(WorkerConnection::files(target.browsing_files()?, false)),
+    }
+}
+
+fn pinned_approval(target: &SessionTarget) -> Option<HostKeyApproval> {
+    (!target.host_key_fingerprint.is_empty()).then(|| HostKeyApproval {
+        fingerprint: target.host_key_fingerprint.clone(),
+        remember: false,
+    })
+}
+
+fn wants_own_connection(shared: &Shared, target: &SessionTarget) -> bool {
+    shared.settings().separate_connections && !target.channels_only.load(Ordering::Relaxed)
+}
+
+fn opened(shared: &Shared, target: &SessionTarget, number: usize) {
+    shared.events.log(
+        LogLevel::Info,
+        Some(&target.session_id),
+        format!("Transfer connection {number} to {} opened", target.label),
+    );
+}
+
+fn note_refusal(shared: &Shared, target: &SessionTarget, refusal: &AppError) {
+    if !target.channels_only.swap(true, Ordering::Relaxed) {
+        shared.events.log(
+            LogLevel::Warn,
+            Some(&target.session_id),
+            format!(
+                "The server did not accept another connection ({}); transfers share the browsing connection",
+                refusal.message
+            ),
+        );
+    }
+}
+
+async fn open_sftp_connection(
+    shared: &Shared,
+    target: &SessionTarget,
+    worker_index: usize,
+) -> AppResult<WorkerConnection> {
     let number = worker_index + 1;
-    if shared.settings().separate_connections && !target.channels_only.load(Ordering::Relaxed) {
-        let approval = (!target.host_key_fingerprint.is_empty()).then(|| HostKeyApproval {
-            fingerprint: target.host_key_fingerprint.clone(),
-            remember: false,
-        });
+    if wants_own_connection(shared, target) {
         let connection_id = format!("{}#{number}", target.session_id);
         // Workers log one line each, not every handshake step.
         let quiet = Events::default();
@@ -109,22 +190,15 @@ async fn open_connection(
             &connection_id,
             &target.profile,
             &shared.sessions.known_hosts,
-            approval,
+            pinned_approval(target),
             &quiet,
         )
         .await
         {
             Ok(connection) => match session::open_sftp(&connection.handle).await {
                 Ok(fs) => {
-                    shared.events.log(
-                        LogLevel::Info,
-                        Some(&target.session_id),
-                        format!("Transfer connection {number} to {} opened", target.label),
-                    );
-                    return Ok(WorkerConnection {
-                        fs,
-                        handle: Some(connection.handle),
-                    });
+                    opened(shared, target, number);
+                    return Ok(WorkerConnection::sftp(fs, Some(connection.handle)));
                 }
                 Err(error) => {
                     ssh::disconnect(&connection.handle).await;
@@ -134,20 +208,40 @@ async fn open_connection(
             Err(error) if error.kind == ErrorKind::HostKeyChanged => return Err(error),
             Err(error) => error,
         };
-        if !target.channels_only.swap(true, Ordering::Relaxed) {
-            shared.events.log(
-                LogLevel::Warn,
-                Some(&target.session_id),
-                format!(
-                    "The server did not accept another connection ({}); transfers share the browsing connection",
-                    refusal.message
-                ),
-            );
-        }
+        note_refusal(shared, target, &refusal);
     }
     let session = shared.sessions.get(&target.session_id).await?;
     let fs = session.open_channel().await?;
-    Ok(WorkerConnection { fs, handle: None })
+    Ok(WorkerConnection::sftp(fs, None))
+}
+
+async fn open_ftp_connection(
+    shared: &Shared,
+    target: &SessionTarget,
+    worker_index: usize,
+) -> AppResult<WorkerConnection> {
+    let number = worker_index + 1;
+    if wants_own_connection(shared, target) {
+        let connection_id = format!("{}#{number}", target.session_id);
+        let quiet = Events::default();
+        match FtpFs::connect(
+            &connection_id,
+            &target.profile,
+            &shared.sessions.certificates,
+            pinned_approval(target),
+            &quiet,
+        )
+        .await
+        {
+            Ok((files, _)) => {
+                opened(shared, target, number);
+                return Ok(WorkerConnection::files(files, true));
+            }
+            Err(error) if error.kind == ErrorKind::HostKeyChanged => return Err(error),
+            Err(error) => note_refusal(shared, target, &error),
+        }
+    }
+    Ok(WorkerConnection::files(target.browsing_files()?, false))
 }
 
 pub(super) async fn run(shared: Arc<Shared>, index: usize) {
@@ -183,37 +277,23 @@ pub(super) async fn run(shared: Arc<Shared>, index: usize) {
     connections.close_all().await;
 }
 
-pub(super) struct JobContext<'a> {
+/// The parts of a running job every transfer path needs.
+pub(super) struct JobRef<'a> {
     pub shared: &'a Shared,
-    pub fs: &'a RemoteFs,
-    /// This worker's own connection; `None` when it borrows a channel of the browsing one.
-    pub handle: Option<&'a SshHandle>,
-    id: JobId,
+    pub id: JobId,
     pub run: &'a JobRun,
     pub spec: &'a JobSpec,
     pub settings: &'a TransferSettings,
 }
 
-impl JobContext<'_> {
-    fn copy_context(&self) -> CopyContext<'_> {
-        let direction = self.spec.direction;
-        CopyContext {
-            fs: self.fs,
-            run: self.run,
-            limiter: self.shared.limiter_for(direction),
-            total: self.shared.total_for(direction),
-            request_size: self.settings.request_size(),
-            requests_in_flight: self.settings.requests_in_flight as usize,
-        }
-    }
-
-    fn exists_action(&self, resolution: Option<ExistsAction>) -> ExistsAction {
+impl JobRef<'_> {
+    pub fn exists_action(&self, resolution: Option<ExistsAction>) -> ExistsAction {
         resolution
             .or(self.shared.queue.lock().unwrap().conflict_override)
             .unwrap_or(self.settings.exists_action)
     }
 
-    fn retarget(&self, target: &str, name: String) {
+    pub fn retarget(&self, target: &str, name: String) {
         self.shared
             .queue
             .lock()
@@ -221,11 +301,13 @@ impl JobContext<'_> {
             .retarget(self.id, target.to_string(), name);
     }
 
-    /// Records where the bytes go and lets idle workers join if the file is large enough.
-    fn begin(&self, plan: Plan, start: u64, end: u64) {
+    /// Records where the bytes go and, when the file can be split and is large enough, lets
+    /// idle workers join.
+    pub fn begin(&self, plan: Plan, start: u64, end: u64, splittable: bool) {
         let _ = self.run.plan.set(plan);
         let remaining = end.saturating_sub(start);
-        let segmented = self.settings.segmented && remaining >= self.settings.segment_threshold();
+        let segmented =
+            splittable && self.settings.segmented && remaining >= self.settings.segment_threshold();
         let piece_size = if segmented {
             (remaining / (u64::from(self.settings.max_segments) * 4))
                 .clamp(MIN_SEGMENT_PIECE, MAX_SEGMENT_PIECE)
@@ -245,6 +327,53 @@ impl JobContext<'_> {
     }
 }
 
+pub(super) struct JobContext<'a> {
+    pub shared: &'a Shared,
+    pub fs: &'a RemoteFs,
+    /// This worker's own connection; `None` when it borrows a channel of the browsing one.
+    pub handle: Option<&'a SshHandle>,
+    id: JobId,
+    pub run: &'a JobRun,
+    pub spec: &'a JobSpec,
+    pub settings: &'a TransferSettings,
+}
+
+impl JobContext<'_> {
+    fn job(&self) -> JobRef<'_> {
+        JobRef {
+            shared: self.shared,
+            id: self.id,
+            run: self.run,
+            spec: self.spec,
+            settings: self.settings,
+        }
+    }
+
+    fn copy_context(&self) -> CopyContext<'_> {
+        let direction = self.spec.direction;
+        CopyContext {
+            fs: self.fs,
+            run: self.run,
+            limiter: self.shared.limiter_for(direction),
+            total: self.shared.total_for(direction),
+            request_size: self.settings.request_size(),
+            requests_in_flight: self.settings.requests_in_flight as usize,
+        }
+    }
+
+    fn exists_action(&self, resolution: Option<ExistsAction>) -> ExistsAction {
+        self.job().exists_action(resolution)
+    }
+
+    fn retarget(&self, target: &str, name: String) {
+        self.job().retarget(target, name);
+    }
+
+    fn begin(&self, plan: Plan, start: u64, end: u64) {
+        self.job().begin(plan, start, end, true);
+    }
+}
+
 async fn execute(shared: &Shared, connections: &mut Connections, claim: Claim) {
     let settings = shared.settings();
     let Claim {
@@ -255,39 +384,33 @@ async fn execute(shared: &Shared, connections: &mut Connections, claim: Claim) {
         resolution,
         resume_offset,
     } = claim;
-
-    let outcome = match connections.get(shared, &spec.session_id).await {
-        Err(error) => RunOutcome::Failed(error),
-        Ok(connection) => {
-            let context = JobContext {
-                shared,
-                fs: &connection.fs,
-                handle: connection.handle.as_ref(),
-                id,
-                run: &run,
-                spec: &spec,
-                settings: &settings,
-            };
-            let result = match (spec.kind, role) {
-                (JobKind::Folder, _) => expand_folder(&context).await,
-                (JobKind::File, Role::Primary) => match spec.direction {
-                    Direction::Download => download(&context, resolution, resume_offset).await,
-                    Direction::Upload => upload(&context, resolution, resume_offset).await,
-                },
-                (JobKind::File, Role::Helper) => help(&context).await,
-            };
-            result.unwrap_or_else(|error| {
-                if error.kind == ErrorKind::Cancelled {
-                    RunOutcome::Stopped
-                } else {
-                    RunOutcome::Failed(error)
-                }
-            })
-        }
+    let job = JobRef {
+        shared,
+        id,
+        run: &run,
+        spec: &spec,
+        settings: &settings,
     };
+
+    let streamed = streamed::applies(shared, &spec);
+    let result = if streamed {
+        streamed::run(&job, connections, role, resolution, resume_offset).await
+    } else {
+        run_sftp(&job, connections, role, resolution, resume_offset).await
+    };
+    let outcome = result.unwrap_or_else(|error| {
+        if error.kind == ErrorKind::Cancelled {
+            RunOutcome::Stopped
+        } else {
+            RunOutcome::Failed(error)
+        }
+    });
     if let RunOutcome::Failed(error) = &outcome {
         if error.is_connection_lost() {
             connections.drop_connection(&spec.session_id).await;
+            if let Some(source_key) = streamed::source_key(&spec) {
+                connections.drop_connection(&source_key).await;
+            }
         }
     }
 
@@ -298,14 +421,10 @@ async fn execute(shared: &Shared, connections: &mut Connections, claim: Claim) {
             return;
         }
         Release::Finalize => {
-            let finalized = match spec.direction {
-                Direction::Download => finalize_download(&run, &settings).await,
-                Direction::Upload => match connections.get(shared, &spec.session_id).await {
-                    Ok(connection) => {
-                        finalize_upload(shared, &connection.fs, &run, &spec, &settings).await
-                    }
-                    Err(error) => Err(error),
-                },
+            let finalized = if streamed {
+                streamed::finalize(&job, connections).await
+            } else {
+                finalize_sftp(&job, connections).await
             };
             match finalized {
                 Ok(()) => RunOutcome::Completed,
@@ -313,7 +432,13 @@ async fn execute(shared: &Shared, connections: &mut Connections, claim: Claim) {
             }
         }
         Release::Settle => {
-            trim_partial(connections.existing(&spec.session_id), &run, &spec).await;
+            // Streamed uploads and copies write in order; only their downloads need trimming.
+            let fs = if streamed {
+                None
+            } else {
+                connections.existing(&spec.session_id)
+            };
+            trim_partial(fs, &run, &spec).await;
             outcome
         }
     };
@@ -331,6 +456,65 @@ async fn execute(shared: &Shared, connections: &mut Connections, claim: Claim) {
     shared.work.notify_waiters();
 }
 
+/// The pipelined path for SFTP uploads and downloads.
+async fn run_sftp(
+    job: &JobRef<'_>,
+    connections: &mut Connections,
+    role: Role,
+    resolution: Option<ExistsAction>,
+    resume_offset: Option<u64>,
+) -> AppResult<RunOutcome> {
+    let spec = job.spec;
+    let connection = connections
+        .get(job.shared, &spec.session_id, &spec.session_id)
+        .await?;
+    let fs = sftp_of(connection)?;
+    let context = JobContext {
+        shared: job.shared,
+        fs,
+        handle: connection.handle.as_ref(),
+        id: job.id,
+        run: job.run,
+        spec,
+        settings: job.settings,
+    };
+    match (spec.kind, role, spec.direction) {
+        (JobKind::Folder, _, _) => expand_folder(job, fs, None).await,
+        (JobKind::File, Role::Primary, Direction::Download) => {
+            download(&context, resolution, resume_offset).await
+        }
+        (JobKind::File, Role::Primary, _) => upload(&context, resolution, resume_offset).await,
+        (JobKind::File, Role::Helper, _) => help(&context).await,
+    }
+}
+
+async fn finalize_sftp(job: &JobRef<'_>, connections: &mut Connections) -> AppResult<()> {
+    let spec = job.spec;
+    match spec.direction {
+        Direction::Download => finalize_download(job.run, job.settings).await,
+        Direction::Upload | Direction::Relay => {
+            let connection = connections
+                .get(job.shared, &spec.session_id, &spec.session_id)
+                .await?;
+            finalize_upload(
+                job.shared,
+                sftp_of(connection)?,
+                job.run,
+                spec,
+                job.settings,
+            )
+            .await
+        }
+    }
+}
+
+fn sftp_of(connection: &WorkerConnection) -> AppResult<&RemoteFs> {
+    connection
+        .sftp
+        .as_deref()
+        .ok_or_else(|| AppError::unsupported("This transfer needs an SFTP connection"))
+}
+
 fn log_result(
     shared: &Shared,
     settings: &TransferSettings,
@@ -338,9 +522,10 @@ fn log_result(
     error: Option<String>,
     spec: &JobSpec,
 ) {
-    let verb = match spec.direction {
-        Direction::Upload => "Upload",
-        Direction::Download => "Download",
+    let (verb, past) = match spec.direction {
+        Direction::Upload => ("Upload", "Uploaded"),
+        Direction::Download => ("Download", "Downloaded"),
+        Direction::Relay => ("Copy", "Copied"),
     };
     let session = Some(spec.session_id.as_str());
     match state {
@@ -367,7 +552,7 @@ fn log_result(
                 LogLevel::Info,
                 session,
                 format!(
-                    "{verb}ed {} to {} ({})",
+                    "{past} {} to {} ({})",
                     spec.source,
                     spec.target,
                     format_size(spec.size)
@@ -383,13 +568,25 @@ fn log_result(
     }
 }
 
-async fn expand_folder(context: &JobContext<'_>) -> AppResult<RunOutcome> {
-    let spec = context.spec;
+/// Lists a folder and queues its contents. `remote` is the server of an upload or download,
+/// or the target of a relay; `source` is the server a relay reads from.
+pub(super) async fn expand_folder(
+    job: &JobRef<'_>,
+    remote: &dyn RemoteFileSystem,
+    source: Option<&dyn RemoteFileSystem>,
+) -> AppResult<RunOutcome> {
+    let spec = job.spec;
     let listing = match spec.direction {
-        Direction::Download => context.fs.list_dir(&spec.source).await?,
+        Direction::Download => remote.list_dir(&spec.source).await?,
         Direction::Upload => {
             let source = spec.source.clone();
             tokio::task::spawn_blocking(move || local::list_dir(&source)).await??
+        }
+        Direction::Relay => {
+            source
+                .ok_or_else(AppError::session_not_found)?
+                .list_dir(&spec.source)
+                .await?
         }
     };
     if spec.ancestors.contains(&listing.path) {
@@ -405,7 +602,7 @@ async fn expand_folder(context: &JobContext<'_>) -> AppResult<RunOutcome> {
                 .await?
                 .map_err(|error| AppError::from(error).with_path(spec.target.clone()))?;
         }
-        Direction::Upload => context.fs.ensure_dir(&spec.target).await?,
+        Direction::Upload | Direction::Relay => remote.ensure_dir(&spec.target).await?,
     }
 
     let mut ancestors = spec.ancestors.to_vec();
@@ -430,7 +627,7 @@ async fn expand_folder(context: &JobContext<'_>) -> AppResult<RunOutcome> {
             continue;
         }
         let target = match spec.direction {
-            Direction::Upload => remote_path::join(&spec.target, &entry.name),
+            Direction::Upload | Direction::Relay => remote_path::join(&spec.target, &entry.name),
             Direction::Download => Path::new(&spec.target)
                 .join(&entry.name)
                 .to_string_lossy()
@@ -438,6 +635,7 @@ async fn expand_folder(context: &JobContext<'_>) -> AppResult<RunOutcome> {
         };
         children.push(JobSpec {
             session_id: spec.session_id.clone(),
+            source_session_id: spec.source_session_id.clone(),
             direction: spec.direction,
             kind: if is_dir {
                 JobKind::Folder
@@ -453,7 +651,7 @@ async fn expand_folder(context: &JobContext<'_>) -> AppResult<RunOutcome> {
         });
     }
     if skipped > 0 {
-        context.shared.events.log(
+        job.shared.events.log(
             LogLevel::Warn,
             Some(&spec.session_id),
             format!(
@@ -652,7 +850,7 @@ async fn help(context: &JobContext<'_>) -> AppResult<RunOutcome> {
             let _ = context.fs.close_handle(handle).await;
             copied?;
         }
-        Direction::Upload => {
+        Direction::Upload | Direction::Relay => {
             let mut file = File::open(&spec.source)
                 .await
                 .map_err(|error| AppError::from(error).with_path(spec.source.clone()))?;
@@ -666,7 +864,7 @@ async fn help(context: &JobContext<'_>) -> AppResult<RunOutcome> {
     Ok(RunOutcome::Completed)
 }
 
-async fn finalize_download(run: &JobRun, settings: &TransferSettings) -> AppResult<()> {
+pub(super) async fn finalize_download(run: &JobRun, settings: &TransferSettings) -> AppResult<()> {
     let Some(plan) = run.plan.get().cloned() else {
         return Ok(());
     };
@@ -753,7 +951,7 @@ async fn trim_partial(fs: Option<&RemoteFs>, run: &JobRun, spec: &JobSpec) {
             })
             .await;
         }
-        Direction::Upload => {
+        Direction::Upload | Direction::Relay => {
             if let Some(fs) = fs {
                 let _ = fs.truncate(&plan.target, prefix).await;
             }
@@ -761,7 +959,7 @@ async fn trim_partial(fs: Option<&RemoteFs>, run: &JobRun, spec: &JobSpec) {
     }
 }
 
-fn conflict(source: FileFacts, target: FileFacts) -> RunOutcome {
+pub(super) fn conflict(source: FileFacts, target: FileFacts) -> RunOutcome {
     RunOutcome::Conflict(ConflictInfo {
         source_size: source.size,
         source_modified: source.modified,
@@ -770,7 +968,7 @@ fn conflict(source: FileFacts, target: FileFacts) -> RunOutcome {
     })
 }
 
-fn folder_in_the_way(spec: &JobSpec) -> AppError {
+pub(super) fn folder_in_the_way(spec: &JobSpec) -> AppError {
     AppError::new(
         ErrorKind::AlreadyExists,
         format!("A folder named {} is in the way", spec.name),
@@ -779,7 +977,7 @@ fn folder_in_the_way(spec: &JobSpec) -> AppError {
 }
 
 /// `None` when nothing is there; otherwise whether it is a folder, and its size and time.
-async fn local_facts(path: &str) -> AppResult<Option<(bool, FileFacts)>> {
+pub(super) async fn local_facts(path: &str) -> AppResult<Option<(bool, FileFacts)>> {
     match tokio::fs::metadata(path).await {
         Ok(metadata) => Ok(Some((
             metadata.is_dir(),
@@ -793,7 +991,7 @@ async fn local_facts(path: &str) -> AppResult<Option<(bool, FileFacts)>> {
     }
 }
 
-fn modified_seconds(metadata: &std::fs::Metadata) -> Option<i64> {
+pub(super) fn modified_seconds(metadata: &std::fs::Metadata) -> Option<i64> {
     metadata
         .modified()
         .ok()
@@ -832,7 +1030,7 @@ pub(super) fn set_local_permissions(
     Ok(())
 }
 
-async fn free_local_name(target: &str) -> AppResult<(String, String)> {
+pub(super) async fn free_local_name(target: &str) -> AppResult<(String, String)> {
     let path = Path::new(target);
     let parent = path.parent().unwrap_or(Path::new(""));
     let name = path
@@ -849,7 +1047,10 @@ async fn free_local_name(target: &str) -> AppResult<(String, String)> {
     Err(no_free_name(target))
 }
 
-async fn free_remote_name(fs: &RemoteFs, target: &str) -> AppResult<(String, String)> {
+pub(super) async fn free_remote_name(
+    fs: &dyn RemoteFileSystem,
+    target: &str,
+) -> AppResult<(String, String)> {
     let parent = remote_path::parent(target).unwrap_or_else(|| "/".into());
     let name = remote_path::file_name(target);
     for number in 1..=MAX_RENAME_ATTEMPTS {

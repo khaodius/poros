@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { profileSecret, savedFromProfile } from "../lib/connectDraft";
+import { profileGrant, profileSecret, savedFromProfile } from "../lib/connectDraft";
 import { toAppError } from "../lib/ipc";
 import { useSavedConnections } from "../state/savedConnectionsStore";
 import { useSessionStore } from "../state/sessionStore";
@@ -32,6 +32,7 @@ export function SaveConnectionDialog({
       const saved = await save(
         savedFromProfile(profile, name, saveSecret && secret !== ""),
         saveSecret ? secret : null,
+        profileGrant(profile),
       );
       linkSaved(sessionId, saved.id);
       onClose();

@@ -1,11 +1,12 @@
 import { memo, useMemo, useState } from "react";
-import { HardDrive, RotateCw, Server, Unplug } from "lucide-react";
+import { HardDrive, RotateCw, Unplug } from "lucide-react";
 import { localSource, remoteSource, startingAt } from "../lib/fileSource";
 import type { PaneTab } from "../lib/layout";
 import { reconnectWithPrompts } from "../state/connectFlow";
 import { useLayoutStore } from "../state/layoutStore";
 import { getPane } from "../state/paneRegistry";
 import { useSessionStore } from "../state/sessionStore";
+import { ConnectionIcon } from "./ConnectionIcon";
 import { FilePane } from "./FilePane";
 import { WelcomePanel } from "./WelcomePanel";
 
@@ -49,7 +50,7 @@ function RemoteTab({ tab, visible, active }: TabContentProps) {
     <FilePane
       tabId={tab.id}
       title={entry.info.label}
-      icon={<Server size={15} />}
+      icon={<ConnectionIcon protocol={entry.info.protocol} size={15} />}
       source={source}
       sessionId={sessionId}
       visible={visible}

@@ -19,6 +19,11 @@ pub enum ErrorKind {
     Sftp,
     Ssh,
     Rsync,
+    Ftp,
+    /// A Google Drive or OneDrive request failed.
+    Cloud,
+    /// The connection's protocol cannot do what was asked, such as rsync over FTP.
+    Unsupported,
     Cancelled,
     Keychain,
 }
@@ -30,6 +35,9 @@ pub struct HostKeyInfo {
     pub port: u16,
     pub algorithm: String,
     pub fingerprint: String,
+    /// Why the system did not trust a TLS certificate; absent for SSH host keys.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub certificate_problem: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -72,6 +80,10 @@ impl AppError {
         Self::new(ErrorKind::Cancelled, "Cancelled")
     }
 
+    pub fn unsupported(message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::Unsupported, message)
+    }
+
     /// Network trouble that a later attempt, on a fresh connection, may not hit.
     pub fn is_retryable(&self) -> bool {
         matches!(
@@ -81,6 +93,8 @@ impl AppError {
                 | ErrorKind::Connection
                 | ErrorKind::Ssh
                 | ErrorKind::Sftp
+                | ErrorKind::Ftp
+                | ErrorKind::Cloud
         )
     }
 
@@ -93,7 +107,27 @@ impl AppError {
     }
 
     pub fn host_key(kind: ErrorKind, info: HostKeyInfo) -> Self {
-        let message = match kind {
+        let message = match (kind, &info.certificate_problem) {
+            (ErrorKind::HostKeyChanged, Some(_)) => format!(
+                "The TLS certificate of {}:{} is not the one you trusted before ({}). This can mean someone is intercepting the connection.",
+                info.host, info.port, info.fingerprint
+            ),
+            (_, Some(problem)) => format!(
+                "The TLS certificate of {}:{} is not trusted by this computer ({}). {problem}",
+                info.host, info.port, info.fingerprint
+            ),
+            _ => Self::host_key_message(kind, &info),
+        };
+        Self {
+            kind,
+            message,
+            host_key: Some(Box::new(info)),
+            path: None,
+        }
+    }
+
+    fn host_key_message(kind: ErrorKind, info: &HostKeyInfo) -> String {
+        match kind {
             ErrorKind::HostKeyChanged => format!(
                 "The host key for {}:{} has changed ({} {}). This can mean someone is intercepting the connection.",
                 info.host, info.port, info.algorithm, info.fingerprint
@@ -102,12 +136,6 @@ impl AppError {
                 "The authenticity of {}:{} can't be established ({} {}).",
                 info.host, info.port, info.algorithm, info.fingerprint
             ),
-        };
-        Self {
-            kind,
-            message,
-            host_key: Some(Box::new(info)),
-            path: None,
         }
     }
 }
@@ -226,6 +254,7 @@ mod tests {
                 port: 22,
                 algorithm: "ssh-ed25519".into(),
                 fingerprint: "SHA256:abc".into(),
+                certificate_problem: None,
             },
         );
         let json = serde_json::to_value(&error).unwrap();

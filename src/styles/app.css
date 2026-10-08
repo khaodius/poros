@@ -351,6 +351,11 @@ input.has-error {
   text-align: center;
 }
 
+.quick-connect .quick-protocol {
+  flex: 0 0 auto;
+  max-width: 140px;
+}
+
 /* Small torn-out windows keep the connect button and drop the quick connect fields. */
 @media (max-width: 620px) {
   .quick-connect {
@@ -1570,6 +1575,51 @@ form.path-bar {
   flex: 0 0 80px;
 }
 
+.field.protocol {
+  flex: 0 0 190px;
+}
+
+.field.protocol select {
+  width: 100%;
+}
+
+.cloud-account {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 8px 10px 8px 12px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.cloud-account .field-hint,
+.cloud-account-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.cloud-account-text {
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+  overflow-wrap: anywhere;
+}
+
+.cloud-account-text strong {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.cloud-account-icon {
+  flex: none;
+  color: var(--accent);
+}
+
+.cloud-account .button {
+  flex: none;
+}
+
 .field-hint {
   color: var(--text-faint);
   font-size: var(--font-size-small);
@@ -2153,6 +2203,10 @@ option {
   color: var(--download);
 }
 
+.direction-relay {
+  color: var(--accent);
+}
+
 .transfer-name-text,
 .transfer-target {
   min-width: 0;
@@ -2558,6 +2612,22 @@ option {
 
 .setting-control > input {
   width: 220px;
+}
+
+.setting-control > input.is-wide {
+  width: 320px;
+}
+
+.setting-steps {
+  margin: 0 0 8px;
+  padding-left: 20px;
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+  line-height: 1.5;
+}
+
+.setting-steps code {
+  color: var(--text);
 }
 
 .switch {

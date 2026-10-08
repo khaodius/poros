@@ -1,6 +1,6 @@
-// Mirrors the serde types in src-tauri/src (model.rs, error.rs, ssh/mod.rs, session.rs,
-// events.rs, transfer/, sync/, connections.rs, themes.rs, fonts.rs). Field names are camelCase on
-// the wire.
+// Mirrors the serde types in src-tauri/src (model.rs, error.rs, protocol.rs, ssh/mod.rs,
+// session.rs, events.rs, transfer/, sync/, connections.rs, cloud/, themes.rs, fonts.rs). Field
+// names are camelCase on the wire.
 
 export type EntryKind = "dir" | "file" | "symlink" | "other";
 export type LinkTarget = "dir" | "file" | "broken";
@@ -27,12 +27,22 @@ export interface DirListing {
   entries: FileEntry[];
 }
 
+export type Protocol = "sftp" | "ftp" | "ftps" | "ftpsImplicit" | "googleDrive" | "oneDrive";
+
+export type CloudProvider = "google" | "microsoft";
+
 export type AuthMethod =
   | { type: "password"; password: string }
   | { type: "publicKey"; keyPath: string; passphrase?: string | null }
-  | { type: "agent" };
+  | { type: "agent" }
+  /**
+   * A Google or Microsoft account. `grantId` names a sign-in just made in the browser; without
+   * it, a saved connection's account comes from the system keychain.
+   */
+  | { type: "oauth"; grantId?: string | null };
 
 export interface ConnectProfile {
+  protocol: Protocol;
   host: string;
   port: number;
   username: string;
@@ -47,6 +57,8 @@ export interface ConnectProfile {
   sendBufferKib?: number | null;
   /** Lets the backend fill an empty password or passphrase from the system keychain. */
   savedConnectionId?: string | null;
+  /** FTP data connections come from the server (active mode) instead of passive mode. */
+  ftpActive?: boolean;
 }
 
 export interface HostKeyInfo {
@@ -54,6 +66,8 @@ export interface HostKeyInfo {
   port: number;
   algorithm: string;
   fingerprint: string;
+  /** Why the system did not trust an FTPS server's TLS certificate; absent for SSH host keys. */
+  certificateProblem?: string;
 }
 
 export interface HostKeyApproval {
@@ -70,6 +84,7 @@ export interface SessionInfo {
   home: string;
   initialPath: string;
   savedConnectionId?: string;
+  protocol: Protocol;
 }
 
 export type ErrorKind =
@@ -89,6 +104,9 @@ export type ErrorKind =
   | "sftp"
   | "ssh"
   | "rsync"
+  | "ftp"
+  | "cloud"
+  | "unsupported"
   | "cancelled"
   | "keychain";
 
@@ -116,7 +134,8 @@ export interface SessionClosed {
 
 export type StoreName = "settings" | "connections" | "themes";
 
-export type Direction = "upload" | "download";
+/** `relay` copies from one server to another. */
+export type Direction = "upload" | "download" | "relay";
 export type JobKind = "file" | "folder";
 export type JobState = "queued" | "running" | "paused" | "conflict" | "done" | "skipped" | "failed";
 export type ExistsAction =
@@ -133,7 +152,10 @@ export interface JobSnapshot {
   id: number;
   /** Sorts jobs in processing order. */
   rank: string;
+  /** The server written to, or read from for a download. */
   sessionId: string;
+  /** The server a relay reads from. */
+  sourceSessionId?: string;
   direction: Direction;
   kind: JobKind;
   name: string;
@@ -151,6 +173,8 @@ export interface JobSnapshot {
   attempts: number;
   /** File data sent so far when rsync updates the file; absent for whole-file copies. */
   deltaBytes?: number;
+  /** Two FTP servers sent the file straight to each other (FXP). */
+  direct?: boolean;
 }
 
 export interface QueueCounts {
@@ -198,6 +222,8 @@ export interface TransferItem {
 
 export interface EnqueueRequest {
   sessionId: string;
+  /** The server a relay reads from. */
+  sourceSessionId?: string | null;
   direction: Direction;
   targetDirectory: string;
   items: TransferItem[];
@@ -304,6 +330,7 @@ export type AuthType = AuthMethod["type"];
 export interface SavedConnection {
   /** Empty for a connection not saved yet. */
   id: string;
+  protocol: Protocol;
   name: string;
   host: string;
   port: number;
@@ -315,6 +342,22 @@ export interface SavedConnection {
   saveSecret: boolean;
   /** Milliseconds since the Unix epoch. */
   lastUsed?: number | null;
+  ftpActive?: boolean;
+}
+
+export interface CloudProviderStatus {
+  provider: CloudProvider;
+  /** An app to sign in with is set in Settings or built into this release. */
+  configured: boolean;
+  builtIn: boolean;
+}
+
+/** A finished browser sign-in, until it is saved with a connection or used to connect. */
+export interface SignedIn {
+  grantId: string;
+  provider: CloudProvider;
+  /** The account's email address or name. */
+  account: string;
 }
 
 export interface FontFamily {

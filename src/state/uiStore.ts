@@ -2,7 +2,7 @@ import { create } from "zustand";
 import type { ConnectDraft } from "../lib/connectDraft";
 
 export type SettingsSection =
-  "transfers" | "sync" | "connection" | "interface" | "appearance" | "log";
+  "transfers" | "sync" | "connection" | "cloud" | "interface" | "appearance" | "log";
 
 export type AppDialog =
   | { kind: "connect"; draft: ConnectDraft; targetTabId?: string; error?: string }

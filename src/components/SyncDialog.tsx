@@ -17,7 +17,7 @@ import {
 } from "../lib/sync";
 import type { SyncPlanView, SyncProgress } from "../lib/types";
 import { lastActivePane, listPanes } from "../state/paneRegistry";
-import { useSessionStore } from "../state/sessionStore";
+import { useSessionStore, type SessionEntry } from "../state/sessionStore";
 import { saveSettingsSection, useSettingsStore } from "../state/settingsStore";
 import { useToastStore } from "../state/toastStore";
 import { Dialog } from "./Dialog";
@@ -48,10 +48,15 @@ function remoteFolderOf(sessionId: string): string {
   return pane?.path() ?? useSessionStore.getState().sessions[sessionId]?.info.initialPath ?? "";
 }
 
+/** Synchronization lists and runs commands over SSH, so it needs an SFTP connection. */
+function canSynchronize(entry: SessionEntry): boolean {
+  return entry.status === "connected" && entry.info.protocol === "sftp";
+}
+
 /** The folders given, with the panes looked at last filling in the rest. */
 function startingFolders(given: Omit<SyncDialogProps, "onClose">): Folders {
   const connected = Object.values(useSessionStore.getState().sessions)
-    .filter((entry) => entry.status === "connected")
+    .filter(canSynchronize)
     .map((entry) => entry.info.id);
   const sessionId =
     [given.sessionId, lastActivePane("remote")?.sessionId, connected[0]].find(
@@ -84,7 +89,7 @@ export function SyncDialog({ onClose, ...given }: SyncDialogProps) {
   );
   const sessionEntries = useSessionStore((state) => state.sessions);
   const sessions = useMemo(
-    () => Object.values(sessionEntries).filter((entry) => entry.status === "connected"),
+    () => Object.values(sessionEntries).filter(canSynchronize),
     [sessionEntries],
   );
   const [folders, setFolders] = useState(() => startingFolders(given));
@@ -313,7 +318,7 @@ function SetupForm({
             disabled={sessions.length === 0}
             onChange={(event) => onSession(event.target.value)}
           >
-            {sessions.length === 0 && <option value="">No server connected</option>}
+            {sessions.length === 0 && <option value="">No SFTP server connected</option>}
             {sessions.map((session) => (
               <option key={session.id} value={session.id}>
                 {session.label}

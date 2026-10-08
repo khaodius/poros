@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AppError,
+  CloudProvider,
+  CloudProviderStatus,
   ConnectProfile,
   DirListing,
   EnqueueRequest,
@@ -14,6 +16,7 @@ import type {
   SavedConnection,
   SessionClosed,
   SessionInfo,
+  SignedIn,
   StoreName,
   SyncPlanView,
   SyncProgress,
@@ -105,10 +108,25 @@ export const settingsStore = {
 
 export const savedConnections = {
   list: () => call<SavedConnection[]>("connections_list"),
-  /** `secret` replaces the stored password or passphrase; omitted keeps it. */
-  save: (connection: SavedConnection, secret?: string | null) =>
-    call<SavedConnection>("connections_save", { connection, secret: secret ?? null }),
+  /**
+   * `secret` replaces the stored password or passphrase, and `oauthGrant` the stored cloud
+   * account; omitted keeps what is stored.
+   */
+  save: (connection: SavedConnection, secret?: string | null, oauthGrant?: string | null) =>
+    call<SavedConnection>("connections_save", {
+      connection,
+      secret: secret ?? null,
+      oauthGrant: oauthGrant ?? null,
+    }),
   remove: (id: string) => call<void>("connections_delete", { id }),
+};
+
+export const cloud = {
+  providers: () => call<CloudProviderStatus[]>("cloud_providers"),
+  /** Opens the provider's sign-in page in the browser; resolves once the account is back. */
+  signIn: (requestId: string, provider: CloudProvider) =>
+    call<SignedIn>("cloud_sign_in", { requestId, provider }),
+  cancelSignIn: (requestId: string) => call<void>("cloud_cancel_sign_in", { requestId }),
 };
 
 export const themeFiles = {

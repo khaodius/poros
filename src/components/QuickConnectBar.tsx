@@ -1,12 +1,24 @@
 import { useState, type FormEvent } from "react";
 import { Plug } from "lucide-react";
-import { EMPTY_DRAFT, profileFromDraft, type ConnectDraft } from "../lib/connectDraft";
+import {
+  EMPTY_DRAFT,
+  canConnect,
+  profileFromDraft,
+  withProtocol,
+  type ConnectDraft,
+} from "../lib/connectDraft";
 import { parseHostInput } from "../lib/path";
+import { PROTOCOLS, defaultPort, isCloud } from "../lib/protocols";
+import type { Protocol } from "../lib/types";
 import { quickConnect } from "../state/connectActions";
 import { useToastStore } from "../state/toastStore";
 import { useUiStore } from "../state/uiStore";
 
+const SERVER_PROTOCOLS = PROTOCOLS.filter((info) => !isCloud(info.value));
+const CLOUD_PROTOCOLS = PROTOCOLS.filter((info) => isCloud(info.value));
+
 export function QuickConnectBar() {
+  const [protocol, setProtocol] = useState<Protocol>("sftp");
   const [host, setHost] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -15,13 +27,23 @@ export function QuickConnectBar() {
   const showToast = useToastStore((state) => state.show);
   const openDialog = useUiStore((state) => state.open);
 
+  const chooseProtocol = (chosen: Protocol) => {
+    // Cloud storage signs in through the browser, which the connect dialog walks through.
+    if (isCloud(chosen)) {
+      openDialog({ kind: "connect", draft: withProtocol(EMPTY_DRAFT, chosen) });
+      return;
+    }
+    setProtocol(chosen);
+  };
+
   const currentDraft = (): ConnectDraft => {
     const parsed = parseHostInput(host);
+    const chosen = parsed.protocol ?? protocol;
     return {
-      ...EMPTY_DRAFT,
+      ...withProtocol(EMPTY_DRAFT, chosen),
       host: parsed.host,
       username: username.trim() || parsed.username || "",
-      port: port || (parsed.port ? String(parsed.port) : "22"),
+      port: port || String(parsed.port ?? defaultPort(chosen)),
       password,
       initialPath: parsed.path ?? "",
     };
@@ -31,7 +53,7 @@ export function QuickConnectBar() {
     event.preventDefault();
     const draft = currentDraft();
     if (!draft.host || connecting) return;
-    if (!draft.username) {
+    if (!canConnect(draft)) {
       openDialog({ kind: "connect", draft });
       return;
     }
@@ -44,6 +66,25 @@ export function QuickConnectBar() {
 
   return (
     <form className="quick-connect" onSubmit={submit}>
+      <select
+        className="quick-protocol"
+        value={protocol}
+        aria-label="Protocol"
+        onChange={(event) => chooseProtocol(event.target.value as Protocol)}
+      >
+        {SERVER_PROTOCOLS.map((info) => (
+          <option key={info.value} value={info.value}>
+            {info.shortLabel}
+          </option>
+        ))}
+        <optgroup label="Cloud storage">
+          {CLOUD_PROTOCOLS.map((info) => (
+            <option key={info.value} value={info.value}>
+              {info.shortLabel}...
+            </option>
+          ))}
+        </optgroup>
+      </select>
       <input
         className="quick-host"
         value={host}
@@ -71,7 +112,7 @@ export function QuickConnectBar() {
       <input
         className="quick-port"
         value={port}
-        placeholder="22"
+        placeholder={String(defaultPort(protocol))}
         aria-label="Port"
         inputMode="numeric"
         onChange={(event) => setPort(event.target.value.replace(/\D/g, ""))}

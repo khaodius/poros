@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use poros_lib::error::ErrorKind;
 use poros_lib::events::Events;
 use poros_lib::model::{EntryKind, LinkTarget};
+use poros_lib::protocol::Protocol;
 use poros_lib::session::{SessionInfo, SessionManager};
 use poros_lib::settings::TransferSettings;
 use poros_lib::ssh::{AuthMethod, ConnectProfile, HostKeyApproval};
@@ -44,6 +45,7 @@ fn server() -> Option<Server> {
 
 fn profile(server: &Server, auth: AuthMethod) -> ConnectProfile {
     ConnectProfile {
+        protocol: Protocol::Sftp,
         host: "127.0.0.1".into(),
         port: server.port,
         username: server.user.clone(),
@@ -55,6 +57,7 @@ fn profile(server: &Server, auth: AuthMethod) -> ConnectProfile {
         receive_buffer_kib: None,
         send_buffer_kib: None,
         saved_connection_id: None,
+        ftp_active: false,
     }
 }
 
@@ -245,7 +248,7 @@ async fn browse_and_manage_files() {
         .await
         .unwrap();
     let session = manager.get(&info.id).await.unwrap();
-    let fs = &session.fs;
+    let fs = session.sftp().unwrap();
 
     let scratch = format!("poros-test-{}", std::process::id());
     let root = fs.make_dir("~", &scratch).await.unwrap();
@@ -369,7 +372,13 @@ impl TransferFixture {
             )
             .await
             .unwrap();
-        let fs = &manager.get(&session.id).await.unwrap().fs;
+        let fs = manager
+            .get(&session.id)
+            .await
+            .unwrap()
+            .sftp()
+            .unwrap()
+            .clone();
         let scratch = format!("poros-{name}-{}", std::process::id());
         let existing = remote_path_join(&session.home, &scratch);
         let _ = fs.delete(std::slice::from_ref(&existing)).await;
@@ -402,7 +411,14 @@ impl TransferFixture {
     }
 
     async fn download(&self, transfers: &TransferManager, sources: &[&str], target: &Path) {
-        let fs = &self.manager.get(&self.session.id).await.unwrap().fs;
+        let fs = self
+            .manager
+            .get(&self.session.id)
+            .await
+            .unwrap()
+            .sftp()
+            .unwrap()
+            .clone();
         let mut items = Vec::new();
         for source in sources {
             let parent = source.rsplit_once('/').unwrap().0;
@@ -438,6 +454,7 @@ impl TransferFixture {
         transfers
             .enqueue(EnqueueRequest {
                 session_id: self.session.id.clone(),
+                source_session_id: None,
                 direction,
                 target_directory: target.to_string(),
                 items,
@@ -458,7 +475,14 @@ impl TransferFixture {
     }
 
     async fn close(self) {
-        let fs = &self.manager.get(&self.session.id).await.unwrap().fs;
+        let fs = self
+            .manager
+            .get(&self.session.id)
+            .await
+            .unwrap()
+            .sftp()
+            .unwrap()
+            .clone();
         fs.delete(std::slice::from_ref(&self.remote)).await.unwrap();
         self.manager.disconnect(&self.session.id).await.unwrap();
     }
@@ -698,7 +722,14 @@ async fn delta_transfers_send_only_the_changes() {
     assert!(sent < 200_000, "sent {sent} bytes");
     assert_eq!(list.jobs[0].transferred, edited.len() as u64);
     let remote_file = remote_path_join(&fixture.remote, "data.bin");
-    let fs = &fixture.manager.get(&fixture.session.id).await.unwrap().fs;
+    let fs = fixture
+        .manager
+        .get(&fixture.session.id)
+        .await
+        .unwrap()
+        .sftp()
+        .unwrap()
+        .clone();
     let local_modified = std::fs::metadata(&file)
         .unwrap()
         .modified()
@@ -851,7 +882,14 @@ async fn sync_mirrors_folders_both_ways() {
 
     // A changed file, a folder only on the server, and an excluded file there that stays.
     std::fs::write(local.join("a.txt"), pattern(2000, 5)).unwrap();
-    let fs = &fixture.manager.get(&fixture.session.id).await.unwrap().fs;
+    let fs = fixture
+        .manager
+        .get(&fixture.session.id)
+        .await
+        .unwrap()
+        .sftp()
+        .unwrap()
+        .clone();
     fs.make_dir(&fixture.remote, "old").await.unwrap();
     let kept_log = remote_path_join(&fixture.remote, "keep.log");
     let handle = fs.open_for_write(&kept_log, true, None).await.unwrap();

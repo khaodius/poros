@@ -9,6 +9,7 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult, ErrorKind};
+use crate::protocol::Protocol;
 use crate::storage;
 
 const KEYCHAIN_SERVICE: &str = "io.github.khaodius.poros";
@@ -19,6 +20,9 @@ pub enum AuthType {
     Password,
     PublicKey,
     Agent,
+    /// A Google or Microsoft account signed in through the browser.
+    #[serde(rename = "oauth")]
+    OAuth,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -26,6 +30,8 @@ pub enum AuthType {
 pub struct SavedConnection {
     #[serde(default)]
     pub id: String,
+    #[serde(default)]
+    pub protocol: Protocol,
     pub name: String,
     pub host: String,
     pub port: u16,
@@ -41,6 +47,9 @@ pub struct SavedConnection {
     /// Milliseconds since the Unix epoch.
     #[serde(default)]
     pub last_used: Option<u64>,
+    /// FTP data connections come from the server (active mode).
+    #[serde(default)]
+    pub ftp_active: bool,
 }
 
 /// Where secrets live. The keychain in the app, memory in tests.
@@ -117,14 +126,28 @@ impl ConnectionStore {
     ) -> AppResult<SavedConnection> {
         connection.name = connection.name.trim().to_string();
         connection.host = connection.host.trim().to_string();
+        if let Some(host) = connection.protocol.service_host() {
+            connection.host = host.to_string();
+            connection.port = connection.protocol.default_port();
+            connection.key_path = None;
+        }
         if connection.host.is_empty() {
             return Err(AppError::invalid("Host is required"));
         }
         if connection.name.is_empty() {
             connection.name = connection.host.clone();
         }
-        if connection.auth_type == AuthType::Agent {
-            connection.save_secret = false;
+        match connection.auth_type {
+            AuthType::Agent => connection.save_secret = false,
+            // Without the stored sign-in the connection could not be opened again.
+            AuthType::OAuth => connection.save_secret = true,
+            AuthType::Password | AuthType::PublicKey => {}
+        }
+        if connection.protocol.is_cloud() != (connection.auth_type == AuthType::OAuth) {
+            return Err(AppError::invalid(format!(
+                "{} connections cannot use this sign-in method",
+                connection.protocol.display_name()
+            )));
         }
         let _guard = self.lock.lock().unwrap();
         let mut connections = self.read()?;
@@ -167,6 +190,20 @@ impl ConnectionStore {
         } else {
             Ok(None)
         }
+    }
+
+    /// Replaces the stored secret of a saved connection that keeps one, as when a cloud
+    /// provider issues a new refresh token.
+    pub fn update_secret(&self, id: &str, secret: &str) -> AppResult<()> {
+        let _guard = self.lock.lock().unwrap();
+        let keeps_secret = self
+            .read()?
+            .iter()
+            .any(|connection| connection.id == id && connection.save_secret);
+        if keeps_secret {
+            self.secrets.set(id, secret)?;
+        }
+        Ok(())
     }
 
     pub fn touch(&self, id: &str, now_millis: u64) -> AppResult<()> {
@@ -218,6 +255,7 @@ mod tests {
     fn connection() -> SavedConnection {
         SavedConnection {
             id: String::new(),
+            protocol: Protocol::Sftp,
             name: " ".into(),
             host: " example.com ".into(),
             port: 22,
@@ -227,6 +265,7 @@ mod tests {
             remote_path: None,
             save_secret: true,
             last_used: None,
+            ftp_active: false,
         }
     }
 
@@ -255,9 +294,41 @@ mod tests {
         assert_eq!(store.secret(&saved.id).unwrap(), None);
         assert_eq!(store.list().unwrap().len(), 1);
 
+        store.update_secret(&saved.id, "rotated").unwrap();
+        assert_eq!(store.secret(&saved.id).unwrap(), None);
+
         store.touch(&saved.id, 42).unwrap();
         assert_eq!(store.list().unwrap()[0].last_used, Some(42));
         store.delete(&saved.id).unwrap();
         assert!(store.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn cloud_connections_keep_their_sign_in() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store = ConnectionStore::new(
+            temp_dir.path().join("connections.json"),
+            Box::<MemorySecrets>::default(),
+        );
+        let drive = SavedConnection {
+            protocol: Protocol::GoogleDrive,
+            host: String::new(),
+            username: "ada@example.com".into(),
+            auth_type: AuthType::OAuth,
+            save_secret: false,
+            ..connection()
+        };
+        let saved = store.save(drive, Some("refresh".into())).unwrap();
+        assert!(saved.save_secret);
+        assert_eq!(saved.host, "drive.google.com");
+        assert_eq!(saved.port, 443);
+        store.update_secret(&saved.id, "rotated").unwrap();
+        assert_eq!(store.secret(&saved.id).unwrap().as_deref(), Some("rotated"));
+
+        let mismatched = SavedConnection {
+            auth_type: AuthType::Password,
+            ..saved
+        };
+        assert!(store.save(mismatched, None).is_err());
     }
 }

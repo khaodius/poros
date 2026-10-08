@@ -25,6 +25,9 @@ const RANK_MIDDLE: u32 = 0x8000_0000;
 pub enum Direction {
     Upload,
     Download,
+    /// From one server to another, straight between them where both allow it (FXP) and
+    /// through this computer otherwise.
+    Relay,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -58,7 +61,10 @@ pub struct ConflictInfo {
 /// What a job moves. Fixed when queued, except `target` and `name`, which a rename changes.
 #[derive(Debug, Clone)]
 pub struct JobSpec {
+    /// The server written to, or read from for a download.
     pub session_id: String,
+    /// The server read from in a relay.
+    pub source_session_id: Option<String>,
     pub direction: Direction,
     pub kind: JobKind,
     pub name: String,
@@ -68,6 +74,12 @@ pub struct JobSpec {
     pub size: u64,
     /// Canonical source folders above this one, to stop at symbolic link loops.
     pub ancestors: Arc<[String]>,
+}
+
+impl JobSpec {
+    pub fn involves(&self, session_id: &str) -> bool {
+        self.session_id == session_id || self.source_session_id.as_deref() == Some(session_id)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -108,6 +120,8 @@ pub struct JobRun {
     pub delta: AtomicBool,
     /// File data a delta transfer sent over the network.
     pub delta_bytes: AtomicU64,
+    /// Set while two FTP servers send the file to each other (FXP).
+    pub direct: AtomicBool,
     max_workers: AtomicU32,
 }
 
@@ -120,6 +134,7 @@ impl JobRun {
             plan: OnceLock::new(),
             delta: AtomicBool::new(false),
             delta_bytes: AtomicU64::new(0),
+            direct: AtomicBool::new(false),
             max_workers: AtomicU32::new(1),
         }
     }
@@ -203,6 +218,8 @@ pub struct Job {
     pub speed: u64,
     /// Bytes sent over the network when rsync moved only the changes.
     pub delta_bytes: Option<u64>,
+    /// The servers of a relay sent the file to each other.
+    pub direct: bool,
     run: Option<Arc<JobRun>>,
     workers: u32,
     stop: Option<StopReason>,
@@ -222,6 +239,7 @@ impl Job {
             id: self.id,
             rank: self.rank.clone(),
             session_id: self.spec.session_id.clone(),
+            source_session_id: self.spec.source_session_id.clone(),
             direction: self.spec.direction,
             kind: self.spec.kind,
             name: self.spec.name.clone(),
@@ -241,6 +259,7 @@ impl Job {
             conflict: self.conflict.clone(),
             attempts: self.attempts,
             delta_bytes: self.delta_bytes,
+            direct: self.direct,
         }
     }
 }
@@ -252,6 +271,8 @@ pub struct JobSnapshot {
     /// Sorts jobs in processing order.
     pub rank: String,
     pub session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_session_id: Option<String>,
     pub direction: Direction,
     pub kind: JobKind,
     pub name: String,
@@ -270,6 +291,8 @@ pub struct JobSnapshot {
     pub attempts: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub delta_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub direct: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
@@ -400,6 +423,7 @@ impl Queue {
                 transferred: 0,
                 speed: 0,
                 delta_bytes: None,
+                direct: false,
                 run: None,
                 workers: 0,
                 stop: None,
@@ -415,9 +439,7 @@ impl Queue {
     }
 
     pub fn has_session_jobs(&self, session_id: &str) -> bool {
-        self.jobs
-            .values()
-            .any(|job| job.spec.session_id == session_id)
+        self.jobs.values().any(|job| job.spec.involves(session_id))
     }
 
     pub fn claim(&mut self, now: Instant) -> Option<Claim> {
@@ -465,6 +487,7 @@ impl Queue {
         job.conflict = None;
         job.speed = 0;
         job.delta_bytes = None;
+        job.direct = false;
         job.sample = Some((now, job.resume_offset.unwrap_or(0)));
         self.dirty.insert(id);
         Some(Claim {
@@ -548,6 +571,7 @@ impl Queue {
                 .delta
                 .load(Ordering::Relaxed)
                 .then(|| run.delta_bytes.load(Ordering::Relaxed));
+            job.direct = run.direct.load(Ordering::Relaxed);
         }
         self.dirty.insert(id);
 
@@ -698,7 +722,7 @@ impl Queue {
     pub fn session_job_ids(&self, session_id: &str) -> Vec<JobId> {
         self.jobs
             .values()
-            .filter(|job| job.spec.session_id == session_id && !job.is_finished())
+            .filter(|job| job.spec.involves(session_id) && !job.is_finished())
             .map(|job| job.id)
             .collect()
     }
@@ -814,13 +838,16 @@ impl Queue {
                 .delta
                 .load(Ordering::Relaxed)
                 .then(|| run.delta_bytes.load(Ordering::Relaxed));
+            let direct = run.direct.load(Ordering::Relaxed);
             if transferred != job.transferred
                 || speed != job.speed
                 || delta_bytes != job.delta_bytes
+                || direct != job.direct
             {
                 job.transferred = transferred;
                 job.speed = speed;
                 job.delta_bytes = delta_bytes;
+                job.direct = direct;
                 self.dirty.insert(job.id);
             }
             job.sample = Some((now, transferred));
@@ -875,7 +902,7 @@ fn changed_directory(spec: &JobSpec) -> ChangedDirectory {
             session_id: None,
             path: spec.target_directory.clone(),
         },
-        Direction::Upload => ChangedDirectory {
+        Direction::Upload | Direction::Relay => ChangedDirectory {
             side: Side::Remote,
             session_id: Some(spec.session_id.clone()),
             path: spec.target_directory.clone(),
@@ -896,6 +923,7 @@ mod tests {
     fn file(name: &str, size: u64) -> JobSpec {
         JobSpec {
             session_id: "session".into(),
+            source_session_id: None,
             direction: Direction::Upload,
             kind: JobKind::File,
             name: name.into(),
