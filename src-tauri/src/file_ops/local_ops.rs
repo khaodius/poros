@@ -413,7 +413,7 @@ mod tests {
             &root.join("backup"),
             Conflict::KeepBoth,
         ));
-        assert_eq!(summary.placed, [display(&root.join("backup/site"))]);
+        assert_eq!(summary.placed, [display(&root.join("backup").join("site"))]);
         assert_eq!(
             fs::read(root.join("backup/site/css/main.css")).unwrap(),
             b"p{}"
