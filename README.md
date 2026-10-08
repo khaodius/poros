@@ -30,6 +30,30 @@
 - **Saved connections**, with passwords stored only on request and only in the system keychain.
 - **Themes** as shareable JSON files, ten built in, with every color editable in settings.
 
+## Performance
+
+3,600 files totaling 1.4 GiB (3,000 of 16 to 256 KiB, 560 of 1 MiB, 40 of 12 MiB), median of
+three runs over a 1 Gbit/s link:
+
+| Client                     | Upload | Download |
+| -------------------------- | -----: | -------: |
+| Poros, 1 worker            | 20.3 s |   26.2 s |
+| Poros, 4 workers (default) | 14.1 s |   15.5 s |
+| Poros, 8 workers           | 13.5 s |   13.3 s |
+| OpenSSH sftp 9.6           | 17.6 s |   17.9 s |
+| rsync 3.2.7                | 13.6 s |   13.7 s |
+
+At 8 workers Poros sustains about 900 Mbit/s, 95% of the link's measured TCP throughput.
+
+Setup: Poros 0.2.0 release build and a stock OpenSSH 9.6 server on Ubuntu 24.04, in separate
+network namespaces joined by a link capped at 1 Gbit/s (941 Mbit/s measured with iperf3, no added
+latency), files on RAM disks, 4-core Xeon at 2.1 GHz. To reproduce, run
+`POROS_TEST_SSH_PORT=2222 cargo run --release --example transfer_benchmark` in `src-tauri`
+against a server set up as for the end-to-end tests.
+
+On a real connection, gigabit at both ends, Poros moved 3,643 files (1.4 GiB) in 16.6 s, about
+720 Mbit/s.
+
 ## Install
 
 Download an installer from the [latest release](https://github.com/khaodius/poros/releases/latest):
