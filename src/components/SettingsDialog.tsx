@@ -1,6 +1,7 @@
 import {
   ArrowLeftRight,
   CircleArrowUp,
+  Cloud,
   FileText,
   FolderSync,
   LayoutPanelLeft,
@@ -23,6 +24,7 @@ import { saveSettingsSection, useSettingsStore } from "../state/settingsStore";
 import { useUiStore, type SettingsSection } from "../state/uiStore";
 import { checkForUpdates, useUpdateStore } from "../state/updateStore";
 import { AppearanceSettings } from "./AppearanceSettings";
+import { CloudSettingsPage } from "./CloudSettings";
 import { Dialog } from "./Dialog";
 import { SyncSettingsPage } from "./SyncSettings";
 import {
@@ -37,6 +39,7 @@ const SECTIONS: { id: SettingsSection; label: string; icon: LucideIcon }[] = [
   { id: "transfers", label: "Transfers", icon: ArrowLeftRight },
   { id: "sync", label: "Sync", icon: FolderSync },
   { id: "connection", label: "Connection", icon: Network },
+  { id: "cloud", label: "Cloud accounts", icon: Cloud },
   { id: "interface", label: "Interface", icon: LayoutPanelLeft },
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "log", label: "Log", icon: FileText },
@@ -82,6 +85,7 @@ export function SettingsDialog({ section }: { section: SettingsSection }) {
           {section === "transfers" && <TransferSettingsPage settings={settings} />}
           {section === "sync" && <SyncSettingsPage settings={settings} />}
           {section === "connection" && <ConnectionSettingsPage settings={settings} />}
+          {section === "cloud" && <CloudSettingsPage settings={settings} />}
           {section === "interface" && <InterfaceSettingsPage settings={settings} />}
           {section === "appearance" && <AppearanceSettings />}
           {section === "log" && <LogSettingsPage settings={settings} />}
@@ -162,6 +166,12 @@ function TransferSettingsPage({ settings }: { settings: Settings }) {
           disabled={!transfers.segmented}
           onChange={(maxSegments) => set({ maxSegments })}
         />
+        <SwitchSetting
+          label="Copy directly between FTP servers (FXP)"
+          hint="Both servers must allow it. Otherwise, and between other servers, files stream through Poros."
+          checked={transfers.fxp}
+          onChange={(fxp) => set({ fxp })}
+        />
       </SettingGroup>
 
       <SettingGroup title="Bandwidth">
@@ -220,13 +230,13 @@ function TransferSettingsPage({ settings }: { settings: Settings }) {
         />
         <SwitchSetting
           label="Write to a temporary name, then rename"
-          hint="A file appears under its name only once complete, and a replaced file is never left half written."
+          hint="A file appears under its name only once complete, and a replaced file is never left half written. Uploads to FTP servers are written in place."
           checked={transfers.temporaryFiles}
           onChange={(temporaryFiles) => set({ temporaryFiles })}
         />
         <SwitchSetting
           label="Verify checksums"
-          hint="Compares both copies after each file with the server's sha256sum, sha1sum or md5sum. Reads every file once more on both sides."
+          hint="Compares both copies after each file with the server's sha256sum, sha1sum or md5sum, on SFTP servers. Reads every file once more on both sides."
           checked={transfers.verifyChecksums}
           onChange={(verifyChecksums) => set({ verifyChecksums })}
         />

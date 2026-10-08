@@ -1,4 +1,14 @@
-import { Ban, Download, File, Folder, HardDrive, Server, Sparkles, Upload } from "lucide-react";
+import {
+  ArrowLeftRight,
+  Ban,
+  Download,
+  File,
+  Folder,
+  HardDrive,
+  Server,
+  Sparkles,
+  Upload,
+} from "lucide-react";
 import { isDirLike } from "../lib/sort";
 import { useDragStore, type DragPayload, type DropTarget } from "../state/dragStore";
 import { getPane } from "../state/paneRegistry";
@@ -6,6 +16,8 @@ import { getPane } from "../state/paneRegistry";
 const POINTER_OFFSET = { x: 14, y: 12 };
 
 type Hint = { icon: typeof Upload; text: string; blocked?: boolean };
+
+const BLOCKED: Hint = { icon: Ban, text: "Only to or from server tabs", blocked: true };
 
 function hintFor(payload: DragPayload, target: DropTarget | null): Hint | null {
   if (!target) return null;
@@ -21,8 +33,11 @@ function hintFor(payload: DragPayload, target: DropTarget | null): Hint | null {
   if (source.kind === "remote" && destination.kind === "local") {
     return { icon: Download, text: `Download to ${folderName}` };
   }
-  if (source.tabId === destination.tabId && target.folder === null) return null;
-  return { icon: Ban, text: "Only between local and server tabs", blocked: true };
+  if (source.tabId === destination.tabId) return target.folder === null ? null : BLOCKED;
+  if (source.kind === "remote" && destination.kind === "remote") {
+    return { icon: ArrowLeftRight, text: `Copy to ${folderName}` };
+  }
+  return BLOCKED;
 }
 
 /**

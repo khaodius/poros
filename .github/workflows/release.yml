@@ -132,10 +132,15 @@ jobs:
 
       - run: npm ci
 
+      # The Google and Microsoft apps cloud storage signs in with by default. Without them,
+      # users add their own app registrations in Settings.
       - name: Build and sign the installers
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          POROS_GOOGLE_CLIENT_ID: ${{ secrets.POROS_GOOGLE_CLIENT_ID }}
+          POROS_GOOGLE_CLIENT_SECRET: ${{ secrets.POROS_GOOGLE_CLIENT_SECRET }}
+          POROS_MICROSOFT_CLIENT_ID: ${{ secrets.POROS_MICROSOFT_CLIENT_ID }}
         run: npm run tauri build -- --config src-tauri/tauri.release.conf.json
 
       - uses: actions/upload-artifact@v4

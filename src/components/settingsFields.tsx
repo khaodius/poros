@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { RotateCcw } from "lucide-react";
 import { Stepper } from "./Stepper";
 
@@ -120,6 +120,55 @@ export function SelectSetting<T extends string>({
           </option>
         ))}
       </select>
+    </SettingRow>
+  );
+}
+
+interface TextSettingProps {
+  label: string;
+  hint?: string;
+  value: string;
+  placeholder?: string;
+  disabled?: boolean;
+  /** For long values such as app IDs. */
+  wide?: boolean;
+  onCommit: (value: string) => void;
+}
+
+/** Saves when the box loses focus or Enter is pressed, so the backend's tidying does not fight typing. */
+export function TextSetting({
+  label,
+  hint,
+  value,
+  placeholder,
+  disabled,
+  wide,
+  onCommit,
+}: TextSettingProps) {
+  const [typed, setTyped] = useState<string | null>(null);
+  const commit = () => {
+    if (typed !== null && typed !== value) onCommit(typed);
+    setTyped(null);
+  };
+  return (
+    <SettingRow label={label} hint={hint} disabled={disabled}>
+      <input
+        value={typed ?? value}
+        aria-label={label}
+        placeholder={placeholder}
+        className={wide ? "is-wide" : undefined}
+        spellCheck={false}
+        disabled={disabled}
+        onChange={(event) => setTyped(event.target.value)}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") commit();
+          if (event.key === "Escape" && typed !== null) {
+            event.preventDefault();
+            setTyped(null);
+          }
+        }}
+      />
     </SettingRow>
   );
 }

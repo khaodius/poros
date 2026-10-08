@@ -22,6 +22,18 @@ describe("sanitizeSettings", () => {
     expect(settings.log.levels).toEqual({ info: true, warn: false, error: true, server: true });
   });
 
+  it("keeps the cloud apps and the FXP switch", () => {
+    const settings = sanitizeSettings({
+      transfers: { fxp: false },
+      cloud: { googleClientId: "id.apps.googleusercontent.com", microsoftTenant: 5 },
+    });
+    expect(settings.transfers.fxp).toBe(false);
+    expect(settings.cloud).toEqual({
+      ...DEFAULT_SETTINGS.cloud,
+      googleClientId: "id.apps.googleusercontent.com",
+    });
+  });
+
   it("turns the old compact rows switch into a row height", () => {
     expect(sanitizeSettings({ appearance: { compactRows: true } }).appearance.rowHeight).toBe(21);
     expect(sanitizeSettings({ appearance: { compactRows: false } }).appearance.rowHeight).toBe(24);

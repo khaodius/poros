@@ -1,12 +1,15 @@
 pub mod checksum;
+pub mod cloud;
 pub mod commands;
 pub mod connections;
 pub mod error;
 pub mod events;
 pub mod fonts;
 pub mod format;
+pub mod ftp;
 pub mod local;
 pub mod model;
+pub mod protocol;
 pub mod remote_path;
 pub mod rsync;
 pub mod session;
@@ -16,6 +19,8 @@ pub mod ssh;
 pub mod storage;
 pub mod sync;
 pub mod themes;
+pub mod timestamp;
+pub mod tls;
 pub mod transfer;
 
 use std::sync::Arc;
@@ -24,6 +29,7 @@ use std::time::Duration;
 use tauri::webview::PageLoadEvent;
 use tauri::{Manager, RunEvent, WindowEvent};
 
+use cloud::OAuthVault;
 use commands::PendingWindows;
 use connections::{ConnectionStore, Keychain};
 use events::Events;
@@ -52,6 +58,19 @@ pub fn run() {
                 config_dir.join("known_hosts"),
                 events.clone(),
             ));
+            let connections = Arc::new(ConnectionStore::new(
+                config_dir.join("connections.json"),
+                Box::new(Keychain),
+            ));
+            let store = connections.clone();
+            sessions.set_secret_sink(Arc::new(move |id: &str, secret: &str| {
+                let (store, id, secret) = (store.clone(), id.to_string(), secret.to_string());
+                tauri::async_runtime::spawn_blocking(move || {
+                    if let Err(error) = store.update_secret(&id, &secret) {
+                        log::warn!("Could not keep the renewed sign-in: {}", error.message);
+                    }
+                });
+            }));
             let transfers =
                 TransferManager::new(sessions.clone(), events.clone(), settings.get().transfers);
             transfers.keep_queue_in(config_dir.join("transfers.json"));
@@ -59,10 +78,8 @@ pub fn run() {
             app.manage(SyncManager::new(sessions.clone(), events.clone()));
             app.manage(sessions);
             app.manage(settings);
-            app.manage(Arc::new(ConnectionStore::new(
-                config_dir.join("connections.json"),
-                Box::new(Keychain),
-            )));
+            app.manage(connections);
+            app.manage(OAuthVault::default());
             app.manage(ThemeStore::new(config_dir.join("themes")));
             app.manage(PendingWindows::default());
             app.manage(events);
@@ -131,6 +148,9 @@ pub fn run() {
             commands::connections_list,
             commands::connections_save,
             commands::connections_delete,
+            commands::cloud_providers,
+            commands::cloud_sign_in,
+            commands::cloud_cancel_sign_in,
             commands::themes_list,
             commands::theme_save,
             commands::theme_delete,

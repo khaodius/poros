@@ -1,14 +1,15 @@
 import { useState } from "react";
-import { HardDrive, KeyRound, Lock, Plus, Server, UserRound } from "lucide-react";
-import { EMPTY_DRAFT } from "../lib/connectDraft";
+import { Globe, HardDrive, KeyRound, Lock, Plus, UserRound } from "lucide-react";
+import { EMPTY_DRAFT, connectionDetail } from "../lib/connectDraft";
 import type { SavedConnection } from "../lib/types";
 import { connectSaved } from "../state/connectActions";
 import { useLayoutStore } from "../state/layoutStore";
 import { byRecentUse, useSavedConnections } from "../state/savedConnectionsStore";
 import { useUiStore } from "../state/uiStore";
+import { ConnectionIcon } from "./ConnectionIcon";
 import { PorosLogo } from "./PorosLogo";
 
-const AUTH_ICONS = { password: Lock, publicKey: KeyRound, agent: UserRound };
+const AUTH_ICONS = { password: Lock, publicKey: KeyRound, agent: UserRound, oauth: Globe };
 
 export function WelcomePanel({ tabId }: { tabId: string }) {
   const connections = useSavedConnections((state) => state.connections);
@@ -38,7 +39,7 @@ export function WelcomePanel({ tabId }: { tabId: string }) {
             onClick={() => openDialog({ kind: "connect", draft: EMPTY_DRAFT, targetTabId: tabId })}
           >
             <Plus size={14} />
-            Connect to server
+            Connect
           </button>
           <button
             type="button"
@@ -71,13 +72,14 @@ export function WelcomePanel({ tabId }: { tabId: string }) {
                       disabled={connectingId !== null}
                       onClick={() => void connect(connection)}
                     >
-                      <Server size={16} className="saved-item-icon" />
+                      <ConnectionIcon
+                        protocol={connection.protocol}
+                        size={16}
+                        className="saved-item-icon"
+                      />
                       <span className="saved-item-text">
                         <span className="saved-item-name">{connection.name}</span>
-                        <span className="saved-item-detail">
-                          {connection.username}@{connection.host}
-                          {connection.port === 22 ? "" : `:${connection.port}`}
-                        </span>
+                        <span className="saved-item-detail">{connectionDetail(connection)}</span>
                       </span>
                       {connecting ? (
                         <span className="saved-item-status">Connecting...</span>

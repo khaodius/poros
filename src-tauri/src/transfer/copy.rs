@@ -254,7 +254,7 @@ pub async fn upload(context: &CopyContext<'_>, file: &mut File, handle: &str) ->
     Ok(())
 }
 
-async fn read_up_to(file: &mut File, len: usize) -> AppResult<Vec<u8>> {
+pub(super) async fn read_up_to(file: &mut File, len: usize) -> AppResult<Vec<u8>> {
     let mut buffer = vec![0; len];
     let mut filled = 0;
     while filled < len {

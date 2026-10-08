@@ -6,6 +6,7 @@ pub mod keys;
 pub mod known_hosts;
 
 use std::borrow::Cow;
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -16,6 +17,7 @@ use tokio::net::{TcpSocket, TcpStream};
 
 use crate::error::{AppError, AppResult, ErrorKind, HostKeyInfo};
 use crate::events::{Events, LogLevel};
+use crate::protocol::Protocol;
 use crate::settings::{MAX_SOCKET_BUFFER_KIB, MIN_SOCKET_BUFFER_KIB};
 use known_hosts::{fingerprint, HostKeyStatus, KnownHosts};
 
@@ -37,11 +39,27 @@ pub enum AuthMethod {
         passphrase: Option<String>,
     },
     Agent,
+    /// A Google or Microsoft account signed in through the browser. The frontend names a
+    /// fresh sign-in by `grant_id`; the refresh token itself stays in the backend.
+    #[serde(rename = "oauth", rename_all = "camelCase")]
+    OAuth {
+        #[serde(default)]
+        grant_id: Option<String>,
+        #[serde(skip)]
+        refresh_token: String,
+        /// The app registration to sign in as, filled from Settings before connecting.
+        #[serde(skip)]
+        client: Option<crate::cloud::OAuthClient>,
+    },
 }
 
+/// What to connect to and how. Despite living with the SSH code, it describes a connection
+/// of any protocol; fields that do not apply to a protocol are ignored.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectProfile {
+    #[serde(default)]
+    pub protocol: Protocol,
     pub host: String,
     pub port: u16,
     pub username: String,
@@ -63,6 +81,10 @@ pub struct ConnectProfile {
     /// Fills an empty password or passphrase from the system keychain.
     #[serde(default)]
     pub saved_connection_id: Option<String>,
+    /// FTP data connections come from the server to Poros (active mode) instead of the other
+    /// way round (passive mode).
+    #[serde(default)]
+    pub ftp_active: bool,
 }
 
 impl ConnectProfile {
@@ -74,6 +96,7 @@ impl ConnectProfile {
                 passphrase.as_deref().unwrap_or("").is_empty()
             }
             AuthMethod::Agent => false,
+            AuthMethod::OAuth { refresh_token, .. } => refresh_token.is_empty(),
         }
     }
 
@@ -82,22 +105,42 @@ impl ConnectProfile {
             AuthMethod::Password { password } => *password = secret,
             AuthMethod::PublicKey { passphrase, .. } => *passphrase = Some(secret),
             AuthMethod::Agent => {}
+            AuthMethod::OAuth { refresh_token, .. } => *refresh_token = secret,
+        }
+    }
+
+    /// FTP servers take `anonymous` when no username is given.
+    pub fn login_name(&self) -> &str {
+        match self.username.trim() {
+            "" if self.protocol.is_ftp() => "anonymous",
+            username => username,
         }
     }
 
     pub fn label(&self) -> String {
-        if self.port == 22 {
-            format!("{}@{}", self.username, self.host)
+        if self.protocol.is_cloud() {
+            return format!("{} ({})", self.protocol.display_name(), self.username);
+        }
+        let scheme = match self.protocol {
+            Protocol::Sftp => "",
+            Protocol::Ftp => "ftp://",
+            _ => "ftps://",
+        };
+        if self.port == self.protocol.default_port() {
+            format!("{scheme}{}@{}", self.login_name(), self.host)
         } else {
-            format!("{}@{}:{}", self.username, self.host, self.port)
+            format!("{scheme}{}@{}:{}", self.login_name(), self.host, self.port)
         }
     }
 
-    fn validate(&self) -> AppResult<()> {
+    pub fn validate(&self) -> AppResult<()> {
+        if self.protocol.is_cloud() {
+            return Ok(());
+        }
         if self.host.trim().is_empty() {
             return Err(AppError::invalid("Host is required"));
         }
-        if self.username.trim().is_empty() {
+        if self.protocol == Protocol::Sftp && self.username.trim().is_empty() {
             return Err(AppError::invalid("Username is required"));
         }
         if self.port == 0 {
@@ -149,6 +192,7 @@ impl client::Handler for ClientHandler {
             port: self.port,
             algorithm: key.algorithm().as_str().to_string(),
             fingerprint: fingerprint(&key),
+            certificate_problem: None,
         };
         let status = self.known_hosts.check(&self.host, self.port, &key);
         if status == HostKeyStatus::Trusted {
@@ -325,33 +369,40 @@ pub async fn connect(
     })
 }
 
-/// Connects to the first address that answers. Buffer sizes are set before connecting so the
-/// TCP window scale the handshake negotiates can use them.
-async fn open_socket(profile: &ConnectProfile) -> std::io::Result<TcpStream> {
+/// Connects to the first address that answers.
+pub(crate) async fn open_socket(profile: &ConnectProfile) -> std::io::Result<TcpStream> {
     let mut last_error = None;
     for address in tokio::net::lookup_host((profile.host.trim(), profile.port)).await? {
-        let socket = if address.is_ipv4() {
-            TcpSocket::new_v4()?
-        } else {
-            TcpSocket::new_v6()?
-        };
-        if let Some(kib) = profile.receive_buffer_kib {
-            socket.set_recv_buffer_size(socket_buffer_bytes(kib))?;
-        }
-        if let Some(kib) = profile.send_buffer_kib {
-            socket.set_send_buffer_size(socket_buffer_bytes(kib))?;
-        }
-        match socket.connect(address).await {
-            Ok(stream) => {
-                stream.set_nodelay(true)?;
-                return Ok(stream);
-            }
+        match connect_socket(address, profile).await {
+            Ok(stream) => return Ok(stream),
             Err(error) => last_error = Some(error),
         }
     }
     Err(last_error.unwrap_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::NotFound, "the host name has no address")
     }))
+}
+
+/// Buffer sizes are set before connecting so the TCP window scale the handshake negotiates
+/// can use them.
+pub(crate) async fn connect_socket(
+    address: SocketAddr,
+    profile: &ConnectProfile,
+) -> std::io::Result<TcpStream> {
+    let socket = if address.is_ipv4() {
+        TcpSocket::new_v4()?
+    } else {
+        TcpSocket::new_v6()?
+    };
+    if let Some(kib) = profile.receive_buffer_kib {
+        socket.set_recv_buffer_size(socket_buffer_bytes(kib))?;
+    }
+    if let Some(kib) = profile.send_buffer_kib {
+        socket.set_send_buffer_size(socket_buffer_bytes(kib))?;
+    }
+    let stream = socket.connect(address).await?;
+    stream.set_nodelay(true)?;
+    Ok(stream)
 }
 
 fn socket_buffer_bytes(kib: u32) -> u32 {

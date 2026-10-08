@@ -5,7 +5,11 @@ import type { SavedConnection } from "../lib/types";
 interface SavedConnectionsState {
   connections: SavedConnection[];
   load: () => Promise<void>;
-  save: (connection: SavedConnection, secret?: string | null) => Promise<SavedConnection>;
+  save: (
+    connection: SavedConnection,
+    secret?: string | null,
+    oauthGrant?: string | null,
+  ) => Promise<SavedConnection>;
   remove: (id: string) => Promise<void>;
 }
 
@@ -14,8 +18,8 @@ export const useSavedConnections = create<SavedConnectionsState>((set, get) => (
   load: async () => {
     set({ connections: await savedConnections.list() });
   },
-  save: async (connection, secret) => {
-    const saved = await savedConnections.save(connection, secret);
+  save: async (connection, secret, oauthGrant) => {
+    const saved = await savedConnections.save(connection, secret, oauthGrant);
     await get().load();
     return saved;
   },

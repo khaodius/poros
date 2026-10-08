@@ -132,6 +132,9 @@ export function FilePane({
     const entry = sessionId ? state.sessions[sessionId] : undefined;
     return Boolean(entry?.profile && !entry.info.savedConnectionId);
   });
+  const protocol = useSessionStore((state) =>
+    sessionId ? state.sessions[sessionId]?.info.protocol : undefined,
+  );
   const where = source.kind === "remote" ? "remote" : "local";
   const paneRef = useRef(pane);
   useLayoutEffect(() => {
@@ -226,10 +229,12 @@ export function FilePane({
   /** Synchronizes the folder clicked, or the one shown, with the other side. */
   const syncMenuItem = (entry: FileEntry | null): MenuItem => {
     const folder = entry && isDirLike(entry) ? entry.path : (pane.listing?.path ?? "");
+    // Synchronization runs over SSH.
+    const synchronizable = source.kind === "local" || protocol === "sftp";
     return {
-      label: "Synchronize folder...",
+      label: synchronizable ? "Synchronize folder..." : "Synchronize folder (SFTP only)",
       icon: <FolderSync size={14} />,
-      disabled: !folder,
+      disabled: !folder || !synchronizable,
       onSelect: () =>
         openDialog(
           source.kind === "local"

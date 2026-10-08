@@ -1,6 +1,6 @@
-// Mirrors src-tauri/src/settings.rs. The backend owns and clamps the transfer and connection
-// sections; the interface, appearance, log, sync and updates sections are stored as given, so
-// they are checked here.
+// Mirrors src-tauri/src/settings.rs. The backend owns and clamps the transfer, connection and
+// cloud sections; the interface, appearance, log, sync and updates sections are stored as given,
+// so they are checked here.
 
 import { DETAIL_COLUMNS, type DetailColumn } from "./columns";
 import { SORT_KEYS, type SortSpec } from "./sort";
@@ -44,6 +44,8 @@ export interface TransferSettings {
   deltaThresholdKib: number;
   /** The command that starts rsync on the server. */
   rsyncPath: string;
+  /** Copies between two FTP servers go directly from one to the other when both allow it. */
+  fxp: boolean;
 }
 
 export interface ConnectionSettings {
@@ -58,6 +60,15 @@ export interface ConnectionSettings {
   /** Lets the system size the TCP send buffer; off uses `sendBufferKib`. */
   autoTuneSendBuffer: boolean;
   sendBufferKib: number;
+}
+
+/** The apps Poros signs in to cloud storage with; empty uses the one built into the release. */
+export interface CloudSettings {
+  googleClientId: string;
+  googleClientSecret: string;
+  microsoftClientId: string;
+  /** `common`, `consumers`, `organizations` or a directory (tenant) ID; empty means `common`. */
+  microsoftTenant: string;
 }
 
 export type DoubleClickAction = "transfer" | "nothing";
@@ -122,6 +133,7 @@ export interface UpdateSettings {
 export interface Settings {
   transfers: TransferSettings;
   connection: ConnectionSettings;
+  cloud: CloudSettings;
   interface: InterfaceSettings;
   appearance: AppearanceSettings;
   log: LogSettings;
@@ -165,6 +177,7 @@ export const DEFAULT_SETTINGS: Settings = {
     deltaTransfers: true,
     deltaThresholdKib: 1024,
     rsyncPath: "rsync",
+    fxp: true,
   },
   connection: {
     timeoutSecs: 20,
@@ -175,6 +188,12 @@ export const DEFAULT_SETTINGS: Settings = {
     receiveBufferKib: 128,
     autoTuneSendBuffer: true,
     sendBufferKib: 128,
+  },
+  cloud: {
+    googleClientId: "",
+    googleClientSecret: "",
+    microsoftClientId: "",
+    microsoftTenant: "",
   },
   interface: {
     doubleClickFile: "transfer",
@@ -250,6 +269,7 @@ export function sanitizeSettings(stored: unknown): Settings {
   const settings: Settings = {
     transfers: mergeSection(DEFAULT_SETTINGS.transfers, source.transfers),
     connection: mergeSection(DEFAULT_SETTINGS.connection, source.connection),
+    cloud: mergeSection(DEFAULT_SETTINGS.cloud, source.cloud),
     interface: mergeSection(DEFAULT_SETTINGS.interface, source.interface),
     appearance: mergeSection(DEFAULT_SETTINGS.appearance, source.appearance),
     log: mergeSection(DEFAULT_SETTINGS.log, source.log),
