@@ -83,15 +83,17 @@ the network or the disk is Rust.
 
 ## Install
 
-Prebuilt installers are attached to each [release](https://github.com/khaodius/poros/releases)
-once one is published:
+Prebuilt installers are attached to each [release](https://github.com/khaodius/poros/releases):
 
 | Platform | Packages                    |
 | -------- | --------------------------- |
 | Windows  | `.msi`, `-setup.exe`        |
 | Linux    | `.deb`, `.rpm`, `.AppImage` |
 
-Every CI run also uploads installers as build artifacts.
+Each release lists the SHA-256 checksum of every installer, also in its `SHA256SUMS.txt`, and
+every installer carries a signed build provenance attestation; the release notes show how to
+check both. What changed in each version is in the [changelog](CHANGELOG.md). Every CI run also
+uploads installers as build artifacts.
 
 ### Upgrading
 

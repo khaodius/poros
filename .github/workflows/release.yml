@@ -1,0 +1,226 @@
+name: Release
+
+# Builds the Linux and Windows installers from one commit, publishes them with SHA-256
+# checksums and signed build provenance, and writes the release notes from CHANGELOG.md.
+# Push a tag named after the app version (v0.2.0 for 0.2.0), or run the workflow by hand on a
+# branch whose version has no release yet and it tags the commit it built.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check the version and tag
+        id: version
+        run: |
+          version=$(jq -r .version src-tauri/tauri.conf.json)
+          tag="v$version"
+          npm_version=$(jq -r .version package.json)
+          cargo_version=$(sed -n 's/^version = "\(.*\)"$/\1/p' src-tauri/Cargo.toml | head -n 1)
+          if [ "$npm_version" != "$version" ] || [ "$cargo_version" != "$version" ]; then
+            echo "::error::Versions differ: tauri.conf.json $version, package.json $npm_version, Cargo.toml $cargo_version"
+            exit 1
+          fi
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            if [ "$GITHUB_REF_NAME" != "$tag" ]; then
+              echo "::error::Tag $GITHUB_REF_NAME does not match the app version $version"
+              exit 1
+            fi
+          else
+            if git fetch --quiet --depth=1 origin "+refs/tags/$tag:refs/tags/$tag" 2> /dev/null &&
+              [ "$(git rev-parse "$tag^{commit}")" != "$GITHUB_SHA" ]; then
+              echo "::error::$tag already exists on another commit; bump the version first"
+              exit 1
+            fi
+          fi
+          if ! awk -v v="$version" '$1 == "##" && $2 == v { found = 1 } END { exit !found }' CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no section for $version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  bundle:
+    name: Bundle (${{ matrix.platform.name }})
+    needs: version
+    runs-on: ${{ matrix.platform.os }}
+    strategy:
+      matrix:
+        platform:
+          - name: Linux
+            os: ubuntu-22.04
+            artifacts: |
+              src-tauri/target/release/bundle/deb/*.deb
+              src-tauri/target/release/bundle/rpm/*.rpm
+              src-tauri/target/release/bundle/appimage/*.AppImage
+          - name: Windows
+            os: windows-latest
+            artifacts: |
+              src-tauri/target/release/bundle/msi/*.msi
+              src-tauri/target/release/bundle/nsis/*.exe
+    env:
+      APPIMAGE_EXTRACT_AND_RUN: 1
+    # Release builds start from a clean toolchain and no build cache, so nothing from an
+    # earlier run can end up in an installer.
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Linux system libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - run: npm ci
+      - run: npm run tauri build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ runner.os }}
+          path: ${{ matrix.platform.artifacts }}
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish
+    needs: [version, bundle]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      TAG: ${{ needs.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: bundles
+
+      - name: Collect the installers
+        run: |
+          mkdir release
+          find bundles -type f -exec mv -n -t release {} +
+          if [ "$(find bundles -type f | wc -l)" -ne 0 ]; then
+            echo "::error::Two installers share a file name"
+            exit 1
+          fi
+          for pattern in '*.deb' '*.rpm' '*.AppImage' '*.msi' '*-setup.exe'; do
+            count=$(find release -name "$pattern" | wc -l)
+            if [ "$count" -ne 1 ]; then
+              echo "::error::Expected one $pattern installer, found $count"
+              exit 1
+            fi
+          done
+          ls -l release
+
+      - name: Write checksums
+        working-directory: release
+        run: |
+          sha256sum -- * > "$RUNNER_TEMP/SHA256SUMS.txt"
+          mv "$RUNNER_TEMP/SHA256SUMS.txt" .
+          cat SHA256SUMS.txt
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: release/*
+
+      - name: Write release notes
+        run: |
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          tree_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/tree/$TAG"
+          {
+            awk -v v="$VERSION" '$1 == "##" { if (found) exit; found = ($2 == v); next } found' CHANGELOG.md
+            echo
+            echo "## Downloads"
+            echo
+            echo "| File | For | SHA-256 |"
+            echo "| ---- | --- | ------- |"
+            while read -r hash file; do
+              case "$file" in
+                *-setup.exe) kind="Windows setup (recommended for Windows)" ;;
+                *.msi) kind="Windows Installer package" ;;
+                *.deb) kind="Debian, Ubuntu, Linux Mint" ;;
+                *.rpm) kind="Fedora, RHEL, openSUSE" ;;
+                *.AppImage) kind="Any x86-64 Linux, no install needed" ;;
+                *) kind="" ;;
+              esac
+              echo "| \`$file\` | $kind | \`$hash\` |"
+            done < release/SHA256SUMS.txt
+            echo
+            echo "## Verifying a download"
+            echo
+            echo "\`SHA256SUMS.txt\` lists the SHA-256 checksum of every file above. If the checksum of"
+            echo "your copy matches, it is byte for byte the file published here and was not changed or"
+            echo "corrupted on the way to you."
+            echo
+            echo "On Linux, in the folder with your download and \`SHA256SUMS.txt\`:"
+            echo
+            echo '```sh'
+            echo "sha256sum --check --ignore-missing SHA256SUMS.txt"
+            echo '```'
+            echo
+            echo "On Windows, in PowerShell, then compare the result with the table (letter case does not matter):"
+            echo
+            echo '```powershell'
+            echo "Get-FileHash .\\Poros_${VERSION}_x64-setup.exe -Algorithm SHA256"
+            echo '```'
+            echo
+            echo "Every file also carries a signed build provenance attestation, recorded in a public"
+            echo "transparency log, which proves it was built by this repository's release workflow from"
+            echo "the \`$TAG\` tag and not uploaded by hand. With the [GitHub CLI](https://cli.github.com):"
+            echo
+            echo '```sh'
+            echo "gh attestation verify Poros_${VERSION}_amd64.deb --repo $GITHUB_REPOSITORY"
+            echo '```'
+            echo
+            echo "Checksums and attestations prove where a file came from and that it is unaltered; they"
+            echo "are not a virus scan. Everything in the installers is built from the source at"
+            echo "[\`$TAG\`]($tree_url), in public, by [this workflow run]($run_url)."
+            echo
+            echo "The Windows installers are not code-signed yet, so SmartScreen may warn about an"
+            echo "unknown publisher. Choose **More info** and then **Run anyway** once the checksum matches."
+          } > notes.md
+          cat notes.md
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          verify=()
+          if [ "$GITHUB_REF_TYPE" = tag ]; then verify=(--verify-tag); fi
+          gh release create "$TAG" release/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Poros $VERSION" \
+            --notes-file notes.md \
+            "${verify[@]}"
