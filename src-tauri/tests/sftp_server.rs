@@ -2,7 +2,7 @@
 //!
 //! The server must listen on 127.0.0.1 and accept, for `POROS_TEST_SSH_USER`:
 //! the password in `POROS_TEST_SSH_PASSWORD`, and every `tests/fixtures/keys/*.pub` key.
-//! The README describes a throwaway `sshd` setup.
+//! The end-to-end step in `.github/workflows/ci.yml` starts a suitable throwaway `sshd`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
