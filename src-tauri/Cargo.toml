@@ -23,7 +23,7 @@ tauri-plugin-dialog = "2.8"
 tauri-plugin-updater = "2.13"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "sync", "time", "net", "io-util"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "sync", "time", "net", "io-util", "process"] }
 tokio-util = "0.7"
 futures = "0.3"
 # `ring` instead of the default `aws-lc-rs` backend: it builds with only a C compiler,
@@ -57,6 +57,10 @@ rustls-platform-verifier = "0.7"
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2", "json", "form", "query"] }
 ring = "0.17"
 percent-encoding = "2"
+# Local time for scheduled tasks, daylight saving changes included.
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
+# Desktop notifications when the transfer queue finishes.
+tauri-plugin-notification = "2.5"
 
 [dev-dependencies]
 tempfile = "3"

@@ -24,6 +24,8 @@ const saved: SavedConnection = {
   saveSecret: true,
   lastUsed: 5,
   ftpActive: false,
+  bypassProxy: true,
+  jumpConnectionId: "bastion",
 };
 
 describe("profileFromDraft", () => {
@@ -71,6 +73,22 @@ describe("saved connections", () => {
     expect(draft.hasSavedSecret).toBe(true);
     expect(profileFromDraft(draft).savedConnectionId).toBe("abc");
     expect(savedFromDraft(draft)).toEqual({ ...saved, lastUsed: undefined });
+  });
+
+  it("carries the route to the server", () => {
+    const profile = profileFromDraft(draftFromSaved(saved));
+    expect(profile.jumpConnectionId).toBe("bastion");
+    expect(profile.bypassProxy).toBe(true);
+    const direct = savedFromDraft({ ...draftFromSaved(saved), jumpConnectionId: "" });
+    expect(direct.jumpConnectionId).toBeNull();
+  });
+
+  it("keeps the proxy and jump host to SFTP connections", () => {
+    const ftp = withProtocol(draftFromSaved(saved), "ftp");
+    expect(profileFromDraft(ftp).jumpConnectionId).toBeUndefined();
+    expect(profileFromDraft(ftp).bypassProxy).toBeUndefined();
+    expect(savedFromDraft(ftp).jumpConnectionId).toBeNull();
+    expect(savedFromDraft(ftp).bypassProxy).toBe(false);
   });
 
   it("never marks agent connections as having a secret", () => {

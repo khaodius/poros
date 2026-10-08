@@ -1,3 +1,4 @@
+pub mod automation;
 pub mod checksum;
 pub mod cloud;
 pub mod commands;
@@ -11,6 +12,7 @@ pub mod local;
 pub mod model;
 pub mod protocol;
 pub mod remote_path;
+pub mod route;
 pub mod rsync;
 pub mod session;
 pub mod settings;
@@ -29,6 +31,8 @@ use std::time::Duration;
 use tauri::webview::PageLoadEvent;
 use tauri::{Manager, RunEvent, WindowEvent};
 
+use automation::remote_command::CommandRunner;
+use automation::scheduler::Scheduler;
 use cloud::OAuthVault;
 use commands::PendingWindows;
 use connections::{ConnectionStore, Keychain};
@@ -48,6 +52,7 @@ const REVEAL_FALLBACK: Duration = Duration::from_secs(2);
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
@@ -73,16 +78,26 @@ pub fn run() {
             }));
             let transfers =
                 TransferManager::new(sessions.clone(), events.clone(), settings.get().transfers);
+            let (handle, store) = (app.handle().clone(), connections.clone());
+            transfers.resolve_routes_with(Arc::new(move |profile| {
+                let settings = handle.state::<SettingsStore>().get().connection;
+                route::resolve(profile, &settings, &store)
+            }));
             transfers.keep_queue_in(config_dir.join("transfers.json"));
             app.manage(transfers);
             app.manage(SyncManager::new(sessions.clone(), events.clone()));
+            app.manage(CommandRunner::new(sessions.clone(), events.clone()));
             app.manage(sessions);
             app.manage(settings);
             app.manage(connections);
             app.manage(OAuthVault::default());
             app.manage(ThemeStore::new(config_dir.join("themes")));
             app.manage(PendingWindows::default());
+            // Last, since tasks take everything above from the app's state.
+            let scheduler = Scheduler::load(config_dir.join("schedules.json"), events.clone());
             app.manage(events);
+            scheduler.start(app.handle().clone());
+            app.manage(scheduler);
             Ok(())
         })
         .on_page_load(|webview, payload| {
@@ -145,6 +160,7 @@ pub fn run() {
             commands::sync_run,
             commands::settings_get,
             commands::settings_set,
+            commands::proxy_password_set,
             commands::connections_list,
             commands::connections_save,
             commands::connections_delete,
@@ -158,6 +174,15 @@ pub fn run() {
             commands::themes_open_folder,
             commands::fonts_list,
             commands::save_text_file,
+            commands::remote_command_run,
+            commands::remote_command_stop,
+            commands::power_action,
+            commands::local_command_run,
+            commands::app_exit,
+            commands::schedules_list,
+            commands::schedule_save,
+            commands::schedule_delete,
+            commands::schedule_run_now,
             commands::window_open,
             commands::window_initial_layout,
             commands::app_restart,

@@ -23,7 +23,7 @@ use poros_lib::protocol::{Protocol, RemoteFileSystem, WriteRequest};
 use poros_lib::remote_path;
 use poros_lib::session::{SessionInfo, SessionManager};
 use poros_lib::settings::TransferSettings;
-use poros_lib::ssh::{AuthMethod, ConnectProfile, HostKeyApproval};
+use poros_lib::ssh::{AuthMethod, ConnectProfile, HostKeyApproval, Route};
 use poros_lib::tls::CERTIFICATE_ALGORITHM;
 use poros_lib::transfer::{
     Direction, EnqueueRequest, ExistsAction, JobSnapshot, JobState, TransferItem, TransferList,
@@ -108,6 +108,9 @@ fn profile(server: &Server, password: &str) -> ConnectProfile {
         send_buffer_kib: None,
         saved_connection_id: None,
         ftp_active: false,
+        bypass_proxy: false,
+        jump_connection_id: None,
+        route: Route::default(),
     }
 }
 

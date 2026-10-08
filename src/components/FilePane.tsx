@@ -49,6 +49,7 @@ import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { FileList } from "./FileList";
 import { PathBar } from "./PathBar";
 import { PromptDialog } from "./PromptDialog";
+import { serverCommandsMenu } from "./commandMenu";
 
 type PaneDialog =
   | { type: "newFolder" }
@@ -339,6 +340,10 @@ export function FilePane({
       },
       ...(entry ? [] : [sortMenu()]),
       syncMenuItem(entry),
+      // Commands run over SSH.
+      ...(sessionId && protocol === "sftp" && pane.listing
+        ? [serverCommandsMenu(sessionId, { folder: pane.listing.path, items: targets })]
+        : []),
       "separator",
       {
         label: "Rename",

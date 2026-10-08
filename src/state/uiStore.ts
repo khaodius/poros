@@ -1,8 +1,18 @@
 import { create } from "zustand";
+import type { CommandTarget } from "../lib/commands";
 import type { ConnectDraft } from "../lib/connectDraft";
+import type { ScheduledTask } from "../lib/types";
 
 export type SettingsSection =
-  "transfers" | "sync" | "connection" | "cloud" | "interface" | "appearance" | "log" | "updates";
+  | "transfers"
+  | "sync"
+  | "connection"
+  | "cloud"
+  | "automation"
+  | "interface"
+  | "appearance"
+  | "log"
+  | "updates";
 
 export type AppDialog =
   | { kind: "connect"; draft: ConnectDraft; targetTabId?: string; error?: string }
@@ -12,7 +22,10 @@ export type AppDialog =
   | { kind: "sync"; localPath?: string; sessionId?: string; remotePath?: string }
   | { kind: "closeTab"; tabId: string; sessionId: string; label: string; pendingTransfers: number }
   /** `returnTo` reopens the dialog the update was found from once this one closes. */
-  | { kind: "update"; returnTo?: AppDialog };
+  | { kind: "update"; returnTo?: AppDialog }
+  | { kind: "runCommand"; sessionId: string; target: CommandTarget }
+  /** A task to start editing, such as one prepared from the synchronization dialog. */
+  | { kind: "schedules"; draft?: ScheduledTask };
 
 interface UiState {
   dialog: AppDialog | null;

@@ -1,6 +1,8 @@
 //! Unfinished transfers saved in `transfers.json`, so closing Poros, a crash or a power cut does
 //! not lose the queue. They come back paused. Passwords, passphrases and cloud sign-ins are never
-//! written: a restored server takes them from a session the user opens to it.
+//! written: a restored server takes them from a session the user opens to it. Neither is the
+//! route, which is worked out again from the current settings before a restored server
+//! connects.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -13,7 +15,7 @@ use super::conflict::ExistsAction;
 use super::queue::{Direction, JobKind, JobSpec, JobState, ResumePoint, Unfinished};
 use super::{Login, SessionTarget, Shared};
 use crate::protocol::Protocol;
-use crate::ssh::{AuthMethod, ConnectProfile};
+use crate::ssh::{AuthMethod, ConnectProfile, Route};
 use crate::storage;
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -40,6 +42,10 @@ struct SavedServer {
     saved_connection_id: Option<String>,
     #[serde(default)]
     ftp_active: bool,
+    #[serde(default)]
+    bypass_proxy: bool,
+    #[serde(default)]
+    jump_connection_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -104,6 +110,8 @@ impl From<&ConnectProfile> for SavedServer {
             send_buffer_kib: profile.send_buffer_kib,
             saved_connection_id: profile.saved_connection_id.clone(),
             ftp_active: profile.ftp_active,
+            bypass_proxy: profile.bypass_proxy,
+            jump_connection_id: profile.jump_connection_id.clone(),
         }
     }
 }
@@ -138,6 +146,9 @@ impl SavedServer {
             send_buffer_kib: self.send_buffer_kib,
             saved_connection_id: self.saved_connection_id.clone(),
             ftp_active: self.ftp_active,
+            bypass_proxy: self.bypass_proxy,
+            jump_connection_id: self.jump_connection_id.clone(),
+            route: Route::default(),
         }
     }
 }
@@ -323,6 +334,7 @@ pub(super) fn restore(shared: &Shared, file: &Path) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ssh::proxy::{Proxy, ProxyKind};
 
     #[test]
     fn saved_servers_never_hold_secrets() {
@@ -342,15 +354,32 @@ mod tests {
             send_buffer_kib: None,
             saved_connection_id: Some("saved".into()),
             ftp_active: false,
+            bypass_proxy: true,
+            jump_connection_id: Some("bastion".into()),
+            route: Route {
+                proxy: Some(Proxy {
+                    kind: ProxyKind::Socks5,
+                    host: "proxy.local".into(),
+                    port: 1080,
+                    username: "alice".into(),
+                    password: "proxy-secret".into(),
+                    remote_dns: true,
+                }),
+                jump_hosts: Vec::new(),
+            },
         };
         let saved = SavedServer::from(&profile);
         let text = serde_json::to_string(&saved).unwrap();
         assert!(!text.contains("hunter2"));
+        assert!(!text.contains("proxy-secret"));
         let restored = serde_json::from_str::<SavedServer>(&text)
             .unwrap()
             .profile();
         assert_eq!(restored.host, "example.com");
         assert_eq!(restored.saved_connection_id.as_deref(), Some("saved"));
+        assert!(restored.bypass_proxy);
+        assert_eq!(restored.jump_connection_id.as_deref(), Some("bastion"));
+        assert!(restored.route.proxy.is_none());
         assert!(matches!(
             restored.auth,
             AuthMethod::Password { password } if password.is_empty()

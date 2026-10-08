@@ -1044,6 +1044,14 @@ impl Queue {
             .collect()
     }
 
+    /// Jobs of a session that failed after their retries.
+    pub fn session_failures(&self, session_id: &str) -> usize {
+        self.jobs
+            .values()
+            .filter(|job| job.spec.session_id == session_id && job.state == JobState::Failed)
+            .count()
+    }
+
     /// Keeps the given order among the moved jobs.
     pub fn move_to(&mut self, ids: &[JobId], to_top: bool) {
         let mut ordered: Vec<&Job> = ids.iter().filter_map(|id| self.jobs.get(id)).collect();
