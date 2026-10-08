@@ -4,23 +4,27 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
+use russh::client::Msg;
+use russh::Channel;
 use tokio::fs::{File, OpenOptions};
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 use super::conflict::{decide, numbered_name, Decision, ExistsAction, FileFacts};
 use super::copy::{self, CopyContext};
 use super::delta;
 use super::pieces::Pieces;
 use super::queue::{
-    Claim, ConflictInfo, Direction, JobId, JobKind, JobRun, JobSpec, JobState, Plan, Release, Role,
-    RunOutcome,
+    Abandoned, Claim, ConflictInfo, Direction, JobId, JobKind, JobRun, JobSpec, JobState, Plan,
+    Release, ResumePoint, Role, RunOutcome, ServerChange,
 };
-use super::{SessionTarget, Shared};
+use super::verify::{self, Checked};
+use super::{Login, SessionTarget, Shared};
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::events::{Events, LogLevel};
 use crate::format::format_size;
 use crate::model::{EntryKind, LinkTarget};
 use crate::settings::TransferSettings;
-use crate::sftp::RemoteFs;
+use crate::sftp::{RemoteFs, RemoteStat};
 use crate::ssh::{self, HostKeyApproval, SshHandle};
 use crate::{local, remote_path, session};
 
@@ -32,6 +36,12 @@ const SINGLE_WORKER_PIECE: u64 = 8 * MEBIBYTE;
 const MIN_SEGMENT_PIECE: u64 = 4 * MEBIBYTE;
 const MAX_SEGMENT_PIECE: u64 = 64 * MEBIBYTE;
 const MAX_RENAME_ATTEMPTS: u32 = 9999;
+/// Added to a file's name, after a leading dot, while it is being written.
+const PARTIAL_SUFFIX: &str = ".poros-part";
+/// The longest file name most file systems take, in bytes.
+const MAX_NAME_BYTES: usize = 255;
+/// Bytes compared on both sides before an interrupted file continues.
+const RESUME_CHECK_BYTES: u64 = 64 * 1024;
 
 struct WorkerConnection {
     fs: RemoteFs,
@@ -68,6 +78,7 @@ impl Connections {
         }
         if !self.open.contains_key(session_id) {
             let target = shared.target(session_id)?;
+            target.adopt_live_session(&shared.sessions).await;
             let connection = open_connection(shared, &target, self.worker_index).await?;
             self.open.insert(session_id.to_string(), connection);
         }
@@ -96,45 +107,31 @@ async fn open_connection(
     target: &SessionTarget,
     worker_index: usize,
 ) -> AppResult<WorkerConnection> {
-    let number = worker_index + 1;
-    if shared.settings().separate_connections && !target.channels_only.load(Ordering::Relaxed) {
-        let approval = (!target.host_key_fingerprint.is_empty()).then(|| HostKeyApproval {
-            fingerprint: target.host_key_fingerprint.clone(),
-            remember: false,
-        });
-        let connection_id = format!("{}#{number}", target.session_id);
-        // Workers log one line each, not every handshake step.
-        let quiet = Events::default();
-        let refusal = match ssh::connect(
-            &connection_id,
-            &target.profile,
-            &shared.sessions.known_hosts,
-            approval,
-            &quiet,
-        )
-        .await
-        {
-            Ok(connection) => match session::open_sftp(&connection.handle).await {
-                Ok(fs) => {
-                    shared.events.log(
-                        LogLevel::Info,
-                        Some(&target.session_id),
-                        format!("Transfer connection {number} to {} opened", target.label),
-                    );
-                    return Ok(WorkerConnection {
-                        fs,
-                        handle: Some(connection.handle),
-                    });
-                }
-                Err(error) => {
-                    ssh::disconnect(&connection.handle).await;
-                    error
-                }
-            },
+    let login = target.login();
+    let browsing = shared.sessions.get(&login.browsing_session).await.ok();
+    let separate =
+        shared.settings().separate_connections && !target.channels_only.load(Ordering::Relaxed);
+    // Without a browsing connection to share, a connection of its own is the only way.
+    if separate || browsing.is_none() {
+        let refusal = match connect_directly(shared, target, &login, worker_index + 1).await {
+            Ok(connection) => return Ok(connection),
             Err(error) if error.kind == ErrorKind::HostKeyChanged => return Err(error),
+            Err(error) if target.is_restored() && needs_login(&error) => {
+                return Err(AppError::new(
+                    ErrorKind::AuthFailed,
+                    format!(
+                        "Connect to {} to continue the transfers saved from last time",
+                        target.label
+                    ),
+                ))
+            }
             Err(error) => error,
         };
-        if !target.channels_only.swap(true, Ordering::Relaxed) {
+        // With nothing else connected, the server is out of reach rather than refusing more.
+        if browsing.is_none() {
+            return Err(refusal);
+        }
+        if separate && !target.channels_only.swap(true, Ordering::Relaxed) {
             shared.events.log(
                 LogLevel::Warn,
                 Some(&target.session_id),
@@ -145,9 +142,57 @@ async fn open_connection(
             );
         }
     }
-    let session = shared.sessions.get(&target.session_id).await?;
+    let session = browsing.ok_or_else(AppError::session_not_found)?;
     let fs = session.open_channel().await?;
     Ok(WorkerConnection { fs, handle: None })
+}
+
+async fn connect_directly(
+    shared: &Shared,
+    target: &SessionTarget,
+    login: &Login,
+    number: usize,
+) -> AppResult<WorkerConnection> {
+    let approval = (!login.host_key_fingerprint.is_empty()).then(|| HostKeyApproval {
+        fingerprint: login.host_key_fingerprint.clone(),
+        remember: false,
+    });
+    let connection_id = format!("{}#{number}", target.session_id);
+    // Workers log one line each, not every handshake step.
+    let quiet = Events::default();
+    let connection = ssh::connect(
+        &connection_id,
+        &login.profile,
+        &shared.sessions.known_hosts,
+        approval,
+        &quiet,
+    )
+    .await?;
+    match session::open_sftp(&connection.handle).await {
+        Ok(fs) => {
+            shared.events.log(
+                LogLevel::Info,
+                Some(&target.session_id),
+                format!("Transfer connection {number} to {} opened", target.label),
+            );
+            Ok(WorkerConnection {
+                fs,
+                handle: Some(connection.handle),
+            })
+        }
+        Err(error) => {
+            ssh::disconnect(&connection.handle).await;
+            Err(error)
+        }
+    }
+}
+
+/// Errors a saved login without its password or a confirmed host key runs into.
+fn needs_login(error: &AppError) -> bool {
+    matches!(
+        error.kind,
+        ErrorKind::AuthFailed | ErrorKind::PassphraseRequired | ErrorKind::HostKeyUnknown
+    )
 }
 
 pub(super) async fn run(shared: Arc<Shared>, index: usize) {
@@ -213,12 +258,42 @@ impl JobContext<'_> {
             .unwrap_or(self.settings.exists_action)
     }
 
+    /// A channel for running a command on the server: on this worker's connection, or on the
+    /// browsing one when the worker borrows its channels.
+    pub async fn command_channel(&self) -> AppResult<Channel<Msg>> {
+        match self.handle {
+            Some(handle) => Ok(handle.channel_open_session().await?),
+            None => {
+                let target = self.shared.target(&self.spec.session_id)?;
+                let session = self
+                    .shared
+                    .sessions
+                    .get(&target.login().browsing_session)
+                    .await?;
+                session.open_command_channel().await
+            }
+        }
+    }
+
+    /// Marks what was written as untrustworthy, so the next attempt starts from the beginning.
+    fn restart(&self, message: String) -> AppError {
+        self.run.restart.store(true, Ordering::Relaxed);
+        AppError::integrity(message)
+    }
+
     fn retarget(&self, target: &str, name: String) {
         self.shared
             .queue
             .lock()
             .unwrap()
             .retarget(self.id, target.to_string(), name);
+    }
+
+    /// What the first worker read as it closed, worth keeping only if no other worker joined.
+    fn keep_closing_stat(&self, stat: Option<RemoteStat>) {
+        if let Some(stat) = stat.filter(|_| !self.run.is_segmented()) {
+            let _ = self.run.closing_stat.set(stat);
+        }
     }
 
     /// Records where the bytes go and lets idle workers join if the file is large enough.
@@ -253,7 +328,7 @@ async fn execute(shared: &Shared, connections: &mut Connections, claim: Claim) {
         run,
         spec,
         resolution,
-        resume_offset,
+        resume,
     } = claim;
 
     let outcome = match connections.get(shared, &spec.session_id).await {
@@ -271,8 +346,8 @@ async fn execute(shared: &Shared, connections: &mut Connections, claim: Claim) {
             let result = match (spec.kind, role) {
                 (JobKind::Folder, _) => expand_folder(&context).await,
                 (JobKind::File, Role::Primary) => match spec.direction {
-                    Direction::Download => download(&context, resolution, resume_offset).await,
-                    Direction::Upload => upload(&context, resolution, resume_offset).await,
+                    Direction::Download => download(&context, resolution, resume).await,
+                    Direction::Upload => upload(&context, resolution, resume).await,
                 },
                 (JobKind::File, Role::Helper) => help(&context).await,
             };
@@ -298,37 +373,116 @@ async fn execute(shared: &Shared, connections: &mut Connections, claim: Claim) {
             return;
         }
         Release::Finalize => {
-            let finalized = match spec.direction {
-                Direction::Download => finalize_download(&run, &settings).await,
-                Direction::Upload => match connections.get(shared, &spec.session_id).await {
-                    Ok(connection) => {
-                        finalize_upload(shared, &connection.fs, &run, &spec, &settings).await
+            let finalized = match connections.get(shared, &spec.session_id).await {
+                Ok(connection) => {
+                    let context = JobContext {
+                        shared,
+                        fs: &connection.fs,
+                        handle: connection.handle.as_ref(),
+                        id,
+                        run: &run,
+                        spec: &spec,
+                        settings: &settings,
+                    };
+                    match spec.direction {
+                        Direction::Download => finalize_download(&context).await,
+                        Direction::Upload => finalize_upload(&context).await,
                     }
-                    Err(error) => Err(error),
-                },
+                }
+                Err(error) => Err(error),
             };
             match finalized {
                 Ok(()) => RunOutcome::Completed,
-                Err(error) => RunOutcome::Failed(error),
+                Err(error) if error.kind == ErrorKind::Cancelled => RunOutcome::Stopped,
+                Err(error) => {
+                    if error.is_connection_lost() {
+                        connections.drop_connection(&spec.session_id).await;
+                    }
+                    RunOutcome::Failed(error)
+                }
             }
         }
         Release::Settle => {
-            trim_partial(connections.existing(&spec.session_id), &run, &spec).await;
+            if !run.restart.load(Ordering::Relaxed) {
+                trim_partial(connections.existing(&spec.session_id), &run, &spec).await;
+            }
             outcome
         }
     };
 
-    let settled = {
+    let (settled, change, abandoned) = {
         let mut queue = shared.queue.lock().unwrap();
-        queue.settle(id, outcome, &settings, Instant::now());
-        queue
-            .job(id)
-            .map(|job| (job.state, job.error.clone(), job.spec.clone()))
+        let change = queue.settle(id, outcome, &settings, Instant::now());
+        let settled = queue.job(id).map(|job| {
+            (
+                job.state,
+                job.error.clone(),
+                job.spec.clone(),
+                job.reconnecting,
+            )
+        });
+        (settled, change, queue.take_abandoned())
     };
-    if let Some((state, error, spec)) = settled {
+    let error = settled.as_ref().and_then(|(_, error, _, _)| error.clone());
+    if let Some((state, error, spec, false)) = settled {
         log_result(shared, &settings, state, error, &spec);
     }
+    if let Some(change) = change {
+        log_server_change(shared, &spec.session_id, change, error.as_deref());
+    }
+    discard_partials(shared, connections, abandoned).await;
     shared.work.notify_waiters();
+}
+
+fn log_server_change(shared: &Shared, session_id: &str, change: ServerChange, error: Option<&str>) {
+    let label = shared
+        .target(session_id)
+        .map(|target| target.label.clone())
+        .unwrap_or_else(|_| "the server".into());
+    let reason = error
+        .and_then(|error| error.strip_suffix(" (reconnecting)"))
+        .unwrap_or("connection lost");
+    let (level, message) = match change {
+        ServerChange::Lost { retry_in } => (
+            LogLevel::Warn,
+            format!(
+                "Lost the connection to {label} ({reason}); its transfers continue when it is back, trying again in {} s",
+                retry_in.as_secs()
+            ),
+        ),
+        ServerChange::Back => (
+            LogLevel::Info,
+            format!("Reconnected to {label}; its transfers continue"),
+        ),
+        ServerChange::GaveUp { failed } => (
+            LogLevel::Error,
+            format!(
+                "Could not reconnect to {label}; {failed} {} failed",
+                if failed == 1 { "transfer" } else { "transfers" }
+            ),
+        ),
+    };
+    shared.events.log(level, Some(session_id), message);
+}
+
+/// Deletes the temporary files of transfers removed from the queue before they finished.
+async fn discard_partials(shared: &Shared, connections: &Connections, abandoned: Vec<Abandoned>) {
+    for partial in abandoned {
+        match partial.direction {
+            Direction::Download => {
+                let _ = tokio::fs::remove_file(&partial.path).await;
+            }
+            Direction::Upload => {
+                let paths = std::slice::from_ref(&partial.path);
+                match connections.existing(&partial.session_id) {
+                    Some(fs) => {
+                        let _ = fs.delete(paths).await;
+                    }
+                    None => super::discard_with_browsing_session(shared, &partial).await,
+                }
+            }
+        }
+    }
 }
 
 fn log_result(
@@ -467,10 +621,82 @@ async fn expand_folder(context: &JobContext<'_>) -> AppResult<RunOutcome> {
     Ok(RunOutcome::Expanded(children))
 }
 
+/// Where a file's bytes go and from which offset.
+struct Destination {
+    target: String,
+    /// A temporary file renamed over `target` once complete; `None` writes the target itself.
+    partial: Option<String>,
+    start: u64,
+}
+
+impl Destination {
+    fn in_place(target: &str, start: u64) -> Self {
+        Self {
+            target: target.to_string(),
+            partial: None,
+            start,
+        }
+    }
+
+    fn write_path(&self) -> &str {
+        self.partial.as_deref().unwrap_or(&self.target)
+    }
+}
+
+/// `.name.poros-part`, unless that would be too long a name.
+fn partial_name(name: &str) -> Option<String> {
+    let partial = format!(".{name}{PARTIAL_SUFFIX}");
+    (partial.len() <= MAX_NAME_BYTES).then_some(partial)
+}
+
+fn local_partial(target: &str) -> Option<String> {
+    let path = Path::new(target);
+    let name = partial_name(&path.file_name()?.to_string_lossy())?;
+    Some(path.with_file_name(name).to_string_lossy().into_owned())
+}
+
+fn remote_partial(target: &str) -> Option<String> {
+    let parent = remote_path::parent(target)?;
+    Some(remote_path::join(
+        &parent,
+        &partial_name(remote_path::file_name(target))?,
+    ))
+}
+
+/// A new local file: through a temporary file, unless that is turned off or the target is a
+/// link, which must be written through rather than replaced.
+async fn fresh_download(context: &JobContext<'_>, target: String) -> Destination {
+    let wanted =
+        context.settings.temporary_files && !delta::is_local_symlink(Path::new(&target)).await;
+    Destination {
+        partial: wanted.then(|| local_partial(&target)).flatten(),
+        target,
+        start: 0,
+    }
+}
+
+async fn fresh_upload(
+    context: &JobContext<'_>,
+    target: String,
+    replaces: bool,
+) -> AppResult<Destination> {
+    let wanted =
+        context.settings.temporary_files && !(replaces && context.fs.is_symlink(&target).await?);
+    Ok(Destination {
+        partial: wanted.then(|| remote_partial(&target)).flatten(),
+        target,
+        start: 0,
+    })
+}
+
+fn source_changed(resume: &ResumePoint, source: FileFacts) -> bool {
+    resume.source_size != source.size || resume.source_modified != source.modified
+}
+
 async fn download(
     context: &JobContext<'_>,
     resolution: Option<ExistsAction>,
-    resume_offset: Option<u64>,
+    resume: Option<ResumePoint>,
 ) -> AppResult<RunOutcome> {
     let spec = context.spec;
     let source = context.fs.stat(&spec.source).await?.ok_or_else(|| {
@@ -488,13 +714,25 @@ async fn download(
         modified: source.modified,
     };
 
+    let fresh = |target: String| fresh_download(context, target);
     let existing = local_facts(&spec.target).await?;
-    let (target, start) = match (resume_offset, existing) {
-        (Some(offset), existing) => {
-            let on_disk = existing.map_or(0, |(_, facts)| facts.size);
-            (spec.target.clone(), offset.min(on_disk).min(source.size))
+    let mut destination = match (resume, existing) {
+        (Some(resume), _) if source_changed(&resume, source_facts) => {
+            fresh(spec.target.clone()).await
         }
-        (None, None) => (spec.target.clone(), 0),
+        (Some(resume), existing) => {
+            let written = match &resume.partial {
+                Some(partial) => local_facts(partial).await?,
+                None => existing,
+            };
+            let on_disk = written.map_or(0, |(_, facts)| facts.size);
+            Destination {
+                target: spec.target.clone(),
+                partial: resume.partial,
+                start: resume.offset.min(on_disk).min(source.size),
+            }
+        }
+        (None, None) => fresh(spec.target.clone()).await,
         (None, Some((true, _))) => return Err(folder_in_the_way(spec)),
         (None, Some((false, target_facts))) => {
             match decide(
@@ -507,7 +745,7 @@ async fn download(
                 Decision::Rename => {
                     let (target, name) = free_local_name(&spec.target).await?;
                     context.retarget(&target, name);
-                    (target, 0)
+                    fresh(target).await
                 }
                 Decision::Write { offset: 0 } => {
                     if let Some(outcome) =
@@ -515,41 +753,59 @@ async fn download(
                     {
                         return Ok(outcome);
                     }
-                    (spec.target.clone(), 0)
+                    fresh(spec.target.clone()).await
                 }
-                Decision::Write { offset } => (spec.target.clone(), offset),
+                Decision::Write { offset } => Destination::in_place(&spec.target, offset),
             }
         }
     };
 
+    let write_path = destination.write_path().to_string();
     let mut file = OpenOptions::new()
         .write(true)
+        .read(true)
         .create(true)
-        .truncate(start == 0)
-        .open(&target)
+        .truncate(destination.start == 0)
+        .open(&write_path)
         .await
-        .map_err(|error| AppError::from(error).with_path(target.clone()))?;
+        .map_err(|error| AppError::from(error).with_path(write_path.clone()))?;
+    if destination.start > 0 {
+        let window = check_window(destination.start);
+        let theirs = context
+            .fs
+            .read_range(&spec.source, window.start, window.len)
+            .await?;
+        let ours = read_local_range(&mut file, window.start, window.len).await?;
+        if theirs != ours {
+            log_starting_over(context);
+            file.set_len(0).await?;
+            destination.start = 0;
+        }
+    }
     context.begin(
         Plan {
-            target,
+            target: write_path,
+            rename_to: destination.partial.is_some().then_some(destination.target),
+            source_size: source.size,
             source_modified: source.modified,
             source_permissions: source.permissions,
-            resumed: start > 0,
+            replaced_permissions: None,
         },
-        start,
+        destination.start,
         source.size,
     );
     let handle = context.fs.open_for_read(&spec.source).await?;
     let copied = copy::download(&context.copy_context(), &handle, &mut file).await;
-    let _ = context.fs.close_handle(handle).await;
+    let (stat, _) = context.fs.close_and_stat(handle, false).await;
     copied?;
+    context.keep_closing_stat(stat);
     Ok(RunOutcome::Completed)
 }
 
 async fn upload(
     context: &JobContext<'_>,
     resolution: Option<ExistsAction>,
-    resume_offset: Option<u64>,
+    resume: Option<ResumePoint>,
 ) -> AppResult<RunOutcome> {
     let spec = context.spec;
     let metadata = tokio::fs::metadata(&spec.source)
@@ -563,16 +819,26 @@ async fn upload(
         modified: modified_seconds(&metadata),
     };
 
-    let existing = context.fs.stat(&spec.target).await?;
-    let (target, start) = match (resume_offset, existing) {
-        (Some(offset), existing) => {
-            let on_server = existing.map_or(0, |stat| stat.size);
-            (
-                spec.target.clone(),
-                offset.min(on_server).min(source_facts.size),
-            )
+    let fs = context.fs;
+    let fresh = |target: String, replaces: bool| fresh_upload(context, target, replaces);
+    let existing = fs.stat(&spec.target).await?;
+    let mut destination = match (resume, existing) {
+        (Some(resume), existing) if source_changed(&resume, source_facts) => {
+            fresh(spec.target.clone(), existing.is_some()).await?
         }
-        (None, None) => (spec.target.clone(), 0),
+        (Some(resume), existing) => {
+            let written = match &resume.partial {
+                Some(partial) => fs.stat(partial).await?,
+                None => existing,
+            };
+            let on_server = written.map_or(0, |stat| stat.size);
+            Destination {
+                target: spec.target.clone(),
+                partial: resume.partial,
+                start: resume.offset.min(on_server).min(source_facts.size),
+            }
+        }
+        (None, None) => fresh(spec.target.clone(), false).await?,
         (None, Some(stat)) if stat.is_dir => return Err(folder_in_the_way(spec)),
         (None, Some(stat)) => {
             let target_facts = FileFacts {
@@ -587,9 +853,9 @@ async fn upload(
                 Decision::Ask => return Ok(conflict(source_facts, target_facts)),
                 Decision::Skip => return Ok(RunOutcome::Skipped("Already exists".into())),
                 Decision::Rename => {
-                    let (target, name) = free_remote_name(context.fs, &spec.target).await?;
+                    let (target, name) = free_remote_name(fs, &spec.target).await?;
                     context.retarget(&target, name);
-                    (target, 0)
+                    fresh(target, false).await?
                 }
                 Decision::Write { offset: 0 } => {
                     if let Some(outcome) =
@@ -597,41 +863,102 @@ async fn upload(
                     {
                         return Ok(outcome);
                     }
-                    (spec.target.clone(), 0)
+                    fresh(spec.target.clone(), true).await?
                 }
-                Decision::Write { offset } => (spec.target.clone(), offset),
+                Decision::Write { offset } => Destination::in_place(&spec.target, offset),
             }
         }
     };
 
     let source_permissions = local_permissions(&metadata);
-    let permissions = context
-        .settings
-        .preserve_permissions
-        .then_some(source_permissions)
-        .flatten();
+    let replaced_permissions = existing.and_then(|stat| stat.permissions);
+    let permissions = if context.settings.preserve_permissions {
+        source_permissions
+    } else {
+        replaced_permissions
+    };
     let mut file = File::open(&spec.source)
         .await
         .map_err(|error| AppError::from(error).with_path(spec.source.clone()))?;
-    let handle = context
-        .fs
-        .open_for_write(&target, start == 0, permissions)
-        .await?;
+    let truncate = destination.start == 0;
+    let handle = match fs
+        .open_for_write(destination.write_path(), truncate, permissions)
+        .await
+    {
+        // A folder may let files be replaced but not created.
+        Err(error)
+            if destination.partial.is_some() && error.kind == ErrorKind::PermissionDenied =>
+        {
+            destination = Destination::in_place(&spec.target, 0);
+            fs.open_for_write(&spec.target, true, permissions).await?
+        }
+        opened => opened?,
+    };
+    if destination.start > 0 {
+        let window = check_window(destination.start);
+        let theirs = fs
+            .read_range(destination.write_path(), window.start, window.len)
+            .await?;
+        let ours = read_local_range(&mut file, window.start, window.len).await?;
+        if theirs != ours {
+            log_starting_over(context);
+            fs.truncate(destination.write_path(), 0).await?;
+            destination.start = 0;
+        }
+    }
+    let write_path = destination.write_path().to_string();
     context.begin(
         Plan {
-            target,
+            target: write_path,
+            rename_to: destination.partial.is_some().then_some(destination.target),
+            source_size: source_facts.size,
             source_modified: source_facts.modified,
             source_permissions,
-            resumed: start > 0,
+            replaced_permissions,
         },
-        start,
+        destination.start,
         source_facts.size,
     );
     let copied = copy::upload(&context.copy_context(), &mut file, &handle).await;
-    let closed = context.fs.close_handle(handle).await;
+    let (stat, closed) = fs
+        .close_and_stat(handle, context.settings.flush_to_disk)
+        .await;
     copied?;
     closed?;
+    context.keep_closing_stat(stat);
     Ok(RunOutcome::Completed)
+}
+
+/// The bytes just before `start` that both sides must agree on before a file continues.
+struct CheckWindow {
+    start: u64,
+    len: u32,
+}
+
+fn check_window(start: u64) -> CheckWindow {
+    let len = start.min(RESUME_CHECK_BYTES);
+    CheckWindow {
+        start: start - len,
+        len: len as u32,
+    }
+}
+
+async fn read_local_range(file: &mut File, offset: u64, len: u32) -> AppResult<Vec<u8>> {
+    file.seek(std::io::SeekFrom::Start(offset)).await?;
+    let mut data = Vec::with_capacity(len as usize);
+    file.take(u64::from(len)).read_to_end(&mut data).await?;
+    Ok(data)
+}
+
+fn log_starting_over(context: &JobContext<'_>) {
+    context.shared.events.log(
+        LogLevel::Warn,
+        Some(&context.spec.session_id),
+        format!(
+            "The part of {} already transferred does not match the source; starting it over",
+            context.spec.name
+        ),
+    );
 }
 
 /// A worker joining a large file the first worker already opened.
@@ -658,7 +985,10 @@ async fn help(context: &JobContext<'_>) -> AppResult<RunOutcome> {
                 .map_err(|error| AppError::from(error).with_path(spec.source.clone()))?;
             let handle = context.fs.open_for_write(&plan.target, false, None).await?;
             let copied = copy::upload(&context.copy_context(), &mut file, &handle).await;
-            let closed = context.fs.close_handle(handle).await;
+            let (_, closed) = context
+                .fs
+                .close_and_stat(handle, context.settings.flush_to_disk)
+                .await;
             copied?;
             closed?;
         }
@@ -666,73 +996,152 @@ async fn help(context: &JobContext<'_>) -> AppResult<RunOutcome> {
     Ok(RunOutcome::Completed)
 }
 
-async fn finalize_download(run: &JobRun, settings: &TransferSettings) -> AppResult<()> {
+/// Checks the finished file, sets its time and permissions and moves it into place.
+async fn finalize_download(context: &JobContext<'_>) -> AppResult<()> {
+    let (run, spec, settings) = (context.run, context.spec, context.settings);
     let Some(plan) = run.plan.get().cloned() else {
         return Ok(());
     };
     let end = run.end().unwrap_or(0);
+    let source = match run.closing_stat.get() {
+        Some(stat) => Some(*stat),
+        None => context.fs.stat(&spec.source).await?,
+    };
+    let unchanged = source
+        .is_some_and(|stat| stat.size == plan.source_size && stat.modified == plan.source_modified)
+        && end == plan.source_size;
+    if !unchanged {
+        return Err(context.restart(format!(
+            "{} changed on the server while it was being downloaded",
+            spec.name
+        )));
+    }
+
     let modified = settings
         .preserve_timestamps
         .then_some(plan.source_modified)
         .flatten();
-    let permissions = settings
-        .preserve_permissions
-        .then_some(plan.source_permissions)
-        .flatten();
+    let preserve_permissions = settings.preserve_permissions;
+    let flush = settings.flush_to_disk;
     let target = plan.target.clone();
-    tokio::task::spawn_blocking(move || -> std::io::Result<()> {
-        let file = std::fs::OpenOptions::new().write(true).open(&target)?;
+    let complete = move |truncate: bool| -> std::io::Result<()> {
+        let file = std::fs::OpenOptions::new().write(true).open(&plan.target)?;
         // Workers write pieces out of order, and a resumed file may be longer than its source.
-        file.set_len(end)?;
+        if truncate {
+            file.set_len(end)?;
+        }
         if let Some(seconds) = modified.and_then(|seconds| u64::try_from(seconds).ok()) {
             file.set_modified(UNIX_EPOCH + Duration::from_secs(seconds))?;
         }
-        set_local_permissions(&file, permissions)
-    })
-    .await?
-    .map_err(|error| AppError::from(error).with_path(plan.target))
+        let permissions = if preserve_permissions {
+            plan.source_permissions
+        } else {
+            // A file replaced through a temporary one keeps its permissions.
+            plan.rename_to
+                .as_ref()
+                .and_then(|replaced| std::fs::metadata(replaced).ok())
+                .and_then(|metadata| local_permissions(&metadata))
+        };
+        set_local_permissions(&file, permissions)?;
+        if flush {
+            file.sync_all()?;
+        }
+        drop(file);
+        match &plan.rename_to {
+            Some(replaced) => std::fs::rename(&plan.target, replaced),
+            None => Ok(()),
+        }
+    };
+    let truncate = if settings.verify_checksums {
+        let written = target.clone();
+        tokio::task::spawn_blocking(move || {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&written)?
+                .set_len(end)
+        })
+        .await?
+        .map_err(|error| AppError::from(error).with_path(target.clone()))?;
+        if let Checked::Different = verify::same_contents(context, &spec.source, &target).await? {
+            return Err(context.restart(format!(
+                "The downloaded copy of {} does not match the server's checksum",
+                spec.name
+            )));
+        }
+        false
+    } else {
+        true
+    };
+    tokio::task::spawn_blocking(move || complete(truncate))
+        .await?
+        .map_err(|error| AppError::from(error).with_path(target))
 }
 
-async fn finalize_upload(
-    shared: &Shared,
-    fs: &RemoteFs,
-    run: &JobRun,
-    spec: &JobSpec,
-    settings: &TransferSettings,
-) -> AppResult<()> {
+async fn finalize_upload(context: &JobContext<'_>) -> AppResult<()> {
+    let (fs, run, spec, settings) = (context.fs, context.run, context.spec, context.settings);
     let Some(plan) = run.plan.get() else {
         return Ok(());
     };
-    if plan.resumed {
-        let end = run.end().unwrap_or(0);
-        if fs
-            .stat(&plan.target)
-            .await?
-            .is_some_and(|stat| stat.size > end)
+    let end = run.end().unwrap_or(0);
+    let size = match run.closing_stat.get() {
+        Some(stat) if stat.size == end => end,
+        _ => fs.stat(&plan.target).await?.map_or(0, |stat| stat.size),
+    };
+    if size < end {
+        return Err(context.restart(format!(
+            "The server holds {} of the {} sent for {}",
+            format_size(size),
+            format_size(end),
+            spec.name
+        )));
+    }
+    if size > end {
+        fs.truncate(&plan.target, end).await?;
+    }
+    let metadata = tokio::fs::metadata(&spec.source)
+        .await
+        .map_err(|error| AppError::from(error).with_path(spec.source.clone()))?;
+    if metadata.len() != plan.source_size || modified_seconds(&metadata) != plan.source_modified {
+        return Err(context.restart(format!("{} changed while it was being uploaded", spec.name)));
+    }
+    if settings.verify_checksums {
+        if let Checked::Different =
+            verify::same_contents(context, &plan.target, &spec.source).await?
         {
-            fs.truncate(&plan.target, end).await?;
+            return Err(context.restart(format!(
+                "The copy of {} on the server does not match the local file's checksum",
+                spec.name
+            )));
         }
     }
+
     let modified = settings
         .preserve_timestamps
         .then_some(plan.source_modified)
         .flatten();
-    let permissions = settings
-        .preserve_permissions
-        .then_some(plan.source_permissions)
-        .flatten();
+    let permissions = if settings.preserve_permissions {
+        plan.source_permissions
+    } else {
+        plan.rename_to.as_ref().and(plan.replaced_permissions)
+    };
+    let attributes = fs.set_attributes(&plan.target, modified, permissions);
+    // Sent together: servers apply them in order, so this costs one round trip.
+    let (attributes, replaced) = match &plan.rename_to {
+        Some(replaced) => tokio::join!(attributes, fs.replace(&plan.target, replaced)),
+        None => (attributes.await, Ok(())),
+    };
     // Some servers refuse attribute changes; the file itself is complete.
-    if let Err(error) = fs.set_attributes(&plan.target, modified, permissions).await {
-        shared.events.log(
+    if let Err(error) = attributes {
+        context.shared.events.log(
             LogLevel::Warn,
             Some(&spec.session_id),
             format!(
                 "Could not set the time or permissions of {}: {}",
-                plan.target, error.message
+                spec.target, error.message
             ),
         );
     }
-    Ok(())
+    replaced
 }
 
 /// Cuts an interrupted target back to its complete prefix, so a later resume by size is safe
@@ -868,4 +1277,39 @@ fn no_free_name(target: &str) -> AppError {
         format!("No free name next to {target}"),
     )
     .with_path(target)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn temporary_files_sit_hidden_beside_their_targets() {
+        assert_eq!(
+            remote_partial("/srv/data/report.pdf").as_deref(),
+            Some("/srv/data/.report.pdf.poros-part")
+        );
+        assert_eq!(
+            remote_partial("/report.pdf").as_deref(),
+            Some("/.report.pdf.poros-part")
+        );
+        let local = local_partial("/home/me/report.pdf").unwrap();
+        assert_eq!(
+            Path::new(&local),
+            Path::new("/home/me/.report.pdf.poros-part")
+        );
+        // Too long a name would be refused, so such files are written in place.
+        assert!(partial_name(&"x".repeat(MAX_NAME_BYTES)).is_none());
+    }
+
+    #[test]
+    fn resuming_compares_the_bytes_just_before_the_resume_point() {
+        let near_start = check_window(1000);
+        assert_eq!((near_start.start, near_start.len), (0, 1000));
+        let further = check_window(RESUME_CHECK_BYTES * 3);
+        assert_eq!(
+            (further.start, u64::from(further.len)),
+            (RESUME_CHECK_BYTES * 2, RESUME_CHECK_BYTES)
+        );
+    }
 }
