@@ -1,9 +1,10 @@
 //! `connect` is self-contained (profile in, authenticated handle out) so transfer workers
-//! can open extra connections with the same profile.
+//! can open extra connections with the same profile, including its proxy and jump hosts.
 
 mod auth;
 pub mod keys;
 pub mod known_hosts;
+pub mod proxy;
 
 use std::borrow::Cow;
 use std::net::SocketAddr;
@@ -13,6 +14,7 @@ use std::time::Duration;
 use russh::client::{self, Handle};
 use russh::keys::PublicKeyOrCertificate;
 use serde::Deserialize;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpSocket, TcpStream};
 
 use crate::error::{AppError, AppResult, ErrorKind, HostKeyInfo};
@@ -20,6 +22,7 @@ use crate::events::{Events, LogLevel};
 use crate::protocol::Protocol;
 use crate::settings::{MAX_SOCKET_BUFFER_KIB, MIN_SOCKET_BUFFER_KIB};
 use known_hosts::{fingerprint, HostKeyStatus, KnownHosts};
+use proxy::{Destination, Proxy};
 
 pub const DEFAULT_TIMEOUT_SECS: u64 = 20;
 pub const DEFAULT_KEEPALIVE_SECS: u64 = 30;
@@ -85,6 +88,25 @@ pub struct ConnectProfile {
     /// way round (passive mode).
     #[serde(default)]
     pub ftp_active: bool,
+    /// Connects without the proxy from the connection settings.
+    #[serde(default)]
+    pub bypass_proxy: bool,
+    /// A saved connection to tunnel through, as with OpenSSH's ProxyJump.
+    #[serde(default)]
+    pub jump_connection_id: Option<String>,
+    /// How to reach the server. The backend works it out from the settings and the saved
+    /// connections, so secrets never pass through the frontend.
+    #[serde(skip)]
+    pub route: Route,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct Route {
+    /// Used for the first connection this computer makes: to the outermost jump host, or to
+    /// the server when there is none.
+    pub proxy: Option<Proxy>,
+    /// Servers to tunnel through, outermost first.
+    pub jump_hosts: Vec<ConnectProfile>,
 }
 
 impl ConnectProfile {
@@ -167,9 +189,17 @@ pub struct Connection {
     pub host_key_fingerprint: String,
 }
 
+/// Whether a connection is the one asked for or a jump host on the way to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Hop {
+    Server,
+    JumpHost,
+}
+
 pub struct ClientHandler {
     host: String,
     port: u16,
+    hop: Hop,
     session_id: String,
     known_hosts: KnownHosts,
     approval: Option<HostKeyApproval>,
@@ -177,6 +207,8 @@ pub struct ClientHandler {
     rejection: Arc<Mutex<Option<AppError>>>,
     accepted_fingerprint: Arc<Mutex<Option<String>>>,
     events: Events,
+    /// The jump host this connection runs through, kept open for as long as it is needed.
+    _tunnel: Option<SshHandle>,
 }
 
 impl client::Handler for ClientHandler {
@@ -213,6 +245,11 @@ impl client::Handler for ClientHandler {
                     if let Err(error) = self.known_hosts.trust(&self.host, self.port, &key) {
                         self.log(LogLevel::Warn, format!("Could not save host key: {error}"));
                     }
+                } else if self.hop == Hop::JumpHost {
+                    // Transfer connections and the next attempt, which may stop to ask about
+                    // the server behind it, have to get through this jump host again.
+                    self.known_hosts
+                        .trust_until_exit(&self.host, self.port, &key);
                 }
                 self.log(
                     LogLevel::Info,
@@ -250,6 +287,14 @@ impl client::Handler for ClientHandler {
         &mut self,
         reason: client::DisconnectReason<Self::Error>,
     ) -> Result<(), Self::Error> {
+        if self.hop == Hop::JumpHost {
+            // The connection through it ends too and reports that itself.
+            self.log(
+                LogLevel::Info,
+                format!("Jump host {}:{} closed", self.host, self.port),
+            );
+            return Ok(());
+        }
         let text = match &reason {
             client::DisconnectReason::ReceivedDisconnect(info) => {
                 format!("Server closed the connection: {}", info.message)
@@ -271,6 +316,11 @@ impl ClientHandler {
     }
 }
 
+/// Anything an SSH connection can run over: a TCP socket, or a channel through a jump host.
+trait Transport: AsyncRead + AsyncWrite + Unpin + Send {}
+
+impl<T: AsyncRead + AsyncWrite + Unpin + Send> Transport for T {}
+
 pub async fn connect(
     session_id: &str,
     profile: &ConnectProfile,
@@ -279,9 +329,49 @@ pub async fn connect(
     events: &Events,
 ) -> AppResult<Connection> {
     profile.validate()?;
-    let timeout = Duration::from_secs(profile.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS));
-    let keepalive = profile.keepalive_secs.unwrap_or(DEFAULT_KEEPALIVE_SECS);
+    let attempt = Attempt {
+        session_id,
+        profile,
+        known_hosts,
+        approval,
+        events,
+    };
+    let mut tunnel: Option<(SshHandle, String)> = None;
+    for jump_host in &profile.route.jump_hosts {
+        jump_host.validate()?;
+        let transport = attempt
+            .open_transport(jump_host, tunnel.as_ref())
+            .await
+            .map_err(|error| on_jump_host(jump_host, error))?;
+        let previous = tunnel.take().map(|(handle, _)| handle);
+        let (handle, _) = attempt
+            .establish(Hop::JumpHost, jump_host, transport, previous)
+            .await
+            .map_err(|error| on_jump_host(jump_host, error))?;
+        tunnel = Some((handle, jump_host.label()));
+    }
 
+    let transport = attempt.open_transport(profile, tunnel.as_ref()).await?;
+    let previous = tunnel.map(|(handle, _)| handle);
+    let (handle, host_key_fingerprint) = attempt
+        .establish(Hop::Server, profile, transport, previous)
+        .await?;
+    Ok(Connection {
+        handle,
+        host_key_fingerprint,
+    })
+}
+
+/// Says which jump host an error came from; host key questions already name it.
+fn on_jump_host(jump_host: &ConnectProfile, mut error: AppError) -> AppError {
+    if error.host_key.is_none() {
+        error.message = format!("Jump host {}: {}", jump_host.label(), error.message);
+    }
+    error
+}
+
+fn client_config(profile: &ConnectProfile) -> client::Config {
+    let keepalive = profile.keepalive_secs.unwrap_or(DEFAULT_KEEPALIVE_SECS);
     let mut preferred = russh::Preferred::default();
     if profile.compression {
         preferred.compression = Cow::Borrowed(&[
@@ -290,7 +380,7 @@ pub async fn connect(
             russh::compression::NONE,
         ]);
     }
-    let config = client::Config {
+    client::Config {
         client_id: russh::SshId::Standard(
             concat!("SSH-2.0-Poros_", env!("CARGO_PKG_VERSION")).into(),
         ),
@@ -300,79 +390,204 @@ pub async fn connect(
         window_size: CHANNEL_WINDOW_BYTES,
         preferred,
         ..Default::default()
-    };
+    }
+}
 
-    let rejection = Arc::new(Mutex::new(None));
-    let accepted_fingerprint = Arc::new(Mutex::new(None));
-    let handler = ClientHandler {
-        host: profile.host.trim().to_string(),
-        port: profile.port,
-        session_id: session_id.to_string(),
-        known_hosts: known_hosts.clone(),
-        approval,
-        rejection: rejection.clone(),
-        accepted_fingerprint: accepted_fingerprint.clone(),
-        events: events.clone(),
-    };
+fn timeout_of(profile: &ConnectProfile) -> Duration {
+    Duration::from_secs(profile.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS))
+}
 
-    events.log(
-        LogLevel::Info,
-        Some(session_id),
-        format!("Connecting to {}:{}", profile.host.trim(), profile.port),
-    );
-    let connecting = async {
-        let socket = open_socket(profile).await.map_err(russh::Error::IO)?;
-        client::connect_stream(Arc::new(config), socket, handler).await
-    };
-    let mut handle = match tokio::time::timeout(timeout, connecting).await {
-        Err(_) => {
-            return Err(AppError::new(
+/// One connection attempt along a route: what every hop of it shares.
+struct Attempt<'a> {
+    session_id: &'a str,
+    /// The server asked for; its timeouts, buffers and route apply to every hop.
+    profile: &'a ConnectProfile,
+    known_hosts: &'a KnownHosts,
+    approval: Option<HostKeyApproval>,
+    events: &'a Events,
+}
+
+impl Attempt<'_> {
+    /// The byte stream to `hop`: a channel through the previous jump host, or a TCP connection,
+    /// through the proxy when there is one.
+    async fn open_transport(
+        &self,
+        hop: &ConnectProfile,
+        tunnel: Option<&(SshHandle, String)>,
+    ) -> AppResult<Box<dyn Transport>> {
+        let profile = self.profile;
+        let host = hop.host.trim();
+        let log = |message: String| {
+            self.events
+                .log(LogLevel::Info, Some(self.session_id), message)
+        };
+        let timed_out = || {
+            AppError::new(
                 ErrorKind::Timeout,
                 format!(
-                    "Timed out after {}s connecting to {}",
-                    timeout.as_secs(),
-                    profile.host
+                    "Timed out after {}s connecting to {host}",
+                    timeout_of(profile).as_secs()
                 ),
-            ))
-        }
-        Ok(Err(error)) => {
-            if let Some(rejected) = rejection.lock().unwrap().take() {
-                return Err(rejected);
-            }
-            return Err(connection_error(error, profile));
-        }
-        Ok(Ok(handle)) => handle,
-    };
+            )
+        };
 
-    events.log(
-        LogLevel::Info,
-        Some(session_id),
-        format!("Authenticating as {}", profile.username),
-    );
-    let authenticating = auth::authenticate(&mut handle, profile, events, session_id);
-    match tokio::time::timeout(timeout, authenticating).await {
-        Err(_) => Err(AppError::new(
-            ErrorKind::Timeout,
-            "Timed out during authentication",
-        )),
-        Ok(result) => result,
-    }?;
-    events.log(LogLevel::Info, Some(session_id), "Authenticated");
-    let host_key_fingerprint = accepted_fingerprint
-        .lock()
-        .unwrap()
-        .take()
-        .unwrap_or_default();
-    Ok(Connection {
-        handle,
-        host_key_fingerprint,
-    })
+        if let Some((jump_handle, jump_label)) = tunnel {
+            log(format!(
+                "Connecting to {host}:{} through {jump_label}",
+                hop.port
+            ));
+            let opening =
+                jump_handle.channel_open_direct_tcpip(host, u32::from(hop.port), "127.0.0.1", 0);
+            let channel = tokio::time::timeout(timeout_of(profile), opening)
+                .await
+                .map_err(|_| timed_out())?
+                .map_err(|error| match error {
+                    russh::Error::ChannelOpenFailure(reason) => AppError::new(
+                        ErrorKind::Connection,
+                        format!(
+                            "{jump_label} could not reach {host}:{} ({reason:?})",
+                            hop.port
+                        ),
+                    ),
+                    other => other.into(),
+                })?;
+            return Ok(Box::new(channel.into_stream()));
+        }
+
+        match &profile.route.proxy {
+            Some(proxy) => {
+                log(format!(
+                    "Connecting to {host}:{} through the {}",
+                    hop.port,
+                    proxy.label()
+                ));
+                let connecting = async {
+                    let mut socket = open_socket_to(&proxy.host, proxy.port, profile)
+                        .await
+                        .map_err(|error| {
+                            AppError::new(
+                                ErrorKind::Connection,
+                                format!("Could not connect to the {}: {error}", proxy.label()),
+                            )
+                        })?;
+                    let destination = Destination::resolve(proxy, host, hop.port).await?;
+                    proxy::handshake(&mut socket, proxy, &destination, hop.port).await?;
+                    AppResult::Ok(socket)
+                };
+                let socket = tokio::time::timeout(timeout_of(profile), connecting)
+                    .await
+                    .map_err(|_| timed_out())??;
+                Ok(Box::new(socket))
+            }
+            None => {
+                log(format!("Connecting to {host}:{}", hop.port));
+                let socket = tokio::time::timeout(
+                    timeout_of(profile),
+                    open_socket_to(host, hop.port, profile),
+                )
+                .await
+                .map_err(|_| timed_out())?
+                .map_err(|error| {
+                    AppError::new(
+                        ErrorKind::Connection,
+                        format!("Could not connect to {host}:{}: {error}", hop.port),
+                    )
+                })?;
+                Ok(Box::new(socket))
+            }
+        }
+    }
+
+    /// Runs the SSH handshake and authentication for one hop over `transport`.
+    async fn establish(
+        &self,
+        hop: Hop,
+        hop_profile: &ConnectProfile,
+        transport: Box<dyn Transport>,
+        tunnel: Option<SshHandle>,
+    ) -> AppResult<(SshHandle, String)> {
+        let (session_id, events) = (self.session_id, self.events);
+        let timeout = timeout_of(self.profile);
+        let rejection = Arc::new(Mutex::new(None));
+        let accepted_fingerprint = Arc::new(Mutex::new(None));
+        let handler = ClientHandler {
+            host: hop_profile.host.trim().to_string(),
+            port: hop_profile.port,
+            hop,
+            session_id: session_id.to_string(),
+            known_hosts: self.known_hosts.clone(),
+            approval: self.approval.clone(),
+            rejection: rejection.clone(),
+            accepted_fingerprint: accepted_fingerprint.clone(),
+            events: events.clone(),
+            _tunnel: tunnel,
+        };
+
+        let handshake =
+            client::connect_stream(Arc::new(client_config(self.profile)), transport, handler);
+        let mut handle = match tokio::time::timeout(timeout, handshake).await {
+            Err(_) => {
+                return Err(AppError::new(
+                    ErrorKind::Timeout,
+                    format!(
+                        "Timed out after {}s connecting to {}",
+                        timeout.as_secs(),
+                        hop_profile.host.trim()
+                    ),
+                ))
+            }
+            Ok(Err(error)) => {
+                if let Some(rejected) = rejection.lock().unwrap().take() {
+                    return Err(rejected);
+                }
+                return Err(connection_error(error, hop_profile));
+            }
+            Ok(Ok(handle)) => handle,
+        };
+
+        events.log(
+            LogLevel::Info,
+            Some(session_id),
+            format!("Authenticating as {}", hop_profile.username),
+        );
+        let authenticating = auth::authenticate(&mut handle, hop_profile, events, session_id);
+        match tokio::time::timeout(timeout, authenticating).await {
+            Err(_) => Err(AppError::new(
+                ErrorKind::Timeout,
+                "Timed out during authentication",
+            )),
+            Ok(result) => result,
+        }?;
+        events.log(
+            LogLevel::Info,
+            Some(session_id),
+            match hop {
+                Hop::Server => "Authenticated".to_string(),
+                Hop::JumpHost => format!("Authenticated on jump host {}", hop_profile.label()),
+            },
+        );
+        let host_key_fingerprint = accepted_fingerprint
+            .lock()
+            .unwrap()
+            .take()
+            .unwrap_or_default();
+        Ok((handle, host_key_fingerprint))
+    }
 }
 
 /// Connects to the first address that answers.
 pub(crate) async fn open_socket(profile: &ConnectProfile) -> std::io::Result<TcpStream> {
+    open_socket_to(&profile.host, profile.port, profile).await
+}
+
+/// Connects to the first address of `host` that answers, with `profile`'s buffer sizes.
+async fn open_socket_to(
+    host: &str,
+    port: u16,
+    profile: &ConnectProfile,
+) -> std::io::Result<TcpStream> {
     let mut last_error = None;
-    for address in tokio::net::lookup_host((profile.host.trim(), profile.port)).await? {
+    for address in tokio::net::lookup_host((host.trim(), port)).await? {
         match connect_socket(address, profile).await {
             Ok(stream) => return Ok(stream),
             Err(error) => last_error = Some(error),

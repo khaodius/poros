@@ -153,6 +153,9 @@ async fn open_connection(
     target: &SessionTarget,
     worker_index: usize,
 ) -> AppResult<WorkerConnection> {
+    target
+        .resolve_restored_route(shared.route_resolver.get())
+        .await?;
     let login = target.login();
     let protocol = login.profile.protocol;
     if protocol.is_cloud() {

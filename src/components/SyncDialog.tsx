@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
-import { CircleAlert, FolderOpen, LoaderCircle } from "lucide-react";
+import { CalendarClock, CircleAlert, FolderOpen, LoaderCircle } from "lucide-react";
 import { localSource } from "../lib/fileSource";
 import { pluralize } from "../lib/format";
 import { onSyncProgress, sync, toAppError } from "../lib/ipc";
+import { newTask, syncAction } from "../lib/schedule";
 import { TIME_TOLERANCE_LIMITS, type SyncSettings } from "../lib/settings";
 import {
   COMPARE_OPTIONS,
@@ -20,6 +21,7 @@ import { lastActivePane, listPanes } from "../state/paneRegistry";
 import { useSessionStore, type SessionEntry } from "../state/sessionStore";
 import { saveSettingsSection, useSettingsStore } from "../state/settingsStore";
 import { useToastStore } from "../state/toastStore";
+import { useUiStore } from "../state/uiStore";
 import { Dialog } from "./Dialog";
 import { Stepper } from "./Stepper";
 import { SyncPlanList } from "./SyncPlanList";
@@ -221,6 +223,25 @@ export function SyncDialog({ onClose, ...given }: SyncDialogProps) {
     folders.localPath.trim() !== "" &&
     folders.remotePath.trim() !== "" &&
     sessions.some((entry) => entry.info.id === folders.sessionId);
+  const savedConnectionId = sessions.find((entry) => entry.info.id === folders.sessionId)?.info
+    .savedConnectionId;
+
+  /** Moves on to a scheduled task that runs this synchronization through the saved connection. */
+  const schedule = () => {
+    if (!savedConnectionId) return;
+    void saveSettingsSection("sync", options);
+    useUiStore.getState().open({
+      kind: "schedules",
+      draft: newTask(
+        syncAction({
+          connectionId: savedConnectionId,
+          localPath: folders.localPath.trim(),
+          remotePath: folders.remotePath.trim(),
+          options,
+        }),
+      ),
+    });
+  };
 
   return (
     <Dialog title="Synchronize folders" onClose={onClose} width={860}>
@@ -237,6 +258,7 @@ export function SyncDialog({ onClose, ...given }: SyncDialogProps) {
           onBrowse={() => void browseLocal()}
           onOption={setOption}
           onSubmit={(event) => void compare(event)}
+          onSchedule={canCompare && savedConnectionId ? schedule : undefined}
           onCancel={onClose}
         />
       )}
@@ -270,6 +292,8 @@ interface SetupFormProps {
   onBrowse: () => void;
   onOption: <K extends keyof SyncSettings>(key: K, value: SyncSettings[K]) => void;
   onSubmit: (event: FormEvent) => void;
+  /** Absent while the folders are incomplete or the server's connection is not saved. */
+  onSchedule?: () => void;
   onCancel: () => void;
 }
 
@@ -285,6 +309,7 @@ function SetupForm({
   onBrowse,
   onOption,
   onSubmit,
+  onSchedule,
   onCancel,
 }: SetupFormProps) {
   const both = options.direction === "both";
@@ -437,6 +462,19 @@ function SetupForm({
       {error && <p className="form-error">{error}</p>}
 
       <div className="dialog-actions">
+        <button
+          type="button"
+          className="button push-left"
+          disabled={!onSchedule}
+          title={
+            onSchedule
+              ? "Run this synchronization at set times"
+              : "Fill in both folders of a saved connection to schedule this"
+          }
+          onClick={onSchedule}
+        >
+          <CalendarClock size={14} /> Schedule...
+        </button>
         <button type="button" className="button" onClick={onCancel}>
           Cancel
         </button>

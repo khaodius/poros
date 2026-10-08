@@ -21,6 +21,7 @@ import { connectInTab } from "../state/connectActions";
 import { byRecentUse, useSavedConnections } from "../state/savedConnectionsStore";
 import { CloudSignIn } from "./CloudSignIn";
 import { ConnectionIcon } from "./ConnectionIcon";
+import { useSettingsStore } from "../state/settingsStore";
 import { Dialog } from "./Dialog";
 
 const AUTH_LABELS: Record<AuthChoice, string> = {
@@ -52,6 +53,15 @@ export function ConnectDialog({
   const [needsPassphrase, setNeedsPassphrase] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const passphraseRef = useRef<HTMLInputElement>(null);
+  const proxy = useSettingsStore((state) => state.settings.connection.proxy);
+  const proxyEnabled = proxy.kind !== "none" && proxy.host.trim() !== "";
+  // Only SSH connections can carry a tunnel.
+  const jumpHosts = connections
+    .filter((connection) => connection.protocol === "sftp" && connection.id !== draft.savedId)
+    .sort((first, second) => first.name.localeCompare(second.name));
+  const jumpHostMissing =
+    draft.jumpConnectionId !== "" &&
+    !jumpHosts.some((connection) => connection.id === draft.jumpConnectionId);
 
   const update = <K extends keyof ConnectDraft>(key: K, value: ConnectDraft[K]) =>
     setDraft((current) => ({ ...current, [key]: value }));
@@ -69,6 +79,7 @@ export function ConnectDialog({
     setNeedsPassphrase(false);
   };
 
+  const sftp = draft.protocol === "sftp";
   const cloud = isCloud(draft.protocol);
   const ftp = isFtp(draft.protocol);
   const authChoices = authChoicesFor(draft.protocol);
@@ -364,6 +375,31 @@ export function ConnectDialog({
             />
           </label>
 
+          {sftp && (
+            <label className="field">
+              <span>Jump host</span>
+              <select
+                value={draft.jumpConnectionId}
+                disabled={jumpHosts.length === 0 && !jumpHostMissing}
+                onChange={(event) => update("jumpConnectionId", event.target.value)}
+              >
+                <option value="">None, connect straight to the server</option>
+                {jumpHostMissing && (
+                  <option value={draft.jumpConnectionId}>A deleted connection</option>
+                )}
+                {jumpHosts.map((connection) => (
+                  <option key={connection.id} value={connection.id}>
+                    {connection.name}
+                  </option>
+                ))}
+              </select>
+              <small className="field-hint">
+                Logs in to this saved connection first and reaches the server through it, like
+                ProxyJump in OpenSSH.
+              </small>
+            </label>
+          )}
+
           <div className="checks">
             <label className="check">
               <input
@@ -392,6 +428,16 @@ export function ConnectDialog({
                   onChange={(event) => update("ftpActive", event.target.checked)}
                 />
                 Active mode: the server opens data connections to this computer
+              </label>
+            )}
+            {sftp && proxyEnabled && !draft.jumpConnectionId && (
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={draft.bypassProxy}
+                  onChange={(event) => update("bypassProxy", event.target.checked)}
+                />
+                Connect without the proxy
               </label>
             )}
           </div>

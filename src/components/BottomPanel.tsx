@@ -16,6 +16,7 @@ import { useTransferStore } from "../state/transferStore";
 import { LogView } from "./LogView";
 import { Stepper } from "./Stepper";
 import { TransferView } from "./TransferView";
+import { WhenDoneControl } from "./WhenDoneControl";
 
 type PanelTab = TransferViewKind | "log";
 
@@ -74,6 +75,7 @@ export function BottomPanel() {
           ))}
         </div>
         <WorkerControl />
+        <WhenDoneControl />
         <div className="panel-toolbar">
           {tab === "queue" && (
             <>

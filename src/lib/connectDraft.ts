@@ -33,6 +33,9 @@ export interface ConnectDraft {
   ftpActive: boolean;
   /** A cloud account just signed in to, not yet stored with a connection. */
   signedIn: SignedIn | null;
+  /** A saved connection to go through first; empty connects straight to the server. */
+  jumpConnectionId: string;
+  bypassProxy: boolean;
 }
 
 export const EMPTY_DRAFT: ConnectDraft = {
@@ -52,6 +55,8 @@ export const EMPTY_DRAFT: ConnectDraft = {
   hasSavedSecret: false,
   ftpActive: false,
   signedIn: null,
+  jumpConnectionId: "",
+  bypassProxy: false,
 };
 
 /** The ways a protocol can sign in, the first being its default. */
@@ -125,6 +130,11 @@ export function profileFromDraft(draft: ConnectDraft): ConnectProfile {
   };
   if (isFtp(draft.protocol)) profile.ftpActive = draft.ftpActive;
   if (draft.savedId) profile.savedConnectionId = draft.savedId;
+  // The proxy and jump hosts carry SSH connections only.
+  if (draft.protocol === "sftp") {
+    if (draft.jumpConnectionId) profile.jumpConnectionId = draft.jumpConnectionId;
+    if (draft.bypassProxy) profile.bypassProxy = true;
+  }
   return profile;
 }
 
@@ -143,6 +153,8 @@ export function draftFromSaved(connection: SavedConnection): ConnectDraft {
     saveSecret: connection.saveSecret,
     hasSavedSecret: connection.saveSecret,
     ftpActive: connection.ftpActive ?? false,
+    jumpConnectionId: connection.jumpConnectionId ?? "",
+    bypassProxy: connection.bypassProxy ?? false,
   };
 }
 
@@ -169,6 +181,8 @@ export function savedFromDraft(draft: ConnectDraft): SavedConnection {
     // A cloud connection cannot open without its stored sign-in.
     saveSecret: cloud || (draft.authChoice !== "agent" && draft.saveSecret),
     ftpActive: isFtp(draft.protocol) && draft.ftpActive,
+    bypassProxy: draft.protocol === "sftp" && draft.bypassProxy,
+    jumpConnectionId: (draft.protocol === "sftp" && draft.jumpConnectionId) || null,
   };
 }
 
@@ -193,6 +207,8 @@ export function savedFromProfile(profile: ConnectProfile, name: string, saveSecr
     remotePath: profile.initialPath ?? null,
     saveSecret: cloud || (profile.auth.type !== "agent" && saveSecret),
     ftpActive: profile.ftpActive ?? false,
+    bypassProxy: profile.bypassProxy ?? false,
+    jumpConnectionId: profile.jumpConnectionId ?? null,
   };
   return connection;
 }

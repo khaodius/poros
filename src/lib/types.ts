@@ -1,6 +1,6 @@
 // Mirrors the serde types in src-tauri/src (model.rs, error.rs, protocol.rs, ssh/mod.rs,
-// session.rs, events.rs, transfer/, sync/, connections.rs, cloud/, themes.rs, fonts.rs). Field
-// names are camelCase on the wire.
+// session.rs, events.rs, transfer/, sync/, connections.rs, cloud/, themes.rs, fonts.rs,
+// automation/). Field names are camelCase on the wire.
 
 export type EntryKind = "dir" | "file" | "symlink" | "other";
 export type LinkTarget = "dir" | "file" | "broken";
@@ -59,6 +59,10 @@ export interface ConnectProfile {
   savedConnectionId?: string | null;
   /** FTP data connections come from the server (active mode) instead of passive mode. */
   ftpActive?: boolean;
+  /** Skips the proxy from the connection settings. */
+  bypassProxy?: boolean;
+  /** A saved connection to reach this server through, like OpenSSH's ProxyJump. */
+  jumpConnectionId?: string | null;
 }
 
 export interface HostKeyInfo {
@@ -133,7 +137,7 @@ export interface SessionClosed {
   reason: string;
 }
 
-export type StoreName = "settings" | "connections" | "themes";
+export type StoreName = "settings" | "connections" | "themes" | "schedules";
 
 /** `relay` copies from one server to another. */
 export type Direction = "upload" | "download" | "relay";
@@ -346,6 +350,9 @@ export interface SavedConnection {
   /** Milliseconds since the Unix epoch. */
   lastUsed?: number | null;
   ftpActive?: boolean;
+  bypassProxy?: boolean;
+  /** Another saved connection this one is reached through. */
+  jumpConnectionId?: string | null;
 }
 
 export interface CloudProviderStatus {
@@ -376,4 +383,91 @@ export interface ThemeFile {
   theme?: unknown;
   /** Why the file could not be read. */
   error?: string;
+}
+
+/** Sent when the transfer queue runs out of work. */
+export interface QueueFinished {
+  done: number;
+  failed: number;
+  skipped: number;
+  bytes: number;
+  elapsedMillis: number;
+  /** Jobs still waiting because they are paused; the queue is not really finished. */
+  paused: number;
+}
+
+export type PowerAction = "lock" | "sleep" | "hibernate" | "logOff" | "shutDown";
+
+export interface CommandRequest {
+  /** Names this run for its output events and for stopping it. */
+  runId: string;
+  sessionId: string;
+  command: string;
+  /** The folder to run the command in; the login folder when absent. */
+  directory?: string | null;
+}
+
+export interface OutputChunk {
+  runId: string;
+  stream: "stdout" | "stderr";
+  text: string;
+}
+
+export interface CommandResult {
+  /** Absent when the server did not say, for example after a stop. */
+  exitStatus: number | null;
+  /** The signal that ended the command, if one did. */
+  signal: string | null;
+  stopped: boolean;
+  elapsedMillis: number;
+}
+
+export type Trigger =
+  /** Seconds since the Unix epoch. */
+  | { type: "once"; at: number }
+  /** From `start` (seconds since the Unix epoch), then every `minutes`. */
+  | { type: "every"; minutes: number; start: number }
+  /** At a local time of day on the chosen weekdays, Monday being 0. */
+  | { type: "daily"; minuteOfDay: number; weekdays: number[] };
+
+export type TaskAction =
+  | {
+      type: "sync";
+      connectionId: string;
+      localPath: string;
+      remotePath: string;
+      direction: SyncDirection;
+      compare: CompareMode;
+      deleteExtraneous: boolean;
+      skipNewerOnTarget: boolean;
+      ignoreExisting: boolean;
+      timeToleranceSecs: number;
+      excludes: string[];
+    }
+  | { type: "command"; connectionId: string; command: string; directory?: string | null };
+
+export interface LastRun {
+  /** Seconds since the Unix epoch. */
+  started: number;
+  finished: number;
+  succeeded: boolean;
+  message: string;
+}
+
+export interface ScheduledTask {
+  /** Empty for a task not saved yet. */
+  id: string;
+  name: string;
+  enabled: boolean;
+  trigger: Trigger;
+  action: TaskAction;
+  /** Runs once at the next start when Poros was closed at the time. */
+  runMissed: boolean;
+  /** Seconds since the Unix epoch. Worked out by the backend. */
+  nextRun?: number | null;
+  lastRun?: LastRun | null;
+}
+
+export interface TaskView extends ScheduledTask {
+  running: boolean;
 }

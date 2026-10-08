@@ -4,6 +4,9 @@ use std::sync::{Arc, Mutex};
 
 use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
+use crate::automation::remote_command::{CommandRequest, CommandResult, CommandRunner};
+use crate::automation::scheduler::{ScheduledTask, Scheduler, TaskView};
+use crate::automation::system::{self, PowerAction};
 use crate::cloud::{self, CloudProvider, OAuthClient, OAuthVault, ProviderStatus, SignedIn};
 use crate::connections::{ConnectionStore, SavedConnection};
 use crate::error::{AppError, AppResult};
@@ -11,6 +14,7 @@ use crate::events::{Events, LogLevel, Store};
 use crate::fonts::{self, FontFamily};
 use crate::local;
 use crate::model::{DirListing, FileEntry};
+use crate::route;
 use crate::session::{SessionInfo, SessionManager};
 use crate::settings::{Settings, SettingsStore};
 use crate::ssh::{AuthMethod, ConnectProfile, HostKeyApproval};
@@ -60,6 +64,7 @@ pub async fn connect(
     window: WebviewWindow,
     sessions: State<'_, Arc<SessionManager>>,
     connections: State<'_, Arc<ConnectionStore>>,
+    settings: State<'_, SettingsStore>,
     events: State<'_, Events>,
     mut profile: ConnectProfile,
     host_key_approval: Option<HostKeyApproval>,
@@ -75,6 +80,12 @@ pub async fn connect(
             }
         }
     }
+    let connection_settings = settings.get().connection;
+    let store = connections.inner().clone();
+    let profile = tokio::task::spawn_blocking(move || {
+        route::resolve(&mut profile, &connection_settings, &store).map(|()| profile)
+    })
+    .await??;
     let info = sessions
         .connect(profile, host_key_approval, window.label())
         .await?;
@@ -314,6 +325,22 @@ pub fn settings_set(
     Ok(saved)
 }
 
+/// Keeps the proxy password in the system keychain; an empty one deletes it.
+#[tauri::command]
+pub async fn proxy_password_set(
+    settings: State<'_, SettingsStore>,
+    connections: State<'_, Arc<ConnectionStore>>,
+    events: State<'_, Events>,
+    password: String,
+) -> AppResult<Settings> {
+    let store = connections.inner().clone();
+    let has_password = !password.is_empty();
+    tokio::task::spawn_blocking(move || store.set_proxy_password(Some(&password))).await??;
+    let saved = settings.set_proxy_has_password(has_password)?;
+    events.store_changed(Store::Settings);
+    Ok(saved)
+}
+
 #[tauri::command]
 pub async fn connections_list(
     connections: State<'_, Arc<ConnectionStore>>,
@@ -445,6 +472,63 @@ pub async fn save_text_file(path: String, contents: String) -> AppResult<()> {
         std::fs::write(&path, contents).map_err(|error| AppError::from(error).with_path(path))
     })
     .await?
+}
+
+#[tauri::command]
+pub async fn remote_command_run(
+    commands: State<'_, CommandRunner>,
+    request: CommandRequest,
+) -> AppResult<CommandResult> {
+    commands.run(request).await
+}
+
+#[tauri::command]
+pub fn remote_command_stop(commands: State<'_, CommandRunner>, run_id: String) {
+    commands.stop(&run_id);
+}
+
+#[tauri::command]
+pub async fn power_action(action: PowerAction) -> AppResult<()> {
+    tokio::task::spawn_blocking(move || system::perform(action)).await?
+}
+
+/// Runs the user's command through the system shell, with `environment` added.
+#[tauri::command]
+pub async fn local_command_run(
+    events: State<'_, Events>,
+    command: String,
+    environment: HashMap<String, String>,
+) -> AppResult<()> {
+    system::run_local_command(&command, &environment, &events).await
+}
+
+#[tauri::command]
+pub fn app_exit(app: AppHandle) {
+    app.exit(0);
+}
+
+#[tauri::command]
+pub fn schedules_list(scheduler: State<'_, Scheduler>) -> Vec<TaskView> {
+    scheduler.list()
+}
+
+#[tauri::command]
+pub fn schedule_save(scheduler: State<'_, Scheduler>, task: ScheduledTask) -> AppResult<TaskView> {
+    scheduler.save(task)
+}
+
+#[tauri::command]
+pub fn schedule_delete(scheduler: State<'_, Scheduler>, id: String) -> AppResult<()> {
+    scheduler.delete(&id)
+}
+
+#[tauri::command]
+pub fn schedule_run_now(
+    app: AppHandle,
+    scheduler: State<'_, Scheduler>,
+    id: String,
+) -> AppResult<()> {
+    scheduler.run_now(&id, app)
 }
 
 /// Layouts handed from a window to the window it tears a tab out into.

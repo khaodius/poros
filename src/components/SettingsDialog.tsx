@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   ArrowLeftRight,
   CircleArrowUp,
@@ -7,23 +8,30 @@ import {
   LayoutPanelLeft,
   Network,
   Palette,
+  Workflow,
   type LucideIcon,
 } from "lucide-react";
 import { COLUMN_LABELS, DETAIL_COLUMNS } from "../lib/columns";
 import { formatDate, formatTime, formatVersion } from "../lib/format";
+import { settingsStore, toAppError } from "../lib/ipc";
 import {
   DATE_FORMATS,
   LOG_LINE_LIMITS,
   MAX_RECONNECT_MINUTES,
   MAX_WORKERS,
   SOCKET_BUFFER_LIMITS,
+  defaultProxyPort,
+  type ProxyKind,
+  type ProxySettings,
   type Settings,
 } from "../lib/settings";
 import type { ExistsAction } from "../lib/types";
 import { saveSettingsSection, useSettingsStore } from "../state/settingsStore";
+import { useToastStore } from "../state/toastStore";
 import { useUiStore, type SettingsSection } from "../state/uiStore";
 import { checkForUpdates, useUpdateStore } from "../state/updateStore";
 import { AppearanceSettings } from "./AppearanceSettings";
+import { AutomationSettingsPage } from "./AutomationSettings";
 import { CloudSettingsPage } from "./CloudSettings";
 import { Dialog } from "./Dialog";
 import { SyncSettingsPage } from "./SyncSettings";
@@ -33,6 +41,7 @@ import {
   SettingGroup,
   SettingRow,
   SwitchSetting,
+  TextSetting,
 } from "./settingsFields";
 
 const SECTIONS: { id: SettingsSection; label: string; icon: LucideIcon }[] = [
@@ -40,6 +49,7 @@ const SECTIONS: { id: SettingsSection; label: string; icon: LucideIcon }[] = [
   { id: "sync", label: "Sync", icon: FolderSync },
   { id: "connection", label: "Connection", icon: Network },
   { id: "cloud", label: "Cloud accounts", icon: Cloud },
+  { id: "automation", label: "Automation", icon: Workflow },
   { id: "interface", label: "Interface", icon: LayoutPanelLeft },
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "log", label: "Log", icon: FileText },
@@ -86,6 +96,7 @@ export function SettingsDialog({ section }: { section: SettingsSection }) {
           {section === "sync" && <SyncSettingsPage settings={settings} />}
           {section === "connection" && <ConnectionSettingsPage settings={settings} />}
           {section === "cloud" && <CloudSettingsPage settings={settings} />}
+          {section === "automation" && <AutomationSettingsPage settings={settings} />}
           {section === "interface" && <InterfaceSettingsPage settings={settings} />}
           {section === "appearance" && <AppearanceSettings />}
           {section === "log" && <LogSettingsPage settings={settings} />}
@@ -362,6 +373,7 @@ function ConnectionSettingsPage({ settings }: { settings: Settings }) {
           }
         />
       </SettingGroup>
+      <ProxySettingsGroup proxy={connection.proxy} />
       <SettingGroup title="Saved connections">
         <SwitchSetting
           label="Save quick connections automatically"
@@ -373,6 +385,113 @@ function ConnectionSettingsPage({ settings }: { settings: Settings }) {
         />
       </SettingGroup>
     </>
+  );
+}
+
+const PROXY_KINDS: { value: ProxyKind; label: string }[] = [
+  { value: "none", label: "None" },
+  { value: "socks5", label: "SOCKS5" },
+  { value: "socks4", label: "SOCKS4" },
+  { value: "http", label: "HTTP (CONNECT)" },
+];
+
+function ProxySettingsGroup({ proxy }: { proxy: ProxySettings }) {
+  const set = (change: Partial<ProxySettings>) =>
+    void saveSettingsSection("connection", { proxy: { ...proxy, ...change } });
+  const off = proxy.kind === "none";
+  const setPassword = (password: string) =>
+    void settingsStore
+      .setProxyPassword(password)
+      .catch((caught) => useToastStore.getState().show("error", toAppError(caught).message));
+  return (
+    <SettingGroup title="Proxy">
+      <p className="setting-note">
+        New SFTP connections reach their server through this proxy, unless a connection is set to
+        connect without it. With a jump host, only the connection to the jump host uses the proxy.
+        FTP and cloud connections do not use it.
+      </p>
+      <SelectSetting
+        label="Type"
+        value={proxy.kind}
+        options={PROXY_KINDS}
+        onChange={(kind) =>
+          set(
+            proxy.port === defaultProxyPort(proxy.kind)
+              ? { kind, port: defaultProxyPort(kind) }
+              : { kind },
+          )
+        }
+      />
+      <TextSetting
+        label="Host"
+        value={proxy.host}
+        placeholder="proxy.example.com"
+        disabled={off}
+        onCommit={(host) => set({ host })}
+      />
+      <NumberSetting
+        label="Port"
+        value={proxy.port}
+        min={1}
+        max={65535}
+        disabled={off}
+        onChange={(port) => set({ port })}
+      />
+      <TextSetting
+        label="Username"
+        hint="Leave empty for a proxy without a login. SOCKS4 sends only the username."
+        value={proxy.username}
+        disabled={off}
+        onCommit={(username) => set({ username })}
+      />
+      <SettingRow label="Password" hint="Kept in the system keychain." disabled={off}>
+        <span className="input-with-button">
+          <ProxyPasswordInput hasPassword={proxy.hasPassword} disabled={off} onSave={setPassword} />
+          {proxy.hasPassword && (
+            <button type="button" className="button" disabled={off} onClick={() => setPassword("")}>
+              Forget
+            </button>
+          )}
+        </span>
+      </SettingRow>
+      <SwitchSetting
+        label="Look up server names through the proxy"
+        hint="This computer's DNS never sees the names of the servers you connect to. HTTP proxies always do this."
+        checked={proxy.kind === "http" || proxy.remoteDns}
+        disabled={off || proxy.kind === "http"}
+        onChange={(remoteDns) => set({ remoteDns })}
+      />
+    </SettingGroup>
+  );
+}
+
+function ProxyPasswordInput({
+  hasPassword,
+  disabled,
+  onSave,
+}: {
+  hasPassword: boolean;
+  disabled: boolean;
+  onSave: (password: string) => void;
+}) {
+  const [typed, setTyped] = useState("");
+  const save = () => {
+    if (typed) onSave(typed);
+    setTyped("");
+  };
+  return (
+    <input
+      type="password"
+      value={typed}
+      aria-label="Proxy password"
+      placeholder={hasPassword ? "Saved" : ""}
+      disabled={disabled}
+      onChange={(event) => setTyped(event.target.value)}
+      onBlur={save}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") save();
+      }}
+    />
   );
 }
 

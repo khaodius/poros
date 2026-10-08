@@ -56,6 +56,50 @@ export function SwitchSetting({ label, hint, checked, disabled, onChange }: Swit
   );
 }
 
+interface CommitInputProps {
+  value: string;
+  label: string;
+  placeholder?: string;
+  disabled?: boolean;
+  className?: string;
+  onCommit: (value: string) => void;
+}
+
+/** Saves when the box loses focus or Enter is pressed, so the backend's tidying does not fight typing. */
+export function CommitInput({
+  value,
+  label,
+  placeholder,
+  disabled,
+  className,
+  onCommit,
+}: CommitInputProps) {
+  const [typed, setTyped] = useState<string | null>(null);
+  const commit = () => {
+    if (typed !== null && typed !== value) onCommit(typed);
+    setTyped(null);
+  };
+  return (
+    <input
+      className={className}
+      value={typed ?? value}
+      aria-label={label}
+      placeholder={placeholder}
+      spellCheck={false}
+      disabled={disabled}
+      onChange={(event) => setTyped(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") commit();
+        if (event.key === "Escape" && typed !== null) {
+          event.preventDefault();
+          setTyped(null);
+        }
+      }}
+    />
+  );
+}
+
 interface NumberProps {
   label: string;
   hint?: string;
@@ -135,7 +179,6 @@ interface TextSettingProps {
   onCommit: (value: string) => void;
 }
 
-/** Saves when the box loses focus or Enter is pressed, so the backend's tidying does not fight typing. */
 export function TextSetting({
   label,
   hint,
@@ -145,29 +188,15 @@ export function TextSetting({
   wide,
   onCommit,
 }: TextSettingProps) {
-  const [typed, setTyped] = useState<string | null>(null);
-  const commit = () => {
-    if (typed !== null && typed !== value) onCommit(typed);
-    setTyped(null);
-  };
   return (
     <SettingRow label={label} hint={hint} disabled={disabled}>
-      <input
-        value={typed ?? value}
-        aria-label={label}
+      <CommitInput
+        value={value}
+        label={label}
         placeholder={placeholder}
-        className={wide ? "is-wide" : undefined}
-        spellCheck={false}
         disabled={disabled}
-        onChange={(event) => setTyped(event.target.value)}
-        onBlur={commit}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") commit();
-          if (event.key === "Escape" && typed !== null) {
-            event.preventDefault();
-            setTyped(null);
-          }
-        }}
+        className={wide ? "is-wide" : undefined}
+        onCommit={onCommit}
       />
     </SettingRow>
   );

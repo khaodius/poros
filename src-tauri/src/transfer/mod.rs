@@ -102,12 +102,29 @@ pub struct TransferUpdate {
     pub stats: TransferStats,
 }
 
+/// Sent when the queue runs dry after moving at least one file.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueueFinished {
+    pub done: u64,
+    pub failed: u64,
+    pub skipped: u64,
+    pub bytes: u64,
+    pub elapsed_millis: u64,
+    /// Jobs still waiting because they are paused; the queue is not really finished.
+    pub paused: u32,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TransferList {
     pub jobs: Vec<JobSnapshot>,
     pub stats: TransferStats,
 }
+
+/// Fills in a profile's route from the current connection settings and saved connections.
+/// Blocks on the keychain.
+pub type RouteResolver = Arc<dyn Fn(&mut ConnectProfile) -> AppResult<()> + Send + Sync>;
 
 /// What workers need to reach a session's server, kept after the browsing session closes so
 /// queued transfers can still run.
@@ -127,6 +144,9 @@ pub(crate) struct SessionTarget {
     /// Sessions this FTP server would not send files to directly, so relays to them skip
     /// trying FXP again.
     pub fxp_refused: Mutex<BTreeSet<String>>,
+    /// A restored login's route is still to be worked out. Workers wait on the lock so none
+    /// connects before it is, which could skip the proxy or a jump host.
+    route_pending: tokio::sync::Mutex<bool>,
 }
 
 #[derive(Clone)]
@@ -162,6 +182,7 @@ impl SessionTarget {
             checksum: tokio::sync::Mutex::new(None),
             restored: AtomicBool::new(restored),
             fxp_refused: Mutex::new(BTreeSet::new()),
+            route_pending: tokio::sync::Mutex::new(restored),
         }
     }
 
@@ -188,6 +209,27 @@ impl SessionTarget {
 
     pub fn is_restored(&self) -> bool {
         self.restored.load(Ordering::Relaxed)
+    }
+
+    /// Works out a restored login's route the first time it connects on its own.
+    pub async fn resolve_restored_route(&self, resolver: Option<&RouteResolver>) -> AppResult<()> {
+        let mut pending = self.route_pending.lock().await;
+        if !*pending || !self.is_restored() {
+            return Ok(());
+        }
+        if let Some(resolve) = resolver.cloned() {
+            let mut profile = self.login().profile;
+            let profile =
+                tokio::task::spawn_blocking(move || resolve(&mut profile).map(|()| profile))
+                    .await??;
+            let mut login = self.login.lock().unwrap();
+            // A session the user opened meanwhile brought its own route.
+            if self.is_restored() {
+                login.profile = profile;
+            }
+        }
+        *pending = false;
+        Ok(())
     }
 
     /// Takes over a session the user has open to the same server when the browsing session
@@ -233,6 +275,8 @@ pub(crate) struct Shared {
     /// Where unfinished transfers are saved between runs; unset in tests.
     queue_file: OnceLock<PathBuf>,
     saving: AtomicBool,
+    /// Unset in tests, where restored servers connect directly.
+    route_resolver: OnceLock<RouteResolver>,
 }
 
 impl Shared {
@@ -289,6 +333,7 @@ impl TransferManager {
             borrowed_relays: tokio::sync::Mutex::new(()),
             queue_file: OnceLock::new(),
             saving: AtomicBool::new(false),
+            route_resolver: OnceLock::new(),
         });
         let manager = Self { shared };
         manager.configure(settings);
@@ -461,6 +506,12 @@ impl TransferManager {
         }
     }
 
+    /// How transfers restored from the last run reach their servers through the proxy and jump
+    /// hosts before a session to them is open again.
+    pub fn resolve_routes_with(&self, resolver: RouteResolver) {
+        let _ = self.shared.route_resolver.set(resolver);
+    }
+
     /// Restores the transfers saved in `file` by the last run, paused, and keeps saving there.
     pub fn keep_queue_in(&self, file: PathBuf) {
         if self.shared.queue_file.set(file.clone()).is_err() {
@@ -534,6 +585,14 @@ impl TransferManager {
             .unwrap()
             .session_job_ids(session_id)
             .len()
+    }
+
+    pub fn failed_session_jobs(&self, session_id: &str) -> usize {
+        self.shared
+            .queue
+            .lock()
+            .unwrap()
+            .session_failures(session_id)
     }
 }
 
@@ -622,7 +681,16 @@ async fn report_progress(shared: Weak<Shared>) {
                 });
             }
             (Some(started), false) if stats.counts.conflict == 0 => {
-                log_summary(&shared.events, started, totals, uploaded + downloaded, now);
+                if let Some(finished) = summarize(
+                    started,
+                    totals,
+                    uploaded + downloaded,
+                    stats.counts.paused,
+                    now,
+                ) {
+                    log_summary(&shared.events, &finished);
+                    shared.events.queue_finished(&finished);
+                }
                 batch = None;
             }
             _ => {}
@@ -699,19 +767,42 @@ pub(super) async fn discard_with_browsing_session(shared: &Shared, partial: &Aba
     let _ = files.delete(std::slice::from_ref(&partial.path)).await;
 }
 
-fn log_summary(events: &Events, batch: &Batch, totals: Totals, bytes: u64, now: Instant) {
+/// `None` when the batch settled no file.
+fn summarize(
+    batch: &Batch,
+    totals: Totals,
+    bytes: u64,
+    paused: u32,
+    now: Instant,
+) -> Option<QueueFinished> {
     let done = totals.done - batch.totals.done;
     let failed = totals.failed - batch.totals.failed;
     let skipped = totals.skipped - batch.totals.skipped;
     if done + failed + skipped == 0 {
-        return;
+        return None;
     }
-    let elapsed = now.saturating_duration_since(batch.started_at);
+    Some(QueueFinished {
+        done,
+        failed,
+        skipped,
+        bytes: bytes.saturating_sub(batch.bytes),
+        elapsed_millis: now.saturating_duration_since(batch.started_at).as_millis() as u64,
+        paused,
+    })
+}
+
+fn log_summary(events: &Events, finished: &QueueFinished) {
+    let QueueFinished {
+        done,
+        failed,
+        skipped,
+        ..
+    } = *finished;
     let mut message = format!(
         "Transfers finished: {done} {} ({}) in {}",
         if done == 1 { "file" } else { "files" },
-        format_size(bytes.saturating_sub(batch.bytes)),
-        format_duration(elapsed)
+        format_size(finished.bytes),
+        format_duration(Duration::from_millis(finished.elapsed_millis))
     );
     if skipped > 0 {
         message.push_str(&format!(", {skipped} skipped"));
@@ -725,4 +816,83 @@ fn log_summary(events: &Events, batch: &Batch, totals: Totals, bytes: u64, now: 
         LogLevel::Info
     };
     events.log(level, None, message);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ssh::proxy::{Proxy, ProxyKind};
+    use crate::ssh::{AuthMethod, Route};
+
+    fn login() -> Login {
+        Login {
+            profile: ConnectProfile {
+                protocol: Protocol::Sftp,
+                host: "example.com".into(),
+                port: 22,
+                username: "me".into(),
+                auth: AuthMethod::Agent,
+                initial_path: None,
+                timeout_secs: None,
+                keepalive_secs: None,
+                compression: false,
+                receive_buffer_kib: None,
+                send_buffer_kib: None,
+                saved_connection_id: None,
+                ftp_active: false,
+                bypass_proxy: false,
+                jump_connection_id: None,
+                route: Route::default(),
+            },
+            host_key_fingerprint: String::new(),
+            browsing_session: "restored".into(),
+            browsing_files: None,
+        }
+    }
+
+    fn counting_resolver(calls: Arc<AtomicU64>) -> RouteResolver {
+        Arc::new(move |profile: &mut ConnectProfile| {
+            calls.fetch_add(1, Ordering::Relaxed);
+            profile.route.proxy = Some(Proxy {
+                kind: ProxyKind::Socks5,
+                host: "proxy.local".into(),
+                port: 1080,
+                username: String::new(),
+                password: String::new(),
+                remote_dns: true,
+            });
+            Ok(())
+        })
+    }
+
+    #[tokio::test]
+    async fn restored_targets_work_out_their_route_once() {
+        let calls = Arc::new(AtomicU64::new(0));
+        let resolver = counting_resolver(calls.clone());
+        let target = Arc::new(SessionTarget::new("restored".into(), login(), true));
+        let workers: Vec<_> = (0..4)
+            .map(|_| {
+                let target = target.clone();
+                let resolver = resolver.clone();
+                tokio::spawn(async move { target.resolve_restored_route(Some(&resolver)).await })
+            })
+            .collect();
+        for worker in workers {
+            worker.await.unwrap().unwrap();
+        }
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        assert!(target.login().profile.route.proxy.is_some());
+    }
+
+    #[tokio::test]
+    async fn live_targets_keep_the_route_of_their_session() {
+        let calls = Arc::new(AtomicU64::new(0));
+        let target = SessionTarget::new("live".into(), login(), false);
+        target
+            .resolve_restored_route(Some(&counting_resolver(calls.clone())))
+            .await
+            .unwrap();
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+        assert!(target.login().profile.route.proxy.is_none());
+    }
 }
