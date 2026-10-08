@@ -1,5 +1,5 @@
-// Geometry for dragging a pane around the dock: where the lifted pane floats, which group it
-// covers enough to make room for it, and on which side of that group it lands.
+// Geometry for dragging a pane around the dock: where the lifted pane floats, which group it is
+// over, and whether it merges into that group or splits it.
 
 import {
   allGroups,
@@ -33,12 +33,9 @@ export interface Rect {
 export const DOCK_GAP = 8;
 /** Matches the .tab-bar height. */
 export const TAB_BAR_HEIGHT = 31;
-/** How much of a group the lifted pane covers, or of itself when it is the smaller, before
- * the group moves aside. */
-export const COVER_SHARE = 0.5;
-/** Over its own group, a pane must move this far off center, in halves of the group's size,
- * before it splits the group. */
-const CENTER_ZONE = 0.3;
+/** In halves of a group's size: a pane centered this close to a group's center merges into it
+ * as a tab, and farther out it splits the group on the side it leans toward. */
+const MERGE_ZONE = 0.5;
 /** The lifted pane is never larger than this share of the dock, so the layout under it shows. */
 const FLOATING_MAX = { width: 0.5, height: 0.6 };
 
@@ -68,65 +65,39 @@ export function groupRects(root: LayoutNode, dock: Rect): GroupRect[] {
   }));
 }
 
-function overlapArea(first: Rect, second: Rect): number {
-  const width =
-    Math.min(first.left + first.width, second.left + second.width) -
-    Math.max(first.left, second.left);
-  const height =
-    Math.min(first.top + first.height, second.top + second.height) -
-    Math.max(first.top, second.top);
-  return width > 0 && height > 0 ? width * height : 0;
+function distanceTo(rect: Rect, point: Point): number {
+  const x = Math.max(rect.left - point.x, 0, point.x - (rect.left + rect.width));
+  const y = Math.max(rect.top - point.y, 0, point.y - (rect.top + rect.height));
+  return Math.hypot(x, y);
 }
 
-/** How much of the smaller rectangle the two share, from 0 to 1. */
-export function coverage(first: Rect, second: Rect): number {
-  const smaller = Math.min(first.width * first.height, second.width * second.height);
-  return smaller > 0 ? overlapArea(first, second) / smaller : 0;
+export function rectCenter({ left, top, width, height }: Rect): Point {
+  return { x: left + width / 2, y: top + height / 2 };
 }
 
-/** How far the floating rectangle's center is from the target's, in halves of its size. */
-function centerOffset(target: Rect, floating: Rect): Point {
-  return {
-    x: (floating.left + floating.width / 2 - (target.left + target.width / 2)) / (target.width / 2),
-    y:
-      (floating.top + floating.height / 2 - (target.top + target.height / 2)) / (target.height / 2),
-  };
+/** The group under a point, or the closest one when the point falls in the gap between groups. */
+export function groupNearest(groups: GroupRect[], point: Point): GroupRect | null {
+  let nearest: GroupRect | null = null;
+  let nearestDistance = Infinity;
+  for (const entry of groups) {
+    const distance = distanceTo(entry.rect, point);
+    if (distance < nearestDistance) {
+      nearest = entry;
+      nearestDistance = distance;
+    }
+  }
+  return nearest;
 }
 
-export type EdgeSide = Exclude<DropSide, "center">;
-
-/** The side of `target` the floating rectangle's center lies toward. */
-export function sideWithin(target: Rect, floating: Rect): EdgeSide {
-  const { x, y } = centerOffset(target, floating);
+/** Where a pane centered on `point` drops into `target`: its middle merges, its edges split. */
+export function dropSide(target: Rect, point: Point): DropSide {
+  const center = rectCenter(target);
+  const x = (point.x - center.x) / (target.width / 2);
+  const y = (point.y - center.y) / (target.height / 2);
+  if (Math.max(Math.abs(x), Math.abs(y)) < MERGE_ZONE) return "center";
   if (Math.abs(x) >= Math.abs(y)) return x < 0 ? "left" : "right";
   return y < 0 ? "top" : "bottom";
 }
-
-export function nearCenter(target: Rect, floating: Rect): boolean {
-  const { x, y } = centerOffset(target, floating);
-  return Math.max(Math.abs(x), Math.abs(y)) < CENTER_ZONE;
-}
-
-/** The group the floating pane covers most, once it covers enough to make room. */
-export function coveredGroup(groups: GroupRect[], floating: Rect): GroupRect | null {
-  let best: GroupRect | null = null;
-  let bestCoverage = COVER_SHARE;
-  for (const entry of groups) {
-    const covered = coverage(entry.rect, floating);
-    if (covered >= bestCoverage) {
-      best = entry;
-      bestCoverage = covered;
-    }
-  }
-  return best;
-}
-
-const OPPOSITE: Record<EdgeSide, EdgeSide> = {
-  left: "right",
-  right: "left",
-  top: "bottom",
-  bottom: "top",
-};
 
 /** Whether two layouts hold the same tabs in the same arrangement, whatever their sizes. */
 function sameArrangement(first: LayoutNode, second: LayoutNode): boolean {
@@ -144,18 +115,15 @@ function sameArrangement(first: LayoutNode, second: LayoutNode): boolean {
   );
 }
 
-/**
- * The side of a covered group to open for a dragged tab. When the pane already sits on that
- * side, opening it would change nothing, so the group moves over to the pane's place instead.
- */
-export function sideToMakeRoom(
+/** Whether dropping the tab there would change anything; merging into its own group never does. */
+export function changesLayout(
   root: LayoutNode,
   tabId: string,
   groupId: string,
-  side: EdgeSide,
-): EdgeSide {
-  if (groupOfTab(root, tabId)?.id === groupId) return side;
-  return sameArrangement(dockTab(root, tabId, groupId, side), root) ? OPPOSITE[side] : side;
+  side: DropSide,
+): boolean {
+  if (side === "center" && groupOfTab(root, tabId)?.id === groupId) return false;
+  return !sameArrangement(dockTab(root, tabId, groupId, side), root);
 }
 
 /**

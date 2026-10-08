@@ -1,13 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  coverage,
-  coveredGroup,
+  changesLayout,
+  dropSide,
   floatingFrame,
-  floatingRect,
+  groupNearest,
   groupRects,
-  nearCenter,
-  sideToMakeRoom,
-  sideWithin,
   type Rect,
 } from "./docking";
 import { group, type LayoutNode } from "./layout";
@@ -42,41 +39,41 @@ describe("docking geometry", () => {
     ]);
   });
 
-  it("measures coverage against the smaller rectangle", () => {
-    const big = rect(0, 0, 400, 400);
-    expect(coverage(big, rect(300, 0, 200, 100))).toBe(0.5);
-    expect(coverage(rect(0, 0, 100, 100), big)).toBe(1);
-    expect(coverage(big, rect(400, 0, 100, 100))).toBe(0);
-  });
-
-  it("makes room only once half is covered", () => {
+  it("finds the group under a point, or the closest across a gap", () => {
     const groups = groupRects(sideBySide(), DOCK);
-    const pane = { grab: { x: 0, y: 0 }, size: { width: 500, height: 360 } };
-    const coveredAt = (x: number) => coveredGroup(groups, floatingRect(pane, { x, y: 40 }));
-    expect(coveredAt(200)?.groupId).toBe("left");
-    // Mostly over the gap and the left group: the right group stays put.
-    expect(coveredAt(250)?.groupId).toBe("left");
-    expect(coveredAt(270)?.groupId).toBe("right");
-    expect(coveredAt(700)?.groupId).toBe("right");
-    expect(coveredAt(1000)).toBeNull();
+    expect(groupNearest(groups, { x: 200, y: 300 })?.groupId).toBe("left");
+    expect(groupNearest(groups, { x: 503, y: 300 })?.groupId).toBe("left");
+    expect(groupNearest(groups, { x: 506, y: 300 })?.groupId).toBe("right");
+    expect(groupNearest([], { x: 0, y: 0 })).toBeNull();
   });
 
-  it("picks the side the floating pane leans toward", () => {
+  it("merges in the middle of a group and splits toward its edges", () => {
     const target = rect(0, 0, 400, 400);
-    expect(sideWithin(target, rect(-50, 150, 100, 100))).toBe("left");
-    expect(sideWithin(target, rect(150, 320, 100, 100))).toBe("bottom");
-    expect(sideWithin(target, rect(300, 0, 100, 100))).toBe("right");
-    expect(sideWithin(target, rect(160, 0, 100, 100))).toBe("top");
-    expect(nearCenter(target, rect(150, 150, 100, 100))).toBe(true);
-    expect(nearCenter(target, rect(150, 250, 100, 100))).toBe(false);
+    expect(dropSide(target, { x: 200, y: 200 })).toBe("center");
+    expect(dropSide(target, { x: 110, y: 290 })).toBe("center");
+    expect(dropSide(target, { x: 90, y: 200 })).toBe("left");
+    expect(dropSide(target, { x: 320, y: 250 })).toBe("right");
+    expect(dropSide(target, { x: 200, y: 20 })).toBe("top");
+    expect(dropSide(target, { x: 250, y: 380 })).toBe("bottom");
   });
 
-  it("moves a covered pane over to the dragged pane's place", () => {
+  it("ignores drops that would leave the layout as it is", () => {
     const root = sideBySide();
-    // Left of the right group is where the pane already is, so the groups trade places.
-    expect(sideToMakeRoom(root, "a", "right", "left")).toBe("right");
-    expect(sideToMakeRoom(root, "a", "right", "bottom")).toBe("bottom");
-    expect(sideToMakeRoom(root, "b", "left", "right")).toBe("left");
+    expect(changesLayout(root, "a", "right", "center")).toBe(true);
+    // Left of the right group is where the pane already is.
+    expect(changesLayout(root, "a", "right", "left")).toBe(false);
+    expect(changesLayout(root, "a", "right", "right")).toBe(true);
+    expect(changesLayout(root, "a", "left", "bottom")).toBe(false);
+
+    const shared: LayoutNode = {
+      ...group([
+        { id: "a", kind: "local" },
+        { id: "b", kind: "welcome" },
+      ]),
+      id: "only",
+    };
+    expect(changesLayout(shared, "a", "only", "center")).toBe(false);
+    expect(changesLayout(shared, "a", "only", "right")).toBe(true);
   });
 
   it("shrinks a large pane around the pointer that holds it", () => {

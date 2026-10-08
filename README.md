@@ -23,10 +23,10 @@ the network or the disk is Rust.
 
 - **Tabs and docking**: every local folder and server session is a tab. Drag tabs to reorder
   them, or onto another tab bar to join it. Pull a tab off its bar and its pane follows the
-  pointer; once it covers half of another pane, the panes move aside to open the spot it will
-  drop into, beside that pane or in its place. Moving a pane does not reload it. Drag the
-  dividers to resize, and pull a tab out of the window to give it a window of its own, then send
-  it back from its menu.
+  pointer while the other panes stay put. Drop it over the middle of another pane to merge it in
+  as a tab, or toward one of that pane's edges to split the pane there; a highlight marks which
+  before you let go. Moving a pane does not reload it. Drag the dividers to resize, and pull a
+  tab out of the window to give it a window of its own, then send it back from its menu.
 - **Transfer queue** with parallel workers, each on its own connection, and a worker count you
   can change from the queue header while transfers run; holding **-** or **+** counts faster
   every ten steps, as do the number fields in settings. Large files are split across idle

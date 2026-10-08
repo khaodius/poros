@@ -36,9 +36,12 @@ interface TabMenu {
 export function TabBar({ group }: { group: GroupNode }) {
   const addTab = useLayoutStore((state) => state.addTab);
   const [menu, setMenu] = useState<TabMenu | null>(null);
-  const dropIndex = useDragStore(({ target }) =>
-    target?.kind === "tabBar" && target.groupId === group.id ? target.index : null,
-  );
+  const dropIndex = useDragStore(({ target }) => {
+    if (target?.kind === "tabBar" && target.groupId === group.id) return target.index;
+    const merging =
+      target?.kind === "dock" && target.groupId === group.id && target.side === "center";
+    return merging ? group.tabs.length : null;
+  });
   const liftedTabId = useDragStore(({ payload, target }) =>
     payload?.kind === "tab" && isLifted(payload, target) ? payload.tabId : null,
   );
