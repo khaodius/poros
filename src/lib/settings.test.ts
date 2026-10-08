@@ -64,4 +64,14 @@ describe("sanitizeSettings", () => {
       86400,
     );
   });
+
+  it("checks for updates at start-up unless turned off", () => {
+    expect(sanitizeSettings({}).updates).toEqual({ checkOnStart: true, skippedVersion: "" });
+    const updates = sanitizeSettings({
+      updates: { checkOnStart: "no", skippedVersion: " 0.3.0 " },
+    }).updates;
+    expect(updates.checkOnStart).toBe(true);
+    expect(updates.skippedVersion).toBe("0.3.0");
+    expect(sanitizeSettings({ updates: { checkOnStart: false } }).updates.checkOnStart).toBe(false);
+  });
 });

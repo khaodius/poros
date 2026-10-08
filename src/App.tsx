@@ -16,8 +16,10 @@ import { SplashScreen } from "./components/SplashScreen";
 import { StatusBar } from "./components/StatusBar";
 import { SyncDialog } from "./components/SyncDialog";
 import { Toasts } from "./components/Toasts";
+import { UpdateDialog } from "./components/UpdateDialog";
 import { WindowControls } from "./components/WindowControls";
 import { Workspace } from "./components/Workspace";
+import { useTabDragsBetweenWindows } from "./hooks/useTabDragsBetweenWindows";
 import { useWindowMaximized } from "./hooks/useWindowMaximized";
 import { EMPTY_DRAFT } from "./lib/connectDraft";
 import {
@@ -41,11 +43,12 @@ import { useLogStore } from "./state/logStore";
 import { useSavedConnections } from "./state/savedConnectionsStore";
 import { useSessionStore } from "./state/sessionStore";
 import { saveSettingsSection, useSettingsStore } from "./state/settingsStore";
-import { adoptHandoff, isMainWindow, requestCloseTab } from "./state/tabActions";
+import { adoptHandoff, isMainWindow, receiveTabs, requestCloseTab } from "./state/tabActions";
 import { applyTheme, findTheme, rememberTheme, useThemeStore } from "./state/themeStore";
 import { uploadDroppedPaths } from "./state/transferActions";
 import { useTransferStore } from "./state/transferStore";
 import { useUiStore } from "./state/uiStore";
+import { checkForUpdates } from "./state/updateStore";
 
 let starting: Promise<void> | null = null;
 
@@ -93,14 +96,6 @@ function reloadStore(store: StoreName): Promise<void> {
   }
 }
 
-/** Adds tabs a torn-out window handed back, and brings this window forward. */
-async function receiveTabs(handoff: unknown): Promise<void> {
-  for (const tab of await adoptHandoff(handoff)) useLayoutStore.getState().addTab(tab);
-  await getCurrentWindow()
-    .setFocus()
-    .catch(() => undefined);
-}
-
 function activeTabId(): string | null {
   const { root, activeGroupId } = useLayoutStore.getState();
   return findGroup(root, activeGroupId)?.activeTabId ?? null;
@@ -119,7 +114,7 @@ function useBackendEvents() {
     if (isMainWindow()) {
       subscriptions.push(
         getCurrentWindow().listen<unknown>(RETURN_TAB_EVENT, (event) => {
-          void receiveTabs(event.payload);
+          void receiveTabs(event.payload, null);
         }),
       );
     }
@@ -237,6 +232,20 @@ function useShortcuts() {
   }, []);
 }
 
+/** Leaves the start-up screen and the first listings to finish before asking for updates. */
+const UPDATE_CHECK_DELAY_MILLIS = 3000;
+
+/** Looks for a newer release once the main window has loaded, unless turned off. */
+function useUpdateCheckOnStart(ready: boolean) {
+  useEffect(() => {
+    // Development builds are not installed copies, so they only check when asked to.
+    if (!ready || !isMainWindow() || import.meta.env.DEV) return;
+    if (!useSettingsStore.getState().settings.updates.checkOnStart) return;
+    const timer = window.setTimeout(() => void checkForUpdates("start"), UPDATE_CHECK_DELAY_MILLIS);
+    return () => window.clearTimeout(timer);
+  }, [ready]);
+}
+
 const FONT_SIZE_KEYS: Record<string, number> = { "=": 1, "+": 1, "-": -1, _: -1 };
 /** Wheel distance, in pixels, that changes the font size by one step on a touchpad. */
 const WHEEL_STEP = 50;
@@ -297,9 +306,11 @@ export function App() {
   }, []);
   useEffect(() => startClipboard(), []);
   useBackendEvents();
+  useTabDragsBetweenWindows();
   useSystemFileDrops();
   useShortcuts();
   useFontSizeShortcuts();
+  useUpdateCheckOnStart(ready);
   const systemTitleBar = useSystemTitleBar();
   const maximized = useWindowMaximized();
   const drawnBorder = NEEDS_DRAWN_BORDER && !systemTitleBar && !maximized;
@@ -365,6 +376,7 @@ export function App() {
 
 function AppDialog() {
   const dialog = useUiStore((state) => state.dialog);
+  const open = useUiStore((state) => state.open);
   const close = useUiStore((state) => state.close);
   switch (dialog?.kind) {
     case "connect":
@@ -389,6 +401,8 @@ function AppDialog() {
           onClose={close}
         />
       );
+    case "update":
+      return <UpdateDialog onClose={() => (dialog.returnTo ? open(dialog.returnTo) : close())} />;
     case "closeTab":
       return (
         <CloseTabDialog

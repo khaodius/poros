@@ -1,4 +1,15 @@
-import { Ban, Copy, Download, File, Folder, FolderInput, Upload } from "lucide-react";
+import {
+  Ban,
+  Copy,
+  Download,
+  File,
+  Folder,
+  FolderInput,
+  HardDrive,
+  Server,
+  Sparkles,
+  Upload,
+} from "lucide-react";
 import { baseName } from "../lib/path";
 import { isDirLike } from "../lib/sort";
 import { useDragStore, type DragPayload, type DropTarget } from "../state/dragStore";
@@ -26,12 +37,31 @@ function hintFor(payload: DragPayload, target: DropTarget | null, copy: boolean)
   }
 }
 
-/** Follows the pointer during a drag inside the window, saying what a drop would do. */
+/**
+ * Follows the pointer during a drag inside the window, saying what a drop would do, and names
+ * a tab another window drags over this one.
+ */
 export function DragGhost() {
   const payload = useDragStore((state) => state.payload);
   const target = useDragStore((state) => state.target);
   const pointer = useDragStore((state) => state.pointer);
   const copy = useDragStore((state) => state.copy);
+  const incoming = useDragStore((state) => state.incoming);
+  const style = {
+    transform: `translate(${pointer.x + POINTER_OFFSET.x}px, ${pointer.y + POINTER_OFFSET.y}px)`,
+  };
+  if (incoming) {
+    const TabIcon =
+      incoming.kind === "local" ? HardDrive : incoming.kind === "remote" ? Server : Sparkles;
+    return (
+      <div className="drag-ghost" style={style}>
+        <span className="drag-ghost-label">
+          <TabIcon size={14} />
+          <span>{incoming.label}</span>
+        </span>
+      </div>
+    );
+  }
   // Files from the operating system already show the system's drag image, and a dragged tab
   // carries its whole pane.
   if (!payload || payload.kind !== "files") return null;
@@ -47,12 +77,7 @@ export function DragGhost() {
   }
 
   return (
-    <div
-      className="drag-ghost"
-      style={{
-        transform: `translate(${pointer.x + POINTER_OFFSET.x}px, ${pointer.y + POINTER_OFFSET.y}px)`,
-      }}
-    >
+    <div className="drag-ghost" style={style}>
       <span className="drag-ghost-label">
         <Icon size={14} />
         <span>{label}</span>

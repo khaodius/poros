@@ -1,5 +1,6 @@
 import {
   ArrowLeftRight,
+  CircleArrowUp,
   FileText,
   FolderSync,
   LayoutPanelLeft,
@@ -8,7 +9,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { COLUMN_LABELS, DETAIL_COLUMNS } from "../lib/columns";
-import { formatDate } from "../lib/format";
+import { formatDate, formatTime, formatVersion } from "../lib/format";
 import {
   DATE_FORMATS,
   LOG_LINE_LIMITS,
@@ -20,6 +21,7 @@ import {
 import type { ExistsAction } from "../lib/types";
 import { saveSettingsSection, useSettingsStore } from "../state/settingsStore";
 import { useUiStore, type SettingsSection } from "../state/uiStore";
+import { checkForUpdates, useUpdateStore } from "../state/updateStore";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { Dialog } from "./Dialog";
 import { SyncSettingsPage } from "./SyncSettings";
@@ -38,6 +40,7 @@ const SECTIONS: { id: SettingsSection; label: string; icon: LucideIcon }[] = [
   { id: "interface", label: "Interface", icon: LayoutPanelLeft },
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "log", label: "Log", icon: FileText },
+  { id: "updates", label: "Updates", icon: CircleArrowUp },
 ];
 
 /** 2026-10-06 14:05:09 local time, to show what each date format looks like. */
@@ -82,6 +85,7 @@ export function SettingsDialog({ section }: { section: SettingsSection }) {
           {section === "interface" && <InterfaceSettingsPage settings={settings} />}
           {section === "appearance" && <AppearanceSettings />}
           {section === "log" && <LogSettingsPage settings={settings} />}
+          {section === "updates" && <UpdateSettingsPage settings={settings} />}
         </div>
       </div>
     </Dialog>
@@ -477,6 +481,57 @@ function LogSettingsPage({ settings }: { settings: Settings }) {
         checked={settings.transfers.logEachFile}
         onChange={(logEachFile) => void saveSettingsSection("transfers", { logEachFile })}
       />
+    </SettingGroup>
+  );
+}
+
+function UpdateSettingsPage({ settings }: { settings: Settings }) {
+  const openDialog = useUiStore((state) => state.open);
+  const update = useUpdateStore((state) => state.update);
+  const checking = useUpdateStore((state) => state.checking);
+  const checkedAt = useUpdateStore((state) => state.checkedAt);
+  const checkError = useUpdateStore((state) => state.checkError);
+
+  const status = checking
+    ? "Checking for updates"
+    : checkError
+      ? `Could not check for updates: ${checkError}`
+      : update
+        ? `${formatVersion(update.version)} is available`
+        : checkedAt !== null
+          ? `Up to date, checked at ${formatTime(checkedAt)}`
+          : "The version you are running";
+
+  return (
+    <SettingGroup title="Updates">
+      <SwitchSetting
+        label="Check for updates when Poros starts"
+        hint="Looks for a newer release on GitHub. Nothing is downloaded until you choose to install it."
+        checked={settings.updates.checkOnStart}
+        onChange={(checkOnStart) => void saveSettingsSection("updates", { checkOnStart })}
+      />
+      <SettingRow label={`Poros ${formatVersion(__APP_VERSION__)}`} hint={status}>
+        {update && !checking ? (
+          <button
+            type="button"
+            className="button"
+            onClick={() =>
+              openDialog({ kind: "update", returnTo: { kind: "settings", section: "updates" } })
+            }
+          >
+            Show update
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="button"
+            disabled={checking}
+            onClick={() => void checkForUpdates("manual")}
+          >
+            {checking ? "Checking..." : "Check for updates"}
+          </button>
+        )}
+      </SettingRow>
     </SettingGroup>
   );
 }
