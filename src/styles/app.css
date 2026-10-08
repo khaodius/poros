@@ -240,6 +240,94 @@ input.has-error {
   letter-spacing: 0.01em;
 }
 
+/* The logo's gradient, drawn from the accent: the original purple is the Dusk accent mixed
+   these amounts toward white and black. */
+@supports (color: color-mix(in srgb, red 50%, white)) {
+  .poros-logo-tint {
+    stop-color: color-mix(in srgb, var(--accent) 52%, white);
+  }
+
+  .poros-logo-light {
+    stop-color: color-mix(in srgb, var(--accent) 85%, white);
+  }
+
+  .poros-logo-dark {
+    stop-color: color-mix(in srgb, var(--accent) 90%, black);
+  }
+
+  .poros-logo-shade {
+    stop-color: color-mix(in srgb, var(--accent) 77%, black);
+  }
+}
+
+.poros-logo {
+  flex: none;
+  display: block;
+}
+
+/* Startup */
+
+.splash {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  background: var(--surface-base);
+  transition: opacity 220ms ease-out;
+}
+
+.splash.is-leaving {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.splash-dots {
+  display: flex;
+  gap: 9px;
+}
+
+.splash-dots span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.2;
+  animation: splash-dot 0.9s ease-in-out infinite;
+}
+
+.splash-dots span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.splash-dots span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes splash-dot {
+  0%,
+  60%,
+  100% {
+    opacity: 0.2;
+    transform: scale(0.85);
+  }
+
+  30% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .splash-dots span {
+    animation-name: none;
+    opacity: 0.6;
+  }
+}
+
 .quick-connect {
   display: flex;
   flex: 1;

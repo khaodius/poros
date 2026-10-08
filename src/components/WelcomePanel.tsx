@@ -6,6 +6,7 @@ import { connectSaved } from "../state/connectActions";
 import { useLayoutStore } from "../state/layoutStore";
 import { byRecentUse, useSavedConnections } from "../state/savedConnectionsStore";
 import { useUiStore } from "../state/uiStore";
+import { PorosLogo } from "./PorosLogo";
 
 const AUTH_ICONS = { password: Lock, publicKey: KeyRound, agent: UserRound };
 
@@ -28,7 +29,7 @@ export function WelcomePanel({ tabId }: { tabId: string }) {
   return (
     <section className="pane welcome">
       <div className="welcome-body">
-        <img src="/poros.svg" alt="" width={44} height={44} className="welcome-logo" />
+        <PorosLogo size={44} className="welcome-logo" />
         <h2 className="welcome-title">New tab</h2>
         <div className="welcome-actions">
           <button

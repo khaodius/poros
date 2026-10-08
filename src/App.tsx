@@ -8,8 +8,10 @@ import { ConnectDialog } from "./components/ConnectDialog";
 import { DragGhost } from "./components/DragGhost";
 import { HostKeyDialog } from "./components/HostKeyDialog";
 import { QuickConnectBar } from "./components/QuickConnectBar";
+import { PorosLogo } from "./components/PorosLogo";
 import { SaveConnectionDialog } from "./components/SaveConnectionDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
+import { SplashScreen } from "./components/SplashScreen";
 import { StatusBar } from "./components/StatusBar";
 import { SyncDialog } from "./components/SyncDialog";
 import { Toasts } from "./components/Toasts";
@@ -29,6 +31,7 @@ import {
 import { findGroup, group, welcomeTab } from "./lib/layout";
 import { DEFAULT_SETTINGS, FONT_SIZE_LIMITS } from "./lib/settings";
 import { dragWindowFrom } from "./lib/windowDrag";
+import { matchWindowBackground, revealWindow } from "./lib/windowReveal";
 import type { StoreName } from "./lib/types";
 import { hitTest, useDragStore, type DragPayload } from "./state/dragStore";
 import { persistLayout, restoreLayout, useLayoutStore } from "./state/layoutStore";
@@ -37,7 +40,7 @@ import { useSavedConnections } from "./state/savedConnectionsStore";
 import { useSessionStore } from "./state/sessionStore";
 import { saveSettingsSection, useSettingsStore } from "./state/settingsStore";
 import { adoptHandoff, isMainWindow, requestCloseTab } from "./state/tabActions";
-import { applyTheme, findTheme, useThemeStore } from "./state/themeStore";
+import { applyTheme, findTheme, rememberTheme, useThemeStore } from "./state/themeStore";
 import { uploadDroppedPaths } from "./state/transferActions";
 import { useTransferStore } from "./state/transferStore";
 import { useUiStore } from "./state/uiStore";
@@ -124,17 +127,24 @@ function useBackendEvents() {
   }, []);
 }
 
-function useAppliedTheme() {
+/**
+ * Applies the active theme and the appearance settings. A component of its own, so theme edits
+ * and slider previews re-render only this instead of the whole app.
+ */
+function AppliedTheme(): null {
   const appearance = useSettingsStore((state) => state.settings.appearance);
-  const themes = useThemeStore((state) => state.files);
+  const theme = useThemeStore((state) => findTheme(state.files, appearance.theme).theme);
   useEffect(() => {
-    const { theme } = findTheme(themes, appearance.theme);
-    const apply = () => applyTheme(theme, appearance);
+    const apply = () => {
+      applyTheme(theme, appearance);
+      void matchWindowBackground();
+    };
     apply();
+    rememberTheme(theme, appearance);
     const scheme = window.matchMedia("(prefers-color-scheme: dark)");
     scheme.addEventListener("change", apply);
     return () => scheme.removeEventListener("change", apply);
-  }, [themes, appearance]);
+  }, [theme, appearance]);
 
   // Theme files edited in another program apply when the user switches back.
   useEffect(() => {
@@ -142,6 +152,7 @@ function useAppliedTheme() {
     window.addEventListener("focus", reload);
     return () => window.removeEventListener("focus", reload);
   }, []);
+  return null;
 }
 
 /** Shows the system title bar only when asked to; windows open without one. */
@@ -277,12 +288,12 @@ export function App() {
   const openDialog = useUiStore((state) => state.open);
 
   useEffect(() => {
+    void revealWindow();
     void startApp()
       .catch((caught) => reportError("Could not start", caught))
       .finally(() => setReady(true));
   }, []);
   useBackendEvents();
-  useAppliedTheme();
   useSystemFileDrops();
   useShortcuts();
   useFontSizeShortcuts();
@@ -298,7 +309,7 @@ export function App() {
         onMouseDown={systemTitleBar ? undefined : dragWindowFrom}
       >
         <div className="brand">
-          <img src="/poros.svg" alt="" width={20} height={20} />
+          <PorosLogo size={20} />
           <span>Poros</span>
         </div>
         <QuickConnectBar />
@@ -337,11 +348,13 @@ export function App() {
       {ready ? <Workspace /> : <main className="workspace" />}
 
       <StatusBar />
+      {ready && <AppliedTheme />}
       <AppDialog />
       <ConflictDialog />
       <HostKeyDialog />
       <Toasts />
       <DragGhost />
+      {isMainWindow() && <SplashScreen ready={ready} />}
     </div>
   );
 }
