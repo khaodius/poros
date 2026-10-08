@@ -15,6 +15,7 @@ import { SplashScreen } from "./components/SplashScreen";
 import { StatusBar } from "./components/StatusBar";
 import { SyncDialog } from "./components/SyncDialog";
 import { Toasts } from "./components/Toasts";
+import { UnsavedChangesDialog } from "./components/UnsavedChangesDialog";
 import { WindowControls } from "./components/WindowControls";
 import { Workspace } from "./components/Workspace";
 import { useWindowMaximized } from "./hooks/useWindowMaximized";
@@ -36,6 +37,7 @@ import type { StoreName } from "./lib/types";
 import { hitTest, useDragStore, type DragPayload } from "./state/dragStore";
 import { persistLayout, restoreLayout, useLayoutStore } from "./state/layoutStore";
 import { useLogStore } from "./state/logStore";
+import { askToSave, unsavedEditorTabs } from "./state/editorActions";
 import { useSavedConnections } from "./state/savedConnectionsStore";
 import { useSessionStore } from "./state/sessionStore";
 import { saveSettingsSection, useSettingsStore } from "./state/settingsStore";
@@ -204,11 +206,29 @@ function useSystemFileDrops() {
   }, []);
 }
 
+/** Asks about unsaved files before the window closes. */
+function useCloseGuard() {
+  useEffect(() => {
+    const subscription = getCurrentWindow().onCloseRequested((event) => {
+      const unsaved = unsavedEditorTabs();
+      if (unsaved.length === 0) return;
+      event.preventDefault();
+      askToSave(
+        unsaved.map((tab) => tab.id),
+        true,
+      );
+    });
+    return () => void subscription.then((unlisten) => unlisten());
+  }, []);
+}
+
 function useShortcuts() {
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
       if (useUiStore.getState().dialog) return;
+      // Ctrl+W, Ctrl+T and the like edit the command line in a shell.
+      if ((event.target as HTMLElement).closest?.(".terminal-host")) return;
       const key = event.key.toLowerCase();
       if (key === "t") {
         useLayoutStore.getState().addTab(welcomeTab());
@@ -224,7 +244,7 @@ function useShortcuts() {
     };
     const suppressNativeMenu = (event: MouseEvent) => {
       const target = event.target as HTMLElement;
-      if (!target.closest("input, textarea, .selectable")) event.preventDefault();
+      if (!target.closest("input, textarea, .selectable, .cm-content")) event.preventDefault();
     };
     window.addEventListener("keydown", handleKey);
     window.addEventListener("contextmenu", suppressNativeMenu);
@@ -294,6 +314,7 @@ export function App() {
       .finally(() => setReady(true));
   }, []);
   useBackendEvents();
+  useCloseGuard();
   useSystemFileDrops();
   useShortcuts();
   useFontSizeShortcuts();
@@ -392,6 +413,14 @@ function AppDialog() {
           sessionId={dialog.sessionId}
           label={dialog.label}
           pendingTransfers={dialog.pendingTransfers}
+          onClose={close}
+        />
+      );
+    case "unsavedChanges":
+      return (
+        <UnsavedChangesDialog
+          tabIds={dialog.tabIds}
+          closeWindow={dialog.closeWindow}
           onClose={close}
         />
       );

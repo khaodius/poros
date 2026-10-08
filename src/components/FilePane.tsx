@@ -17,6 +17,7 @@ import {
   Download,
   Eye,
   EyeOff,
+  FilePen,
   FolderOpen,
   FolderPlus,
   FolderSync,
@@ -25,6 +26,7 @@ import {
   Pencil,
   RefreshCw,
   Search,
+  SquareTerminal,
   Trash2,
   Upload,
   X,
@@ -34,13 +36,17 @@ import { COLUMN_LABELS, availableColumns, type DetailColumn } from "../lib/colum
 import type { FileSource } from "../lib/fileSource";
 import { formatSize, pluralize } from "../lib/format";
 import { stemLength } from "../lib/path";
+import { groupOfTab } from "../lib/layout";
 import { isDirLike, type SortKey, type SortSpec } from "../lib/sort";
 import type { FileEntry } from "../lib/types";
 import { beginDrag, useDragStore } from "../state/dragStore";
+import { openInEditor } from "../state/editorActions";
+import { useLayoutStore } from "../state/layoutStore";
 import { useLogStore } from "../state/logStore";
 import { lastActivePane, registerPane, updatePane } from "../state/paneRegistry";
 import { useSessionStore } from "../state/sessionStore";
 import { saveSettingsSection, useSettingsStore } from "../state/settingsStore";
+import { openTerminal } from "../state/terminalActions";
 import { useToastStore } from "../state/toastStore";
 import { transferFromPane, transferToOtherSide } from "../state/transferActions";
 import { useUiStore } from "../state/uiStore";
@@ -205,8 +211,21 @@ export function FilePane({
     );
   };
 
+  /** The group this pane is in, where editors and terminals it opens go. */
+  const ownGroup = () => groupOfTab(useLayoutStore.getState().root, tabId)?.id;
+
+  const edit = (entry: FileEntry) => {
+    if (isDirLike(entry)) return;
+    const location =
+      source.kind === "remote" && sessionId
+        ? { side: "remote" as const, sessionId, path: entry.path }
+        : { side: "local" as const, path: entry.path };
+    void openInEditor(location, ownGroup());
+  };
+
   const activateFile = (entry: FileEntry) => {
     if (doubleClickFile === "transfer") transferToOtherSide(tabId, [entry]);
+    else if (doubleClickFile === "edit") edit(entry);
   };
 
   const transferMenuItem = (targets: FileEntry[]): MenuItem => {
@@ -320,6 +339,16 @@ export function FilePane({
             },
           ]
         : []),
+      ...(entry && !isDirLike(entry)
+        ? [
+            {
+              label: "Edit",
+              icon: <FilePen size={14} />,
+              shortcut: "F4",
+              onSelect: () => edit(entry),
+            },
+          ]
+        : []),
       {
         label: "Refresh",
         icon: <RefreshCw size={14} />,
@@ -379,6 +408,14 @@ export function FilePane({
               onClick={() => openDialog({ kind: "saveConnection", sessionId })}
             >
               <Bookmark size={15} />
+            </ToolbarButton>
+          )}
+          {sessionId && (
+            <ToolbarButton
+              label="Open terminal"
+              onClick={() => openTerminal(sessionId, ownGroup())}
+            >
+              <SquareTerminal size={15} />
             </ToolbarButton>
           )}
           <ToolbarButton label="Back (Alt+Left)" onClick={pane.goBack} disabled={!pane.canGoBack}>
@@ -473,6 +510,7 @@ export function FilePane({
           onHeaderContextMenu={showHeaderMenu}
           onDelete={openDelete}
           onRename={openRename}
+          onEdit={edit}
           onNewFolder={openNewFolder}
           onEditPath={() => setPathEditRequest((count) => count + 1)}
           onFocusFilter={() => filterRef.current?.focus()}

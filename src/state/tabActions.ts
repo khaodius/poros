@@ -17,10 +17,13 @@ import {
   type PaneTab,
 } from "../lib/layout";
 import type { ConnectProfile, SessionInfo } from "../lib/types";
+import { askToSave, closeEditorTab } from "./editorActions";
+import { getEditor } from "./editorRegistry";
 import { useLayoutStore } from "./layoutStore";
 import { getPane, lastActivePane } from "./paneRegistry";
 import { useSessionStore, withoutSecrets } from "./sessionStore";
 import { useSettingsStore } from "./settingsStore";
+import { closeTerminalTab } from "./terminalActions";
 import { useToastStore } from "./toastStore";
 import { useUiStore } from "./uiStore";
 
@@ -61,17 +64,18 @@ export function showSession(session: SessionInfo, targetTabId?: string): void {
   layout.addTab(remoteTab, lastRemote ? groupOfTab(layout.root, lastRemote.tabId)?.id : undefined);
 }
 
-/** The tab with the folder its pane shows now. */
-function withCurrentPath(tab: PaneTab): PaneTab {
-  if (tab.kind === "welcome") return tab;
+/** The tab with the folder its pane shows now, or an editor's unsaved text. */
+function withCurrentState(tab: PaneTab): PaneTab {
+  if (tab.kind === "editor") return { ...tab, draft: getEditor(tab.id)?.draft() ?? undefined };
+  if (tab.kind !== "local" && tab.kind !== "remote") return tab;
   const path = getPane(tab.id)?.path();
   return path ? { ...tab, path } : tab;
 }
 
-/** A tab about to leave this window, with the folder to reopen in the next. */
+/** A tab about to leave this window, with what to reopen it with in the next. */
 function departingTab(tabId: string): PaneTab | null {
   const tab = findTab(useLayoutStore.getState().root, tabId);
-  return tab && withCurrentPath(tab);
+  return tab && withCurrentState(tab);
 }
 
 export function moveTabTo(tabId: string, groupId: string, index?: number): void {
@@ -98,11 +102,21 @@ export function splitTab(tabId: string, side: DropSide): void {
   useLayoutStore.getState().dockTab(sibling.id, owner.id, side);
 }
 
-/** Closes a tab, disconnecting its session; asks first when transfers for it are queued. */
+/** Closes a tab, disconnecting its session; asks first when transfers for it are queued or
+ * the file it edits has unsaved changes. */
 export async function requestCloseTab(tabId: string): Promise<void> {
   const layout = useLayoutStore.getState();
   const tab = findTab(layout.root, tabId);
   if (!tab) return;
+  if (tab.kind === "editor") {
+    if (getEditor(tabId)?.draft()) askToSave([tabId]);
+    else closeEditorTab(tabId);
+    return;
+  }
+  if (tab.kind === "terminal") {
+    closeTerminalTab(tabId);
+    return;
+  }
   if (tab.kind !== "remote") {
     layout.closeTab(tabId);
     return;

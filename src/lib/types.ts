@@ -1,6 +1,6 @@
 // Mirrors the serde types in src-tauri/src (model.rs, error.rs, ssh/mod.rs, session.rs,
-// events.rs, transfer/, sync/, connections.rs, themes.rs, fonts.rs). Field names are camelCase on
-// the wire.
+// events.rs, transfer/, sync/, connections.rs, themes.rs, fonts.rs, text.rs, editor.rs,
+// terminal.rs). Field names are camelCase on the wire.
 
 export type EntryKind = "dir" | "file" | "symlink" | "other";
 export type LinkTarget = "dir" | "file" | "broken";
@@ -331,3 +331,53 @@ export interface ThemeFile {
   /** Why the file could not be read. */
   error?: string;
 }
+
+export type FileLocation =
+  { side: "local"; path: string } | { side: "remote"; sessionId: string; path: string };
+
+export interface DocumentInfo {
+  id: string;
+  name: string;
+  path: string;
+  /** "Local", or the label of the server the file is on. */
+  origin: string;
+}
+
+export type TextEncoding = "utf8" | "utf8Bom" | "utf16Le" | "utf16Be" | "latin1";
+export type LineEnding = "lf" | "crlf";
+
+export interface FileStamp {
+  size: number;
+  /** Milliseconds since the Unix epoch. */
+  modified: number | null;
+}
+
+export interface TextDocument {
+  /** Lines end in `\n` only; `lineEnding` says what the file uses. */
+  text: string;
+  encoding: TextEncoding;
+  lineEnding: LineEnding;
+  stamp: FileStamp;
+}
+
+export interface SaveRequest {
+  documentId: string;
+  text: string;
+  encoding: TextEncoding;
+  lineEnding: LineEnding;
+  /** The file as last read or saved; null overwrites whatever is there. */
+  expected: FileStamp | null;
+}
+
+export type SaveOutcome =
+  | { status: "saved"; stamp: FileStamp }
+  /** Something else changed or removed the file; `current` is null when removed. */
+  | { status: "changed"; current: FileStamp | null };
+
+export interface TerminalInfo {
+  id: string;
+  /** The server's label. */
+  label: string;
+}
+
+export type TerminalEvent = { type: "output"; data: string } | { type: "exit"; message: string };

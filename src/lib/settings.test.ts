@@ -7,6 +7,8 @@ describe("sanitizeSettings", () => {
     const settings = sanitizeSettings({ interface: { showHiddenFiles: true } });
     expect(settings.interface.showHiddenFiles).toBe(true);
     expect(settings.interface.doubleClickFile).toBe("transfer");
+    const editing = sanitizeSettings({ interface: { doubleClickFile: "edit" } });
+    expect(editing.interface.doubleClickFile).toBe("edit");
   });
 
   it("drops values of the wrong type and clamps ranges", () => {

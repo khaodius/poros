@@ -8,5 +8,7 @@ export function useTabLabel(tab: PaneTab | null): string {
   if (!tab) return "";
   if (tab.kind === "local") return "Local";
   if (tab.kind === "welcome") return "New tab";
+  if (tab.kind === "editor") return tab.name;
+  if (tab.kind === "terminal") return tab.label;
   return sessionLabel ?? "Closed session";
 }

@@ -10,7 +10,9 @@ export type AppDialog =
   | { kind: "saveConnection"; sessionId: string }
   /** Folders to start with; the panes looked at last fill in what is not given. */
   | { kind: "sync"; localPath?: string; sessionId?: string; remotePath?: string }
-  | { kind: "closeTab"; tabId: string; sessionId: string; label: string; pendingTransfers: number };
+  | { kind: "closeTab"; tabId: string; sessionId: string; label: string; pendingTransfers: number }
+  /** Editor tabs with unsaved changes that are about to close, or whose window is. */
+  | { kind: "unsavedChanges"; tabIds: string[]; closeWindow: boolean };
 
 interface UiState {
   dialog: AppDialog | null;

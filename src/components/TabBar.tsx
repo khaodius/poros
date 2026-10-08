@@ -3,19 +3,23 @@ import {
   AppWindow,
   Columns2,
   CornerUpLeft,
+  FileText,
   HardDrive,
   Plus,
   Rows2,
   Server,
   Sparkles,
+  SquareTerminal,
   X,
   XSquare,
 } from "lucide-react";
 import { welcomeTab, type GroupNode, type PaneTab } from "../lib/layout";
 import { beginDrag, isLifted, tabDrag, useDragStore } from "../state/dragStore";
+import { useUnsavedStore } from "../state/editorRegistry";
 import { useLayoutStore } from "../state/layoutStore";
 import { useTabLabel } from "../hooks/useTabLabel";
 import { useSessionStore } from "../state/sessionStore";
+import { openTerminal } from "../state/terminalActions";
 import {
   dockTabBeside,
   isMainWindow,
@@ -49,6 +53,16 @@ export function TabBar({ group }: { group: GroupNode }) {
   const menuItems = (tab: PaneTab): MenuItem[] => {
     const others = group.tabs.filter((other) => other.id !== tab.id);
     return [
+      ...(tab.kind === "remote"
+        ? [
+            {
+              label: "Open terminal",
+              icon: <SquareTerminal size={14} />,
+              onSelect: () => openTerminal(tab.sessionId, group.id),
+            },
+            "separator" as const,
+          ]
+        : []),
       {
         label: "Split right",
         icon: <Columns2 size={14} />,
@@ -127,6 +141,14 @@ export function TabBar({ group }: { group: GroupNode }) {
   );
 }
 
+const TAB_ICONS = {
+  local: HardDrive,
+  remote: Server,
+  welcome: Sparkles,
+  editor: FileText,
+  terminal: SquareTerminal,
+} satisfies Record<PaneTab["kind"], unknown>;
+
 interface TabButtonProps {
   tab: PaneTab;
   selected: boolean;
@@ -149,7 +171,8 @@ function TabButton({
   const lost = useSessionStore((state) =>
     tab.kind === "remote" ? state.sessions[tab.sessionId]?.status !== "connected" : false,
   );
-  const Icon = tab.kind === "local" ? HardDrive : tab.kind === "remote" ? Server : Sparkles;
+  const unsaved = useUnsavedStore((state) => Boolean(state.tabs[tab.id]));
+  const Icon = TAB_ICONS[tab.kind];
 
   return (
     <div
@@ -191,6 +214,7 @@ function TabButton({
       <Icon size={14} className={`tab-icon tab-icon-${tab.kind}`} />
       <span className="tab-label">{label}</span>
       {lost && <span className="tab-lost" title="Disconnected" />}
+      {unsaved && <span className="tab-unsaved" title="Unsaved changes" />}
       <button
         type="button"
         className="tab-close"

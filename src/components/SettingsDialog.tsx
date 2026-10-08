@@ -330,6 +330,7 @@ function InterfaceSettingsPage({ settings }: { settings: Settings }) {
           value={options.doubleClickFile}
           options={[
             { value: "transfer", label: "Transfers it to the other side" },
+            { value: "edit", label: "Opens it in the editor" },
             { value: "nothing", label: "Does nothing" },
           ]}
           onChange={(doubleClickFile) => set({ doubleClickFile })}
