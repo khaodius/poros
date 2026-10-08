@@ -3,12 +3,8 @@ import {
   AppWindow,
   Columns2,
   CornerUpLeft,
-  FileText,
-  HardDrive,
   Plus,
   Rows2,
-  Server,
-  Sparkles,
   SquareTerminal,
   X,
   XSquare,
@@ -24,12 +20,14 @@ import {
   dockTabBeside,
   isMainWindow,
   moveTabTo,
+  moveTabToWindow,
   requestCloseTab,
   returnTabToMain,
   splitTab,
   tearOutTab,
 } from "../state/tabActions";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
+import { TAB_ICONS } from "./tabIcons";
 
 interface TabMenu {
   x: number;
@@ -141,14 +139,6 @@ export function TabBar({ group }: { group: GroupNode }) {
   );
 }
 
-const TAB_ICONS = {
-  local: HardDrive,
-  remote: Server,
-  welcome: Sparkles,
-  editor: FileText,
-  terminal: SquareTerminal,
-} satisfies Record<PaneTab["kind"], unknown>;
-
 interface TabButtonProps {
   tab: PaneTab;
   selected: boolean;
@@ -200,7 +190,9 @@ function TabButton({
           (target) => {
             if (target.kind === "tabBar") moveTabTo(tab.id, target.groupId, target.index);
             else if (target.kind === "dock") dockTabBeside(tab.id, target.groupId, target.side);
-            else if (target.kind === "outside") {
+            else if (target.kind === "window") {
+              void moveTabToWindow(tab.id, target.label, target.x, target.y);
+            } else if (target.kind === "outside") {
               void tearOutTab(tab.id, target.screenX, target.screenY);
             }
           },

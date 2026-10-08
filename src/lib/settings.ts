@@ -1,6 +1,6 @@
 // Mirrors src-tauri/src/settings.rs. The backend owns and clamps the transfer and connection
-// sections; the interface, appearance, log and sync sections are stored as given, so they are
-// checked here.
+// sections; the interface, appearance, log, sync and updates sections are stored as given, so
+// they are checked here.
 
 import { DETAIL_COLUMNS, type DetailColumn } from "./columns";
 import { SORT_KEYS, type SortSpec } from "./sort";
@@ -113,6 +113,13 @@ export interface SyncSettings {
   excludes: string;
 }
 
+export interface UpdateSettings {
+  /** Looks for a newer release each time the main window opens. */
+  checkOnStart: boolean;
+  /** A release the user chose to skip; checks at start-up stay quiet about it. */
+  skippedVersion: string;
+}
+
 export interface Settings {
   transfers: TransferSettings;
   connection: ConnectionSettings;
@@ -120,6 +127,7 @@ export interface Settings {
   appearance: AppearanceSettings;
   log: LogSettings;
   sync: SyncSettings;
+  updates: UpdateSettings;
 }
 
 export const FONT_SIZE_LIMITS = { min: 10, max: 20 };
@@ -205,6 +213,10 @@ export const DEFAULT_SETTINGS: Settings = {
     timeToleranceSecs: 2,
     excludes: "",
   },
+  updates: {
+    checkOnStart: true,
+    skippedVersion: "",
+  },
 };
 
 type Section = Record<string, unknown>;
@@ -243,6 +255,7 @@ export function sanitizeSettings(stored: unknown): Settings {
     appearance: mergeSection(DEFAULT_SETTINGS.appearance, source.appearance),
     log: mergeSection(DEFAULT_SETTINGS.log, source.log),
     sync: mergeSection(DEFAULT_SETTINGS.sync, source.sync),
+    updates: mergeSection(DEFAULT_SETTINGS.updates, source.updates),
   };
   const options = settings.interface;
   if (!DOUBLE_CLICK_ACTIONS.includes(options.doubleClickFile)) {
@@ -280,5 +293,6 @@ export function sanitizeSettings(stored: unknown): Settings {
     TIME_TOLERANCE_LIMITS.min,
     TIME_TOLERANCE_LIMITS.max,
   );
+  settings.updates.skippedVersion = settings.updates.skippedVersion.trim();
   return settings;
 }

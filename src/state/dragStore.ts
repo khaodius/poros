@@ -12,12 +12,14 @@ import {
   groupRects,
   rectCenter,
   TAB_BAR_HEIGHT,
+  type GroupRect,
   type Point,
   type Rect,
   type Size,
 } from "../lib/docking";
-import type { DropSide } from "../lib/layout";
+import type { DropSide, PaneTab } from "../lib/layout";
 import type { FileEntry } from "../lib/types";
+import { cursorPointer, measureWindows, windowUnder, type ScreenPointer } from "../lib/windowAreas";
 import { useLayoutStore } from "./layoutStore";
 
 export interface TabDrag {
@@ -42,28 +44,32 @@ export type DropTarget =
   | { kind: "pane"; tabId: string; folder: string | null }
   | { kind: "dock"; groupId: string; side: DropSide }
   | { kind: "tabBar"; groupId: string; index: number }
+  /** Another window, with the pointer in that window's coordinates. */
+  | { kind: "window"; label: string; x: number; y: number }
   | { kind: "outside"; screenX: number; screenY: number };
+
+/** A tab another window is dragging over this one. */
+export interface IncomingTab {
+  label: string;
+  kind: PaneTab["kind"];
+}
 
 interface DragState {
   payload: DragPayload | null;
   target: DropTarget | null;
   pointer: { x: number; y: number };
+  incoming: IncomingTab | null;
 }
 
 export const useDragStore = create<DragState>(() => ({
   payload: null,
   target: null,
   pointer: { x: 0, y: 0 },
+  incoming: null,
 }));
 
 const DRAG_THRESHOLD = 5;
-
-interface PointerPosition {
-  clientX: number;
-  clientY: number;
-  screenX: number;
-  screenY: number;
-}
+const CURSOR_POLL_MILLIS = 30;
 
 /** Builds a tab drag from the pressed tab button; the pane lifts out at its own size. */
 export function tabDrag(
@@ -103,38 +109,34 @@ function tabIndexAt(groupId: string, offset: number): number {
   return index < 0 ? tabs.length : index;
 }
 
+function contains(rect: Rect, { x, y }: Point): boolean {
+  return (
+    x >= rect.left && x < rect.left + rect.width && y >= rect.top && y < rect.top + rect.height
+  );
+}
+
+/** The slot in the tab bar under the pointer, if it is over one. */
+function tabBarAt(groups: GroupRect[], x: number, y: number): DropTarget | null {
+  const bar = groups.find(({ rect }) => contains({ ...rect, height: TAB_BAR_HEIGHT }, { x, y }));
+  if (!bar) return null;
+  return {
+    kind: "tabBar",
+    groupId: bar.groupId,
+    index: tabIndexAt(bar.groupId, x - bar.rect.left),
+  };
+}
+
 /**
  * A tab bar under the pointer, else the group under the middle of the lifted pane: dropped over
  * the group's middle it joins the group's tabs, and toward an edge it splits the group there.
  */
-function tabTarget(
-  { clientX: x, clientY: y }: PointerPosition,
-  payload: TabDrag,
-): DropTarget | null {
+function tabTarget({ clientX: x, clientY: y }: ScreenPointer, payload: TabDrag): DropTarget | null {
   const { root } = useLayoutStore.getState();
   const groups = groupRects(root, payload.dock);
-  const bar = groups.find(
-    ({ rect }) =>
-      x >= rect.left &&
-      x < rect.left + rect.width &&
-      y >= rect.top &&
-      y < rect.top + TAB_BAR_HEIGHT,
-  );
-  if (bar) {
-    return {
-      kind: "tabBar",
-      groupId: bar.groupId,
-      index: tabIndexAt(bar.groupId, x - bar.rect.left),
-    };
-  }
-  const { dock } = payload;
+  const bar = tabBarAt(groups, x, y);
+  if (bar) return bar;
   const center = rectCenter(floatingRect(payload, { x, y }));
-  const inDock =
-    center.x >= dock.left &&
-    center.x < dock.left + dock.width &&
-    center.y >= dock.top &&
-    center.y < dock.top + dock.height;
-  const under = inDock ? groupNearest(groups, center) : null;
+  const under = contains(payload.dock, center) ? groupNearest(groups, center) : null;
   if (!under) return null;
   const side = dropSide(under.rect, center);
   return changesLayout(root, payload.tabId, under.groupId, side)
@@ -142,13 +144,34 @@ function tabTarget(
     : null;
 }
 
+/**
+ * Where a tab dragged in from another window would land: the tab bar slot under the pointer,
+ * else the group under it, joining its tabs. Anywhere else in the window it joins the active
+ * group.
+ */
+export function incomingTarget(x: number, y: number): DropTarget {
+  const { root, activeGroupId } = useLayoutStore.getState();
+  const fallback: DropTarget = { kind: "dock", groupId: activeGroupId, side: "center" };
+  const element = document.querySelector<HTMLElement>(".dock");
+  if (!element) return fallback;
+  const { left, top, width, height } = element.getBoundingClientRect();
+  const dock = { left, top, width, height };
+  const groups = groupRects(root, dock);
+  const bar = tabBarAt(groups, x, y);
+  if (bar) return bar;
+  const under = contains(dock, { x, y }) ? groupNearest(groups, { x, y }) : null;
+  return under ? { ...fallback, groupId: under.groupId } : fallback;
+}
+
 /** Finds what is under the pointer: a folder row, a pane, a tab bar slot or a dock zone. */
-export function hitTest(position: PointerPosition, payload: DragPayload): DropTarget | null {
+export function hitTest(position: ScreenPointer, payload: DragPayload): DropTarget | null {
   const { clientX: x, clientY: y } = position;
   if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) {
-    return payload.kind === "tab"
-      ? { kind: "outside", screenX: position.screenX, screenY: position.screenY }
-      : null;
+    if (payload.kind !== "tab") return null;
+    const other = windowUnder(position.screenX, position.screenY);
+    return other
+      ? { kind: "window", ...other }
+      : { kind: "outside", screenX: position.screenX, screenY: position.screenY };
   }
   if (payload.kind === "tab") return tabTarget(position, payload);
   const element = document.elementFromPoint(x, y);
@@ -183,6 +206,25 @@ export function beginDrag(
   const startX = event.clientX;
   const startY = event.clientY;
   let dragging: DragPayload | null = null;
+  let following = 0;
+
+  const track = (position: ScreenPointer) => {
+    if (!dragging) return;
+    useDragStore.setState({
+      payload: dragging,
+      pointer: { x: position.clientX, y: position.clientY },
+      target: hitTest(position, dragging),
+    });
+  };
+  // Outside the window a tab drag follows the system cursor, for webviews that stop reporting
+  // the pointer there.
+  const followCursorOutside = () => {
+    const { target } = useDragStore.getState();
+    if (target?.kind !== "outside" && target?.kind !== "window") return;
+    void cursorPointer().then((position) => {
+      if (position) track(position);
+    });
+  };
 
   const move = (moveEvent: PointerEvent) => {
     if (moveEvent.pointerId !== pointerId) return;
@@ -195,6 +237,10 @@ export function beginDrag(
         stop();
         return;
       }
+      if (dragging.kind === "tab") {
+        void measureWindows();
+        following = window.setInterval(followCursorOutside, CURSOR_POLL_MILLIS);
+      }
       try {
         // The body, since the source can unmount while the layout previews a drop.
         document.body.setPointerCapture(pointerId);
@@ -202,11 +248,7 @@ export function beginDrag(
         // The pointer may already be up; window listeners still see the release.
       }
     }
-    useDragStore.setState({
-      payload: dragging,
-      pointer: { x: moveEvent.clientX, y: moveEvent.clientY },
-      target: hitTest(moveEvent, dragging),
-    });
+    track(moveEvent);
   };
   const release = (upEvent: PointerEvent) => {
     if (upEvent.pointerId !== pointerId) return;
@@ -222,6 +264,8 @@ export function beginDrag(
     if (keyEvent.key === "Escape" && dragging) stop();
   };
   const stop = () => {
+    dragging = null;
+    window.clearInterval(following);
     window.removeEventListener("pointermove", move);
     window.removeEventListener("pointerup", release);
     window.removeEventListener("pointercancel", stop);

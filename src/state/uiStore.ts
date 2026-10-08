@@ -2,7 +2,7 @@ import { create } from "zustand";
 import type { ConnectDraft } from "../lib/connectDraft";
 
 export type SettingsSection =
-  "transfers" | "sync" | "connection" | "interface" | "appearance" | "log";
+  "transfers" | "sync" | "connection" | "interface" | "appearance" | "log" | "updates";
 
 export type AppDialog =
   | { kind: "connect"; draft: ConnectDraft; targetTabId?: string; error?: string }
@@ -12,7 +12,9 @@ export type AppDialog =
   | { kind: "sync"; localPath?: string; sessionId?: string; remotePath?: string }
   | { kind: "closeTab"; tabId: string; sessionId: string; label: string; pendingTransfers: number }
   /** Editor tabs with unsaved changes that are about to close, or whose window is. */
-  | { kind: "unsavedChanges"; tabIds: string[]; closeWindow: boolean };
+  | { kind: "unsavedChanges"; tabIds: string[]; closeWindow: boolean }
+  /** `returnTo` reopens the dialog the update was found from once this one closes. */
+  | { kind: "update"; returnTo?: AppDialog };
 
 interface UiState {
   dialog: AppDialog | null;
