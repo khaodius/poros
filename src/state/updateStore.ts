@@ -1,6 +1,6 @@
 import { check, type DownloadEvent, type Update } from "@tauri-apps/plugin-updater";
 import { create } from "zustand";
-import { application, toAppError } from "../lib/ipc";
+import { application, toAppError, transfers } from "../lib/ipc";
 import { useLogStore } from "./logStore";
 import { saveSettingsSection, useSettingsStore } from "./settingsStore";
 import { useUiStore } from "./uiStore";
@@ -102,7 +102,10 @@ export async function installUpdate(): Promise<void> {
 
   useUpdateStore.setState({ progress: { ...current }, installError: null });
   try {
-    await update.downloadAndInstall(onEvent);
+    await update.download(onEvent);
+    // The Windows installer closes Poros without the normal exit, so the queue is saved first.
+    await transfers.saveQueue();
+    await update.install();
     await application.restart();
   } catch (caught) {
     useUpdateStore.setState({ progress: null, installError: toAppError(caught).message });

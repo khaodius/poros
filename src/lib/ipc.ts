@@ -88,6 +88,7 @@ export const transfers = {
     call<void>("transfer_resolve", { id, action, applyToAll }),
   sessionJobs: (sessionId: string) => call<number>("transfer_session_jobs", { sessionId }),
   pauseSession: (sessionId: string) => call<number>("transfer_pause_session", { sessionId }),
+  saveQueue: () => call<void>("transfer_save_queue"),
 };
 
 export const sync = {

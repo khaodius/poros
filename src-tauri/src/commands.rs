@@ -227,6 +227,13 @@ pub fn transfer_pause_session(transfers: State<'_, TransferManager>, session_id:
     transfers.pause_session(&session_id)
 }
 
+/// Writes the unfinished transfers to disk now. Used before an installer closes the app without
+/// the normal exit.
+#[tauri::command]
+pub fn transfer_save_queue(transfers: State<'_, TransferManager>) {
+    transfers.save_queue();
+}
+
 #[tauri::command]
 pub async fn sync_compare(
     sync: State<'_, SyncManager>,

@@ -121,6 +121,7 @@ pub fn run() {
             commands::transfer_resolve,
             commands::transfer_session_jobs,
             commands::transfer_pause_session,
+            commands::transfer_save_queue,
             commands::sync_compare,
             commands::sync_cancel,
             commands::sync_discard,

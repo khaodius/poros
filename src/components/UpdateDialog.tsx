@@ -1,6 +1,7 @@
 import { Fragment, useMemo } from "react";
 import { formatSize, formatVersion, pluralize } from "../lib/format";
 import { parseReleaseNotes, type NoteSpan } from "../lib/releaseNotes";
+import { useSettingsStore } from "../state/settingsStore";
 import { useTransferStore } from "../state/transferStore";
 import {
   installUpdate,
@@ -17,6 +18,7 @@ export function UpdateDialog({ onClose }: { onClose: () => void }) {
   const pendingTransfers = useTransferStore(
     ({ snapshot }) => snapshot.stats.counts.queued + snapshot.stats.counts.running,
   );
+  const keepQueue = useSettingsStore((state) => state.settings.transfers.keepQueue);
   const notes = useMemo(() => parseReleaseNotes(update?.body ?? ""), [update]);
   if (!update) return null;
 
@@ -65,7 +67,8 @@ export function UpdateDialog({ onClose }: { onClose: () => void }) {
         )}
         {pendingTransfers > 0 && (
           <p className="warning-text">
-            {pluralize(pendingTransfers, "transfer")} in the queue will stop when Poros restarts.
+            {pluralize(pendingTransfers, "transfer")} in the queue will stop when Poros restarts
+            {keepQueue ? " and come back paused." : "."}
           </p>
         )}
       </div>
