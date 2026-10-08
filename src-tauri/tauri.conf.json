@@ -51,5 +51,15 @@
         "installerHooks": "windows/installer-hooks.nsh"
       }
     }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": ["https://github.com/khaodius/poros/releases/latest/download/latest.json"],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMwOTVDMjMzMkIwMURDRTIKUldUaTNBRXJNOEtWd0F4Rk0rRXBtQVFpenBZaU9xOWlwdFY0Z1A1NSsySFpNQ3BoK0Y0b2JQbksK",
+      "requireSignedVersion": true,
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

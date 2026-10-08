@@ -227,6 +227,13 @@ pub fn transfer_pause_session(transfers: State<'_, TransferManager>, session_id:
     transfers.pause_session(&session_id)
 }
 
+/// Writes the unfinished transfers to disk now. Used before an installer closes the app without
+/// the normal exit.
+#[tauri::command]
+pub fn transfer_save_queue(transfers: State<'_, TransferManager>) {
+    transfers.save_queue();
+}
+
 #[tauri::command]
 pub async fn sync_compare(
     sync: State<'_, SyncManager>,
@@ -406,6 +413,13 @@ pub fn window_initial_layout(
     pending: State<'_, PendingWindows>,
 ) -> Option<serde_json::Value> {
     pending.0.lock().unwrap().remove(window.label())
+}
+
+/// Starts the app again after an update replaced it. Goes through the normal exit, so open
+/// sessions are closed first.
+#[tauri::command]
+pub fn app_restart(app: AppHandle) {
+    app.request_restart();
 }
 
 fn now_millis() -> u64 {
