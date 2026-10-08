@@ -2,6 +2,8 @@ import { memo, useMemo, useState } from "react";
 import { HardDrive, RotateCw, Server, Unplug } from "lucide-react";
 import { localSource, remoteSource, startingAt } from "../lib/fileSource";
 import type { PaneTab } from "../lib/layout";
+import { attemptUnderWay, useAutoReconnect } from "../hooks/useAutoReconnect";
+import type { SessionInfo } from "../lib/types";
 import { reconnectWithPrompts } from "../state/connectFlow";
 import { useLayoutStore } from "../state/layoutStore";
 import { getPane } from "../state/paneRegistry";
@@ -90,30 +92,52 @@ function LostSession({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const replaceTab = useLayoutStore((state) => state.replaceTab);
+  const showSession = (session: SessionInfo) => {
+    const path = getPane(tabId)?.path() ?? undefined;
+    replaceTab(tabId, { id: tabId, kind: "remote", sessionId: session.id, path });
+  };
+  const automatic = useAutoReconnect(sessionId, showSession);
 
   const reconnect = async () => {
+    automatic.stop();
     setBusy(true);
     setError(null);
-    const result = await reconnectWithPrompts(sessionId);
+    const underWay = await attemptUnderWay(sessionId)?.catch(() => null);
+    const result = underWay ? { session: underWay } : await reconnectWithPrompts(sessionId);
     setBusy(false);
     if ("error" in result) {
       setError(result.error.message);
       return;
     }
-    const path = getPane(tabId)?.path() ?? undefined;
-    replaceTab(tabId, { id: tabId, kind: "remote", sessionId: result.session.id, path });
+    showSession(result.session);
   };
 
+  const shownError = error ?? automatic.lastError;
   return (
     <div className="pane-overlay">
       <Unplug size={36} className="pane-empty-icon" />
       <p className="pane-empty-title">Connection lost</p>
       {reason && <p className="pane-empty-detail">{reason}</p>}
-      {error && <p className="form-error">{error}</p>}
-      <button type="button" className="button button-primary" onClick={reconnect} disabled={busy}>
-        <RotateCw size={14} className={busy ? "spin" : ""} />
-        {busy ? "Reconnecting..." : "Reconnect"}
-      </button>
+      {automatic.active && (
+        <p className="pane-empty-detail">
+          {automatic.secondsLeft > 0
+            ? `Reconnecting in ${automatic.secondsLeft} s`
+            : "Reconnecting..."}
+          {automatic.failures > 0 && ` (attempt ${automatic.failures + 1})`}
+        </p>
+      )}
+      {shownError && <p className="form-error">{shownError}</p>}
+      <div className="pane-overlay-actions">
+        <button type="button" className="button button-primary" onClick={reconnect} disabled={busy}>
+          <RotateCw size={14} className={busy ? "spin" : ""} />
+          {busy ? "Reconnecting..." : automatic.active ? "Reconnect now" : "Reconnect"}
+        </button>
+        {automatic.active && (
+          <button type="button" className="button" onClick={automatic.stop}>
+            Stop
+          </button>
+        )}
+      </div>
     </div>
   );
 }

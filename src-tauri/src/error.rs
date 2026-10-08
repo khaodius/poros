@@ -19,6 +19,8 @@ pub enum ErrorKind {
     Sftp,
     Ssh,
     Rsync,
+    /// A finished file failed a size, change or checksum check.
+    Integrity,
     Cancelled,
     Keychain,
 }
@@ -72,6 +74,10 @@ impl AppError {
         Self::new(ErrorKind::Cancelled, "Cancelled")
     }
 
+    pub fn integrity(message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::Integrity, message)
+    }
+
     /// Network trouble that a later attempt, on a fresh connection, may not hit.
     pub fn is_retryable(&self) -> bool {
         matches!(
@@ -81,6 +87,7 @@ impl AppError {
                 | ErrorKind::Connection
                 | ErrorKind::Ssh
                 | ErrorKind::Sftp
+                | ErrorKind::Integrity
         )
     }
 
