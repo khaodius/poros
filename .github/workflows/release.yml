@@ -2,10 +2,15 @@ name: Release
 
 # Builds the Linux and Windows installers from one commit, publishes them with SHA-256
 # checksums and signed build provenance, and writes the release notes from CHANGELOG.md.
-# Push a tag named after the app version (v0.2.0 for 0.2.0), or run the workflow by hand on a
-# branch whose version has no release yet and it tags the commit it built.
+# A push to main that carries a version with no release yet publishes it and tags the commit
+# it built; pushes whose version is already released do nothing. Pushing a tag named after the
+# app version (v0.2.0 for 0.2.0), or running the workflow by hand, publishes that version too.
 on:
   push:
+    branches: [main]
+    paths:
+      - src-tauri/tauri.conf.json
+      - .github/workflows/release.yml
     tags: ["v*"]
   workflow_dispatch:
 
@@ -26,6 +31,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
+      release: ${{ steps.version.outputs.release }}
     steps:
       - uses: actions/checkout@v5
 
@@ -40,28 +46,34 @@ jobs:
             echo "::error::Versions differ: tauri.conf.json $version, package.json $npm_version, Cargo.toml $cargo_version"
             exit 1
           fi
+          release=true
           if [ "$GITHUB_REF_TYPE" = tag ]; then
             if [ "$GITHUB_REF_NAME" != "$tag" ]; then
               echo "::error::Tag $GITHUB_REF_NAME does not match the app version $version"
               exit 1
             fi
-          else
-            if git fetch --quiet --depth=1 origin "+refs/tags/$tag:refs/tags/$tag" 2> /dev/null &&
-              [ "$(git rev-parse "$tag^{commit}")" != "$GITHUB_SHA" ]; then
+          elif git fetch --quiet --depth=1 origin "+refs/tags/$tag:refs/tags/$tag" 2> /dev/null; then
+            if [ "$GITHUB_EVENT_NAME" = push ]; then
+              echo "$tag is already released, nothing to publish"
+              release=false
+            elif [ "$(git rev-parse "$tag^{commit}")" != "$GITHUB_SHA" ]; then
               echo "::error::$tag already exists on another commit; bump the version first"
               exit 1
             fi
           fi
-          if ! awk -v v="$version" '$1 == "##" && $2 == v { found = 1 } END { exit !found }' CHANGELOG.md; then
+          if [ "$release" = true ] &&
+            ! awk -v v="$version" '$1 == "##" && $2 == v { found = 1 } END { exit !found }' CHANGELOG.md; then
             echo "::error::CHANGELOG.md has no section for $version"
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "release=$release" >> "$GITHUB_OUTPUT"
 
   bundle:
     name: Bundle (${{ matrix.platform.name }})
     needs: version
+    if: needs.version.outputs.release == 'true'
     runs-on: ${{ matrix.platform.os }}
     strategy:
       matrix:
@@ -109,6 +121,7 @@ jobs:
   publish:
     name: Publish
     needs: [version, bundle]
+    if: needs.version.outputs.release == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
