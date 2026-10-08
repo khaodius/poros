@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use russh::client::Msg;
 use russh::Channel;
@@ -23,6 +24,7 @@ pub struct Session {
     info: SessionInfo,
     handle: SshHandle,
     pub fs: RemoteFs,
+    pub opened_at: Instant,
 }
 
 impl Session {
@@ -218,6 +220,7 @@ impl SessionManager {
             info: info.clone(),
             handle,
             fs,
+            opened_at: Instant::now(),
         });
         self.sessions.write().await.insert(id.to_string(), session);
         Ok(info)
@@ -241,6 +244,39 @@ impl SessionManager {
             ));
         }
         Ok(session)
+    }
+
+    /// Whether the session is open and its connection still up.
+    pub async fn is_live(&self, id: &str) -> bool {
+        self.sessions
+            .read()
+            .await
+            .get(id)
+            .is_some_and(|session| !session.handle.is_closed())
+    }
+
+    /// An open session to the same account on the same server, if there is one, opened after
+    /// `opened_after` when given.
+    pub async fn find_live(
+        &self,
+        host: &str,
+        port: u16,
+        username: &str,
+        opened_after: Option<Instant>,
+    ) -> Option<Arc<Session>> {
+        self.sessions
+            .read()
+            .await
+            .values()
+            .find(|session| {
+                let profile = &session.profile;
+                profile.host == host
+                    && profile.port == port
+                    && profile.username == username
+                    && opened_after.is_none_or(|since| session.opened_at > since)
+                    && !session.handle.is_closed()
+            })
+            .cloned()
     }
 
     /// The session's details, for a window taking over a tab; the window becomes its owner.

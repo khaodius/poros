@@ -12,6 +12,7 @@ import { formatDate } from "../lib/format";
 import {
   DATE_FORMATS,
   LOG_LINE_LIMITS,
+  MAX_RECONNECT_MINUTES,
   MAX_WORKERS,
   SOCKET_BUFFER_LIMITS,
   type Settings,
@@ -119,6 +120,12 @@ function TransferSettingsPage({ settings }: { settings: Settings }) {
           checked={transfers.keepCompleted}
           onChange={(keepCompleted) => set({ keepCompleted })}
         />
+        <SwitchSetting
+          label="Keep unfinished transfers when Poros closes"
+          hint="They come back paused at the next start. Passwords are never saved with them."
+          checked={transfers.keepQueue}
+          onChange={(keepQueue) => set({ keepQueue })}
+        />
       </SettingGroup>
 
       <SettingGroup title="Connections">
@@ -207,12 +214,30 @@ function TransferSettingsPage({ settings }: { settings: Settings }) {
           checked={transfers.preservePermissions}
           onChange={(preservePermissions) => set({ preservePermissions })}
         />
+        <SwitchSetting
+          label="Write to a temporary name, then rename"
+          hint="A file appears under its name only once complete, and a replaced file is never left half written."
+          checked={transfers.temporaryFiles}
+          onChange={(temporaryFiles) => set({ temporaryFiles })}
+        />
+        <SwitchSetting
+          label="Verify checksums"
+          hint="Compares both copies after each file with the server's sha256sum, sha1sum or md5sum. Reads every file once more on both sides."
+          checked={transfers.verifyChecksums}
+          onChange={(verifyChecksums) => set({ verifyChecksums })}
+        />
+        <SwitchSetting
+          label="Flush to disk before finishing"
+          hint="A file counts as done only once stored, so a power cut right after cannot lose it. On servers that support it; slows many small files."
+          checked={transfers.flushToDisk}
+          onChange={(flushToDisk) => set({ flushToDisk })}
+        />
       </SettingGroup>
 
       <SettingGroup title="Errors">
         <NumberSetting
           label="Retries"
-          hint="For timeouts and dropped connections."
+          hint="For timeouts, failed checks and connections that drop again right away."
           value={transfers.retryAttempts}
           min={0}
           max={20}
@@ -302,6 +327,25 @@ function ConnectionSettingsPage({ settings }: { settings: Settings }) {
           hint="Helps text over slow links; slows already compressed files. Applies to new connections."
           checked={connection.compression}
           onChange={(compression) => set({ compression })}
+        />
+      </SettingGroup>
+      <SettingGroup title="Reconnecting">
+        <SwitchSetting
+          label="Reconnect lost tabs automatically"
+          hint="Tries again with growing delays, without asking for passwords already given."
+          checked={connection.autoReconnect}
+          onChange={(autoReconnect) => set({ autoReconnect })}
+        />
+        <NumberSetting
+          label="Keep trying for"
+          hint="Tabs and transfers wait this long for a lost server; transfers keep their retries meanwhile. 0 gives up at once."
+          value={settings.transfers.reconnectMinutes}
+          min={0}
+          max={MAX_RECONNECT_MINUTES}
+          unit="min"
+          onChange={(reconnectMinutes) =>
+            void saveSettingsSection("transfers", { reconnectMinutes })
+          }
         />
       </SettingGroup>
       <SettingGroup title="Saved connections">

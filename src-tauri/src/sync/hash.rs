@@ -2,22 +2,21 @@
 //! hashes its own files with `md5sum` when it has it; otherwise they are read over SFTP.
 
 use std::collections::HashMap;
-use std::io::Read;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 
 use futures::stream::{self, StreamExt};
-use md5::{Digest, Md5};
 use tokio_util::sync::CancellationToken;
 
 use super::tree::Counter;
+use crate::checksum::{hash_file, parse_output, Algorithm};
 use crate::error::{AppError, AppResult};
 use crate::remote_path;
 use crate::rsync::{run_command, shell_quote};
 use crate::session::Session;
 use crate::sftp::{ReadChunk, RemoteFs};
 
-type Hash = [u8; 16];
+type Hash = Vec<u8>;
 
 const PARALLEL_LOCAL_FILES: usize = 4;
 const PARALLEL_COMMANDS: usize = 2;
@@ -67,7 +66,7 @@ async fn hash_local(
         .map(|path| {
             let file = local_path(root, &path);
             async move {
-                let hash = tokio::task::spawn_blocking(move || hash_local_file(&file))
+                let hash = tokio::task::spawn_blocking(move || hash_file(&file, Algorithm::Md5))
                     .await
                     .ok()
                     .and_then(Result::ok);
@@ -82,20 +81,6 @@ async fn hash_local(
         .into_iter()
         .filter_map(|(path, hash)| hash.map(|hash| (path, hash)))
         .collect())
-}
-
-fn hash_local_file(path: &PathBuf) -> std::io::Result<Hash> {
-    let mut file = std::fs::File::open(path)?;
-    let mut digest = Md5::new();
-    let mut buffer = vec![0; READ_CHUNK as usize];
-    loop {
-        let read = file.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        digest.update(&buffer[..read]);
-    }
-    Ok(digest.finalize().into())
 }
 
 pub fn local_path(root: &str, relative: &str) -> PathBuf {
@@ -141,7 +126,7 @@ async fn hash_with_md5sum(
                 return None;
             }
             let text = String::from_utf8_lossy(&output.output);
-            let hashes: HashMap<String, Hash> = parse_md5sum(&text)
+            let hashes: HashMap<String, Hash> = parse_output(&text, Algorithm::Md5)
                 .into_iter()
                 .filter_map(|(name, hash)| by_argument.get(&name).map(|path| (path.clone(), hash)))
                 .collect();
@@ -188,56 +173,10 @@ fn command_batches(root: &str, paths: &[String]) -> Vec<(String, HashMap<String,
     batches
 }
 
-/// Lines of `<hash>  <name>`; names with a backslash or line break are escaped and the line
-/// starts with a backslash.
-fn parse_md5sum(output: &str) -> Vec<(String, Hash)> {
-    output
-        .lines()
-        .filter_map(|line| {
-            let (escaped, line) = match line.strip_prefix('\\') {
-                Some(rest) => (true, rest),
-                None => (false, line),
-            };
-            let (hex, name) = line.split_at_checked(32)?;
-            let name = name
-                .strip_prefix("  ")
-                .or_else(|| name.strip_prefix(" *"))?;
-            let mut hash = [0; 16];
-            for (index, byte) in hash.iter_mut().enumerate() {
-                *byte = u8::from_str_radix(hex.get(index * 2..index * 2 + 2)?, 16).ok()?;
-            }
-            let name = if escaped {
-                unescape(name)
-            } else {
-                name.to_string()
-            };
-            Some((name, hash))
-        })
-        .collect()
-}
-
-fn unescape(name: &str) -> String {
-    let mut plain = String::with_capacity(name.len());
-    let mut characters = name.chars();
-    while let Some(character) = characters.next() {
-        if character != '\\' {
-            plain.push(character);
-            continue;
-        }
-        match characters.next() {
-            Some('n') => plain.push('\n'),
-            Some('r') => plain.push('\r'),
-            Some(other) => plain.push(other),
-            None => plain.push('\\'),
-        }
-    }
-    plain
-}
-
 async fn hash_over_sftp(fs: &RemoteFs, path: &str) -> AppResult<Hash> {
     let handle = fs.open_for_read(path).await?;
     let chunk = fs.read_size(READ_CHUNK).max(1);
-    let mut digest = Md5::new();
+    let mut digest = Algorithm::Md5.hasher();
     let mut offset = 0;
     let result = loop {
         match fs.read_chunk(&handle, offset, chunk).await {
@@ -250,24 +189,12 @@ async fn hash_over_sftp(fs: &RemoteFs, path: &str) -> AppResult<Hash> {
         }
     };
     let _ = fs.close_handle(handle).await;
-    result.map(|_| digest.finalize().into())
+    result.map(|_| digest.finish())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn reads_md5sum_output() {
-        let output = "d41d8cd98f00b204e9800998ecf8427e  /srv/empty\n\
-                      \\0cc175b9c0f1b6a831c399e269772661  /srv/odd\\nname\n\
-                      md5sum: /srv/locked: Permission denied\n";
-        let parsed = parse_md5sum(output);
-        assert_eq!(parsed.len(), 2);
-        assert_eq!(parsed[0].0, "/srv/empty");
-        assert_eq!(parsed[0].1[0], 0xd4);
-        assert_eq!(parsed[1].0, "/srv/odd\nname");
-    }
 
     #[test]
     fn splits_long_argument_lists() {

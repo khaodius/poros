@@ -1,3 +1,4 @@
+pub mod checksum;
 pub mod commands;
 pub mod connections;
 pub mod editor;
@@ -60,6 +61,7 @@ pub fn run() {
             ));
             let transfers =
                 TransferManager::new(sessions.clone(), events.clone(), settings.get().transfers);
+            transfers.keep_queue_in(config_dir.join("transfers.json"));
             app.manage(transfers);
             app.manage(SyncManager::new(sessions.clone(), events.clone()));
             app.manage(EditorManager::new(sessions.clone(), events.clone()));
@@ -168,6 +170,7 @@ pub fn run() {
 
     app.run(|handle, event| {
         if let RunEvent::Exit = event {
+            handle.state::<TransferManager>().save_queue();
             let sessions = handle.state::<Arc<SessionManager>>();
             let terminals = handle.state::<TerminalManager>();
             tauri::async_runtime::block_on(async {
