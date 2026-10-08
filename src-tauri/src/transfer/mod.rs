@@ -155,6 +155,9 @@ pub(crate) struct Shared {
     downloaded: AtomicU64,
     live_workers: Mutex<BTreeSet<usize>>,
     stopping: AtomicBool,
+    /// Taken by a relay that borrows the browsing connections of two FTP servers, so two
+    /// relays in opposite directions cannot each hold one server while waiting for the other.
+    borrowed_relays: tokio::sync::Mutex<()>,
 }
 
 impl Shared {
@@ -208,6 +211,7 @@ impl TransferManager {
             downloaded: AtomicU64::new(0),
             live_workers: Mutex::new(BTreeSet::new()),
             stopping: AtomicBool::new(false),
+            borrowed_relays: tokio::sync::Mutex::new(()),
         });
         let manager = Self { shared };
         manager.configure(settings);

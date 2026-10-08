@@ -34,7 +34,6 @@ use poros_lib::transfer::{
 const OWNER: &str = "main";
 const MEBIBYTE: usize = 1024 * 1024;
 
-#[derive(Clone)]
 struct Server {
     protocol: Protocol,
     port: u16,
@@ -610,6 +609,9 @@ async fn manages_files_and_folders() {
         assert_eq!(part, contents[1000..2000]);
         assert_eq!(files.stat(&file).await.unwrap().unwrap().size, 250_000);
 
+        // Listing a folder moves the session into it, which must not upset renaming or
+        // removing that folder.
+        files.list_dir(&deeper).await.unwrap();
         let renamed = files.rename(&sub, "renamed").await.unwrap();
         assert_eq!(renamed, remote_path::join(root, "renamed"));
         assert_eq!(files.stat(&sub).await.unwrap(), None);
@@ -631,6 +633,10 @@ async fn manages_files_and_folders() {
 
         // A folder goes with everything in it, even when listed with its contents.
         let inner = remote_path::join(&renamed, "deeper/inner.bin");
+        files
+            .list_dir(&remote_path::join(&renamed, "deeper"))
+            .await
+            .unwrap();
         files.delete(&[inner, renamed.clone()]).await.unwrap();
         assert_eq!(files.stat(&renamed).await.unwrap(), None);
         assert!(files.list_dir(root).await.unwrap().entries.is_empty());
@@ -639,12 +645,14 @@ async fn manages_files_and_folders() {
         let refused = files.delete(&["/".to_string()]).await.unwrap_err();
         assert_eq!(refused.kind, ErrorKind::InvalidInput);
 
-        // The SSH test setup puts links in the home folder; they are resolved like SFTP's.
+        // The CI setup puts links in the home folder. Like SFTP's, they are listed as links,
+        // and `stat` describes what they point to.
         let home = files.list_dir("~").await.unwrap();
         if let Some(link) = home.entries.iter().find(|entry| entry.name == "data-link") {
             assert_eq!(link.kind, EntryKind::Symlink);
             assert_eq!(link.link_target, Some(LinkTarget::Dir));
             assert!(link.is_dir_like());
+            assert!(files.stat(&link.path).await.unwrap().unwrap().is_dir);
         }
         if let Some(link) = home
             .entries
@@ -652,6 +660,20 @@ async fn manages_files_and_folders() {
             .find(|entry| entry.name == "broken-link")
         {
             assert_eq!(link.link_target, Some(LinkTarget::Broken));
+            assert_eq!(files.stat(&link.path).await.unwrap(), None);
+        }
+        if let Some(link) = home.entries.iter().find(|entry| entry.name == "file-link") {
+            assert_eq!(link.link_target, Some(LinkTarget::File));
+            let target = remote_path::join(&session.home, "data/linked.bin");
+            let target_stat = files.stat(&target).await.unwrap().unwrap();
+            assert_eq!(link.size, target_stat.size);
+            let link_stat = files.stat(&link.path).await.unwrap().unwrap();
+            assert!(!link_stat.is_dir);
+            assert_eq!(link_stat.size, target_stat.size);
+            assert_eq!(
+                read_remote(files, &link.path).await,
+                read_remote(files, &target).await
+            );
         }
         fixture.close().await;
     }
@@ -665,6 +687,14 @@ async fn transfers_a_tree_both_ways() {
         let remote = fixture.at(index).remote.clone();
         let source = fixture.local.path().join("tree");
         write_tree(&source, 20 * MEBIBYTE + 12345);
+        let dated = "nested/b with spaces.txt";
+        let file_time = 1_500_000_000;
+        std::fs::File::options()
+            .write(true)
+            .open(source.join(dated))
+            .unwrap()
+            .set_modified(std::time::UNIX_EPOCH + Duration::from_secs(file_time as u64))
+            .unwrap();
 
         let transfers = fixture.transfers(transfer_settings());
         fixture
@@ -678,6 +708,14 @@ async fn transfers_a_tree_both_ways() {
             read_remote_tree(files, &remote_tree).await,
             read_tree(&source)
         );
+        // Uploads keep the local file's time.
+        let remote_modified = files
+            .stat(&remote_path::join(&remote_tree, dated))
+            .await
+            .unwrap()
+            .unwrap()
+            .modified;
+        assert_eq!(remote_modified, Some(file_time));
         drop(transfers);
 
         // Slow enough that idle workers have time to join the large file.
@@ -695,6 +733,15 @@ async fn transfers_a_tree_both_ways() {
         assert!(most_connections > 1, "the large download was not split");
         assert_eq!(read_tree(&downloaded.join("tree")), read_tree(&source));
         drop(transfers);
+        // Downloads keep the time the server reports.
+        let local_modified = std::fs::metadata(downloaded.join("tree").join(dated))
+            .unwrap()
+            .modified()
+            .unwrap()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        assert_eq!(local_modified, file_time);
 
         // Without separate connections every worker takes turns on the browsing connection.
         let shared = fixture.local.path().join("shared");
@@ -1361,5 +1408,73 @@ async fn relays_between_ftp_and_sftp() {
         .await,
         expected
     );
+    fixture.close().await;
+}
+
+/// Two servers that each lend their one browsing connection, copying to each other at once:
+/// neither copy may hold one server while waiting for the other.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn opposite_relays_share_browsing_connections() {
+    let (Some(first), Some(second)) = (plain_server(), second_server()) else {
+        return;
+    };
+    let mut fixture = Fixture::new();
+    let first_index = fixture.open(&first, "opposite-first").await;
+    let second_index = fixture.open(&second, "opposite-second").await;
+    let (first_path, expected) = relay_source(&fixture, first_index).await;
+    let (second_path, _) = relay_source(&fixture, second_index).await;
+
+    for fxp in [true, false] {
+        let into_second = fixture
+            .at(second_index)
+            .files
+            .make_dir(
+                &fixture.at(second_index).remote,
+                &format!("from-first-{fxp}"),
+            )
+            .await
+            .unwrap();
+        let into_first = fixture
+            .at(first_index)
+            .files
+            .make_dir(
+                &fixture.at(first_index).remote,
+                &format!("from-second-{fxp}"),
+            )
+            .await
+            .unwrap();
+        let transfers = fixture.transfers(TransferSettings {
+            fxp,
+            separate_connections: false,
+            ..transfer_settings()
+        });
+        fixture
+            .relay(
+                &transfers,
+                first_index,
+                &[&first_path],
+                second_index,
+                &into_second,
+            )
+            .await;
+        fixture
+            .relay(
+                &transfers,
+                second_index,
+                &[&second_path],
+                first_index,
+                &into_first,
+            )
+            .await;
+        assert_all_done(&wait_until_settled(&transfers).await.0);
+        drop(transfers);
+        for (index, folder) in [(second_index, &into_second), (first_index, &into_first)] {
+            let copied = remote_path::join(folder, "relay-source");
+            assert_eq!(
+                read_remote_tree(&fixture.at(index).files, &copied).await,
+                expected
+            );
+        }
+    }
     fixture.close().await;
 }

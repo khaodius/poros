@@ -66,6 +66,12 @@ impl WorkerConnection {
         }
     }
 
+    /// An FTP connection borrowed from the browsing session, which other workers may be
+    /// waiting for.
+    pub fn borrows_ftp_connection(&self) -> bool {
+        !self.owns_files && self.files.protocol().is_ftp()
+    }
+
     async fn close(self) {
         if let Some(fs) = &self.sftp {
             fs.close();

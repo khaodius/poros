@@ -246,6 +246,8 @@ pub struct Control {
     timeout: Duration,
     /// Cleared once the server refuses `EPSV`.
     extended_passive: bool,
+    /// Cleared once the server refuses to set a time with `MDTM`.
+    sets_time_with_mdtm: bool,
     last_used: Instant,
 }
 
@@ -298,6 +300,7 @@ impl Control {
             local,
             timeout,
             extended_passive: true,
+            sets_time_with_mdtm: true,
             last_used: Instant::now(),
         };
 
@@ -654,10 +657,16 @@ impl Control {
     }
 
     /// Stops a transfer early. Servers answer an abort in different ways (426 then 226, or
-    /// 226 alone, or 225), so a `NOOP` afterwards finds where the replies end.
+    /// 226 alone, or 225), so a `NOOP` afterwards finds where the replies end. Some servers
+    /// read commands in bulk during a transfer and drop whatever follows `ABOR`, so the
+    /// `NOOP` waits for the first answer.
     pub async fn abort_transfer(&mut self, data: Stream) -> AppResult<()> {
         self.send("ABOR").await?;
         drop(data);
+        let first = self.read_reply().await?;
+        if first.code == 421 {
+            return Err(reply_error(&first));
+        }
         self.resynchronize().await
     }
 
@@ -742,7 +751,12 @@ impl Control {
                         .skip(1)
                         .find(|line| line.starts_with(' '))
                         .map(|line| line.trim_start());
-                    if let Some(entry) = facts.and_then(listing::parse_mlsd_line) {
+                    // Facts about a link describe the link itself, which `SIZE` and `CWD`
+                    // below see through.
+                    if let Some(entry) = facts
+                        .and_then(listing::parse_mlsd_line)
+                        .filter(|entry| entry.kind != EntryKind::Symlink)
+                    {
                         return Ok(Some(entry.stat()));
                     }
                 }
@@ -822,9 +836,19 @@ impl Control {
             .map_err(|error| error.with_path(path))
     }
 
+    /// Moves to the folder above `path`, in case the session is in it or below it. Some
+    /// servers cannot remove that folder, and others lose their place once it moves away.
+    async fn step_out_of(&mut self, path: &str) -> AppResult<()> {
+        if let Some(parent) = crate::remote_path::parent(path) {
+            self.command(&format!("CWD {parent}")).await?;
+        }
+        Ok(())
+    }
+
     pub async fn rename(&mut self, from: &str, to: &str) -> AppResult<()> {
         check_argument(from)?;
         check_argument(to)?;
+        self.step_out_of(from).await?;
         self.expect(&format!("RNFR {from}"), 3)
             .await
             .map_err(|error| error.with_path(from))?;
@@ -844,20 +868,30 @@ impl Control {
 
     pub async fn remove_dir(&mut self, path: &str) -> AppResult<()> {
         check_argument(path)?;
+        self.step_out_of(path).await?;
         self.expect(&format!("RMD {path}"), 2)
             .await
             .map(|_| ())
             .map_err(|error| error.with_path(path))
     }
 
+    /// Uses `MFMT`, or else the older `MDTM <time> <path>` form that servers such as vsftpd
+    /// and ProFTPD take. A server without either keeps the time it wrote the file at.
     pub async fn set_modified(&mut self, path: &str, modified: i64) -> AppResult<()> {
         check_argument(path)?;
-        if !self.features.mfmt {
-            return Ok(());
+        let time = format_ftp_time(modified);
+        if self.features.mfmt {
+            return self
+                .expect(&format!("MFMT {time} {path}"), 2)
+                .await
+                .map(|_| ());
         }
-        self.expect(&format!("MFMT {} {path}", format_ftp_time(modified)), 2)
-            .await
-            .map(|_| ())
+        if self.features.mdtm && self.sets_time_with_mdtm {
+            let reply = self.command(&format!("MDTM {time} {path}")).await?;
+            // A server that only reads times takes the whole argument for a file name.
+            self.sets_time_with_mdtm = reply.class() == 2;
+        }
+        Ok(())
     }
 
     pub async fn set_permissions(&mut self, path: &str, permissions: u32) -> AppResult<()> {

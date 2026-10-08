@@ -54,24 +54,27 @@ struct Endpoints {
     remote: Arc<dyn RemoteFileSystem>,
     /// The server a relay reads from.
     source: Option<Arc<dyn RemoteFileSystem>>,
+    /// Both ends of a relay are FTP connections borrowed from browsing sessions.
+    borrows_both: bool,
 }
 
 async fn endpoints(job: &JobRef<'_>, connections: &mut Connections) -> AppResult<Endpoints> {
     let spec = job.spec;
-    let remote = connections
+    let target = connections
         .get(job.shared, &spec.session_id, &spec.session_id)
-        .await?
-        .files
-        .clone();
+        .await?;
+    let remote = target.files.clone();
+    let mut borrows_both = target.borrows_ftp_connection();
     let source = match (&spec.source_session_id, source_key(spec)) {
-        (Some(source_id), Some(key)) => Some(
-            connections
-                .get(job.shared, source_id, &key)
-                .await?
-                .files
-                .clone(),
-        ),
-        _ => None,
+        (Some(source_id), Some(key)) => {
+            let source = connections.get(job.shared, source_id, &key).await?;
+            borrows_both &= source.borrows_ftp_connection();
+            Some(source.files.clone())
+        }
+        _ => {
+            borrows_both = false;
+            None
+        }
     };
     // One FTP connection cannot read and write at once.
     if let Some(source) = &source {
@@ -79,11 +82,20 @@ async fn endpoints(job: &JobRef<'_>, connections: &mut Connections) -> AppResult
             && std::ptr::addr_eq(Arc::as_ptr(source), Arc::as_ptr(&remote))
         {
             return Err(AppError::unsupported(
-                "This server accepts only one connection, so files cannot be copied within it",
+                if job.settings.separate_connections {
+                    "This server accepts only one connection, so files cannot be copied within it"
+                } else {
+                    "Copying within an FTP server needs a second connection. Turn on \"Give each \
+                 transfer its own connection\" in Settings, Transfers."
+                },
             ));
         }
     }
-    Ok(Endpoints { remote, source })
+    Ok(Endpoints {
+        remote,
+        source,
+        borrows_both,
+    })
 }
 
 pub(super) async fn run(
@@ -106,6 +118,13 @@ pub(super) async fn run(
             upload(job, endpoints.remote, resolution, resume_offset).await
         }
         (JobKind::File, Role::Primary, Direction::Relay) => {
+            let _turn = match endpoints.borrows_both {
+                true => Some(tokio::select! {
+                    turn = job.shared.borrowed_relays.lock() => turn,
+                    _ = job.run.cancel.cancelled() => return Err(AppError::cancelled()),
+                }),
+                false => None,
+            };
             relay(job, endpoints, resolution, resume_offset).await
         }
         (JobKind::File, Role::Helper, _) => help(job, endpoints.remote).await,
