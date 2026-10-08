@@ -408,6 +408,13 @@ pub fn window_initial_layout(
     pending.0.lock().unwrap().remove(window.label())
 }
 
+/// Starts the app again after an update replaced it. Goes through the normal exit, so open
+/// sessions are closed first.
+#[tauri::command]
+pub fn app_restart(app: AppHandle) {
+    app.request_restart();
+}
+
 fn now_millis() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

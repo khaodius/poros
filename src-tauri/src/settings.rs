@@ -1,5 +1,5 @@
 //! Persisted in `settings.json` in the app config folder. The backend reads the transfer and
-//! connection sections; the interface, appearance, log and sync sections belong to the
+//! connection sections; the interface, appearance, log, sync and updates sections belong to the
 //! frontend and are stored as given. Mirrored in `src/lib/settings.ts`.
 
 use std::path::{Path, PathBuf};
@@ -160,6 +160,7 @@ pub struct Settings {
     pub log: serde_json::Value,
     /// Defaults for folder synchronization.
     pub sync: serde_json::Value,
+    pub updates: serde_json::Value,
 }
 
 impl Default for Settings {
@@ -172,6 +173,7 @@ impl Default for Settings {
             appearance: empty(),
             log: empty(),
             sync: empty(),
+            updates: empty(),
         }
     }
 }
@@ -185,6 +187,7 @@ impl Settings {
             &mut self.appearance,
             &mut self.log,
             &mut self.sync,
+            &mut self.updates,
         ] {
             if !section.is_object() {
                 *section = serde_json::Value::Object(Default::default());
@@ -282,10 +285,12 @@ mod tests {
         let mut changed = store.get();
         changed.transfers.workers = 8;
         changed.appearance = serde_json::json!({ "theme": "dusk" });
+        changed.updates = serde_json::json!({ "checkOnStart": false });
         store.set(changed).unwrap();
 
         let reloaded = SettingsStore::load(file);
         assert_eq!(reloaded.get().transfers.workers, 8);
         assert_eq!(reloaded.get().appearance["theme"], "dusk");
+        assert_eq!(reloaded.get().updates["checkOnStart"], false);
     }
 }

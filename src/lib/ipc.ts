@@ -135,6 +135,11 @@ export const windows = {
   initialLayout: () => call<unknown>("window_initial_layout"),
 };
 
+export const application = {
+  /** Starts Poros again, once an update has replaced it. */
+  restart: () => call<void>("app_restart"),
+};
+
 function subscribe<T>(event: string, handler: (payload: T) => void): Promise<UnlistenFn> {
   return listen<T>(event, (received) => handler(received.payload));
 }

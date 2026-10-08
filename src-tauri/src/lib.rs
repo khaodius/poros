@@ -41,6 +41,7 @@ const REVEAL_FALLBACK: Duration = Duration::from_secs(2);
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
             std::fs::create_dir_all(&config_dir)?;
@@ -136,6 +137,7 @@ pub fn run() {
             commands::save_text_file,
             commands::window_open,
             commands::window_initial_layout,
+            commands::app_restart,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Poros");
