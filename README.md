@@ -301,6 +301,14 @@ cargo test
 
 CI runs all of the above on Linux and Windows and builds installers for both.
 
+### Releasing
+
+Set the new version in `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`,
+run `npm install`, and `cargo check` in `src-tauri`, to update the lockfiles, add a section for it
+to [CHANGELOG.md](CHANGELOG.md), and merge to `main`. The Release workflow then builds the
+installers from that commit, tags it, and publishes the release with the changelog section,
+SHA-256 checksums and build provenance attestations.
+
 ### End-to-end tests
 
 `src-tauri/tests/sftp_server.rs` connects to a real OpenSSH server and is skipped unless
