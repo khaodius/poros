@@ -32,7 +32,8 @@ import {
   type Placement,
   type SplitNode,
 } from "../lib/layout";
-import { isLifted, useDragStore, type TabDrag } from "../state/dragStore";
+import { MAIN_WINDOW } from "../lib/ipc";
+import { isLifted, useDragStore, type DropTarget, type TabDrag } from "../state/dragStore";
 import { useLayoutStore } from "../state/layoutStore";
 import { TabBar } from "./TabBar";
 import { TabContent } from "./TabContent";
@@ -131,8 +132,10 @@ export function DockArea() {
     ),
   );
 
+  // Also set while a tab from another window is over this one.
+  const target = useDragStore((state) => state.target);
   const liftedTabId = drag && isLifted(drag.payload, drag.target) ? drag.payload.tabId : null;
-  const dropTarget = liftedTabId && drag?.target?.kind === "dock" ? drag.target : null;
+  const dropTarget = target?.kind === "dock" ? target : null;
 
   const layout = useMemo(
     () => (resizing ? setSizes(root, resizing.splitId, resizing.sizes) : root),
@@ -146,7 +149,7 @@ export function DockArea() {
     groups.flatMap((entry) => entry.tabs.map((tab) => [tab.id, entry] as const)),
   );
 
-  const leaving = drag?.target?.kind === "outside";
+  const leaving = target?.kind === "outside" || target?.kind === "window";
   const floating = drag && liftedTabId ? floatingIn(drag.payload, drag.pointer, leaving) : null;
 
   // Dragging a handle previews the sizes in this component only and commits on release.
@@ -257,7 +260,7 @@ export function DockArea() {
         <FloatingFrame
           tab={tabs.find((tab) => tab.id === liftedTabId)}
           label={drag.payload.label}
-          leaving={leaving}
+          leavingTo={leaving ? target : null}
           style={floating}
         />
       )}
@@ -327,22 +330,27 @@ function TabPanel({ tab, groupId, visible, active, floating, style }: TabPanelPr
 interface FloatingFrameProps {
   tab: PaneTab | undefined;
   label: string;
-  /** The pointer is outside the window, so a drop opens a new one. */
-  leaving: boolean;
+  /** Where the pane goes when the pointer is outside the window. */
+  leavingTo: DropTarget | null;
   style: CSSProperties;
 }
 
-function FloatingFrame({ tab, label, leaving, style }: FloatingFrameProps) {
+function leavingHint(target: DropTarget): string {
+  if (target.kind !== "window") return "New window";
+  return target.label === MAIN_WINDOW ? "Move to main window" : "Move to that window";
+}
+
+function FloatingFrame({ tab, label, leavingTo, style }: FloatingFrameProps) {
   const Icon = tab?.kind === "local" ? HardDrive : tab?.kind === "remote" ? Server : Sparkles;
   return (
     <div className="dock-floating" style={style}>
       <div className="dock-floating-title">
         <Icon size={14} className={`tab-icon tab-icon-${tab?.kind}`} />
         <span className="tab-label">{label}</span>
-        {leaving && (
+        {leavingTo && (
           <span className="dock-floating-hint">
             <SquareArrowOutUpRight size={12} />
-            New window
+            {leavingHint(leavingTo)}
           </span>
         )}
       </div>

@@ -22,6 +22,7 @@ import {
   dockTabBeside,
   isMainWindow,
   moveTabTo,
+  moveTabToWindow,
   requestCloseTab,
   returnTabToMain,
   splitTab,
@@ -184,7 +185,9 @@ function TabButton({
           (target) => {
             if (target.kind === "tabBar") moveTabTo(tab.id, target.groupId, target.index);
             else if (target.kind === "dock") dockTabBeside(tab.id, target.groupId, target.side);
-            else if (target.kind === "outside") {
+            else if (target.kind === "window") {
+              void moveTabToWindow(tab.id, target.label, target.x, target.y);
+            } else if (target.kind === "outside") {
               void tearOutTab(tab.id, target.screenX, target.screenY);
             }
           },

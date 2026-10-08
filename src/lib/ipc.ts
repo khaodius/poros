@@ -36,6 +36,11 @@ export const STORE_CHANGED_EVENT = "poros://store-changed";
 export const SYNC_PROGRESS_EVENT = "poros://sync-progress";
 /** Sent by a torn-out window to hand a tab back to the main window. */
 export const RETURN_TAB_EVENT = "poros://return-tab";
+/** Sent by the window a tab is dragged out of to the window under the pointer. */
+export const TAB_DRAG_EVENT = "poros://tab-drag";
+
+/** The label of the window Poros starts with; windows torn out of it get others. */
+export const MAIN_WINDOW = "main";
 
 export function toAppError(rejection: unknown): AppError {
   if (rejection && typeof rejection === "object" && "kind" in rejection && "message" in rejection) {
@@ -91,6 +96,7 @@ export const transfers = {
     call<void>("transfer_resolve", { id, action, applyToAll }),
   sessionJobs: (sessionId: string) => call<number>("transfer_session_jobs", { sessionId }),
   pauseSession: (sessionId: string) => call<number>("transfer_pause_session", { sessionId }),
+  saveQueue: () => call<void>("transfer_save_queue"),
 };
 
 export const sync = {
@@ -151,6 +157,11 @@ export const windows = {
   open: (layout: unknown, width: number, height: number, x?: number, y?: number) =>
     call<string>("window_open", { layout, width, height, x: x ?? null, y: y ?? null }),
   initialLayout: () => call<unknown>("window_initial_layout"),
+};
+
+export const application = {
+  /** Starts Poros again, once an update has replaced it. */
+  restart: () => call<void>("app_restart"),
 };
 
 function subscribe<T>(event: string, handler: (payload: T) => void): Promise<UnlistenFn> {
