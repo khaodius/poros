@@ -14,11 +14,14 @@ use super::conflict::ExistsAction;
 use super::pieces::Pieces;
 use crate::error::AppError;
 use crate::settings::TransferSettings;
+use crate::sftp::RemoteStat;
 
 pub type JobId = u64;
 
 /// Top-level ranks grow down from here for "move to top" and up for everything else.
 const RANK_MIDDLE: u32 = 0x8000_0000;
+/// The longest wait between attempts to reach a server that dropped.
+const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -27,7 +30,7 @@ pub enum Direction {
     Download,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum JobKind {
     File,
@@ -92,10 +95,29 @@ pub enum RunOutcome {
 /// Prepared by the first worker on a file; helpers open the same target.
 #[derive(Debug, Clone)]
 pub struct Plan {
+    /// Where the bytes are written: the target, or a temporary file beside it.
     pub target: String,
+    /// The real target when `target` is a temporary file, renamed over it once complete.
+    pub rename_to: Option<String>,
+    /// The source as it was when the transfer started.
+    pub source_size: u64,
     pub source_modified: Option<i64>,
     pub source_permissions: Option<u32>,
-    pub resumed: bool,
+    /// The permissions of the file a temporary file replaces, kept when the source's are not.
+    pub replaced_permissions: Option<u32>,
+}
+
+/// Where an interrupted file continues from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResumePoint {
+    /// Bytes before this offset are in place from an earlier run.
+    pub offset: u64,
+    /// The temporary file holding them; `None` when they are in the target itself.
+    pub partial: Option<String>,
+    /// The source as it was then. A source that changed since starts over.
+    pub source_size: u64,
+    pub source_modified: Option<i64>,
 }
 
 /// Shared by the workers on one running job.
@@ -108,7 +130,13 @@ pub struct JobRun {
     pub delta: AtomicBool,
     /// File data a delta transfer sent over the network.
     pub delta_bytes: AtomicU64,
+    /// What was written cannot be trusted, so the next attempt starts from the beginning.
+    pub restart: AtomicBool,
+    /// Read as the first worker closed its handle: the target of an upload, the source of a
+    /// download. Only set when that worker moved the whole file alone.
+    pub closing_stat: OnceLock<RemoteStat>,
     max_workers: AtomicU32,
+    segmented: AtomicBool,
 }
 
 impl JobRun {
@@ -120,8 +148,28 @@ impl JobRun {
             plan: OnceLock::new(),
             delta: AtomicBool::new(false),
             delta_bytes: AtomicU64::new(0),
+            restart: AtomicBool::new(false),
+            closing_stat: OnceLock::new(),
             max_workers: AtomicU32::new(1),
+            segmented: AtomicBool::new(false),
         }
+    }
+
+    /// Other workers may have joined, so one worker's view of the file is not the whole.
+    pub fn is_segmented(&self) -> bool {
+        self.segmented.load(Ordering::Relaxed)
+    }
+
+    /// Where this run would continue from if it stopped now.
+    fn resume_point(&self) -> Option<ResumePoint> {
+        let plan = self.plan.get()?;
+        let offset = self.complete_prefix()?;
+        Some(ResumePoint {
+            offset,
+            partial: plan.rename_to.is_some().then(|| plan.target.clone()),
+            source_size: plan.source_size,
+            source_modified: plan.source_modified,
+        })
     }
 
     pub fn start_pieces(&self, pieces: Pieces) {
@@ -197,8 +245,9 @@ pub struct Job {
     pub resolution: Option<ExistsAction>,
     pub attempts: u32,
     pub not_before: Option<Instant>,
-    /// Bytes before this offset are already in the target from an earlier run.
-    pub resume_offset: Option<u64>,
+    pub resume: Option<ResumePoint>,
+    /// Waiting for its server to come back after the connection dropped.
+    pub reconnecting: bool,
     pub transferred: u64,
     pub speed: u64,
     /// Bytes sent over the network when rsync moved only the changes.
@@ -241,6 +290,7 @@ impl Job {
             conflict: self.conflict.clone(),
             attempts: self.attempts,
             delta_bytes: self.delta_bytes,
+            reconnecting: self.reconnecting,
         }
     }
 }
@@ -270,6 +320,8 @@ pub struct JobSnapshot {
     pub attempts: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub delta_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub reconnecting: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
@@ -327,7 +379,7 @@ pub struct Claim {
     pub run: Arc<JobRun>,
     pub spec: JobSpec,
     pub resolution: Option<ExistsAction>,
-    pub resume_offset: Option<u64>,
+    pub resume: Option<ResumePoint>,
 }
 
 pub enum Release {
@@ -337,6 +389,45 @@ pub enum Release {
     Finalize,
     /// This was the last worker: tidy up, then `settle`.
     Settle,
+}
+
+/// A change in whether a job's server can be reached, for the log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServerChange {
+    /// A connection dropped; the server's transfers wait this long, then try again.
+    Lost { retry_in: Duration },
+    /// The server answered again.
+    Back,
+    /// The server stayed out of reach for the whole reconnect window, so its transfers failed.
+    GaveUp { failed: usize },
+}
+
+/// A server whose connections dropped. Its jobs wait instead of using up their retries.
+struct Outage {
+    since: Instant,
+    /// Its jobs are not started before this.
+    until: Instant,
+    failures: u32,
+    /// Waiting ran out; its jobs fail like any other until something gets through.
+    gave_up: bool,
+}
+
+/// A temporary file of a transfer that left the queue unfinished.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Abandoned {
+    pub session_id: String,
+    pub direction: Direction,
+    pub path: String,
+}
+
+/// An unfinished job as it is saved between runs of the app.
+#[derive(Debug, Clone)]
+pub struct Unfinished {
+    pub spec: JobSpec,
+    pub state: JobState,
+    pub error: Option<String>,
+    pub resolution: Option<ExistsAction>,
+    pub resume: Option<ResumePoint>,
 }
 
 #[derive(Default)]
@@ -353,6 +444,10 @@ pub struct Queue {
     dirty: HashSet<JobId>,
     removed: Vec<JobId>,
     changed_directories: Vec<ChangedDirectory>,
+    outages: HashMap<String, Outage>,
+    abandoned: Vec<Abandoned>,
+    /// Jobs were added, removed, reordered or changed state since the queue was last saved.
+    pub unsaved: bool,
 }
 
 impl Queue {
@@ -396,7 +491,8 @@ impl Queue {
                 resolution: None,
                 attempts: 0,
                 not_before: None,
-                resume_offset: None,
+                resume: None,
+                reconnecting: false,
                 transferred: 0,
                 speed: 0,
                 delta_bytes: None,
@@ -407,7 +503,49 @@ impl Queue {
             },
         );
         self.dirty.insert(id);
+        self.unsaved = true;
         id
+    }
+
+    /// Brings back a job saved by an earlier run of the app. Jobs that were waiting or running
+    /// come back paused, so nothing starts until the user says so.
+    pub fn restore(&mut self, saved: Unfinished) -> JobId {
+        let id = self.add(saved.spec);
+        if let Some(job) = self.jobs.get_mut(&id) {
+            self.pending.remove(&job.rank);
+            job.state = match saved.state {
+                JobState::Failed => JobState::Failed,
+                _ => JobState::Paused,
+            };
+            job.error = saved.error;
+            job.resolution = saved.resolution;
+            job.transferred = saved.resume.as_ref().map_or(0, |resume| resume.offset);
+            job.resume = saved.resume;
+        }
+        id
+    }
+
+    /// Every job not yet done, in queue order; running ones with where they would resume.
+    pub fn unfinished(&self) -> Vec<Unfinished> {
+        let mut jobs: Vec<&Job> = self
+            .jobs
+            .values()
+            .filter(|job| !matches!(job.state, JobState::Done | JobState::Skipped))
+            .collect();
+        jobs.sort_by(|left, right| left.rank.cmp(&right.rank));
+        jobs.into_iter()
+            .map(|job| Unfinished {
+                spec: job.spec.clone(),
+                state: job.state,
+                error: job.error.clone(),
+                resolution: job.resolution,
+                resume: job
+                    .run
+                    .as_ref()
+                    .and_then(|run| run.resume_point())
+                    .or_else(|| job.resume.clone()),
+            })
+            .collect()
     }
 
     pub fn job(&self, id: JobId) -> Option<&Job> {
@@ -440,7 +578,7 @@ impl Queue {
                     run,
                     spec: job.spec.clone(),
                     resolution: None,
-                    resume_offset: None,
+                    resume: None,
                 });
             }
         }
@@ -449,14 +587,16 @@ impl Queue {
             .pending
             .iter()
             .find(|(_, id)| {
-                self.jobs[id]
-                    .not_before
-                    .is_none_or(|not_before| not_before <= now)
+                let job = &self.jobs[id];
+                job.not_before.is_none_or(|not_before| not_before <= now)
+                    && !self.server_unreachable(&job.spec.session_id, now)
             })
             .map(|(rank, id)| (rank.clone(), *id))?;
         self.pending.remove(&rank);
         let job = self.jobs.get_mut(&id)?;
-        let run = Arc::new(JobRun::new(job.resume_offset.unwrap_or(0)));
+        let start = job.resume.as_ref().map_or(0, |resume| resume.offset);
+        let run = Arc::new(JobRun::new(start));
+        self.unsaved = true;
         job.state = JobState::Running;
         job.run = Some(run.clone());
         job.workers = 1;
@@ -465,7 +605,8 @@ impl Queue {
         job.conflict = None;
         job.speed = 0;
         job.delta_bytes = None;
-        job.sample = Some((now, job.resume_offset.unwrap_or(0)));
+        job.reconnecting = false;
+        job.sample = Some((now, start));
         self.dirty.insert(id);
         Some(Claim {
             id,
@@ -473,14 +614,21 @@ impl Queue {
             run,
             spec: job.spec.clone(),
             resolution: job.resolution,
-            resume_offset: job.resume_offset,
+            resume: job.resume.clone(),
         })
+    }
+
+    fn server_unreachable(&self, session_id: &str, now: Instant) -> bool {
+        self.outages
+            .get(session_id)
+            .is_some_and(|outage| !outage.gave_up && now < outage.until)
     }
 
     /// The first worker prepared the target; up to `max_workers` may now share the file.
     pub fn open_segments(&mut self, id: JobId, max_workers: u32) {
         if let Some(run) = self.jobs.get(&id).and_then(|job| job.run.as_ref()) {
             run.max_workers.store(max_workers, Ordering::Relaxed);
+            run.segmented.store(true, Ordering::Relaxed);
             self.segmented.push(id);
         }
     }
@@ -491,6 +639,7 @@ impl Queue {
             job.spec.target = target;
             job.spec.name = name;
             self.dirty.insert(id);
+            self.unsaved = true;
         }
     }
 
@@ -522,18 +671,18 @@ impl Queue {
         }
     }
 
-    /// Decides a job's state once no worker is on it.
+    /// Decides a job's state once no worker is on it, and reports whether that changed what
+    /// is known about its server.
     pub fn settle(
         &mut self,
         id: JobId,
         outcome: RunOutcome,
         settings: &TransferSettings,
         now: Instant,
-    ) {
+    ) -> Option<ServerChange> {
         self.segmented.retain(|segmented| *segmented != id);
-        let Some(job) = self.jobs.get_mut(&id) else {
-            return;
-        };
+        self.unsaved = true;
+        let job = self.jobs.get_mut(&id)?;
         let run = job.run.take();
         let stop = job.stop.take();
         job.workers = 0;
@@ -541,8 +690,11 @@ impl Queue {
         job.sample = None;
         if let Some(run) = &run {
             job.transferred = run.transferred.load(Ordering::Relaxed);
-            if let Some(prefix) = run.complete_prefix() {
-                job.resume_offset = Some(prefix);
+            if run.restart.load(Ordering::Relaxed) {
+                job.resume = None;
+                job.transferred = 0;
+            } else if let Some(resume) = run.resume_point() {
+                job.resume = Some(resume);
             }
             job.delta_bytes = run
                 .delta
@@ -550,17 +702,18 @@ impl Queue {
                 .then(|| run.delta_bytes.load(Ordering::Relaxed));
         }
         self.dirty.insert(id);
+        let session_id = job.spec.session_id.clone();
 
         let failure = match (stop, outcome) {
             (Some(StopReason::Remove), _) => {
                 self.forget(id);
-                return;
+                return None;
             }
             (_, RunOutcome::Completed) => {
                 self.totals.done += 1;
                 job.state = JobState::Done;
                 job.error = None;
-                job.resume_offset = None;
+                job.resume = None;
                 if let Some(end) = run.as_ref().and_then(|run| run.end()) {
                     job.spec.size = end;
                     job.transferred = end;
@@ -570,7 +723,7 @@ impl Queue {
                 if !settings.keep_completed {
                     self.forget(id);
                 }
-                return;
+                return self.server_answered(&session_id);
             }
             (_, RunOutcome::Skipped(reason)) => {
                 self.totals.skipped += 1;
@@ -579,7 +732,7 @@ impl Queue {
                 if !settings.keep_completed {
                     self.forget(id);
                 }
-                return;
+                return self.server_answered(&session_id);
             }
             (_, RunOutcome::Expanded(children)) => {
                 let rank = job.rank.clone();
@@ -590,25 +743,36 @@ impl Queue {
                     let child_rank = format!("{rank}{}", rank_segment(index as u32));
                     self.insert(child_rank, child);
                 }
-                return;
+                return self.server_answered(&session_id);
             }
             (Some(StopReason::Pause), _) => {
                 job.state = JobState::Paused;
-                return;
+                return None;
             }
             (Some(StopReason::Requeue), _) | (None, RunOutcome::Stopped) => {
                 job.state = JobState::Queued;
                 self.pending.insert(job.rank.clone(), id);
-                return;
+                return None;
             }
             (None, RunOutcome::Conflict(info)) => {
                 job.state = JobState::Conflict;
                 job.conflict = Some(info);
-                return;
+                return self.server_answered(&session_id);
             }
             (Some(StopReason::Failed(error)), _) | (None, RunOutcome::Failed(error)) => error,
         };
 
+        if failure.is_connection_lost() {
+            if let Some(change) = self.wait_for_server(id, &failure, settings, now) {
+                return change;
+            }
+        }
+        let change = if failure.is_connection_lost() {
+            None
+        } else {
+            self.server_answered(&session_id)
+        };
+        let job = self.jobs.get_mut(&id)?;
         job.attempts += 1;
         if failure.is_retryable() && job.attempts <= settings.retry_attempts {
             job.state = JobState::Queued;
@@ -620,6 +784,129 @@ impl Queue {
             job.state = JobState::Failed;
             job.error = Some(failure.message);
         }
+        change
+    }
+
+    /// Puts a job whose connection dropped back in line to wait for its server, without using
+    /// up its retries. The drop that starts an outage does count, so a file that itself breaks
+    /// the connection still fails in the end. `None` when the job should fail or retry as usual;
+    /// otherwise what changed about the server, if anything.
+    fn wait_for_server(
+        &mut self,
+        id: JobId,
+        failure: &AppError,
+        settings: &TransferSettings,
+        now: Instant,
+    ) -> Option<Option<ServerChange>> {
+        if settings.retry_attempts == 0 || settings.reconnect_minutes == 0 {
+            return None;
+        }
+        let session_id = self.jobs.get(&id)?.spec.session_id.clone();
+        let delay = |failures: u32| {
+            let first = Duration::from_secs(u64::from(settings.retry_delay_secs.max(1)));
+            first
+                .saturating_mul(1 << failures.saturating_sub(1).min(16))
+                .min(MAX_RECONNECT_DELAY.max(first))
+        };
+        let change = match self.outages.get_mut(&session_id) {
+            None => {
+                let job = self.jobs.get_mut(&id)?;
+                if job.attempts >= settings.retry_attempts {
+                    return None;
+                }
+                job.attempts += 1;
+                let retry_in = delay(1);
+                self.outages.insert(
+                    session_id.clone(),
+                    Outage {
+                        since: now,
+                        until: now + retry_in,
+                        failures: 1,
+                        gave_up: false,
+                    },
+                );
+                Some(ServerChange::Lost { retry_in })
+            }
+            Some(outage) if outage.gave_up => return None,
+            // This attempt began before the outage did.
+            Some(outage) if now < outage.until => None,
+            Some(outage)
+                if now.saturating_duration_since(outage.since) < settings.reconnect_window() =>
+            {
+                outage.failures += 1;
+                let retry_in = delay(outage.failures);
+                outage.until = now + retry_in;
+                Some(ServerChange::Lost { retry_in })
+            }
+            Some(outage) => {
+                outage.gave_up = true;
+                let message = format!(
+                    "{} (gave up after trying to reconnect for {} min)",
+                    failure.message, settings.reconnect_minutes
+                );
+                let failed = self.fail_waiting(&session_id, &message) + 1;
+                let job = self.jobs.get_mut(&id)?;
+                self.totals.failed += 1;
+                job.state = JobState::Failed;
+                job.reconnecting = false;
+                job.error = Some(message);
+                return Some(Some(ServerChange::GaveUp { failed }));
+            }
+        };
+        let job = self.jobs.get_mut(&id)?;
+        job.state = JobState::Queued;
+        job.reconnecting = true;
+        job.not_before = None;
+        job.error = Some(format!("{} (reconnecting)", failure.message));
+        self.pending.insert(job.rank.clone(), id);
+        Some(change)
+    }
+
+    /// Fails every queued job of a session; returns how many there were.
+    fn fail_waiting(&mut self, session_id: &str, message: &str) -> usize {
+        let waiting: Vec<(String, JobId)> = self
+            .pending
+            .iter()
+            .filter(|(_, id)| self.jobs[*id].spec.session_id == session_id)
+            .map(|(rank, id)| (rank.clone(), *id))
+            .collect();
+        for (rank, id) in &waiting {
+            self.pending.remove(rank);
+            if let Some(job) = self.jobs.get_mut(id) {
+                job.state = JobState::Failed;
+                job.reconnecting = false;
+                job.error = Some(message.to_string());
+                self.dirty.insert(*id);
+            }
+        }
+        self.totals.failed += waiting.len() as u64;
+        waiting.len()
+    }
+
+    /// Servers whose transfers wait after a dropped connection, with when that began.
+    pub fn waiting_servers(&self) -> Vec<(String, Instant)> {
+        self.outages
+            .iter()
+            .filter(|(_, outage)| !outage.gave_up)
+            .map(|(session_id, outage)| (session_id.clone(), outage.since))
+            .collect()
+    }
+
+    /// A new session reached the server, so its transfers need not wait out their delay.
+    pub fn end_outage(&mut self, session_id: &str) -> bool {
+        let ended = self
+            .outages
+            .get(session_id)
+            .is_some_and(|outage| !outage.gave_up);
+        if ended {
+            self.outages.remove(session_id);
+        }
+        ended
+    }
+
+    /// Something got through to the server, so it is no longer out of reach.
+    fn server_answered(&mut self, session_id: &str) -> Option<ServerChange> {
+        self.outages.remove(session_id).map(|_| ServerChange::Back)
     }
 
     fn forget(&mut self, id: JobId) {
@@ -627,7 +914,20 @@ impl Queue {
             self.pending.remove(&job.rank);
             self.dirty.remove(&id);
             self.removed.push(id);
+            self.unsaved = true;
+            if let Some(partial) = job.resume.and_then(|resume| resume.partial) {
+                self.abandoned.push(Abandoned {
+                    session_id: job.spec.session_id,
+                    direction: job.spec.direction,
+                    path: partial,
+                });
+            }
         }
+    }
+
+    /// Temporary files of jobs that left the queue, for the caller to delete.
+    pub fn take_abandoned(&mut self) -> Vec<Abandoned> {
+        std::mem::take(&mut self.abandoned)
     }
 
     pub fn pause(&mut self, ids: &[JobId]) {
@@ -640,11 +940,13 @@ impl Queue {
                     self.pending.remove(&job.rank);
                     job.state = JobState::Paused;
                     job.not_before = None;
+                    job.reconnecting = false;
                 }
                 JobState::Running => stop_run(job, StopReason::Pause),
                 _ => continue,
             }
             self.dirty.insert(*id);
+            self.unsaved = true;
         }
     }
 
@@ -666,6 +968,16 @@ impl Queue {
             job.not_before = None;
             self.pending.insert(job.rank.clone(), *id);
             self.dirty.insert(*id);
+            self.unsaved = true;
+            // Asking again is a fresh start for a server Poros had given up on.
+            let session_id = &job.spec.session_id;
+            if self
+                .outages
+                .get(session_id)
+                .is_some_and(|outage| outage.gave_up)
+            {
+                self.outages.remove(session_id);
+            }
         }
     }
 
@@ -727,6 +1039,7 @@ impl Queue {
                 self.pending.insert(job.rank.clone(), id);
             }
             self.dirty.insert(id);
+            self.unsaved = true;
         }
     }
 
@@ -753,6 +1066,7 @@ impl Queue {
             job.state = JobState::Queued;
             self.pending.insert(job.rank.clone(), id);
             self.dirty.insert(id);
+            self.unsaved = true;
         }
     }
 
@@ -846,9 +1160,15 @@ impl Queue {
     }
 
     pub fn has_delayed_jobs(&self) -> bool {
-        self.pending
-            .values()
-            .any(|id| self.jobs[id].not_before.is_some())
+        self.pending.values().any(|id| {
+            let job = &self.jobs[id];
+            job.not_before.is_some() || self.outages.contains_key(&job.spec.session_id)
+        })
+    }
+
+    /// With nothing left to run, no job waits for a server any more.
+    pub fn forget_outages(&mut self) {
+        self.outages.clear();
     }
 }
 
@@ -918,6 +1238,17 @@ mod tests {
         TransferSettings::default()
     }
 
+    fn plan(target: &str, size: u64) -> Plan {
+        Plan {
+            target: target.into(),
+            rename_to: None,
+            source_size: size,
+            source_modified: Some(1),
+            source_permissions: None,
+            replaced_permissions: None,
+        }
+    }
+
     fn claim_name(queue: &mut Queue) -> Option<String> {
         queue.claim(Instant::now()).map(|claim| claim.spec.name)
     }
@@ -966,6 +1297,7 @@ mod tests {
         let mut queue = Queue::new();
         let id = queue.add(file("big", 100));
         let claim = queue.claim(Instant::now()).unwrap();
+        claim.run.plan.set(plan("/remote/big", 100)).unwrap();
         claim.run.start_pieces(Pieces::new(0, 100, 10));
         let piece = claim.run.claim_piece().unwrap();
         claim.run.add_progress(10);
@@ -976,12 +1308,12 @@ mod tests {
         finish(&mut queue, id, RunOutcome::Stopped);
         let job = queue.job(id).unwrap();
         assert_eq!(job.state, JobState::Queued);
-        assert_eq!(job.resume_offset, Some(10));
+        assert_eq!(job.resume.as_ref().map(|resume| resume.offset), Some(10));
         assert!(queue.claim(Instant::now()).is_none());
 
         queue.set_paused(false);
         let claim = queue.claim(Instant::now()).unwrap();
-        assert_eq!(claim.resume_offset, Some(10));
+        assert_eq!(claim.resume.map(|resume| resume.offset), Some(10));
     }
 
     #[test]
@@ -1027,7 +1359,8 @@ mod tests {
         finish(&mut queue, id, RunOutcome::Failed(lost));
         let job = queue.job(id).unwrap();
         assert_eq!(job.state, JobState::Queued);
-        assert!(job.not_before.is_some());
+        assert!(job.reconnecting);
+        assert!(queue.has_delayed_jobs());
         assert!(queue.claim(Instant::now()).is_none());
         assert!(queue
             .claim(Instant::now() + Duration::from_secs(60))
@@ -1074,5 +1407,211 @@ mod tests {
         assert!(queue.job(id).is_some());
         finish(&mut queue, id, RunOutcome::Stopped);
         assert!(queue.job(id).is_none());
+    }
+
+    fn drop_connection(
+        queue: &mut Queue,
+        id: JobId,
+        settings: &TransferSettings,
+        now: Instant,
+    ) -> Option<ServerChange> {
+        let lost = RunOutcome::Failed(AppError::new(ErrorKind::Disconnected, "gone"));
+        assert!(matches!(queue.release(id, &lost), Release::Settle));
+        queue.settle(id, lost, settings, now)
+    }
+
+    #[test]
+    fn dropped_connections_wait_for_the_server_with_growing_delays() {
+        let settings = TransferSettings {
+            retry_attempts: 2,
+            retry_delay_secs: 5,
+            ..settings()
+        };
+        let mut queue = Queue::new();
+        let first = queue.add(file("a", 1));
+        let second = queue.add(file("b", 1));
+        let start = Instant::now();
+        queue.claim(start).unwrap();
+        queue.claim(start).unwrap();
+
+        assert_eq!(
+            drop_connection(&mut queue, first, &settings, start),
+            Some(ServerChange::Lost {
+                retry_in: Duration::from_secs(5)
+            })
+        );
+        // The second job lost the same connection, so the outage is already known.
+        assert_eq!(drop_connection(&mut queue, second, &settings, start), None);
+        assert_eq!(queue.job(first).unwrap().attempts, 1);
+        assert_eq!(queue.job(second).unwrap().attempts, 0);
+        assert!(queue.claim(start + Duration::from_secs(4)).is_none());
+
+        let later = start + Duration::from_secs(5);
+        let claim = queue.claim(later).unwrap();
+        assert_eq!(
+            drop_connection(&mut queue, claim.id, &settings, later),
+            Some(ServerChange::Lost {
+                retry_in: Duration::from_secs(10)
+            })
+        );
+        // Waiting on the server does not use up retries.
+        assert_eq!(queue.job(first).unwrap().attempts, 1);
+        assert!(queue.claim(later + Duration::from_secs(9)).is_none());
+
+        let back = later + Duration::from_secs(10);
+        let claim = queue.claim(back).unwrap();
+        assert!(matches!(
+            queue.release(claim.id, &RunOutcome::Completed),
+            Release::Settle
+        ));
+        assert_eq!(
+            queue.settle(claim.id, RunOutcome::Completed, &settings, back),
+            Some(ServerChange::Back)
+        );
+        assert!(queue.claim(back).is_some());
+    }
+
+    #[test]
+    fn a_new_session_to_the_server_ends_the_wait() {
+        let mut queue = Queue::new();
+        let id = queue.add(file("a", 1));
+        let start = Instant::now();
+        queue.claim(start).unwrap();
+        drop_connection(&mut queue, id, &settings(), start);
+        assert_eq!(
+            queue.waiting_servers(),
+            vec![("session".to_string(), start)]
+        );
+        assert!(queue.claim(start).is_none());
+        assert!(queue.end_outage("session"));
+        assert!(queue.waiting_servers().is_empty());
+        assert!(queue.claim(start).is_some());
+    }
+
+    #[test]
+    fn a_server_out_of_reach_too_long_fails_its_waiting_jobs() {
+        let settings = TransferSettings {
+            reconnect_minutes: 1,
+            ..settings()
+        };
+        let mut queue = Queue::new();
+        let first = queue.add(file("a", 1));
+        let second = queue.add(file("b", 1));
+        let start = Instant::now();
+        queue.claim(start).unwrap();
+        drop_connection(&mut queue, first, &settings, start);
+
+        let late = start + Duration::from_secs(61);
+        let claim = queue.claim(late).unwrap();
+        assert_eq!(claim.id, first);
+        assert_eq!(
+            drop_connection(&mut queue, first, &settings, late),
+            Some(ServerChange::GaveUp { failed: 2 })
+        );
+        assert_eq!(queue.job(first).unwrap().state, JobState::Failed);
+        assert_eq!(queue.job(second).unwrap().state, JobState::Failed);
+        assert!(!queue.has_delayed_jobs());
+
+        queue.resume(&[first, second]);
+        assert!(queue.claim(late).is_some());
+    }
+
+    #[test]
+    fn without_reconnecting_a_dropped_connection_is_an_ordinary_retry() {
+        let settings = TransferSettings {
+            reconnect_minutes: 0,
+            ..settings()
+        };
+        let mut queue = Queue::new();
+        let id = queue.add(file("a", 1));
+        let start = Instant::now();
+        queue.claim(start).unwrap();
+        assert_eq!(drop_connection(&mut queue, id, &settings, start), None);
+        let job = queue.job(id).unwrap();
+        assert!(!job.reconnecting);
+        assert!(job.not_before.is_some());
+        assert_eq!(job.attempts, 1);
+    }
+
+    #[test]
+    fn removed_jobs_leave_their_temporary_files_for_deletion() {
+        let mut queue = Queue::new();
+        let id = queue.add(file("big", 100));
+        let claim = queue.claim(Instant::now()).unwrap();
+        claim
+            .run
+            .plan
+            .set(Plan {
+                rename_to: Some("/remote/big".into()),
+                ..plan("/remote/.big.poros-part", 100)
+            })
+            .unwrap();
+        claim.run.start_pieces(Pieces::new(0, 100, 10));
+        let piece = claim.run.claim_piece().unwrap();
+        claim.run.complete_piece(piece.start);
+        queue.pause(&[id]);
+        finish(&mut queue, id, RunOutcome::Stopped);
+        assert!(queue.take_abandoned().is_empty());
+
+        queue.remove(&[id]);
+        assert_eq!(
+            queue.take_abandoned(),
+            vec![Abandoned {
+                session_id: "session".into(),
+                direction: Direction::Upload,
+                path: "/remote/.big.poros-part".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn unfinished_jobs_come_back_paused_where_they_stopped() {
+        let mut queue = Queue::new();
+        let done = queue.add(file("done", 1));
+        let running = queue.add(file("running", 100));
+        let failed = queue.add(file("failed", 1));
+        queue.add(file("waiting", 1));
+        queue.claim(Instant::now()).unwrap();
+        finish(&mut queue, done, RunOutcome::Completed);
+        let claim = queue.claim(Instant::now()).unwrap();
+        claim.run.plan.set(plan("/remote/running", 100)).unwrap();
+        claim.run.start_pieces(Pieces::new(0, 100, 10));
+        let piece = claim.run.claim_piece().unwrap();
+        claim.run.complete_piece(piece.start);
+        queue.claim(Instant::now()).unwrap();
+        let denied = AppError::new(ErrorKind::PermissionDenied, "denied");
+        finish(&mut queue, failed, RunOutcome::Failed(denied));
+        assert_eq!(queue.job(running).unwrap().state, JobState::Running);
+
+        let unfinished = queue.unfinished();
+        let names: Vec<&str> = unfinished
+            .iter()
+            .map(|job| job.spec.name.as_str())
+            .collect();
+        assert_eq!(names, ["running", "failed", "waiting"]);
+        assert_eq!(
+            unfinished[0].resume.as_ref().map(|resume| resume.offset),
+            Some(10)
+        );
+
+        let mut restored = Queue::new();
+        let ids: Vec<JobId> = unfinished
+            .into_iter()
+            .map(|job| restored.restore(job))
+            .collect();
+        let states: Vec<JobState> = ids
+            .iter()
+            .map(|id| restored.job(*id).unwrap().state)
+            .collect();
+        assert_eq!(
+            states,
+            [JobState::Paused, JobState::Failed, JobState::Paused]
+        );
+        assert_eq!(restored.job(ids[0]).unwrap().transferred, 10);
+        assert!(restored.claim(Instant::now()).is_none());
+        restored.resume(&ids);
+        let claim = restored.claim(Instant::now()).unwrap();
+        assert_eq!(claim.spec.name, "running");
+        assert_eq!(claim.resume.map(|resume| resume.offset), Some(10));
     }
 }

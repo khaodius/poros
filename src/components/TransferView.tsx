@@ -39,6 +39,7 @@ const EMPTY_MESSAGES: Record<TransferViewKind, string> = {
 function statusText(job: JobSnapshot): string {
   switch (job.state) {
     case "queued":
+      if (job.reconnecting) return "Connection lost, waiting for the server";
       return job.attempts > 0 ? `Waiting to retry (attempt ${job.attempts + 1})` : "Queued";
     case "running":
       if (job.kind === "folder") return "Listing folder";

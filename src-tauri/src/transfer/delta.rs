@@ -6,9 +6,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, UNIX_EPOCH};
 
-use russh::client::Msg;
-use russh::Channel;
-
 use super::conflict::FileFacts;
 use super::limiter::RateLimiter;
 use super::queue::{JobRun, RunOutcome};
@@ -60,7 +57,7 @@ pub(super) async fn try_upload(
     };
     let pace = RunPace::new(context);
     let sent = attempt(context, async {
-        let channel = open_channel(context).await?;
+        let channel = context.command_channel().await?;
         rsync::upload(channel, &request, &pace).await
     })
     .await?;
@@ -89,7 +86,7 @@ pub(super) async fn try_download(
     };
     let pace = RunPace::new(context);
     let received = attempt(context, async {
-        let channel = open_channel(context).await?;
+        let channel = context.command_channel().await?;
         let (report, file) = rsync::download(channel, &request, &pace).await?;
         put_in_place(context.settings, &partial, &target, file).await?;
         Ok(report)
@@ -173,7 +170,7 @@ async fn available_rsync(context: &JobContext<'_>) -> Option<String> {
         biased;
         _ = context.run.cancel.cancelled() => return None,
         probed = async {
-            let channel = open_channel(context).await?;
+            let channel = context.command_channel().await?;
             rsync::probe(channel, &path).await
         } => probed,
     };
@@ -204,20 +201,6 @@ async fn available_rsync(context: &JobContext<'_>) -> Option<String> {
     available.then_some(path)
 }
 
-async fn open_channel(context: &JobContext<'_>) -> AppResult<Channel<Msg>> {
-    match context.handle {
-        Some(handle) => Ok(handle.channel_open_session().await?),
-        None => {
-            let session = context
-                .shared
-                .sessions
-                .get(&context.spec.session_id)
-                .await?;
-            session.open_command_channel().await
-        }
-    }
-}
-
 /// The new version is built beside the target and replaces it once complete.
 fn partial_path(target: &Path) -> PathBuf {
     let name = target
@@ -228,7 +211,7 @@ fn partial_path(target: &Path) -> PathBuf {
     target.with_file_name(format!(".{name}.poros-{suffix}"))
 }
 
-async fn is_local_symlink(path: &Path) -> bool {
+pub(super) async fn is_local_symlink(path: &Path) -> bool {
     tokio::fs::symlink_metadata(path)
         .await
         .is_ok_and(|metadata| metadata.file_type().is_symlink())
