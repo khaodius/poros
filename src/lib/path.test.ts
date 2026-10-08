@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { breadcrumbs, parseHostInput, stemLength } from "./path";
+import { baseName, breadcrumbs, isWithin, parseHostInput, samePath, stemLength } from "./path";
 
 describe("breadcrumbs", () => {
   it("splits POSIX paths from the root", () => {
@@ -60,5 +60,28 @@ describe("parseHostInput", () => {
       path: undefined,
       ...expected,
     });
+  });
+});
+
+describe("comparing paths", () => {
+  it("names the last part of a path", () => {
+    expect(baseName("/srv/www/")).toBe("www");
+    expect(baseName("C:\\Users\\poros")).toBe("poros");
+    expect(baseName("/")).toBe("/");
+  });
+
+  it("ignores trailing separators, and case and slashes on Windows", () => {
+    expect(samePath("/srv/www/", "/srv/www", "posix")).toBe(true);
+    expect(samePath("/srv/WWW", "/srv/www", "posix")).toBe(false);
+    expect(samePath("/", "/", "posix")).toBe(true);
+    expect(samePath("C:\\Users\\", "c:/users", "windows")).toBe(true);
+  });
+
+  it("finds paths inside a folder but not beside it", () => {
+    expect(isWithin("/srv/www/site", "/srv/www", "posix")).toBe(true);
+    expect(isWithin("/srv/www", "/srv/www/", "posix")).toBe(true);
+    expect(isWithin("/srv/www-old", "/srv/www", "posix")).toBe(false);
+    expect(isWithin("/home", "/", "posix")).toBe(true);
+    expect(isWithin("D:\\Data\\x", "d:\\data", "windows")).toBe(true);
   });
 });

@@ -48,15 +48,24 @@ interface DragState {
   payload: DragPayload | null;
   target: DropTarget | null;
   pointer: { x: number; y: number };
+  /** The copy key is held: Ctrl, or Option on macOS. Files dropped then are copied. */
+  copy: boolean;
 }
 
 export const useDragStore = create<DragState>(() => ({
   payload: null,
   target: null,
   pointer: { x: 0, y: 0 },
+  copy: false,
 }));
 
 const DRAG_THRESHOLD = 5;
+
+const COPY_KEY = navigator.userAgent.includes("Mac") ? "altKey" : "ctrlKey";
+
+function holdsCopyKey(event: MouseEvent | KeyboardEvent): boolean {
+  return event[COPY_KEY];
+}
 
 interface PointerPosition {
   clientX: number;
@@ -171,12 +180,13 @@ function swallowNextClick(): void {
 
 /**
  * Starts tracking a press that may become a drag. `payload` is built once the pointer has
- * moved far enough; `onDrop` receives the target under the pointer on release.
+ * moved far enough; `onDrop` receives the target under the pointer on release, and whether
+ * the copy key was held.
  */
 export function beginDrag(
   event: ReactPointerEvent<HTMLElement>,
   payload: () => DragPayload | null,
-  onDrop: (target: DropTarget, payload: DragPayload) => void,
+  onDrop: (target: DropTarget, payload: DragPayload, copy: boolean) => void,
 ): void {
   if (event.button !== 0) return;
   const pointerId = event.pointerId;
@@ -206,6 +216,7 @@ export function beginDrag(
       payload: dragging,
       pointer: { x: moveEvent.clientX, y: moveEvent.clientY },
       target: hitTest(moveEvent, dragging),
+      copy: holdsCopyKey(moveEvent),
     });
   };
   const release = (upEvent: PointerEvent) => {
@@ -215,21 +226,25 @@ export function beginDrag(
     stop();
     if (finished) {
       swallowNextClick();
-      if (target) onDrop(target, finished);
+      if (target) onDrop(target, finished, holdsCopyKey(upEvent));
     }
   };
-  const cancelOnEscape = (keyEvent: KeyboardEvent) => {
-    if (keyEvent.key === "Escape" && dragging) stop();
+  const followKeys = (keyEvent: KeyboardEvent) => {
+    if (!dragging) return;
+    if (keyEvent.type === "keydown" && keyEvent.key === "Escape") stop();
+    else useDragStore.setState({ copy: holdsCopyKey(keyEvent) });
   };
   const stop = () => {
     window.removeEventListener("pointermove", move);
     window.removeEventListener("pointerup", release);
     window.removeEventListener("pointercancel", stop);
-    window.removeEventListener("keydown", cancelOnEscape, true);
-    useDragStore.setState({ payload: null, target: null });
+    window.removeEventListener("keydown", followKeys, true);
+    window.removeEventListener("keyup", followKeys, true);
+    useDragStore.setState({ payload: null, target: null, copy: false });
   };
   window.addEventListener("pointermove", move);
   window.addEventListener("pointerup", release);
   window.addEventListener("pointercancel", stop);
-  window.addEventListener("keydown", cancelOnEscape, true);
+  window.addEventListener("keydown", followKeys, true);
+  window.addEventListener("keyup", followKeys, true);
 }

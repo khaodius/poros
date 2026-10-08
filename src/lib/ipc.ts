@@ -2,15 +2,25 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AppError,
+  CompareRequest,
+  Comparison,
   ConnectProfile,
   DirListing,
   EnqueueRequest,
   ExistsAction,
+  FileDetails,
   FileEntry,
+  FileLocation,
+  FolderUsage,
   FontFamily,
   HostKeyApproval,
   JobState,
   LogRecord,
+  MoveCopyRequest,
+  OperationProgress,
+  OperationSummary,
+  PermissionRequest,
+  PermissionSummary,
   SavedConnection,
   SessionClosed,
   SessionInfo,
@@ -31,6 +41,7 @@ export const SESSION_CLOSED_EVENT = "poros://session-closed";
 export const TRANSFERS_EVENT = "poros://transfers";
 export const STORE_CHANGED_EVENT = "poros://store-changed";
 export const SYNC_PROGRESS_EVENT = "poros://sync-progress";
+export const FILE_OPERATION_EVENT = "poros://file-operation";
 /** Sent by a torn-out window to hand a tab back to the main window. */
 export const RETURN_TAB_EVENT = "poros://return-tab";
 
@@ -73,6 +84,22 @@ export const remote = {
   rename: (sessionId: string, path: string, newName: string) =>
     call<string>("remote_rename", { sessionId, path, newName }),
   remove: (sessionId: string, paths: string[]) => call<void>("remote_delete", { sessionId, paths }),
+};
+
+export const fileOperations = {
+  /** The names among `names` already taken in `directory`. */
+  conflicts: (location: FileLocation, names: string[], directory: string) =>
+    call<string[]>("files_conflicts", { location, names, directory }),
+  moveOrCopy: (request: MoveCopyRequest) =>
+    call<OperationSummary>("files_move_or_copy", { request }),
+  cancel: (operationId: string) => call<void>("files_cancel", { operationId }),
+  details: (sessionId: string, path: string) =>
+    call<FileDetails>("files_details", { sessionId, path }),
+  measure: (operationId: string, sessionId: string, paths: string[]) =>
+    call<FolderUsage>("files_measure", { operationId, sessionId, paths }),
+  setPermissions: (request: PermissionRequest) =>
+    call<PermissionSummary>("files_set_permissions", { request }),
+  compare: (request: CompareRequest) => call<Comparison>("files_compare", { request }),
 };
 
 export const transfers = {
@@ -148,3 +175,5 @@ export const onStoreChanged = (handler: (store: StoreName) => void) =>
   subscribe(STORE_CHANGED_EVENT, handler);
 export const onSyncProgress = (handler: (progress: SyncProgress) => void) =>
   subscribe(SYNC_PROGRESS_EVENT, handler);
+export const onFileOperation = (handler: (progress: OperationProgress) => void) =>
+  subscribe(FILE_OPERATION_EVENT, handler);

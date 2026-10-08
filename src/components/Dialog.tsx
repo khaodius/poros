@@ -9,9 +9,18 @@ interface DialogProps {
   footer?: ReactNode;
   width?: number;
   tone?: "default" | "danger";
+  className?: string;
 }
 
-export function Dialog({ title, onClose, children, footer, width = 440, tone }: DialogProps) {
+export function Dialog({
+  title,
+  onClose,
+  children,
+  footer,
+  width = 440,
+  tone,
+  className,
+}: DialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
@@ -27,7 +36,9 @@ export function Dialog({ title, onClose, children, footer, width = 440, tone }: 
   return (
     <dialog
       ref={dialogRef}
-      className={`dialog ${tone === "danger" ? "dialog-danger" : ""}`}
+      className={["dialog", tone === "danger" && "dialog-danger", className]
+        .filter(Boolean)
+        .join(" ")}
       style={{ width }}
       onMouseDown={dragWindowFromBackdrop}
       onCancel={(event) => {

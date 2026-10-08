@@ -6,6 +6,7 @@ import { CloseTabDialog } from "./components/CloseTabDialog";
 import { ConflictDialog } from "./components/ConflictDialog";
 import { ConnectDialog } from "./components/ConnectDialog";
 import { DragGhost } from "./components/DragGhost";
+import { FileOperationsHost } from "./components/FileOperationsHost";
 import { HostKeyDialog } from "./components/HostKeyDialog";
 import { QuickConnectBar } from "./components/QuickConnectBar";
 import { PorosLogo } from "./components/PorosLogo";
@@ -33,6 +34,7 @@ import { DEFAULT_SETTINGS, FONT_SIZE_LIMITS } from "./lib/settings";
 import { dragWindowFrom } from "./lib/windowDrag";
 import { matchWindowBackground, revealWindow } from "./lib/windowReveal";
 import type { StoreName } from "./lib/types";
+import { startClipboard } from "./state/clipboardStore";
 import { hitTest, useDragStore, type DragPayload } from "./state/dragStore";
 import { persistLayout, restoreLayout, useLayoutStore } from "./state/layoutStore";
 import { useLogStore } from "./state/logStore";
@@ -293,6 +295,7 @@ export function App() {
       .catch((caught) => reportError("Could not start", caught))
       .finally(() => setReady(true));
   }, []);
+  useEffect(() => startClipboard(), []);
   useBackendEvents();
   useSystemFileDrops();
   useShortcuts();
@@ -351,6 +354,7 @@ export function App() {
       {ready && <AppliedTheme />}
       <AppDialog />
       <ConflictDialog />
+      <FileOperationsHost />
       <HostKeyDialog />
       <Toasts />
       <DragGhost />

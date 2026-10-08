@@ -75,6 +75,10 @@ export const COLOR_TOKENS: ColorToken[] = [
   token("progress", "Progress bars", "Transfers"),
   token("upload", "Uploads", "Transfers"),
   token("download", "Downloads", "Transfers"),
+  token("diff-added", "Added lines", "Compare", true),
+  token("diff-added-word", "Added words", "Compare", true),
+  token("diff-removed", "Removed lines", "Compare", true),
+  token("diff-removed-word", "Removed words", "Compare", true),
   token("backdrop", "Dialog backdrop", "Window", true),
 ];
 
@@ -416,6 +420,13 @@ export function deriveColors(theme: Theme, prefersDark: boolean): Record<string,
   if (danger) {
     derive("danger-hover", mixHex(danger, dark ? "white" : "black", 0.1));
     derive("danger-soft", withAlpha(danger, dark ? 0.14 : 0.1));
+    derive("diff-removed", withAlpha(danger, dark ? 0.12 : 0.09));
+    derive("diff-removed-word", withAlpha(danger, dark ? 0.32 : 0.22));
+  }
+  const success = theme.colors.success;
+  if (success) {
+    derive("diff-added", withAlpha(success, dark ? 0.12 : 0.1));
+    derive("diff-added-word", withAlpha(success, dark ? 0.32 : 0.24));
   }
   return colors;
 }
