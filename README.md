@@ -188,8 +188,9 @@ Exclude patterns work as in rsync: `*.log` skips matching names anywhere, `cache
 named `cache`, `/build` skips only the `build` at the top, and `**` matches across folders.
 
 Delta transfers apply to every upload and download that overwrites a file, synchronized or not.
-They need rsync 2.6.4 or newer on the server, and are tuned in Settings > Sync: the smallest file
-they are used for, and the rsync command for servers where it is not on the `PATH`.
+They need rsync 2.6.4 or newer on the server, reached over SSH; rsync daemons (`rsync://`
+addresses on port 873) are not supported. Settings > Sync turns rsync on or off and sets the
+smallest file it is used for and the rsync command for servers where it is not on the `PATH`.
 
 ### Keyboard
 

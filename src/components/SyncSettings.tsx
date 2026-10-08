@@ -23,9 +23,13 @@ export function SyncSettingsPage({ settings }: { settings: Settings }) {
   return (
     <>
       <SettingGroup title="rsync">
+        <p className="setting-note">
+          rsync runs on the server through your SSH connection, so the server needs rsync installed.
+          rsync daemons (rsync:// addresses on port 873) are not supported.
+        </p>
         <SwitchSetting
-          label="Send only the changed parts of files"
-          hint="When the other side already has a file, rsync on the server works out what changed and only that crosses the network. Without rsync there, files are copied whole."
+          label="Use rsync"
+          hint="Files that already exist on the other side are updated by sending only the parts that changed. When this is off, or the server has no rsync, files are copied whole over SFTP."
           checked={transfers.deltaTransfers}
           onChange={(deltaTransfers) => setTransfers({ deltaTransfers })}
         />
