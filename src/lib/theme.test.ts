@@ -60,6 +60,15 @@ describe("colors", () => {
     expect(colors["accent-hover"]).toBe(mixHex("#3d7eff", "white", 0.12));
   });
 
+  it("derives the compare colors from success and danger", () => {
+    const colors = deriveColors(
+      { name: "t", base: "light", colors: { success: "#00aa00", danger: "#cc0000" } },
+      true,
+    );
+    expect(colors["diff-added"]).toBe("rgb(0 170 0 / 0.1)");
+    expect(colors["diff-removed-word"]).toBe("rgb(204 0 0 / 0.22)");
+  });
+
   it("lets derived colors follow a changed accent", () => {
     const theme = {
       name: "t",

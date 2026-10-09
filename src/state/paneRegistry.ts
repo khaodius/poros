@@ -1,14 +1,17 @@
 // The file panes open in this window, so transfers can find a pane to send files to and
 // panes showing a folder a transfer changed can refresh.
 
+import type { FileEntry } from "../lib/types";
+
 export interface PaneHandle {
   tabId: string;
   kind: "local" | "remote";
   sessionId?: string;
   label: string;
   path: () => string | null;
-  /** Reloads the listing, keeping the selection. */
-  refresh: () => void;
+  /** Reloads the listing, keeping the selection, or moving the cursor to `focusPath`. */
+  refresh: (focusPath?: string) => void;
+  selected: () => FileEntry[];
   visible: boolean;
   activatedAt: number;
 }

@@ -11,6 +11,10 @@ use crate::cloud::{self, CloudProvider, OAuthClient, OAuthVault, ProviderStatus,
 use crate::connections::{ConnectionStore, SavedConnection};
 use crate::error::{AppError, AppResult};
 use crate::events::{Events, LogLevel, Store};
+use crate::file_ops::{
+    CompareRequest, Comparison, Details, FileOperations, Location, MoveCopyRequest,
+    OperationSummary, PermissionRequest, PermissionSummary, Usage,
+};
 use crate::fonts::{self, FontFamily};
 use crate::local;
 use crate::model::{DirListing, FileEntry};
@@ -208,6 +212,64 @@ pub async fn remote_delete(
         .files()
         .delete(&paths)
         .await
+}
+
+#[tauri::command]
+pub async fn files_conflicts(
+    operations: State<'_, FileOperations>,
+    location: Location,
+    names: Vec<String>,
+    directory: String,
+) -> AppResult<Vec<String>> {
+    operations.conflicts(location, names, directory).await
+}
+
+#[tauri::command]
+pub async fn files_move_or_copy(
+    operations: State<'_, FileOperations>,
+    request: MoveCopyRequest,
+) -> AppResult<OperationSummary> {
+    operations.move_or_copy(request).await
+}
+
+#[tauri::command]
+pub fn files_cancel(operations: State<'_, FileOperations>, operation_id: String) {
+    operations.cancel(&operation_id);
+}
+
+#[tauri::command]
+pub async fn files_details(
+    operations: State<'_, FileOperations>,
+    session_id: String,
+    path: String,
+) -> AppResult<Details> {
+    operations.details(&session_id, &path).await
+}
+
+#[tauri::command]
+pub async fn files_measure(
+    operations: State<'_, FileOperations>,
+    operation_id: String,
+    session_id: String,
+    paths: Vec<String>,
+) -> AppResult<Usage> {
+    operations.measure(&operation_id, &session_id, &paths).await
+}
+
+#[tauri::command]
+pub async fn files_set_permissions(
+    operations: State<'_, FileOperations>,
+    request: PermissionRequest,
+) -> AppResult<PermissionSummary> {
+    operations.set_permissions(request).await
+}
+
+#[tauri::command]
+pub async fn files_compare(
+    operations: State<'_, FileOperations>,
+    request: CompareRequest,
+) -> AppResult<Comparison> {
+    operations.compare(request).await
 }
 
 #[tauri::command]

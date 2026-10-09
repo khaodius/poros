@@ -139,6 +139,7 @@ export async function uploadDroppedPaths(
       label: "Local",
       path: () => null,
       refresh: () => undefined,
+      selected: () => [],
       visible: false,
       activatedAt: 0,
     };

@@ -6,16 +6,26 @@ import type {
   CloudProviderStatus,
   CommandRequest,
   CommandResult,
+  CompareRequest,
+  Comparison,
   ConnectProfile,
   DirListing,
   EnqueueRequest,
   ExistsAction,
+  FileDetails,
   FileEntry,
+  FileLocation,
+  FolderUsage,
   FontFamily,
   HostKeyApproval,
   JobState,
   LogRecord,
+  MoveCopyRequest,
+  OperationProgress,
+  OperationSummary,
   OutputChunk,
+  PermissionRequest,
+  PermissionSummary,
   PowerAction,
   QueueFinished,
   SavedConnection,
@@ -43,6 +53,7 @@ export const STORE_CHANGED_EVENT = "poros://store-changed";
 export const SYNC_PROGRESS_EVENT = "poros://sync-progress";
 export const QUEUE_FINISHED_EVENT = "poros://queue-finished";
 export const COMMAND_OUTPUT_EVENT = "poros://command-output";
+export const FILE_OPERATION_EVENT = "poros://file-operation";
 /** Sent by a torn-out window to hand a tab back to the main window. */
 export const RETURN_TAB_EVENT = "poros://return-tab";
 /** Sent by the window a tab is dragged out of to the window under the pointer. */
@@ -90,6 +101,22 @@ export const remote = {
   rename: (sessionId: string, path: string, newName: string) =>
     call<string>("remote_rename", { sessionId, path, newName }),
   remove: (sessionId: string, paths: string[]) => call<void>("remote_delete", { sessionId, paths }),
+};
+
+export const fileOperations = {
+  /** The names among `names` already taken in `directory`. */
+  conflicts: (location: FileLocation, names: string[], directory: string) =>
+    call<string[]>("files_conflicts", { location, names, directory }),
+  moveOrCopy: (request: MoveCopyRequest) =>
+    call<OperationSummary>("files_move_or_copy", { request }),
+  cancel: (operationId: string) => call<void>("files_cancel", { operationId }),
+  details: (sessionId: string, path: string) =>
+    call<FileDetails>("files_details", { sessionId, path }),
+  measure: (operationId: string, sessionId: string, paths: string[]) =>
+    call<FolderUsage>("files_measure", { operationId, sessionId, paths }),
+  setPermissions: (request: PermissionRequest) =>
+    call<PermissionSummary>("files_set_permissions", { request }),
+  compare: (request: CompareRequest) => call<Comparison>("files_compare", { request }),
 };
 
 export const transfers = {
@@ -213,3 +240,5 @@ export const onQueueFinished = (handler: (finished: QueueFinished) => void) =>
   subscribe(QUEUE_FINISHED_EVENT, handler);
 export const onCommandOutput = (handler: (chunk: OutputChunk) => void) =>
   subscribe(COMMAND_OUTPUT_EVENT, handler);
+export const onFileOperation = (handler: (progress: OperationProgress) => void) =>
+  subscribe(FILE_OPERATION_EVENT, handler);

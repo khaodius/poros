@@ -24,6 +24,10 @@ use crate::protocol::{
 };
 use crate::remote_path;
 
+mod ops;
+
+pub use ops::EntryStat;
+
 const PARALLEL_REQUESTS: usize = 16;
 const REQUEST_TIMEOUT_SECS: u64 = 30;
 /// Requests kept in flight by the streams other protocols' transfers read and write through.
@@ -40,6 +44,8 @@ pub struct RemoteFs {
     write_limit: Option<u32>,
     posix_rename: bool,
     fsync: bool,
+    /// The server copies data between its own files (`copy-data`).
+    copy_data: bool,
 }
 
 pub enum ReadChunk {
@@ -71,6 +77,7 @@ impl RemoteFs {
         let offers = |name: &str| version.extensions.contains_key(name);
         let posix_rename = offers(POSIX_RENAME);
         let fsync = offers(extensions::FSYNC);
+        let copy_data = offers(ops::COPY_DATA);
         if version
             .extensions
             .get(extensions::LIMITS)
@@ -91,6 +98,7 @@ impl RemoteFs {
             write_limit: clamp(limits.write_len),
             posix_rename,
             fsync,
+            copy_data,
         })
     }
 

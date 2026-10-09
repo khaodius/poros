@@ -58,6 +58,30 @@ export function stemLength(name: string, isDir: boolean): number {
   return extensionDot > 0 ? extensionDot : name.length;
 }
 
+/** The last part of a path: `/srv/www` -> `www`, `C:\` -> `C:`. */
+export function baseName(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+}
+
+/** One spelling per place: no trailing separator, and on Windows one case and one slash. */
+function normalizedPath(path: string, style: PathStyle): string {
+  const unified = style === "windows" ? path.replace(/\//g, "\\").toLowerCase() : path;
+  const trimmed = unified.replace(style === "windows" ? /\\+$/ : /\/+$/, "");
+  return trimmed === "" ? unified.slice(0, 1) : trimmed;
+}
+
+export function samePath(first: string, second: string, style: PathStyle): boolean {
+  return normalizedPath(first, style) === normalizedPath(second, style);
+}
+
+/** Whether `path` is `folder` or somewhere inside it. */
+export function isWithin(path: string, folder: string, style: PathStyle): boolean {
+  const inner = normalizedPath(path, style);
+  const outer = normalizedPath(folder, style);
+  const separator = style === "windows" ? "\\" : "/";
+  return inner === outer || inner.startsWith(outer.endsWith(separator) ? outer : outer + separator);
+}
+
 function decodeUserInfo(encoded: string): string {
   try {
     return decodeURIComponent(encoded);

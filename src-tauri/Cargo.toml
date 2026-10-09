@@ -42,6 +42,8 @@ md4 = "0.10"
 md-5 = "0.10"
 # Transfer checks against the server's sha256sum.
 sha2 = "0.10"
+# Line and word differences for comparing two files side by side.
+similar = { version = "3.2", default-features = false, features = ["std"] }
 bytes = "1"
 # Saved passwords: Windows Credential Manager, or the Secret Service (GNOME Keyring, KWallet) on Linux.
 keyring = "4.2"

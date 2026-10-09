@@ -39,6 +39,10 @@ export interface FileListActions {
   onRowPointerDown: (event: ReactPointerEvent<HTMLElement>, entry: FileEntry) => void;
   /** Double-click or Enter on a file. */
   onFileActivate: (entry: FileEntry) => void;
+  onCut: () => void;
+  onCopy: () => void;
+  onPaste: () => void;
+  onProperties: () => void;
 }
 
 interface Column {
@@ -105,6 +109,8 @@ interface FileListProps extends FileListActions {
   /** While files are dragged over this list: the folder under the pointer, or "" for the
    * list itself. */
   dropFolder?: string;
+  /** Entries cut to the clipboard, shown faded until they are pasted. */
+  cutPaths?: ReadonlySet<string>;
 }
 
 export function FileList({
@@ -116,6 +122,7 @@ export function FileList({
   striped,
   fontSize,
   dropFolder,
+  cutPaths,
   ...actions
 }: FileListProps) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -235,7 +242,11 @@ export function FileList({
           pane.moveCursorTo(entries.length - 1, extend);
           return true;
         case "Enter":
-          if (cursorEntry) openEntry(cursorEntry);
+          if (event.altKey) {
+            if (pane.selection.size > 0) actions.onProperties();
+          } else if (cursorEntry) {
+            openEntry(cursorEntry);
+          }
           return true;
         case "Backspace":
           pane.goUp();
@@ -259,6 +270,15 @@ export function FileList({
           if (primary || event.altKey) return false;
           actions.onSwitchPane(event.currentTarget);
           return true;
+      }
+      if (primary && !event.shiftKey && !event.altKey) {
+        const clipboardAction = { x: actions.onCut, c: actions.onCopy, v: actions.onPaste }[
+          event.key.toLowerCase()
+        ];
+        if (clipboardAction) {
+          if (event.key.toLowerCase() === "v" || pane.selection.size > 0) clipboardAction();
+          return true;
+        }
       }
       if (primary && event.key.toLowerCase() === "a") {
         pane.selectAll();
@@ -423,6 +443,7 @@ export function FileList({
                   selected && "is-selected",
                   isCursor && "is-cursor",
                   entry.hidden && "is-hidden",
+                  cutPaths?.has(entry.path) && "is-cut",
                   folder && dropFolder === entry.path && "is-drop-folder",
                 ]
                   .filter(Boolean)

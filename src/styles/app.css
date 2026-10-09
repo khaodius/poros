@@ -1767,6 +1767,10 @@ form.path-bar {
   opacity: 0.6;
 }
 
+.file-row.is-cut .file-name {
+  opacity: 0.45;
+}
+
 .file-row-parent {
   color: var(--text-muted);
 }
@@ -4181,6 +4185,402 @@ textarea::placeholder {
 
 .task-status .task-failed strong {
   color: var(--danger);
+}
+
+/* File operations */
+
+.operation-tray {
+  position: fixed;
+  bottom: 36px;
+  left: 16px;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(380px, calc(100vw - 32px));
+}
+
+.operation {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 10px 10px 12px;
+  background: var(--surface-overlay);
+  border-left: 3px solid var(--progress);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-popover);
+  animation: toast-in 160ms ease-out;
+}
+
+.operation > svg {
+  flex: none;
+  color: var(--progress);
+}
+
+.operation-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.operation-title {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.operation-detail {
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Properties */
+
+.properties-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  align-items: center;
+  gap: 6px 16px;
+  margin: 0;
+  font-size: var(--font-size-small);
+}
+
+.properties-facts dt {
+  color: var(--text-muted);
+}
+
+.properties-facts dd {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.permissions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 12px 14px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.permissions legend {
+  padding: 0 4px;
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+  font-weight: 500;
+}
+
+.permission-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.permission-grid table {
+  align-self: flex-start;
+  border-collapse: collapse;
+  font-size: var(--font-size-small);
+}
+
+.permission-grid th,
+.permission-grid td {
+  padding: 4px 16px;
+}
+
+.permission-grid thead th {
+  color: var(--text-faint);
+  font-size: var(--font-size-tiny);
+  font-weight: 500;
+  text-transform: uppercase;
+}
+
+.permission-grid tbody th {
+  padding-left: 0;
+  color: var(--text-muted);
+  font-weight: 500;
+  text-align: left;
+}
+
+.permission-grid td {
+  text-align: center;
+}
+
+.permission-grid input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.permission-specials {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+}
+
+.permission-summary {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+}
+
+.permission-octal {
+  width: 72px;
+  font-family: var(--font-mono);
+}
+
+.permission-symbolic {
+  padding-bottom: 6px;
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+  letter-spacing: 0.06em;
+}
+
+.failure-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+/* Compare */
+
+.dialog.compare-dialog {
+  height: calc(100vh - 48px);
+  overflow: hidden;
+}
+
+.dialog.compare-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.compare-dialog .dialog-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+.compare-files {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 10px;
+}
+
+.compare-file {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px 10px;
+  background: var(--surface-sunken);
+  border-radius: var(--radius-small);
+}
+
+.compare-file-name {
+  overflow: hidden;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.compare-file-where {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.compare-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 18px;
+}
+
+.compare-verdict {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+}
+
+.compare-view {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.compare-view.is-stale {
+  opacity: 0.55;
+}
+
+.compare-steps {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+}
+
+.compare-steps > span {
+  margin-left: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.compare-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+}
+
+.compare-scroll {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-small);
+  line-height: 1.5;
+  outline: none;
+}
+
+.compare-row,
+.compare-fold {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+}
+
+.compare-row {
+  display: grid;
+  grid-template-columns: var(--line-number-width) 1fr var(--line-number-width) 1fr;
+}
+
+.compare-row.is-current {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.compare-number {
+  padding: 0 8px 0 4px;
+  color: var(--text-faint);
+  text-align: right;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.compare-text {
+  min-width: 0;
+  padding: 0 10px 0 6px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 4;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* Number, text, number, text: the second child is the left side's text. */
+.compare-row > .compare-text:nth-child(2) {
+  border-right: 1px solid var(--border);
+}
+
+.compare-text.is-missing {
+  background: repeating-linear-gradient(-45deg, transparent 0 6px, var(--row-alternate) 6px 12px);
+}
+
+.compare-row.is-changed .compare-text.is-left,
+.compare-row.is-removed .compare-text.is-left {
+  background: var(--diff-removed);
+}
+
+.compare-row.is-changed .compare-text.is-right,
+.compare-row.is-added .compare-text.is-right {
+  background: var(--diff-added);
+}
+
+.compare-text mark {
+  color: inherit;
+  border-radius: 2px;
+}
+
+.compare-text.is-left mark {
+  background: var(--diff-removed-word);
+}
+
+.compare-text.is-right mark {
+  background: var(--diff-added-word);
+}
+
+.compare-fold {
+  height: 26px;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--font-size-tiny);
+  background: var(--surface-raised);
+  border: none;
+  border-block: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.compare-fold:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.compare-overview {
+  position: relative;
+  flex: 0 0 12px;
+  background: var(--surface-raised);
+  border-left: 1px solid var(--border);
+}
+
+.compare-mark {
+  position: absolute;
+  right: 2px;
+  left: 2px;
+  min-height: 2px;
+  border-radius: 1px;
+  cursor: pointer;
+}
+
+.compare-mark.is-changed {
+  background: var(--warning);
+}
+
+.compare-mark.is-added {
+  background: var(--success);
+}
+
+.compare-mark.is-removed {
+  background: var(--danger);
+}
+
+.compare-binary {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--text-muted);
+  text-align: center;
 }
 
 @media (prefers-reduced-motion: reduce) {

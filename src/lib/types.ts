@@ -1,6 +1,6 @@
 // Mirrors the serde types in src-tauri/src (model.rs, error.rs, protocol.rs, ssh/mod.rs,
-// session.rs, events.rs, transfer/, sync/, connections.rs, cloud/, themes.rs, fonts.rs,
-// automation/). Field names are camelCase on the wire.
+// session.rs, events.rs, transfer/, sync/, file_ops/, connections.rs, cloud/, themes.rs,
+// fonts.rs, automation/). Field names are camelCase on the wire.
 
 export type EntryKind = "dir" | "file" | "symlink" | "other";
 export type LinkTarget = "dir" | "file" | "broken";
@@ -470,4 +470,127 @@ export interface ScheduledTask {
 
 export interface TaskView extends ScheduledTask {
   running: boolean;
+}
+
+/** Where files are: this computer or the server of a session. */
+export type FileLocation = { kind: "local" } | { kind: "remote"; sessionId: string };
+
+export type PlaceMode = "move" | "copy";
+/** Replace overwrites files and merges folders; keepBoth names the newcomer `name (2)`. */
+export type NameClash = "replace" | "skip" | "keepBoth";
+
+export interface MoveCopyRequest {
+  operationId: string;
+  location: FileLocation;
+  mode: PlaceMode;
+  sources: string[];
+  targetDirectory: string;
+  conflict: NameClash;
+}
+
+export type OperationMethod = "rename" | "copyData" | "command" | "stream" | "local";
+
+export interface OperationFailure {
+  path: string;
+  message: string;
+}
+
+export interface OperationSummary {
+  /** Where each moved or copied item is now. */
+  placed: string[];
+  skipped: number;
+  failures: OperationFailure[];
+  methods: OperationMethod[];
+}
+
+export interface OperationProgress {
+  operationId: string;
+  files: number;
+  bytes: number;
+  current?: string;
+}
+
+export interface FileDetails {
+  uid: number | null;
+  gid: number | null;
+  /** Seconds since the Unix epoch. */
+  accessed: number | null;
+  linkTarget?: string;
+}
+
+export interface FolderUsage {
+  files: number;
+  folders: number;
+  bytes: number;
+}
+
+/** Bits to turn on and off; the rest keep each entry's own value. */
+export interface ModeChange {
+  set: number;
+  clear: number;
+}
+
+export interface PermissionRequest {
+  operationId: string;
+  sessionId: string;
+  paths: string[];
+  files: ModeChange;
+  folders: ModeChange;
+  recursive: boolean;
+  /** A name or number; null keeps it. */
+  owner: string | null;
+  group: string | null;
+}
+
+export interface PermissionSummary {
+  changed: number;
+  skippedLinks: number;
+  failures: OperationFailure[];
+}
+
+export interface FileRef {
+  location: FileLocation;
+  path: string;
+}
+
+export interface CompareRequest {
+  operationId: string;
+  left: FileRef;
+  right: FileRef;
+  ignoreWhitespace: boolean;
+  ignoreCase: boolean;
+}
+
+export type CompareRowKind = "equal" | "changed" | "removed" | "added";
+export type LineEnding = "none" | "lf" | "crlf" | "mixed";
+
+/** Changes are `[start, end)` in string indexes; a changed row without any differs throughout. */
+export interface CompareRow {
+  kind: CompareRowKind;
+  left?: number;
+  right?: number;
+  leftChanges?: [number, number][];
+  rightChanges?: [number, number][];
+}
+
+export type CompareContent =
+  | {
+      kind: "text";
+      leftLines: string[];
+      rightLines: string[];
+      rows: CompareRow[];
+      added: number;
+      removed: number;
+      changed: number;
+      leftLineEnding: LineEnding;
+      rightLineEnding: LineEnding;
+    }
+  | { kind: "binary"; tooLarge: boolean };
+
+export interface Comparison {
+  leftSize: number;
+  rightSize: number;
+  /** Byte for byte the same. */
+  identical: boolean;
+  content: CompareContent;
 }

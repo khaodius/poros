@@ -10,6 +10,7 @@ pub const STORE_CHANGED_EVENT: &str = "poros://store-changed";
 pub const SYNC_PROGRESS_EVENT: &str = "poros://sync-progress";
 pub const QUEUE_FINISHED_EVENT: &str = "poros://queue-finished";
 pub const COMMAND_OUTPUT_EVENT: &str = "poros://command-output";
+pub const FILE_OPERATION_EVENT: &str = "poros://file-operation";
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -96,6 +97,12 @@ impl Events {
     pub fn command_output(&self, chunk: &crate::automation::remote_command::OutputChunk) {
         if let Some(app) = &self.app {
             let _ = app.emit(COMMAND_OUTPUT_EVENT, chunk);
+        }
+    }
+
+    pub fn file_operation(&self, progress: &crate::file_ops::OperationProgress) {
+        if let Some(app) = &self.app {
+            let _ = app.emit(FILE_OPERATION_EVENT, progress);
         }
     }
 

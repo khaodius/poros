@@ -1,6 +1,7 @@
 import {
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type MouseEvent,
@@ -14,16 +15,23 @@ import {
   ArrowUpDown,
   Bookmark,
   ClipboardCopy,
+  ClipboardPaste,
+  Copy,
+  CopyPlus,
   Download,
   Eye,
   EyeOff,
+  FileDiff,
+  FolderInput,
   FolderOpen,
   FolderPlus,
   FolderSync,
   HardDrive,
   Home,
+  Info,
   Pencil,
   RefreshCw,
+  Scissors,
   Search,
   Trash2,
   Upload,
@@ -31,30 +39,51 @@ import {
 } from "lucide-react";
 import { usePane } from "../hooks/usePane";
 import { COLUMN_LABELS, availableColumns, type DetailColumn } from "../lib/columns";
+import { sameFilesystem, toLocation, worksInPlace } from "../lib/fileOrigin";
 import type { FileSource } from "../lib/fileSource";
 import { formatSize, pluralize } from "../lib/format";
 import { stemLength } from "../lib/path";
 import { isDirLike, type SortKey, type SortSpec } from "../lib/sort";
-import type { FileEntry } from "../lib/types";
+import type { FileEntry, PlaceMode } from "../lib/types";
+import { useClipboardStore } from "../state/clipboardStore";
 import { beginDrag, useDragStore } from "../state/dragStore";
+import {
+  dropAction,
+  paneOrigin,
+  paste,
+  placeEntries,
+  putOnClipboard,
+} from "../state/fileOperations";
 import { useLogStore } from "../state/logStore";
-import { lastActivePane, registerPane, updatePane } from "../state/paneRegistry";
+import {
+  getPane,
+  lastActivePane,
+  listPanes,
+  registerPane,
+  updatePane,
+  type PaneHandle,
+} from "../state/paneRegistry";
 import { useSessionStore } from "../state/sessionStore";
 import { saveSettingsSection, useSettingsStore } from "../state/settingsStore";
 import { useToastStore } from "../state/toastStore";
 import { transferFromPane, transferToOtherSide } from "../state/transferActions";
 import { useUiStore } from "../state/uiStore";
+import { CompareDialog, type CompareSide } from "./CompareDialog";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { FileList } from "./FileList";
 import { PathBar } from "./PathBar";
 import { PromptDialog } from "./PromptDialog";
+import { PropertiesDialog } from "./PropertiesDialog";
 import { serverCommandsMenu } from "./commandMenu";
 
 type PaneDialog =
   | { type: "newFolder" }
   | { type: "rename"; entry: FileEntry }
-  | { type: "delete"; entries: FileEntry[] };
+  | { type: "delete"; entries: FileEntry[] }
+  | { type: "placeTo"; mode: PlaceMode; entries: FileEntry[] }
+  | { type: "properties"; entries: FileEntry[] }
+  | { type: "compare"; left: CompareSide; right: CompareSide };
 
 interface FilePaneProps {
   tabId: string;
@@ -91,6 +120,36 @@ function focusNextPane(from: HTMLElement | null) {
   if (lists.length < 2) return;
   const current = lists.findIndex((list) => list === from || list.contains(from));
   lists[(current + 1) % lists.length].focus();
+}
+
+/** A regular file, or a link to one: what compare can read. */
+function isFileLike(entry: FileEntry): boolean {
+  return entry.kind === "file" || (entry.kind === "symlink" && entry.linkTarget === "file");
+}
+
+function compareSide(pane: PaneHandle, entry: FileEntry): CompareSide {
+  return {
+    location: toLocation(paneOrigin(pane)),
+    path: entry.path,
+    name: entry.name,
+    where: pane.label,
+  };
+}
+
+/** A file selected on its own in another pane, the one looked at last, to compare with. */
+function counterpartFile(tabId: string): { pane: PaneHandle; entry: FileEntry } | null {
+  let best: { pane: PaneHandle; entry: FileEntry } | null = null;
+  for (const pane of listPanes()) {
+    if (pane.tabId === tabId || !worksInPlace(paneOrigin(pane))) continue;
+    const selected = pane.selected();
+    if (selected.length !== 1 || !isFileLike(selected[0])) continue;
+    const better =
+      !best ||
+      (pane.visible && !best.pane.visible) ||
+      (pane.visible === best.pane.visible && pane.activatedAt > best.pane.activatedAt);
+    if (better) best = { pane, entry: selected[0] };
+  }
+  return best;
 }
 
 /** Keeps rows from getting shorter than their text when the font is large. */
@@ -137,6 +196,9 @@ export function FilePane({
     sessionId ? state.sessions[sessionId]?.info.protocol : undefined,
   );
   const where = source.kind === "remote" ? "remote" : "local";
+  // Moving, copying and comparing in place, and Properties, run over SFTP.
+  const overSftp = protocol === "sftp";
+  const worksHere = source.kind === "local" || overSftp;
   const paneRef = useRef(pane);
   useLayoutEffect(() => {
     paneRef.current = pane;
@@ -150,7 +212,8 @@ export function FilePane({
         sessionId,
         label: title,
         path: () => paneRef.current.listing?.path ?? null,
-        refresh: () => void paneRef.current.refresh(),
+        refresh: (focusPath) => void paneRef.current.refresh(focusPath),
+        selected: () => paneRef.current.selectedEntries(),
         visible: false,
         activatedAt: 0,
       }),
@@ -162,13 +225,26 @@ export function FilePane({
   }, [tabId, visible, active]);
 
   const dropFolder = useDragStore((state) => {
-    const { payload, target } = state;
+    const { payload, target, copy } = state;
     if (!payload || payload.kind === "tab" || target?.kind !== "pane" || target.tabId !== tabId) {
       return undefined;
     }
-    if (payload.kind === "files" && payload.sourceTabId === tabId) return undefined;
+    if (payload.kind === "files") {
+      const action = dropAction(payload.sourceTabId, payload.entries, target, copy);
+      if (!action || action.kind === "blocked") return undefined;
+    }
     return target.folder ?? "";
   });
+
+  const clip = useClipboardStore((state) => state.clip);
+  const cutPaths = useMemo(
+    () =>
+      clip?.mode === "move" &&
+      sameFilesystem(clip.origin, paneOrigin({ kind: source.kind, sessionId }))
+        ? new Set(clip.entries.map((entry) => entry.path))
+        : undefined,
+    [clip, source.kind, sessionId],
+  );
 
   useEffect(() => {
     if (pane.error && pane.listing) {
@@ -202,11 +278,41 @@ export function FilePane({
     beginDrag(
       event,
       () => ({ kind: "files", sourceTabId: tabId, entries: wasSelected ? selectedNow : [entry] }),
-      (target, payload) => {
-        if (target.kind !== "pane" || target.tabId === tabId || payload.kind !== "files") return;
-        transferFromPane(tabId, payload.entries, target.tabId, target.folder);
+      (target, payload, copy) => {
+        if (target.kind !== "pane" || payload.kind !== "files") return;
+        const action = dropAction(tabId, payload.entries, target, copy);
+        if (action?.kind === "transfer") {
+          transferFromPane(tabId, payload.entries, target.tabId, target.folder);
+        } else if (action?.kind === "blocked") {
+          showToast("info", `${action.reason}.`);
+        } else if (action?.kind === "place") {
+          void placeEntries({
+            mode: action.mode,
+            origin: paneOrigin(action.source),
+            sourceFolder: action.source.path() ?? "",
+            entries: payload.entries,
+            target: action.target,
+            targetFolder: action.folder,
+          });
+        }
       },
     );
+  };
+
+  const cutOrCopy = (mode: PlaceMode, entries: FileEntry[]) => {
+    const self = getPane(tabId);
+    if (self) putOnClipboard(mode, self, entries);
+  };
+
+  /** Into the folder clicked, else the one on show. */
+  const pasteInto = (entry: FileEntry | null) => {
+    const self = getPane(tabId);
+    const folder = entry && isDirLike(entry) ? entry.path : pane.listing?.path;
+    if (self && folder) void paste(self, folder);
+  };
+
+  const openProperties = (entries: FileEntry[]) => {
+    if (overSftp && entries.length > 0) setDialog({ type: "properties", entries });
   };
 
   const activateFile = (entry: FileEntry) => {
@@ -312,8 +418,85 @@ export function FilePane({
     });
   };
 
+  const compareMenuItem = (targets: FileEntry[]): MenuItem | null => {
+    const self = getPane(tabId);
+    if (!self || targets.length === 0 || targets.length > 2 || !targets.every(isFileLike)) {
+      return null;
+    }
+    if (!worksHere) {
+      return {
+        label: "Compare (SFTP only)",
+        icon: <FileDiff size={14} />,
+        disabled: true,
+        onSelect: () => undefined,
+      };
+    }
+    if (targets.length === 2) {
+      return {
+        label: "Compare the two files",
+        icon: <FileDiff size={14} />,
+        onSelect: () =>
+          setDialog({
+            type: "compare",
+            left: compareSide(self, targets[0]),
+            right: compareSide(self, targets[1]),
+          }),
+      };
+    }
+    const other = counterpartFile(tabId);
+    return {
+      label: other ? `Compare with ${other.entry.name}` : "Compare (select a file in another tab)",
+      icon: <FileDiff size={14} />,
+      disabled: !other,
+      onSelect: () =>
+        other &&
+        setDialog({
+          type: "compare",
+          left: compareSide(self, targets[0]),
+          right: compareSide(other.pane, other.entry),
+        }),
+    };
+  };
+
+  const clipboardMenuItems = (entry: FileEntry | null, targets: FileEntry[]): MenuItem[] => [
+    {
+      label: "Cut",
+      icon: <Scissors size={14} />,
+      shortcut: "Ctrl+X",
+      disabled: targets.length === 0,
+      onSelect: () => cutOrCopy("move", targets),
+    },
+    {
+      label: "Copy",
+      icon: <Copy size={14} />,
+      shortcut: "Ctrl+C",
+      disabled: targets.length === 0,
+      onSelect: () => cutOrCopy("copy", targets),
+    },
+    {
+      label: entry && isDirLike(entry) ? `Paste into ${entry.name}` : "Paste",
+      icon: <ClipboardPaste size={14} />,
+      shortcut: "Ctrl+V",
+      disabled: !clip,
+      onSelect: () => pasteInto(entry),
+    },
+    {
+      label: worksHere ? "Move to..." : "Move to (SFTP only)",
+      icon: <FolderInput size={14} />,
+      disabled: targets.length === 0 || !worksHere,
+      onSelect: () => setDialog({ type: "placeTo", mode: "move", entries: targets }),
+    },
+    {
+      label: worksHere ? "Copy to..." : "Copy to (SFTP only)",
+      icon: <CopyPlus size={14} />,
+      disabled: targets.length === 0 || !worksHere,
+      onSelect: () => setDialog({ type: "placeTo", mode: "copy", entries: targets }),
+    },
+  ];
+
   const contextMenuItems = (entry: FileEntry | null): MenuItem[] => {
     const targets = entry ? (pane.selection.has(entry.path) ? selected : [entry]) : [];
+    const compare = compareMenuItem(targets);
     return [
       ...(targets.length > 0 ? [transferMenuItem(targets), "separator" as const] : []),
       ...(entry && isDirLike(entry)
@@ -345,6 +528,8 @@ export function FilePane({
         ? [serverCommandsMenu(sessionId, { folder: pane.listing.path, items: targets })]
         : []),
       "separator",
+      ...clipboardMenuItems(entry, targets),
+      "separator",
       {
         label: "Rename",
         icon: <Pencil size={14} />,
@@ -357,6 +542,18 @@ export function FilePane({
         icon: <ClipboardCopy size={14} />,
         onSelect: () => copyPaths(targets),
       },
+      ...(compare ? [compare] : []),
+      ...(source.kind === "remote" && targets.length > 0
+        ? [
+            {
+              label: overSftp ? "Properties" : "Properties (SFTP only)",
+              icon: <Info size={14} />,
+              shortcut: overSftp ? "Alt+Enter" : undefined,
+              disabled: !overSftp,
+              onSelect: () => openProperties(targets),
+            },
+          ]
+        : []),
       "separator",
       {
         label: targets.length > 1 ? `Delete ${targets.length} items` : "Delete",
@@ -478,6 +675,7 @@ export function FilePane({
           striped={stripedRows}
           fontSize={fontSize}
           dropFolder={dropFolder}
+          cutPaths={cutPaths}
           onActivate={markActive}
           onContextMenu={showContextMenu}
           onHeaderContextMenu={showHeaderMenu}
@@ -489,6 +687,10 @@ export function FilePane({
           onSwitchPane={(from) => focusNextPane(from)}
           onRowPointerDown={startDrag}
           onFileActivate={activateFile}
+          onCut={() => cutOrCopy("move", pane.selectedEntries())}
+          onCopy={() => cutOrCopy("copy", pane.selectedEntries())}
+          onPaste={() => pasteInto(null)}
+          onProperties={() => openProperties(pane.selectedEntries())}
         />
       ) : (
         <div className="pane-empty">
@@ -554,6 +756,46 @@ export function FilePane({
             await pane.refresh(renamed);
           }}
         />
+      )}
+
+      {dialog?.type === "placeTo" && pane.listing && (
+        <PromptDialog
+          title={dialog.mode === "move" ? "Move to" : "Copy to"}
+          label={`Folder to ${dialog.mode} ${
+            dialog.entries.length === 1
+              ? dialog.entries[0].name
+              : pluralize(dialog.entries.length, "item")
+          } into`}
+          initialValue={pane.listing.path}
+          confirmLabel={dialog.mode === "move" ? "Move" : "Copy"}
+          onClose={() => setDialog(null)}
+          onSubmit={async (folder) => {
+            const self = getPane(tabId);
+            if (!self || !pane.listing) return;
+            void placeEntries({
+              mode: dialog.mode,
+              origin: paneOrigin(self),
+              sourceFolder: pane.listing.path,
+              entries: dialog.entries,
+              target: self,
+              targetFolder: folder,
+            });
+          }}
+        />
+      )}
+
+      {dialog?.type === "properties" && sessionId && pane.listing && (
+        <PropertiesDialog
+          sessionId={sessionId}
+          folder={pane.listing.path}
+          entries={dialog.entries}
+          onClose={() => setDialog(null)}
+          onApplied={() => void pane.refresh()}
+        />
+      )}
+
+      {dialog?.type === "compare" && (
+        <CompareDialog left={dialog.left} right={dialog.right} onClose={() => setDialog(null)} />
       )}
 
       {dialog?.type === "delete" && (

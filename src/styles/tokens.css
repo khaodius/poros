@@ -60,6 +60,11 @@
   --row-hover: rgb(255 255 255 / 0.035);
   --row-alternate: rgb(255 255 255 / 0.022);
 
+  --diff-added: rgb(61 187 118 / 0.12);
+  --diff-added-word: rgb(61 187 118 / 0.32);
+  --diff-removed: rgb(229 72 77 / 0.12);
+  --diff-removed-word: rgb(229 72 77 / 0.32);
+
   --shadow-popover: 0 8px 28px rgb(0 0 0 / 0.45), 0 0 0 1px var(--border-strong);
   --shadow-dialog: 0 24px 64px rgb(0 0 0 / 0.55), 0 0 0 1px var(--border-strong);
   --backdrop: rgb(5 6 8 / 0.6);
@@ -126,6 +131,11 @@
     --row-hover: rgb(0 0 0 / 0.035);
     --row-alternate: rgb(0 0 0 / 0.025);
 
+    --diff-added: rgb(31 138 76 / 0.1);
+    --diff-added-word: rgb(31 138 76 / 0.24);
+    --diff-removed: rgb(209 52 56 / 0.09);
+    --diff-removed-word: rgb(209 52 56 / 0.22);
+
     --shadow-popover: 0 8px 24px rgb(20 30 50 / 0.16), 0 0 0 1px var(--border-strong);
     --shadow-dialog: 0 24px 64px rgb(20 30 50 / 0.22), 0 0 0 1px var(--border-strong);
     --backdrop: rgb(20 24 32 / 0.35);
@@ -176,6 +186,11 @@
   --row-selected-inactive: rgb(91 101 117 / 0.13);
   --row-hover: rgb(0 0 0 / 0.035);
   --row-alternate: rgb(0 0 0 / 0.025);
+
+  --diff-added: rgb(31 138 76 / 0.1);
+  --diff-added-word: rgb(31 138 76 / 0.24);
+  --diff-removed: rgb(209 52 56 / 0.09);
+  --diff-removed-word: rgb(209 52 56 / 0.22);
 
   --shadow-popover: 0 8px 24px rgb(20 30 50 / 0.16), 0 0 0 1px var(--border-strong);
   --shadow-dialog: 0 24px 64px rgb(20 30 50 / 0.22), 0 0 0 1px var(--border-strong);
