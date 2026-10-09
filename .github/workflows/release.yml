@@ -134,14 +134,21 @@ jobs:
 
       # The Google and Microsoft apps cloud storage signs in with by default. Without them,
       # users add their own app registrations in Settings.
+      # A key pasted into the secret with a line break fails to decode, so whitespace is
+      # removed from the key (base64 has none) and line breaks from the password.
       - name: Build and sign the installers
+        shell: bash
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           POROS_GOOGLE_CLIENT_ID: ${{ secrets.POROS_GOOGLE_CLIENT_ID }}
           POROS_GOOGLE_CLIENT_SECRET: ${{ secrets.POROS_GOOGLE_CLIENT_SECRET }}
           POROS_MICROSOFT_CLIENT_ID: ${{ secrets.POROS_MICROSOFT_CLIENT_ID }}
-        run: npm run tauri build -- --config src-tauri/tauri.release.conf.json
+        run: |
+          TAURI_SIGNING_PRIVATE_KEY="$(printf '%s' "$TAURI_SIGNING_PRIVATE_KEY" | tr -d '[:space:]')"
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$(printf '%s' "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" | tr -d '\r\n')"
+          export TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+          npm run tauri build -- --config src-tauri/tauri.release.conf.json
 
       - uses: actions/upload-artifact@v4
         with:
