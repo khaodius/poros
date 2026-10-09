@@ -806,9 +806,18 @@ input.has-error {
     height var(--transition-layout);
 }
 
-.dock.is-resizing > *,
-.dock > .tab-panel.is-floating {
+.dock.is-resizing > * {
   transition: none;
+}
+
+.dock > .tab-panel.is-floating {
+  transition: opacity 120ms ease;
+}
+
+/* A tab dragged off the window shows on the desktop or in the window under the pointer instead. */
+.dock.is-tab-away > .tab-panel.is-floating,
+.dock.is-tab-away > .dock-floating {
+  opacity: 0;
 }
 
 /* Automation */
@@ -1144,6 +1153,7 @@ input.has-error {
   border-radius: var(--radius);
   box-shadow: var(--shadow-popover);
   pointer-events: none;
+  transition: opacity 120ms ease;
 }
 
 .dock > .tab-panel.is-floating {

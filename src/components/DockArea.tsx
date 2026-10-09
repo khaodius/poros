@@ -89,7 +89,7 @@ function dropPlacement(placement: Placement, side: DropSide): Placement {
 }
 
 /** Where the lifted pane floats in the dock; held inside it while a drop would leave the
- * window, so the pane can say so. */
+ * window, where it can say so, and where it never stretches the page. */
 function floatingIn(payload: TabDrag, pointer: Point, leaving: boolean): Rect {
   const { dock } = payload;
   const rect = floatingRect(payload, { x: pointer.x - dock.left, y: pointer.y - dock.top });
@@ -127,6 +127,7 @@ export function DockArea() {
 
   // Also set while a tab from another window is over this one.
   const target = useDragStore((state) => state.target);
+  const desktopPreview = useDragStore((state) => state.desktopPreview);
   const liftedTabId = drag && isLifted(drag.payload, drag.target) ? drag.payload.tabId : null;
   const dropTarget = target?.kind === "dock" ? target : null;
 
@@ -143,6 +144,10 @@ export function DockArea() {
   );
 
   const leaving = target?.kind === "outside" || target?.kind === "window";
+  // Off the window the tab shows as a preview on the desktop, or in the window under the
+  // pointer, so the pane here fades out. Where the system cannot place a preview, the pane
+  // stays at the edge of the dock saying where the tab will go.
+  const away = leaving && desktopPreview;
   const floating = drag && liftedTabId ? floatingIn(drag.payload, drag.pointer, leaving) : null;
 
   // Dragging a handle previews the sizes in this component only and commits on release.
@@ -185,7 +190,9 @@ export function DockArea() {
     handle.addEventListener("pointercancel", stop);
   };
 
-  const className = ["dock", resizing && "is-resizing"].filter(Boolean).join(" ");
+  const className = ["dock", resizing && "is-resizing", away && "is-tab-away"]
+    .filter(Boolean)
+    .join(" ");
   return (
     <div ref={dockRef} className={className}>
       {groups.map((entry) =>
@@ -253,7 +260,7 @@ export function DockArea() {
         <FloatingFrame
           tab={tabs.find((tab) => tab.id === liftedTabId)}
           label={drag.payload.label}
-          leavingTo={leaving ? target : null}
+          leavingTo={leaving && !away ? target : null}
           style={floating}
         />
       )}

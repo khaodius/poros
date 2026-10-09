@@ -200,7 +200,7 @@ function TabButton({
             else if (target.kind === "window") {
               void moveTabToWindow(tab.id, target.label, target.x, target.y);
             } else if (target.kind === "outside") {
-              void tearOutTab(tab.id, target.screenX, target.screenY);
+              void tearOutTab(tab.id, target.screen);
             }
           },
         );

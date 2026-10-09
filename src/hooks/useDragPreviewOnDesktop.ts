@@ -4,7 +4,7 @@ import { findTab } from "../lib/layout";
 import type { PreviewPlacement } from "../lib/types";
 import { useDragStore } from "../state/dragStore";
 import { useLayoutStore } from "../state/layoutStore";
-import { tornOutPlacement } from "../state/tabActions";
+import { tornOutCorner, tornOutSize } from "../state/tabActions";
 
 /** The preview's size against the window the tab will open in. */
 const PREVIEW_SCALE = 0.4;
@@ -15,6 +15,11 @@ const PREVIEW_SCALE = 0.4;
  */
 export function useDragPreviewOnDesktop(): void {
   useEffect(() => {
+    void dragPreview
+      .available()
+      .then((desktopPreview) => useDragStore.setState({ desktopPreview }))
+      .catch(() => undefined);
+
     // One call at a time, and only the latest placement, so the preview never lags behind.
     let pending: PreviewPlacement | "hide" | null = null;
     let sending = false;
@@ -40,7 +45,8 @@ export function useDragPreviewOnDesktop(): void {
         send();
         return;
       }
-      const { x, y, width, height } = tornOutPlacement(target.screenX, target.screenY);
+      const { x, y } = tornOutCorner(target.screen);
+      const { width, height } = tornOutSize();
       const kind = findTab(useLayoutStore.getState().root, payload.tabId)?.kind ?? "welcome";
       shown = true;
       pending = {

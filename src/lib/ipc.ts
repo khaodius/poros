@@ -265,9 +265,18 @@ export const files = {
 };
 
 export const windows = {
-  /** Opens a window showing `layout`; returns its label. */
-  open: (layout: unknown, width: number, height: number, x?: number, y?: number) =>
-    call<string>("window_open", { layout, width, height, x: x ?? null, y: y ?? null }),
+  /**
+   * Opens a window showing `layout`, `width` by `height` logical pixels, its top left corner at
+   * `corner` in physical pixels or else centered; returns its label.
+   */
+  open: (layout: unknown, width: number, height: number, corner?: { x: number; y: number }) =>
+    call<string>("window_open", {
+      layout,
+      width,
+      height,
+      x: corner?.x ?? null,
+      y: corner?.y ?? null,
+    }),
   initialLayout: () => call<unknown>("window_initial_layout"),
   setCorners: (corners: WindowCorners) => call<void>("window_set_corners", { corners }),
 };
@@ -275,6 +284,8 @@ export const windows = {
 export const dragPreview = {
   /** Moves the preview of a tab dragged onto the desktop, opening it if needed. */
   place: (placement: PreviewPlacement) => call<void>("drag_preview_place", { placement }),
+  /** Whether the system lets the preview follow the pointer. */
+  available: () => call<boolean>("drag_preview_available"),
   hide: () => call<void>("drag_preview_hide"),
   /** Called by the preview once it listens for content; returns what to show, if anything. */
   ready: () => call<PreviewContent | null>("drag_preview_ready"),

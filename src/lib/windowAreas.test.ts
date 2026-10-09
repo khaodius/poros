@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { onScreen, windowAt, type WindowArea } from "./windowAreas";
+import { heldWindowCorner, windowAt, type WindowArea } from "./windowAreas";
 
 const area = (label: string, left: number, top: number, scale = 1): WindowArea => ({
   label,
@@ -31,30 +31,32 @@ describe("windowAt", () => {
   });
 });
 
-describe("onScreen", () => {
+describe("heldWindowCorner", () => {
+  // A 125% screen with a 100% screen to its left.
   const screens = [
-    { left: 0, top: 0, width: 1920, height: 1040 },
-    { left: 1920, top: 0, width: 2560, height: 1400 },
+    { left: 0, top: 0, width: 2560, height: 1392, scale: 1.25 },
+    { left: -1920, top: 0, width: 1920, height: 1040, scale: 1 },
   ];
-  const opened = (left: number, top: number) => ({ left, top, width: 800, height: 500 });
+  const grab = { x: 60, y: 16 };
 
-  it("leaves a window that fits where it is", () => {
-    expect(onScreen(screens, 300, 300, opened(240, 284))).toEqual(opened(240, 284));
+  it("follows the pointer, held at the grab point in the screen's own scale", () => {
+    expect(heldWindowCorner(screens, { x: 1000, y: 500 }, grab, 1)).toEqual({ x: 925, y: 480 });
+    expect(heldWindowCorner(screens, { x: -1000, y: 500 }, grab, 1)).toEqual({ x: -1060, y: 484 });
   });
 
-  it("moves a window hanging off the bottom or right back onto the screen", () => {
-    expect(onScreen(screens, 1800, 1000, opened(1740, 984))).toEqual(opened(1120, 540));
+  it("keeps following the pointer near the right and bottom edges", () => {
+    expect(heldWindowCorner(screens, { x: 2550, y: 1380 }, grab, 1)).toEqual({
+      x: 2475,
+      y: 1360,
+    });
   });
 
-  it("moves a window hanging off the top or left back onto the screen", () => {
-    expect(onScreen(screens, 20, 5, opened(-40, -11))).toEqual(opened(0, 0));
+  it("keeps the top bar from starting above or left of the screen", () => {
+    expect(heldWindowCorner(screens, { x: 20, y: 5 }, grab, 1)).toEqual({ x: 0, y: 0 });
+    expect(heldWindowCorner(screens, { x: -1900, y: 5 }, grab, 1)).toEqual({ x: -1920, y: 0 });
   });
 
-  it("keeps the window on the screen under the pointer", () => {
-    expect(onScreen(screens, 1950, 1300, opened(1890, 1284))).toEqual(opened(1920, 900));
-  });
-
-  it("leaves the window be when the pointer is on no screen", () => {
-    expect(onScreen(screens, -50, -50, opened(-110, -66))).toEqual(opened(-110, -66));
+  it("uses the given scale when the pointer is on no screen", () => {
+    expect(heldWindowCorner(screens, { x: 5000, y: 50 }, grab, 2)).toEqual({ x: 4880, y: 18 });
   });
 });

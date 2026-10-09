@@ -230,6 +230,7 @@ pub fn run() {
             commands::window_initial_layout,
             commands::window_set_corners,
             commands::drag_preview_place,
+            commands::drag_preview_available,
             commands::drag_preview_hide,
             commands::drag_preview_ready,
             commands::drag_preview_reveal,

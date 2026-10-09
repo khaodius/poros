@@ -656,11 +656,13 @@ export interface PreviewContent {
   kind: "local" | "remote" | "welcome" | "editor" | "terminal";
 }
 
-/** Where the drag preview sits on screen, in logical pixels. */
+/** Where the drag preview sits on screen and what it shows. */
 export interface PreviewPlacement {
   content: PreviewContent;
+  /** The top left corner, in physical pixels. */
   x: number;
   y: number;
+  /** The size, in logical pixels. */
   width: number;
   height: number;
 }
