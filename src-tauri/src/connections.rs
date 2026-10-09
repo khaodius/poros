@@ -9,9 +9,12 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult, ErrorKind};
+use crate::protocol::Protocol;
 use crate::storage;
 
 const KEYCHAIN_SERVICE: &str = "io.github.khaodius.poros";
+/// The keychain entry of the password for the proxy in the connection settings.
+const PROXY_SECRET: &str = "proxy";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -19,6 +22,9 @@ pub enum AuthType {
     Password,
     PublicKey,
     Agent,
+    /// A Google or Microsoft account signed in through the browser.
+    #[serde(rename = "oauth")]
+    OAuth,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -26,6 +32,8 @@ pub enum AuthType {
 pub struct SavedConnection {
     #[serde(default)]
     pub id: String,
+    #[serde(default)]
+    pub protocol: Protocol,
     pub name: String,
     pub host: String,
     pub port: u16,
@@ -41,44 +49,57 @@ pub struct SavedConnection {
     /// Milliseconds since the Unix epoch.
     #[serde(default)]
     pub last_used: Option<u64>,
+    /// FTP data connections come from the server (active mode).
+    #[serde(default)]
+    pub ftp_active: bool,
+    /// Connects without the proxy from the connection settings.
+    #[serde(default)]
+    pub bypass_proxy: bool,
+    /// Another saved connection to tunnel through.
+    #[serde(default)]
+    pub jump_connection_id: Option<String>,
 }
 
-/// Where secrets live. The keychain in the app, memory in tests.
+/// Where secrets live, by account name. The keychain in the app, memory in tests.
 pub trait SecretStore: Send + Sync {
-    fn get(&self, id: &str) -> AppResult<Option<String>>;
-    fn set(&self, id: &str, secret: &str) -> AppResult<()>;
-    fn delete(&self, id: &str) -> AppResult<()>;
+    fn get(&self, account: &str) -> AppResult<Option<String>>;
+    fn set(&self, account: &str, secret: &str) -> AppResult<()>;
+    fn delete(&self, account: &str) -> AppResult<()>;
 }
 
 pub struct Keychain;
 
 impl Keychain {
-    fn entry(id: &str) -> AppResult<keyring::Entry> {
-        keyring::Entry::new(KEYCHAIN_SERVICE, &format!("connection:{id}")).map_err(keychain_error)
+    fn entry(account: &str) -> AppResult<keyring::Entry> {
+        keyring::Entry::new(KEYCHAIN_SERVICE, account).map_err(keychain_error)
     }
 }
 
 impl SecretStore for Keychain {
-    fn get(&self, id: &str) -> AppResult<Option<String>> {
-        match Self::entry(id)?.get_password() {
+    fn get(&self, account: &str) -> AppResult<Option<String>> {
+        match Self::entry(account)?.get_password() {
             Ok(secret) => Ok(Some(secret)),
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(error) => Err(keychain_error(error)),
         }
     }
 
-    fn set(&self, id: &str, secret: &str) -> AppResult<()> {
-        Self::entry(id)?
+    fn set(&self, account: &str, secret: &str) -> AppResult<()> {
+        Self::entry(account)?
             .set_password(secret)
             .map_err(keychain_error)
     }
 
-    fn delete(&self, id: &str) -> AppResult<()> {
-        match Self::entry(id)?.delete_credential() {
+    fn delete(&self, account: &str) -> AppResult<()> {
+        match Self::entry(account)?.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(error) => Err(keychain_error(error)),
         }
     }
+}
+
+fn connection_account(id: &str) -> String {
+    format!("connection:{id}")
 }
 
 fn keychain_error(error: keyring::Error) -> AppError {
@@ -117,25 +138,52 @@ impl ConnectionStore {
     ) -> AppResult<SavedConnection> {
         connection.name = connection.name.trim().to_string();
         connection.host = connection.host.trim().to_string();
+        if let Some(host) = connection.protocol.service_host() {
+            connection.host = host.to_string();
+            connection.port = connection.protocol.default_port();
+            connection.key_path = None;
+        }
         if connection.host.is_empty() {
             return Err(AppError::invalid("Host is required"));
         }
         if connection.name.is_empty() {
             connection.name = connection.host.clone();
         }
-        if connection.auth_type == AuthType::Agent {
-            connection.save_secret = false;
+        match connection.auth_type {
+            AuthType::Agent => connection.save_secret = false,
+            // Without the stored sign-in the connection could not be opened again.
+            AuthType::OAuth => connection.save_secret = true,
+            AuthType::Password | AuthType::PublicKey => {}
+        }
+        if connection.protocol.is_cloud() != (connection.auth_type == AuthType::OAuth) {
+            return Err(AppError::invalid(format!(
+                "{} connections cannot use this sign-in method",
+                connection.protocol.display_name()
+            )));
         }
         let _guard = self.lock.lock().unwrap();
         let mut connections = self.read()?;
         if connection.id.is_empty() {
             connection.id = uuid::Uuid::new_v4().to_string();
         }
+        if connection.protocol != Protocol::Sftp
+            || connection
+                .jump_connection_id
+                .as_deref()
+                .is_some_and(|jump| jump.is_empty() || jump == connection.id)
+        {
+            connection.jump_connection_id = None;
+        }
+        // The proxy only carries SSH connections.
+        if connection.protocol != Protocol::Sftp {
+            connection.bypass_proxy = false;
+        }
 
+        let account = connection_account(&connection.id);
         if !connection.save_secret {
-            self.secrets.delete(&connection.id)?;
+            self.secrets.delete(&account)?;
         } else if let Some(secret) = secret.filter(|secret| !secret.is_empty()) {
-            self.secrets.set(&connection.id, &secret)?;
+            self.secrets.set(&account, &secret)?;
         }
 
         match connections
@@ -154,7 +202,7 @@ impl ConnectionStore {
         let mut connections = self.read()?;
         connections.retain(|connection| connection.id != id);
         storage::write_json(&self.file, &connections)?;
-        self.secrets.delete(id)
+        self.secrets.delete(&connection_account(id))
     }
 
     pub fn secret(&self, id: &str) -> AppResult<Option<String>> {
@@ -163,9 +211,35 @@ impl ConnectionStore {
             .into_iter()
             .any(|connection| connection.id == id && connection.save_secret);
         if saved {
-            self.secrets.get(id)
+            self.secrets.get(&connection_account(id))
         } else {
             Ok(None)
+        }
+    }
+
+    /// Replaces the stored secret of a saved connection that keeps one, as when a cloud
+    /// provider issues a new refresh token.
+    pub fn update_secret(&self, id: &str, secret: &str) -> AppResult<()> {
+        let _guard = self.lock.lock().unwrap();
+        let keeps_secret = self
+            .read()?
+            .iter()
+            .any(|connection| connection.id == id && connection.save_secret);
+        if keeps_secret {
+            self.secrets.set(&connection_account(id), secret)?;
+        }
+        Ok(())
+    }
+
+    pub fn proxy_password(&self) -> AppResult<Option<String>> {
+        self.secrets.get(PROXY_SECRET)
+    }
+
+    /// An empty or missing password deletes the stored one.
+    pub fn set_proxy_password(&self, password: Option<&str>) -> AppResult<()> {
+        match password.filter(|password| !password.is_empty()) {
+            Some(password) => self.secrets.set(PROXY_SECRET, password),
+            None => self.secrets.delete(PROXY_SECRET),
         }
     }
 
@@ -194,30 +268,31 @@ impl ConnectionStore {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::collections::HashMap;
 
     #[derive(Default)]
-    struct MemorySecrets(Mutex<HashMap<String, String>>);
+    pub(crate) struct MemorySecrets(Mutex<HashMap<String, String>>);
 
     impl SecretStore for MemorySecrets {
-        fn get(&self, id: &str) -> AppResult<Option<String>> {
-            Ok(self.0.lock().unwrap().get(id).cloned())
+        fn get(&self, account: &str) -> AppResult<Option<String>> {
+            Ok(self.0.lock().unwrap().get(account).cloned())
         }
-        fn set(&self, id: &str, secret: &str) -> AppResult<()> {
-            self.0.lock().unwrap().insert(id.into(), secret.into());
+        fn set(&self, account: &str, secret: &str) -> AppResult<()> {
+            self.0.lock().unwrap().insert(account.into(), secret.into());
             Ok(())
         }
-        fn delete(&self, id: &str) -> AppResult<()> {
-            self.0.lock().unwrap().remove(id);
+        fn delete(&self, account: &str) -> AppResult<()> {
+            self.0.lock().unwrap().remove(account);
             Ok(())
         }
     }
 
-    fn connection() -> SavedConnection {
+    pub(crate) fn connection() -> SavedConnection {
         SavedConnection {
             id: String::new(),
+            protocol: Protocol::Sftp,
             name: " ".into(),
             host: " example.com ".into(),
             port: 22,
@@ -227,6 +302,9 @@ mod tests {
             remote_path: None,
             save_secret: true,
             last_used: None,
+            ftp_active: false,
+            bypass_proxy: false,
+            jump_connection_id: None,
         }
     }
 
@@ -255,9 +333,81 @@ mod tests {
         assert_eq!(store.secret(&saved.id).unwrap(), None);
         assert_eq!(store.list().unwrap().len(), 1);
 
+        store.update_secret(&saved.id, "rotated").unwrap();
+        assert_eq!(store.secret(&saved.id).unwrap(), None);
+
         store.touch(&saved.id, 42).unwrap();
         assert_eq!(store.list().unwrap()[0].last_used, Some(42));
         store.delete(&saved.id).unwrap();
         assert!(store.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn cloud_connections_keep_their_sign_in() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store = ConnectionStore::new(
+            temp_dir.path().join("connections.json"),
+            Box::<MemorySecrets>::default(),
+        );
+        let drive = SavedConnection {
+            protocol: Protocol::GoogleDrive,
+            host: String::new(),
+            username: "ada@example.com".into(),
+            auth_type: AuthType::OAuth,
+            save_secret: false,
+            ..connection()
+        };
+        let saved = store.save(drive, Some("refresh".into())).unwrap();
+        assert!(saved.save_secret);
+        assert_eq!(saved.host, "drive.google.com");
+        assert_eq!(saved.port, 443);
+        store.update_secret(&saved.id, "rotated").unwrap();
+        assert_eq!(store.secret(&saved.id).unwrap().as_deref(), Some("rotated"));
+
+        let mismatched = SavedConnection {
+            auth_type: AuthType::Password,
+            ..saved
+        };
+        assert!(store.save(mismatched, None).is_err());
+    }
+
+    #[test]
+    fn a_connection_cannot_jump_through_itself() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store = ConnectionStore::new(
+            temp_dir.path().join("connections.json"),
+            Box::<MemorySecrets>::default(),
+        );
+        let saved = store.save(connection(), None).unwrap();
+        let looped = SavedConnection {
+            jump_connection_id: Some(saved.id.clone()),
+            ..saved.clone()
+        };
+        assert_eq!(store.save(looped, None).unwrap().jump_connection_id, None);
+
+        let ftp = SavedConnection {
+            protocol: Protocol::Ftp,
+            port: 21,
+            bypass_proxy: true,
+            jump_connection_id: Some(saved.id.clone()),
+            ..connection()
+        };
+        let ftp = store.save(ftp, None).unwrap();
+        assert_eq!(ftp.jump_connection_id, None);
+        assert!(!ftp.bypass_proxy);
+    }
+
+    #[test]
+    fn proxy_password_lives_beside_connection_secrets() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store = ConnectionStore::new(
+            temp_dir.path().join("connections.json"),
+            Box::<MemorySecrets>::default(),
+        );
+        assert_eq!(store.proxy_password().unwrap(), None);
+        store.set_proxy_password(Some("pw")).unwrap();
+        assert_eq!(store.proxy_password().unwrap().as_deref(), Some("pw"));
+        store.set_proxy_password(Some("")).unwrap();
+        assert_eq!(store.proxy_password().unwrap(), None);
     }
 }

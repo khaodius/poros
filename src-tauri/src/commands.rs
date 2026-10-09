@@ -3,20 +3,29 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use tauri::ipc::Channel;
-use tauri::{AppHandle, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
+use crate::automation::remote_command::{CommandRequest, CommandResult, CommandRunner};
+use crate::automation::scheduler::{ScheduledTask, Scheduler, TaskView};
+use crate::automation::system::{self, PowerAction};
+use crate::cloud::{self, CloudProvider, OAuthClient, OAuthVault, ProviderStatus, SignedIn};
 use crate::connections::{ConnectionStore, SavedConnection};
 use crate::editor::{
     DocumentInfo, EditorManager, FileLocation, SaveOutcome, SaveRequest, TextDocument,
 };
 use crate::error::{AppError, AppResult};
 use crate::events::{Events, LogLevel, Store};
+use crate::file_ops::{
+    CompareRequest, Comparison, Details, FileOperations, Location, MoveCopyRequest,
+    OperationSummary, PermissionRequest, PermissionSummary, Usage,
+};
 use crate::fonts::{self, FontFamily};
 use crate::local;
 use crate::model::{DirListing, FileEntry};
+use crate::route;
 use crate::session::{SessionInfo, SessionManager};
 use crate::settings::{Settings, SettingsStore};
-use crate::ssh::{ConnectProfile, HostKeyApproval};
+use crate::ssh::{AuthMethod, ConnectProfile, HostKeyApproval};
 use crate::sync::{SyncManager, SyncPlanView, SyncRequest, SyncRunRequest, SyncRunSummary};
 use crate::terminal::{Sink, TerminalEvent, TerminalInfo, TerminalManager};
 use crate::themes::{self, ThemeFile, ThemeStore};
@@ -64,10 +73,12 @@ pub async fn connect(
     window: WebviewWindow,
     sessions: State<'_, Arc<SessionManager>>,
     connections: State<'_, Arc<ConnectionStore>>,
+    settings: State<'_, SettingsStore>,
     events: State<'_, Events>,
     mut profile: ConnectProfile,
     host_key_approval: Option<HostKeyApproval>,
 ) -> AppResult<SessionInfo> {
+    prepare_cloud_sign_in(&window, &mut profile)?;
     if let Some(saved_id) = profile.saved_connection_id.clone() {
         if profile.lacks_secret() {
             let store = connections.inner().clone();
@@ -78,6 +89,12 @@ pub async fn connect(
             }
         }
     }
+    let connection_settings = settings.get().connection;
+    let store = connections.inner().clone();
+    let profile = tokio::task::spawn_blocking(move || {
+        route::resolve(&mut profile, &connection_settings, &store).map(|()| profile)
+    })
+    .await??;
     let info = sessions
         .connect(profile, host_key_approval, window.label())
         .await?;
@@ -90,6 +107,29 @@ pub async fn connect(
         }
     }
     Ok(info)
+}
+
+/// Gives a cloud profile the app to sign in as and, after a fresh browser sign-in, its
+/// account. A saved account comes from the keychain like a password.
+fn prepare_cloud_sign_in(window: &WebviewWindow, profile: &mut ConnectProfile) -> AppResult<()> {
+    let Some(provider) = CloudProvider::for_protocol(profile.protocol) else {
+        return Ok(());
+    };
+    let AuthMethod::OAuth {
+        grant_id,
+        refresh_token,
+        client,
+    } = &mut profile.auth
+    else {
+        return Ok(());
+    };
+    if let Some(grant_id) = grant_id {
+        *refresh_token = window
+            .state::<OAuthVault>()
+            .refresh_token(grant_id, provider)?;
+    }
+    *client = OAuthClient::configured(provider, &window.state::<SettingsStore>().get().cloud);
+    Ok(())
 }
 
 #[tauri::command]
@@ -127,7 +167,12 @@ pub async fn remote_list(
     session_id: String,
     path: String,
 ) -> AppResult<DirListing> {
-    sessions.get(&session_id).await?.fs.list_dir(&path).await
+    sessions
+        .get(&session_id)
+        .await?
+        .files()
+        .list_dir(&path)
+        .await
 }
 
 #[tauri::command]
@@ -140,7 +185,7 @@ pub async fn remote_mkdir(
     sessions
         .get(&session_id)
         .await?
-        .fs
+        .files()
         .make_dir(&parent, &name)
         .await
 }
@@ -155,7 +200,7 @@ pub async fn remote_rename(
     sessions
         .get(&session_id)
         .await?
-        .fs
+        .files()
         .rename(&path, &new_name)
         .await
 }
@@ -166,7 +211,70 @@ pub async fn remote_delete(
     session_id: String,
     paths: Vec<String>,
 ) -> AppResult<()> {
-    sessions.get(&session_id).await?.fs.delete(&paths).await
+    sessions
+        .get(&session_id)
+        .await?
+        .files()
+        .delete(&paths)
+        .await
+}
+
+#[tauri::command]
+pub async fn files_conflicts(
+    operations: State<'_, FileOperations>,
+    location: Location,
+    names: Vec<String>,
+    directory: String,
+) -> AppResult<Vec<String>> {
+    operations.conflicts(location, names, directory).await
+}
+
+#[tauri::command]
+pub async fn files_move_or_copy(
+    operations: State<'_, FileOperations>,
+    request: MoveCopyRequest,
+) -> AppResult<OperationSummary> {
+    operations.move_or_copy(request).await
+}
+
+#[tauri::command]
+pub fn files_cancel(operations: State<'_, FileOperations>, operation_id: String) {
+    operations.cancel(&operation_id);
+}
+
+#[tauri::command]
+pub async fn files_details(
+    operations: State<'_, FileOperations>,
+    session_id: String,
+    path: String,
+) -> AppResult<Details> {
+    operations.details(&session_id, &path).await
+}
+
+#[tauri::command]
+pub async fn files_measure(
+    operations: State<'_, FileOperations>,
+    operation_id: String,
+    session_id: String,
+    paths: Vec<String>,
+) -> AppResult<Usage> {
+    operations.measure(&operation_id, &session_id, &paths).await
+}
+
+#[tauri::command]
+pub async fn files_set_permissions(
+    operations: State<'_, FileOperations>,
+    request: PermissionRequest,
+) -> AppResult<PermissionSummary> {
+    operations.set_permissions(request).await
+}
+
+#[tauri::command]
+pub async fn files_compare(
+    operations: State<'_, FileOperations>,
+    request: CompareRequest,
+) -> AppResult<Comparison> {
+    operations.compare(request).await
 }
 
 #[tauri::command]
@@ -284,6 +392,22 @@ pub fn settings_set(
     Ok(saved)
 }
 
+/// Keeps the proxy password in the system keychain; an empty one deletes it.
+#[tauri::command]
+pub async fn proxy_password_set(
+    settings: State<'_, SettingsStore>,
+    connections: State<'_, Arc<ConnectionStore>>,
+    events: State<'_, Events>,
+    password: String,
+) -> AppResult<Settings> {
+    let store = connections.inner().clone();
+    let has_password = !password.is_empty();
+    tokio::task::spawn_blocking(move || store.set_proxy_password(Some(&password))).await??;
+    let saved = settings.set_proxy_has_password(has_password)?;
+    events.store_changed(Store::Settings);
+    Ok(saved)
+}
+
 #[tauri::command]
 pub async fn connections_list(
     connections: State<'_, Arc<ConnectionStore>>,
@@ -292,13 +416,24 @@ pub async fn connections_list(
     tokio::task::spawn_blocking(move || store.list()).await?
 }
 
+/// `oauth_grant` names a browser sign-in whose account the connection keeps.
 #[tauri::command]
 pub async fn connections_save(
     connections: State<'_, Arc<ConnectionStore>>,
+    vault: State<'_, OAuthVault>,
     events: State<'_, Events>,
     connection: SavedConnection,
     secret: Option<String>,
+    oauth_grant: Option<String>,
 ) -> AppResult<SavedConnection> {
+    let secret = match oauth_grant {
+        Some(grant_id) => {
+            let provider = CloudProvider::for_protocol(connection.protocol)
+                .ok_or_else(|| AppError::invalid("Only cloud storage connections sign in"))?;
+            Some(vault.refresh_token(&grant_id, provider)?)
+        }
+        None => secret,
+    };
     let store = connections.inner().clone();
     let saved = tokio::task::spawn_blocking(move || store.save(connection, secret)).await??;
     events.store_changed(Store::Connections);
@@ -315,6 +450,38 @@ pub async fn connections_delete(
     tokio::task::spawn_blocking(move || store.delete(&id)).await??;
     events.store_changed(Store::Connections);
     Ok(())
+}
+
+/// Which cloud providers have an app to sign in with.
+#[tauri::command]
+pub fn cloud_providers(settings: State<'_, SettingsStore>) -> Vec<ProviderStatus> {
+    cloud::oauth::provider_statuses(&settings.get().cloud)
+}
+
+/// Opens the provider's sign-in page in the browser and waits for the account to come back.
+#[tauri::command]
+pub async fn cloud_sign_in(
+    settings: State<'_, SettingsStore>,
+    vault: State<'_, OAuthVault>,
+    request_id: String,
+    provider: CloudProvider,
+) -> AppResult<SignedIn> {
+    let client = OAuthClient::configured(provider, &settings.get().cloud)
+        .ok_or_else(|| cloud::missing_client(provider))?;
+    let cancel = vault.begin(&request_id);
+    let result = cloud::sign_in(&client, &cancel).await;
+    vault.end(&request_id);
+    let authorization = result?;
+    Ok(SignedIn {
+        grant_id: vault.add(provider, authorization.refresh_token),
+        provider,
+        account: authorization.account,
+    })
+}
+
+#[tauri::command]
+pub fn cloud_cancel_sign_in(vault: State<'_, OAuthVault>, request_id: String) {
+    vault.cancel(&request_id);
 }
 
 #[tauri::command]
@@ -485,6 +652,63 @@ pub async fn save_text_file(path: String, contents: String) -> AppResult<()> {
         std::fs::write(&path, contents).map_err(|error| AppError::from(error).with_path(path))
     })
     .await?
+}
+
+#[tauri::command]
+pub async fn remote_command_run(
+    commands: State<'_, CommandRunner>,
+    request: CommandRequest,
+) -> AppResult<CommandResult> {
+    commands.run(request).await
+}
+
+#[tauri::command]
+pub fn remote_command_stop(commands: State<'_, CommandRunner>, run_id: String) {
+    commands.stop(&run_id);
+}
+
+#[tauri::command]
+pub async fn power_action(action: PowerAction) -> AppResult<()> {
+    tokio::task::spawn_blocking(move || system::perform(action)).await?
+}
+
+/// Runs the user's command through the system shell, with `environment` added.
+#[tauri::command]
+pub async fn local_command_run(
+    events: State<'_, Events>,
+    command: String,
+    environment: HashMap<String, String>,
+) -> AppResult<()> {
+    system::run_local_command(&command, &environment, &events).await
+}
+
+#[tauri::command]
+pub fn app_exit(app: AppHandle) {
+    app.exit(0);
+}
+
+#[tauri::command]
+pub fn schedules_list(scheduler: State<'_, Scheduler>) -> Vec<TaskView> {
+    scheduler.list()
+}
+
+#[tauri::command]
+pub fn schedule_save(scheduler: State<'_, Scheduler>, task: ScheduledTask) -> AppResult<TaskView> {
+    scheduler.save(task)
+}
+
+#[tauri::command]
+pub fn schedule_delete(scheduler: State<'_, Scheduler>, id: String) -> AppResult<()> {
+    scheduler.delete(&id)
+}
+
+#[tauri::command]
+pub fn schedule_run_now(
+    app: AppHandle,
+    scheduler: State<'_, Scheduler>,
+    id: String,
+) -> AppResult<()> {
+    scheduler.run_now(&id, app)
 }
 
 /// Layouts handed from a window to the window it tears a tab out into.

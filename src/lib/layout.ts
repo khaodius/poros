@@ -1,13 +1,13 @@
 // The dock layout of a window: groups of tabs, arranged in nested rows and columns. Every
 // operation returns a new tree, normalized so no empty group or single-child split remains.
 
-import type { DocumentInfo, FileStamp, LineEnding, TextEncoding } from "./types";
+import type { DocumentInfo, FileStamp, TextLineEnding, TextEncoding } from "./types";
 
 /** Unsaved text an editor tab takes along when it moves to another window. */
 export interface EditorDraft {
   text: string;
   encoding: TextEncoding;
-  lineEnding: LineEnding;
+  lineEnding: TextLineEnding;
   /** The file as last read or saved; null when it never was. */
   stamp: FileStamp | null;
 }

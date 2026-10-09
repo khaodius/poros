@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock as SyncRwLock};
 use std::time::Instant;
 
 use russh::client::Msg;
@@ -8,35 +8,104 @@ use russh::Channel;
 use serde::Serialize;
 use tokio::sync::RwLock;
 
+use crate::cloud;
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::events::{Events, LogLevel};
+use crate::ftp::FtpFs;
+use crate::protocol::{Protocol, RemoteFileSystem};
 use crate::sftp::RemoteFs;
 use crate::ssh::known_hosts::KnownHosts;
 use crate::ssh::{self, ConnectProfile, HostKeyApproval, SshHandle};
+use crate::tls::TrustedCertificates;
+
+/// Called with a saved connection's id and its new secret when a cloud provider replaces a
+/// refresh token, so the keychain keeps the current one.
+pub type SecretSink = Arc<dyn Fn(&str, &str) + Send + Sync>;
 
 pub struct Session {
     pub id: String,
     /// Kept (with credentials) so transfer workers can open more connections.
     pub profile: ConnectProfile,
+    /// The SSH host key or FTPS certificate the server proved it holds; extra connections pin
+    /// it.
     pub host_key_fingerprint: String,
     /// Label of the window showing this session; closing that window disconnects it.
     owner: Mutex<String>,
     info: SessionInfo,
-    handle: SshHandle,
-    pub fs: RemoteFs,
+    link: Link,
     pub opened_at: Instant,
 }
 
+enum Link {
+    Ssh {
+        handle: SshHandle,
+        fs: Arc<RemoteFs>,
+    },
+    Direct(Arc<dyn RemoteFileSystem>),
+}
+
 impl Session {
+    /// The session's files, whatever the protocol.
+    pub fn files(&self) -> Arc<dyn RemoteFileSystem> {
+        match &self.link {
+            Link::Ssh { fs, .. } => fs.clone(),
+            Link::Direct(files) => files.clone(),
+        }
+    }
+
+    pub fn protocol(&self) -> Protocol {
+        self.profile.protocol
+    }
+
+    /// The SFTP channel of an SSH session, for what only SFTP can do.
+    pub fn sftp(&self) -> AppResult<&Arc<RemoteFs>> {
+        match &self.link {
+            Link::Ssh { fs, .. } => Ok(fs),
+            Link::Direct(_) => Err(self.needs_ssh()),
+        }
+    }
+
     /// A further SFTP channel multiplexed over this session's connection, for transfer workers
     /// when the server refuses extra connections.
     pub async fn open_channel(&self) -> AppResult<RemoteFs> {
-        open_sftp(&self.handle).await
+        match &self.link {
+            Link::Ssh { handle, .. } => open_sftp(handle).await,
+            Link::Direct(_) => Err(self.needs_ssh()),
+        }
     }
 
     /// A channel on this session's connection for running a command on the server.
     pub async fn open_command_channel(&self) -> AppResult<Channel<Msg>> {
-        Ok(self.handle.channel_open_session().await?)
+        match &self.link {
+            Link::Ssh { handle, .. } => Ok(handle.channel_open_session().await?),
+            Link::Direct(_) => Err(self.needs_ssh()),
+        }
+    }
+
+    fn needs_ssh(&self) -> AppError {
+        AppError::unsupported(format!(
+            "This needs an SFTP connection; {} uses {}",
+            self.info.label,
+            self.protocol().display_name()
+        ))
+    }
+
+    fn is_closed(&self) -> bool {
+        match &self.link {
+            Link::Ssh { handle, .. } => handle.is_closed(),
+            // FTP connections reopen by themselves, and cloud APIs have no connection to lose.
+            Link::Direct(_) => false,
+        }
+    }
+
+    async fn close(&self) {
+        match &self.link {
+            Link::Ssh { handle, fs } => {
+                fs.close();
+                ssh::disconnect(handle).await;
+            }
+            Link::Direct(files) => files.close().await,
+        }
     }
 
     pub fn target(&self) -> RemoteTarget {
@@ -60,6 +129,10 @@ pub struct RemoteTarget {
 }
 
 impl RemoteTarget {
+    pub fn protocol(&self) -> Protocol {
+        self.profile.protocol
+    }
+
     /// A connection of its own that accepts the same host key the session did, logging nothing
     /// but failures. `purpose` tells its log lines and close events apart from the session's.
     pub async fn connect(&self, known_hosts: &KnownHosts, purpose: &str) -> AppResult<SshHandle> {
@@ -92,6 +165,7 @@ pub struct SessionInfo {
     pub initial_path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub saved_connection_id: Option<String>,
+    pub protocol: Protocol,
 }
 
 pub struct SessionManager {
@@ -99,17 +173,34 @@ pub struct SessionManager {
     /// Sessions whose connection dropped, kept until closed so they can reconnect.
     lost: RwLock<HashMap<String, Arc<Session>>>,
     pub known_hosts: KnownHosts,
+    pub certificates: TrustedCertificates,
+    secret_sink: SyncRwLock<Option<SecretSink>>,
     events: Events,
 }
 
 impl SessionManager {
+    /// Trusted FTPS certificates are kept beside the app's known_hosts file.
     pub fn new(known_hosts_file: PathBuf, events: Events) -> Self {
+        let certificates_file = known_hosts_file.with_file_name("trusted_certificates");
         Self {
             sessions: RwLock::new(HashMap::new()),
             lost: RwLock::new(HashMap::new()),
             known_hosts: KnownHosts::with_defaults(known_hosts_file),
+            certificates: TrustedCertificates::new(certificates_file),
+            secret_sink: SyncRwLock::new(None),
             events,
         }
+    }
+
+    pub fn set_secret_sink(&self, sink: SecretSink) {
+        *self.secret_sink.write().unwrap() = Some(sink);
+    }
+
+    /// Where a session's rotated refresh tokens go: the keychain entry of its saved connection.
+    fn rotation_hook(&self, profile: &ConnectProfile) -> Option<cloud::TokenRotation> {
+        let saved_id = profile.saved_connection_id.clone()?;
+        let sink = self.secret_sink.read().unwrap().clone()?;
+        Some(Arc::new(move |secret: &str| sink(&saved_id, secret)))
     }
 
     pub async fn connect(
@@ -153,7 +244,7 @@ impl SessionManager {
             .connect(previous.profile.clone(), approval, owner)
             .await?;
         if self.lost.write().await.remove(id).is_some() {
-            previous.fs.close();
+            previous.close().await;
         }
         Ok(info)
     }
@@ -165,21 +256,48 @@ impl SessionManager {
         approval: Option<HostKeyApproval>,
         owner: &str,
     ) -> AppResult<SessionInfo> {
-        let ssh::Connection {
-            handle,
-            host_key_fingerprint,
-        } = ssh::connect(id, &profile, &self.known_hosts, approval, &self.events).await?;
-        let fs = match open_sftp(&handle).await {
-            Ok(fs) => fs,
-            Err(error) => {
-                ssh::disconnect(&handle).await;
-                return Err(error);
+        let (link, host_key_fingerprint) = match profile.protocol {
+            Protocol::Sftp => {
+                let ssh::Connection {
+                    handle,
+                    host_key_fingerprint,
+                } = ssh::connect(id, &profile, &self.known_hosts, approval, &self.events).await?;
+                let fs = match open_sftp(&handle).await {
+                    Ok(fs) => fs,
+                    Err(error) => {
+                        ssh::disconnect(&handle).await;
+                        return Err(error);
+                    }
+                };
+                self.events.log(
+                    LogLevel::Info,
+                    Some(id),
+                    format!("SFTP session ready, home directory {}", fs.home),
+                );
+                let fs = Arc::new(fs);
+                (Link::Ssh { handle, fs }, host_key_fingerprint)
             }
+            protocol if protocol.is_ftp() => {
+                let (files, fingerprint) =
+                    FtpFs::connect(id, &profile, &self.certificates, approval, &self.events)
+                        .await?;
+                (Link::Direct(files), fingerprint)
+            }
+            _ => {
+                let files =
+                    cloud::connect(id, &profile, self.rotation_hook(&profile), &self.events)
+                        .await?;
+                (Link::Direct(files), String::new())
+            }
+        };
+        let files = match &link {
+            Link::Ssh { fs, .. } => fs.clone() as Arc<dyn RemoteFileSystem>,
+            Link::Direct(files) => files.clone(),
         };
 
         let initial_path = match profile.initial_path.as_deref().map(str::trim) {
             Some(requested) if !requested.is_empty() => {
-                match fs.canonicalize(&fs.resolve(requested)).await {
+                match files.canonicalize(&files.resolve(requested)).await {
                     Ok(resolved) => resolved,
                     Err(error) => {
                         self.events.log(
@@ -190,11 +308,11 @@ impl SessionManager {
                                 error.message
                             ),
                         );
-                        fs.home.clone()
+                        files.home().to_string()
                     }
                 }
             }
-            _ => fs.home.clone(),
+            _ => files.home().to_string(),
         };
 
         let info = SessionInfo {
@@ -203,23 +321,18 @@ impl SessionManager {
             host: profile.host.clone(),
             port: profile.port,
             username: profile.username.clone(),
-            home: fs.home.clone(),
+            home: files.home().to_string(),
             initial_path,
             saved_connection_id: profile.saved_connection_id.clone(),
+            protocol: profile.protocol,
         };
-        self.events.log(
-            LogLevel::Info,
-            Some(id),
-            format!("SFTP session ready, home directory {}", fs.home),
-        );
         let session = Arc::new(Session {
             id: id.to_string(),
             profile,
             host_key_fingerprint,
             owner: Mutex::new(owner.to_string()),
             info: info.clone(),
-            handle,
-            fs,
+            link,
             opened_at: Instant::now(),
         });
         self.sessions.write().await.insert(id.to_string(), session);
@@ -234,7 +347,7 @@ impl SessionManager {
             .get(id)
             .cloned()
             .ok_or_else(AppError::session_not_found)?;
-        if session.handle.is_closed() {
+        if session.is_closed() {
             if let Some(session) = self.sessions.write().await.remove(id) {
                 self.lost.write().await.insert(id.to_string(), session);
             }
@@ -252,16 +365,14 @@ impl SessionManager {
             .read()
             .await
             .get(id)
-            .is_some_and(|session| !session.handle.is_closed())
+            .is_some_and(|session| !session.is_closed())
     }
 
-    /// An open session to the same account on the same server, if there is one, opened after
-    /// `opened_after` when given.
+    /// An open session to the same account on the same server over the same protocol, if there
+    /// is one, opened after `opened_after` when given.
     pub async fn find_live(
         &self,
-        host: &str,
-        port: u16,
-        username: &str,
+        like: &ConnectProfile,
         opened_after: Option<Instant>,
     ) -> Option<Arc<Session>> {
         self.sessions
@@ -270,11 +381,12 @@ impl SessionManager {
             .values()
             .find(|session| {
                 let profile = &session.profile;
-                profile.host == host
-                    && profile.port == port
-                    && profile.username == username
+                profile.protocol == like.protocol
+                    && profile.host == like.host
+                    && profile.port == like.port
+                    && profile.username == like.username
                     && opened_after.is_none_or(|since| session.opened_at > since)
-                    && !session.handle.is_closed()
+                    && !session.is_closed()
             })
             .cloned()
     }
@@ -290,8 +402,7 @@ impl SessionManager {
         let session = self.sessions.write().await.remove(id);
         self.lost.write().await.remove(id);
         if let Some(session) = session {
-            session.fs.close();
-            ssh::disconnect(&session.handle).await;
+            session.close().await;
             self.events.log(LogLevel::Info, Some(id), "Disconnected");
         }
         Ok(())

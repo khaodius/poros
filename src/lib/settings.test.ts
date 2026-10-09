@@ -24,6 +24,18 @@ describe("sanitizeSettings", () => {
     expect(settings.log.levels).toEqual({ info: true, warn: false, error: true, server: true });
   });
 
+  it("keeps the cloud apps and the FXP switch", () => {
+    const settings = sanitizeSettings({
+      transfers: { fxp: false },
+      cloud: { googleClientId: "id.apps.googleusercontent.com", microsoftTenant: 5 },
+    });
+    expect(settings.transfers.fxp).toBe(false);
+    expect(settings.cloud).toEqual({
+      ...DEFAULT_SETTINGS.cloud,
+      googleClientId: "id.apps.googleusercontent.com",
+    });
+  });
+
   it("turns the old compact rows switch into a row height", () => {
     expect(sanitizeSettings({ appearance: { compactRows: true } }).appearance.rowHeight).toBe(21);
     expect(sanitizeSettings({ appearance: { compactRows: false } }).appearance.rowHeight).toBe(24);
@@ -75,5 +87,44 @@ describe("sanitizeSettings", () => {
     expect(updates.checkOnStart).toBe(true);
     expect(updates.skippedVersion).toBe("0.3.0");
     expect(sanitizeSettings({ updates: { checkOnStart: false } }).updates.checkOnStart).toBe(false);
+  });
+
+  it("checks the proxy", () => {
+    const proxy = sanitizeSettings({
+      connection: { proxy: { kind: "tor", port: 70000, host: "proxy.local" } },
+    }).connection.proxy;
+    expect(proxy.kind).toBe("none");
+    expect(proxy.port).toBe(1080);
+    expect(proxy.host).toBe("proxy.local");
+    expect(proxy.remoteDns).toBe(true);
+    const http = sanitizeSettings({ connection: { proxy: { kind: "http", port: 0 } } });
+    expect(http.connection.proxy.port).toBe(8080);
+  });
+
+  it("checks the automation options and keeps commands that have something to run", () => {
+    const automation = sanitizeSettings({
+      automation: {
+        whenDone: "explode",
+        commands: [
+          { id: "disk", name: "Disk usage", command: "du -sh {paths}", refresh: "yes" },
+          { id: "disk", command: "ls" },
+          { name: "Empty", command: "  " },
+          "chmod",
+          { command: "uptime", showOutput: false },
+        ],
+      },
+    }).automation;
+    expect(automation.whenDone).toBe("nothing");
+    expect(automation.commands).toEqual([
+      {
+        id: "disk",
+        name: "Disk usage",
+        command: "du -sh {paths}",
+        showOutput: true,
+        refresh: false,
+      },
+      { id: "disk-2", name: "", command: "ls", showOutput: true, refresh: false },
+      { id: "command-5", name: "", command: "uptime", showOutput: false, refresh: false },
+    ]);
   });
 });

@@ -1,8 +1,13 @@
 //! Built on `RawSftpSession` because listings need `longname` (owner names) and transfers
 //! need offset-addressed, pipelined reads and writes. Requests multiplex over one channel.
 
+use std::ops::Range;
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use bytes::Bytes;
 use futures::future::BoxFuture;
-use futures::stream::{self, StreamExt};
+use futures::stream::{self, FuturesOrdered, FuturesUnordered, StreamExt};
 use russh::client::Msg;
 use russh::Channel;
 use russh_sftp::client::error::Error as SftpError;
@@ -13,10 +18,21 @@ use russh_sftp::protocol::{FileAttributes, OpenFlags, Packet, StatusCode};
 
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::model::{kind_from_mode, DirListing, EntryKind, FileEntry, LinkTarget};
+pub use crate::protocol::RemoteStat;
+use crate::protocol::{
+    Capabilities, Protocol, ReadStream, RemoteFileSystem, WriteRequest, WriteStream,
+};
 use crate::remote_path;
+
+mod ops;
+
+pub use ops::EntryStat;
 
 const PARALLEL_REQUESTS: usize = 16;
 const REQUEST_TIMEOUT_SECS: u64 = 30;
+/// Requests kept in flight by the streams other protocols' transfers read and write through.
+const STREAM_REQUESTS: usize = 32;
+const STREAM_CHUNK: u32 = 32 * 1024;
 /// Renames over an existing file in one step, unlike a plain SFTP v3 rename.
 const POSIX_RENAME: &str = "posix-rename@openssh.com";
 
@@ -28,20 +44,13 @@ pub struct RemoteFs {
     write_limit: Option<u32>,
     posix_rename: bool,
     fsync: bool,
+    /// The server copies data between its own files (`copy-data`).
+    copy_data: bool,
 }
 
 pub enum ReadChunk {
     Data(Vec<u8>),
     Eof,
-}
-
-/// The parts of SFTP file attributes a transfer needs.
-#[derive(Debug, Clone, Copy)]
-pub struct RemoteStat {
-    pub is_dir: bool,
-    pub size: u64,
-    pub modified: Option<i64>,
-    pub permissions: Option<u32>,
 }
 
 impl From<&FileAttributes> for RemoteStat {
@@ -68,6 +77,7 @@ impl RemoteFs {
         let offers = |name: &str| version.extensions.contains_key(name);
         let posix_rename = offers(POSIX_RENAME);
         let fsync = offers(extensions::FSYNC);
+        let copy_data = offers(ops::COPY_DATA);
         if version
             .extensions
             .get(extensions::LIMITS)
@@ -88,6 +98,7 @@ impl RemoteFs {
             write_limit: clamp(limits.write_len),
             posix_rename,
             fsync,
+            copy_data,
         })
     }
 
@@ -541,6 +552,211 @@ impl RemoteFs {
         } else {
             Ok(())
         }
+    }
+}
+
+#[async_trait]
+impl RemoteFileSystem for RemoteFs {
+    fn protocol(&self) -> Protocol {
+        Protocol::Sftp
+    }
+
+    fn home(&self) -> &str {
+        &self.home
+    }
+
+    fn capabilities(&self) -> Capabilities {
+        Capabilities {
+            ranged_reads: true,
+            resumable_writes: true,
+        }
+    }
+
+    fn resolve(&self, path: &str) -> String {
+        RemoteFs::resolve(self, path)
+    }
+
+    async fn canonicalize(&self, path: &str) -> AppResult<String> {
+        RemoteFs::canonicalize(self, path).await
+    }
+
+    async fn list_dir(&self, path: &str) -> AppResult<DirListing> {
+        RemoteFs::list_dir(self, path).await
+    }
+
+    async fn make_dir(&self, parent: &str, name: &str) -> AppResult<String> {
+        RemoteFs::make_dir(self, parent, name).await
+    }
+
+    async fn rename(&self, path: &str, new_name: &str) -> AppResult<String> {
+        RemoteFs::rename(self, path, new_name).await
+    }
+
+    async fn delete(&self, paths: &[String]) -> AppResult<()> {
+        RemoteFs::delete(self, paths).await
+    }
+
+    async fn stat(&self, path: &str) -> AppResult<Option<RemoteStat>> {
+        RemoteFs::stat(self, path).await
+    }
+
+    async fn ensure_dir(&self, path: &str) -> AppResult<()> {
+        RemoteFs::ensure_dir(self, path).await
+    }
+
+    async fn set_attributes(
+        &self,
+        path: &str,
+        modified: Option<i64>,
+        permissions: Option<u32>,
+    ) -> AppResult<()> {
+        RemoteFs::set_attributes(self, path, modified, permissions).await
+    }
+
+    async fn open_read(
+        self: Arc<Self>,
+        path: &str,
+        range: Range<u64>,
+    ) -> AppResult<Box<dyn ReadStream>> {
+        let handle = self.open_for_read(path).await?;
+        let chunk = self.read_size(STREAM_CHUNK).max(1);
+        Ok(Box::new(SftpReader {
+            fs: self,
+            handle: Some(handle),
+            next_offset: range.start,
+            end: range.end,
+            chunk,
+            in_flight: FuturesOrdered::new(),
+            ended: false,
+        }))
+    }
+
+    async fn open_write(self: Arc<Self>, request: WriteRequest) -> AppResult<Box<dyn WriteStream>> {
+        let handle = self
+            .open_for_write(&request.path, request.offset == 0, request.permissions)
+            .await?;
+        let chunk = self.write_size(STREAM_CHUNK).max(1) as usize;
+        Ok(Box::new(SftpWriter {
+            fs: self,
+            handle: Some(handle),
+            offset: request.offset,
+            chunk,
+            in_flight: FuturesUnordered::new(),
+        }))
+    }
+
+    async fn close(&self) {
+        RemoteFs::close(self);
+    }
+}
+
+type ReadRequest = BoxFuture<'static, (u64, u32, AppResult<ReadChunk>)>;
+
+/// Sequential reads with many requests in flight, so latency does not bound throughput.
+struct SftpReader {
+    fs: Arc<RemoteFs>,
+    handle: Option<String>,
+    next_offset: u64,
+    end: u64,
+    chunk: u32,
+    in_flight: FuturesOrdered<ReadRequest>,
+    ended: bool,
+}
+
+#[async_trait]
+impl ReadStream for SftpReader {
+    async fn next_chunk(&mut self) -> AppResult<Option<Bytes>> {
+        let Some(handle) = self.handle.clone() else {
+            return Ok(None);
+        };
+        while !self.ended && self.in_flight.len() < STREAM_REQUESTS && self.next_offset < self.end {
+            let offset = self.next_offset;
+            let len = u64::from(self.chunk).min(self.end - offset) as u32;
+            self.next_offset += u64::from(len);
+            let fs = self.fs.clone();
+            let handle = handle.clone();
+            self.in_flight.push_back(Box::pin(async move {
+                (offset, len, fs.read_chunk(&handle, offset, len).await)
+            }));
+        }
+        let Some((offset, len, result)) = self.in_flight.next().await else {
+            return Ok(None);
+        };
+        match result? {
+            ReadChunk::Eof => {
+                self.ended = true;
+                self.in_flight = FuturesOrdered::new();
+                Ok(None)
+            }
+            ReadChunk::Data(data) => {
+                if data.len() < len as usize {
+                    // A short read: everything requested after it starts at the wrong offset.
+                    self.in_flight = FuturesOrdered::new();
+                    self.next_offset = offset + data.len() as u64;
+                }
+                Ok(Some(Bytes::from(data)))
+            }
+        }
+    }
+
+    async fn finish(mut self: Box<Self>) -> AppResult<()> {
+        self.in_flight = FuturesOrdered::new();
+        match self.handle.take() {
+            Some(handle) => self.fs.close_handle(handle).await,
+            None => Ok(()),
+        }
+    }
+}
+
+/// Writes with many requests in flight; acknowledgements may arrive in any order.
+struct SftpWriter {
+    fs: Arc<RemoteFs>,
+    handle: Option<String>,
+    offset: u64,
+    chunk: usize,
+    in_flight: FuturesUnordered<BoxFuture<'static, AppResult<()>>>,
+}
+
+#[async_trait]
+impl WriteStream for SftpWriter {
+    async fn write(&mut self, data: Bytes) -> AppResult<()> {
+        let handle = self
+            .handle
+            .clone()
+            .ok_or_else(|| AppError::invalid("The file is already closed"))?;
+        let mut position = 0;
+        while position < data.len() {
+            while self.in_flight.len() >= STREAM_REQUESTS {
+                if let Some(written) = self.in_flight.next().await {
+                    written?;
+                }
+            }
+            let end = (position + self.chunk).min(data.len());
+            let piece = data.slice(position..end).to_vec();
+            let offset = self.offset;
+            self.offset += piece.len() as u64;
+            position = end;
+            let fs = self.fs.clone();
+            let handle = handle.clone();
+            self.in_flight.push(Box::pin(async move {
+                fs.write_chunk(&handle, offset, piece).await
+            }));
+        }
+        Ok(())
+    }
+
+    async fn finish(mut self: Box<Self>) -> AppResult<()> {
+        let mut result = Ok(());
+        while let Some(written) = self.in_flight.next().await {
+            if result.is_ok() {
+                result = written;
+            }
+        }
+        if let Some(handle) = self.handle.take() {
+            let closed = self.fs.close_handle(handle).await;
+            result = result.and(closed);
+        }
+        result
     }
 }
 

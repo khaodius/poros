@@ -1,15 +1,19 @@
 import { useEffect, useState } from "react";
-import { FolderSync, Plus, SlidersHorizontal } from "lucide-react";
+import { CalendarClock, FolderSync, Plus, SlidersHorizontal } from "lucide-react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { CloseTabDialog } from "./components/CloseTabDialog";
+import { CommandOutputDialog } from "./components/CommandOutputDialog";
 import { ConflictDialog } from "./components/ConflictDialog";
 import { ConnectDialog } from "./components/ConnectDialog";
 import { DragGhost } from "./components/DragGhost";
+import { FileOperationsHost } from "./components/FileOperationsHost";
 import { HostKeyDialog } from "./components/HostKeyDialog";
 import { QuickConnectBar } from "./components/QuickConnectBar";
 import { PorosLogo } from "./components/PorosLogo";
+import { RunCommandDialog } from "./components/RunCommandDialog";
 import { SaveConnectionDialog } from "./components/SaveConnectionDialog";
+import { SchedulerDialog } from "./components/SchedulerDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { SplashScreen } from "./components/SplashScreen";
 import { StatusBar } from "./components/StatusBar";
@@ -17,6 +21,7 @@ import { SyncDialog } from "./components/SyncDialog";
 import { Toasts } from "./components/Toasts";
 import { UnsavedChangesDialog } from "./components/UnsavedChangesDialog";
 import { UpdateDialog } from "./components/UpdateDialog";
+import { WhenDoneCountdown } from "./components/WhenDoneCountdown";
 import { WindowControls } from "./components/WindowControls";
 import { Workspace } from "./components/Workspace";
 import { useTabDragsBetweenWindows } from "./hooks/useTabDragsBetweenWindows";
@@ -25,6 +30,7 @@ import { EMPTY_DRAFT } from "./lib/connectDraft";
 import {
   RETURN_TAB_EVENT,
   onLog,
+  onQueueFinished,
   onSessionClosed,
   onStoreChanged,
   onTransfers,
@@ -36,11 +42,13 @@ import { DEFAULT_SETTINGS, FONT_SIZE_LIMITS } from "./lib/settings";
 import { dragWindowFrom } from "./lib/windowDrag";
 import { matchWindowBackground, revealWindow } from "./lib/windowReveal";
 import type { StoreName } from "./lib/types";
+import { startClipboard } from "./state/clipboardStore";
 import { hitTest, useDragStore, type DragPayload } from "./state/dragStore";
 import { persistLayout, restoreLayout, useLayoutStore } from "./state/layoutStore";
 import { useLogStore } from "./state/logStore";
 import { askToSave, unsavedEditorTabs } from "./state/editorActions";
 import { useSavedConnections } from "./state/savedConnectionsStore";
+import { reloadSchedules } from "./state/scheduleStore";
 import { useSessionStore } from "./state/sessionStore";
 import { saveSettingsSection, useSettingsStore } from "./state/settingsStore";
 import { adoptHandoff, isMainWindow, receiveTabs, requestCloseTab } from "./state/tabActions";
@@ -49,6 +57,7 @@ import { uploadDroppedPaths } from "./state/transferActions";
 import { useTransferStore } from "./state/transferStore";
 import { useUiStore } from "./state/uiStore";
 import { checkForUpdates } from "./state/updateStore";
+import { handleQueueFinished } from "./state/whenDone";
 
 let starting: Promise<void> | null = null;
 
@@ -93,6 +102,10 @@ function reloadStore(store: StoreName): Promise<void> {
         .catch((caught) => reportError("Could not read saved connections", caught));
     case "themes":
       return useThemeStore.getState().load();
+    case "schedules":
+      return reloadSchedules().catch((caught) =>
+        reportError("Could not read scheduled tasks", caught),
+      );
   }
 }
 
@@ -116,6 +129,8 @@ function useBackendEvents() {
         getCurrentWindow().listen<unknown>(RETURN_TAB_EVENT, (event) => {
           void receiveTabs(event.payload, null);
         }),
+        // Only the main window acts, so the action happens once however many windows are open.
+        onQueueFinished((finished) => void handleQueueFinished(finished)),
       );
     }
     return () => {
@@ -322,6 +337,7 @@ export function App() {
       .catch((caught) => reportError("Could not start", caught))
       .finally(() => setReady(true));
   }, []);
+  useEffect(() => startClipboard(), []);
   useBackendEvents();
   useCloseGuard();
   useTabDragsBetweenWindows();
@@ -367,6 +383,15 @@ export function App() {
           <button
             type="button"
             className="icon-button topbar-button"
+            title="Scheduled tasks"
+            aria-label="Scheduled tasks"
+            onClick={() => openDialog({ kind: "schedules" })}
+          >
+            <CalendarClock size={15} />
+          </button>
+          <button
+            type="button"
+            className="icon-button topbar-button"
             title="Settings (Ctrl+,)"
             aria-label="Settings"
             onClick={() => openDialog({ kind: "settings", section: "transfers" })}
@@ -383,7 +408,10 @@ export function App() {
       {ready && <AppliedTheme />}
       <AppDialog />
       <ConflictDialog />
+      <FileOperationsHost />
       <HostKeyDialog />
+      <CommandOutputDialog />
+      {isMainWindow() && <WhenDoneCountdown />}
       <Toasts />
       <DragGhost />
       {isMainWindow() && <SplashScreen ready={ready} />}
@@ -438,6 +466,12 @@ function AppDialog() {
           onClose={close}
         />
       );
+    case "runCommand":
+      return (
+        <RunCommandDialog sessionId={dialog.sessionId} target={dialog.target} onClose={close} />
+      );
+    case "schedules":
+      return <SchedulerDialog initialDraft={dialog.draft} onClose={close} />;
     default:
       return null;
   }

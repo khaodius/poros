@@ -1,6 +1,7 @@
-// Mirrors the serde types in src-tauri/src (model.rs, error.rs, ssh/mod.rs, session.rs,
-// events.rs, transfer/, sync/, connections.rs, themes.rs, fonts.rs, text.rs, editor.rs,
-// terminal.rs). Field names are camelCase on the wire.
+// Mirrors the serde types in src-tauri/src (model.rs, error.rs, protocol.rs, ssh/mod.rs,
+// session.rs, events.rs, transfer/, sync/, file_ops/, connections.rs, cloud/, themes.rs,
+// fonts.rs, automation/, text.rs, editor.rs, terminal.rs). Field names are camelCase on the
+// wire.
 
 export type EntryKind = "dir" | "file" | "symlink" | "other";
 export type LinkTarget = "dir" | "file" | "broken";
@@ -27,12 +28,22 @@ export interface DirListing {
   entries: FileEntry[];
 }
 
+export type Protocol = "sftp" | "ftp" | "ftps" | "ftpsImplicit" | "googleDrive" | "oneDrive";
+
+export type CloudProvider = "google" | "microsoft";
+
 export type AuthMethod =
   | { type: "password"; password: string }
   | { type: "publicKey"; keyPath: string; passphrase?: string | null }
-  | { type: "agent" };
+  | { type: "agent" }
+  /**
+   * A Google or Microsoft account. `grantId` names a sign-in just made in the browser; without
+   * it, a saved connection's account comes from the system keychain.
+   */
+  | { type: "oauth"; grantId?: string | null };
 
 export interface ConnectProfile {
+  protocol: Protocol;
   host: string;
   port: number;
   username: string;
@@ -47,6 +58,12 @@ export interface ConnectProfile {
   sendBufferKib?: number | null;
   /** Lets the backend fill an empty password or passphrase from the system keychain. */
   savedConnectionId?: string | null;
+  /** FTP data connections come from the server (active mode) instead of passive mode. */
+  ftpActive?: boolean;
+  /** Skips the proxy from the connection settings. */
+  bypassProxy?: boolean;
+  /** A saved connection to reach this server through, like OpenSSH's ProxyJump. */
+  jumpConnectionId?: string | null;
 }
 
 export interface HostKeyInfo {
@@ -54,6 +71,8 @@ export interface HostKeyInfo {
   port: number;
   algorithm: string;
   fingerprint: string;
+  /** Why the system did not trust an FTPS server's TLS certificate; absent for SSH host keys. */
+  certificateProblem?: string;
 }
 
 export interface HostKeyApproval {
@@ -70,6 +89,7 @@ export interface SessionInfo {
   home: string;
   initialPath: string;
   savedConnectionId?: string;
+  protocol: Protocol;
 }
 
 export type ErrorKind =
@@ -89,6 +109,9 @@ export type ErrorKind =
   | "sftp"
   | "ssh"
   | "rsync"
+  | "ftp"
+  | "cloud"
+  | "unsupported"
   | "integrity"
   | "cancelled"
   | "keychain";
@@ -115,9 +138,10 @@ export interface SessionClosed {
   reason: string;
 }
 
-export type StoreName = "settings" | "connections" | "themes";
+export type StoreName = "settings" | "connections" | "themes" | "schedules";
 
-export type Direction = "upload" | "download";
+/** `relay` copies from one server to another. */
+export type Direction = "upload" | "download" | "relay";
 export type JobKind = "file" | "folder";
 export type JobState = "queued" | "running" | "paused" | "conflict" | "done" | "skipped" | "failed";
 export type ExistsAction =
@@ -134,7 +158,10 @@ export interface JobSnapshot {
   id: number;
   /** Sorts jobs in processing order. */
   rank: string;
+  /** The server written to, or read from for a download. */
   sessionId: string;
+  /** The server a relay reads from. */
+  sourceSessionId?: string;
   direction: Direction;
   kind: JobKind;
   name: string;
@@ -152,6 +179,8 @@ export interface JobSnapshot {
   attempts: number;
   /** File data sent so far when rsync updates the file; absent for whole-file copies. */
   deltaBytes?: number;
+  /** Two FTP servers sent the file straight to each other (FXP). */
+  direct?: boolean;
   /** Queued while its server is out of reach after a dropped connection. */
   reconnecting?: boolean;
 }
@@ -201,6 +230,8 @@ export interface TransferItem {
 
 export interface EnqueueRequest {
   sessionId: string;
+  /** The server a relay reads from. */
+  sourceSessionId?: string | null;
   direction: Direction;
   targetDirectory: string;
   items: TransferItem[];
@@ -307,6 +338,7 @@ export type AuthType = AuthMethod["type"];
 export interface SavedConnection {
   /** Empty for a connection not saved yet. */
   id: string;
+  protocol: Protocol;
   name: string;
   host: string;
   port: number;
@@ -318,6 +350,25 @@ export interface SavedConnection {
   saveSecret: boolean;
   /** Milliseconds since the Unix epoch. */
   lastUsed?: number | null;
+  ftpActive?: boolean;
+  bypassProxy?: boolean;
+  /** Another saved connection this one is reached through. */
+  jumpConnectionId?: string | null;
+}
+
+export interface CloudProviderStatus {
+  provider: CloudProvider;
+  /** An app to sign in with is set in Settings or built into this release. */
+  configured: boolean;
+  builtIn: boolean;
+}
+
+/** A finished browser sign-in, until it is saved with a connection or used to connect. */
+export interface SignedIn {
+  grantId: string;
+  provider: CloudProvider;
+  /** The account's email address or name. */
+  account: string;
 }
 
 export interface FontFamily {
@@ -335,7 +386,218 @@ export interface ThemeFile {
   error?: string;
 }
 
-export type FileLocation =
+/** Sent when the transfer queue runs out of work. */
+export interface QueueFinished {
+  done: number;
+  failed: number;
+  skipped: number;
+  bytes: number;
+  elapsedMillis: number;
+  /** Jobs still waiting because they are paused; the queue is not really finished. */
+  paused: number;
+}
+
+export type PowerAction = "lock" | "sleep" | "hibernate" | "logOff" | "shutDown";
+
+export interface CommandRequest {
+  /** Names this run for its output events and for stopping it. */
+  runId: string;
+  sessionId: string;
+  command: string;
+  /** The folder to run the command in; the login folder when absent. */
+  directory?: string | null;
+}
+
+export interface OutputChunk {
+  runId: string;
+  stream: "stdout" | "stderr";
+  text: string;
+}
+
+export interface CommandResult {
+  /** Absent when the server did not say, for example after a stop. */
+  exitStatus: number | null;
+  /** The signal that ended the command, if one did. */
+  signal: string | null;
+  stopped: boolean;
+  elapsedMillis: number;
+}
+
+export type Trigger =
+  /** Seconds since the Unix epoch. */
+  | { type: "once"; at: number }
+  /** From `start` (seconds since the Unix epoch), then every `minutes`. */
+  | { type: "every"; minutes: number; start: number }
+  /** At a local time of day on the chosen weekdays, Monday being 0. */
+  | { type: "daily"; minuteOfDay: number; weekdays: number[] };
+
+export type TaskAction =
+  | {
+      type: "sync";
+      connectionId: string;
+      localPath: string;
+      remotePath: string;
+      direction: SyncDirection;
+      compare: CompareMode;
+      deleteExtraneous: boolean;
+      skipNewerOnTarget: boolean;
+      ignoreExisting: boolean;
+      timeToleranceSecs: number;
+      excludes: string[];
+    }
+  | { type: "command"; connectionId: string; command: string; directory?: string | null };
+
+export interface LastRun {
+  /** Seconds since the Unix epoch. */
+  started: number;
+  finished: number;
+  succeeded: boolean;
+  message: string;
+}
+
+export interface ScheduledTask {
+  /** Empty for a task not saved yet. */
+  id: string;
+  name: string;
+  enabled: boolean;
+  trigger: Trigger;
+  action: TaskAction;
+  /** Runs once at the next start when Poros was closed at the time. */
+  runMissed: boolean;
+  /** Seconds since the Unix epoch. Worked out by the backend. */
+  nextRun?: number | null;
+  lastRun?: LastRun | null;
+}
+
+export interface TaskView extends ScheduledTask {
+  running: boolean;
+}
+
+/** Where files are: this computer or the server of a session. */
+export type FileLocation = { kind: "local" } | { kind: "remote"; sessionId: string };
+
+export type PlaceMode = "move" | "copy";
+/** Replace overwrites files and merges folders; keepBoth names the newcomer `name (2)`. */
+export type NameClash = "replace" | "skip" | "keepBoth";
+
+export interface MoveCopyRequest {
+  operationId: string;
+  location: FileLocation;
+  mode: PlaceMode;
+  sources: string[];
+  targetDirectory: string;
+  conflict: NameClash;
+}
+
+export type OperationMethod = "rename" | "copyData" | "command" | "stream" | "local";
+
+export interface OperationFailure {
+  path: string;
+  message: string;
+}
+
+export interface OperationSummary {
+  /** Where each moved or copied item is now. */
+  placed: string[];
+  skipped: number;
+  failures: OperationFailure[];
+  methods: OperationMethod[];
+}
+
+export interface OperationProgress {
+  operationId: string;
+  files: number;
+  bytes: number;
+  current?: string;
+}
+
+export interface FileDetails {
+  uid: number | null;
+  gid: number | null;
+  /** Seconds since the Unix epoch. */
+  accessed: number | null;
+  linkTarget?: string;
+}
+
+export interface FolderUsage {
+  files: number;
+  folders: number;
+  bytes: number;
+}
+
+/** Bits to turn on and off; the rest keep each entry's own value. */
+export interface ModeChange {
+  set: number;
+  clear: number;
+}
+
+export interface PermissionRequest {
+  operationId: string;
+  sessionId: string;
+  paths: string[];
+  files: ModeChange;
+  folders: ModeChange;
+  recursive: boolean;
+  /** A name or number; null keeps it. */
+  owner: string | null;
+  group: string | null;
+}
+
+export interface PermissionSummary {
+  changed: number;
+  skippedLinks: number;
+  failures: OperationFailure[];
+}
+
+export interface FileRef {
+  location: FileLocation;
+  path: string;
+}
+
+export interface CompareRequest {
+  operationId: string;
+  left: FileRef;
+  right: FileRef;
+  ignoreWhitespace: boolean;
+  ignoreCase: boolean;
+}
+
+export type CompareRowKind = "equal" | "changed" | "removed" | "added";
+export type LineEnding = "none" | "lf" | "crlf" | "mixed";
+
+/** Changes are `[start, end)` in string indexes; a changed row without any differs throughout. */
+export interface CompareRow {
+  kind: CompareRowKind;
+  left?: number;
+  right?: number;
+  leftChanges?: [number, number][];
+  rightChanges?: [number, number][];
+}
+
+export type CompareContent =
+  | {
+      kind: "text";
+      leftLines: string[];
+      rightLines: string[];
+      rows: CompareRow[];
+      added: number;
+      removed: number;
+      changed: number;
+      leftLineEnding: LineEnding;
+      rightLineEnding: LineEnding;
+    }
+  | { kind: "binary"; tooLarge: boolean };
+
+export interface Comparison {
+  leftSize: number;
+  rightSize: number;
+  /** Byte for byte the same. */
+  identical: boolean;
+  content: CompareContent;
+}
+
+/** A file the editor opens: on this computer or on the server of a session. */
+export type DocumentLocation =
   { side: "local"; path: string } | { side: "remote"; sessionId: string; path: string };
 
 export interface DocumentInfo {
@@ -347,7 +609,7 @@ export interface DocumentInfo {
 }
 
 export type TextEncoding = "utf8" | "utf8Bom" | "utf16Le" | "utf16Be" | "latin1";
-export type LineEnding = "lf" | "crlf";
+export type TextLineEnding = "lf" | "crlf";
 
 export interface FileStamp {
   size: number;
@@ -359,7 +621,7 @@ export interface TextDocument {
   /** Lines end in `\n` only; `lineEnding` says what the file uses. */
   text: string;
   encoding: TextEncoding;
-  lineEnding: LineEnding;
+  lineEnding: TextLineEnding;
   stamp: FileStamp;
 }
 
@@ -367,7 +629,7 @@ export interface SaveRequest {
   documentId: string;
   text: string;
   encoding: TextEncoding;
-  lineEnding: LineEnding;
+  lineEnding: TextLineEnding;
   /** The file as last read or saved; null overwrites whatever is there. */
   expected: FileStamp | null;
 }

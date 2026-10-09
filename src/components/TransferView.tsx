@@ -11,6 +11,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   ArrowDown,
   ArrowDownToLine,
+  ArrowLeftRight,
   ArrowUp,
   ArrowUpToLine,
   ClipboardCopy,
@@ -19,19 +20,25 @@ import {
   Play,
   RotateCw,
   Trash2,
+  type LucideIcon,
 } from "lucide-react";
 import { formatSize, formatSpeed } from "../lib/format";
 import { transfers } from "../lib/ipc";
 import { jobProgress, jobsIn, VIEW_STATES, type TransferViewKind } from "../lib/transfers";
-import type { JobSnapshot } from "../lib/types";
+import type { Direction, JobSnapshot } from "../lib/types";
 import { useTransferStore } from "../state/transferStore";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 
 const ROW_HEIGHT = 28;
 
+const DIRECTION_ICONS: Record<Direction, LucideIcon> = {
+  upload: ArrowUp,
+  download: ArrowDown,
+  relay: ArrowLeftRight,
+};
+
 const EMPTY_MESSAGES: Record<TransferViewKind, string> = {
-  queue:
-    "Drag files between a local and a server tab, or use Upload and Download in a file's menu.",
+  queue: "Drag files between tabs, or use Upload and Download in a file's menu.",
   failed: "Transfers that fail after their retries end up here.",
   completed: "Finished transfers are listed here.",
 };
@@ -46,6 +53,7 @@ function statusText(job: JobSnapshot): string {
       if (job.deltaBytes !== undefined) {
         return `Updating with rsync, ${formatSize(job.deltaBytes)} sent`;
       }
+      if (job.direct) return "Copying directly between the servers";
       return job.connections > 1
         ? `Transferring on ${job.connections} connections`
         : "Transferring";
@@ -54,6 +62,7 @@ function statusText(job: JobSnapshot): string {
     case "conflict":
       return "Already exists, waiting for your choice";
     case "done":
+      if (job.direct) return "Done, copied directly between the servers";
       return job.deltaBytes === undefined
         ? "Done"
         : `Done with rsync, sent ${formatSize(job.deltaBytes)} of ${formatSize(job.size)}`;
@@ -250,7 +259,7 @@ const TransferRow = memo(function TransferRow({
   onContextMenu,
 }: TransferRowProps) {
   const progress = jobProgress(job);
-  const DirectionIcon = job.direction === "upload" ? ArrowUp : ArrowDown;
+  const DirectionIcon = DIRECTION_ICONS[job.direction];
   const status = statusText(job);
   return (
     <div

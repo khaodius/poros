@@ -1,25 +1,35 @@
 import { useRef, useState, type FormEvent } from "react";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
-import { FolderOpen, Plus, Server } from "lucide-react";
+import { FolderOpen, Plus } from "lucide-react";
 import {
   EMPTY_DRAFT,
+  authChoicesFor,
+  canConnect,
+  connectionDetail,
   draftFromSaved,
   draftSecret,
   profileFromDraft,
   savedFromDraft,
+  withProtocol,
   type AuthChoice,
   type ConnectDraft,
 } from "../lib/connectDraft";
 import { toAppError } from "../lib/ipc";
+import { PROTOCOLS, isCloud, isFtp, protocolInfo } from "../lib/protocols";
+import type { Protocol } from "../lib/types";
 import { connectInTab } from "../state/connectActions";
 import { byRecentUse, useSavedConnections } from "../state/savedConnectionsStore";
+import { CloudSignIn } from "./CloudSignIn";
+import { ConnectionIcon } from "./ConnectionIcon";
+import { useSettingsStore } from "../state/settingsStore";
 import { Dialog } from "./Dialog";
 
-const AUTH_CHOICES: { value: AuthChoice; label: string }[] = [
-  { value: "password", label: "Password" },
-  { value: "publicKey", label: "Key file" },
-  { value: "agent", label: "SSH agent" },
-];
+const AUTH_LABELS: Record<AuthChoice, string> = {
+  password: "Password",
+  publicKey: "Key file",
+  agent: "SSH agent",
+  oauth: "Browser sign-in",
+};
 
 interface ConnectDialogProps {
   initialDraft: ConnectDraft;
@@ -43,6 +53,15 @@ export function ConnectDialog({
   const [needsPassphrase, setNeedsPassphrase] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const passphraseRef = useRef<HTMLInputElement>(null);
+  const proxy = useSettingsStore((state) => state.settings.connection.proxy);
+  const proxyEnabled = proxy.kind !== "none" && proxy.host.trim() !== "";
+  // Only SSH connections can carry a tunnel.
+  const jumpHosts = connections
+    .filter((connection) => connection.protocol === "sftp" && connection.id !== draft.savedId)
+    .sort((first, second) => first.name.localeCompare(second.name));
+  const jumpHostMissing =
+    draft.jumpConnectionId !== "" &&
+    !jumpHosts.some((connection) => connection.id === draft.jumpConnectionId);
 
   const update = <K extends keyof ConnectDraft>(key: K, value: ConnectDraft[K]) =>
     setDraft((current) => ({ ...current, [key]: value }));
@@ -54,12 +73,29 @@ export function ConnectDialog({
     setConfirmingDelete(false);
   };
 
-  const hasHost = draft.host.trim() !== "";
-  const canConnect =
-    hasHost &&
-    draft.username.trim() !== "" &&
-    (draft.authChoice !== "publicKey" || draft.keyPath.trim() !== "");
+  const changeProtocol = (protocol: Protocol) => {
+    setDraft((current) => withProtocol(current, protocol));
+    setError(null);
+    setNeedsPassphrase(false);
+  };
+
+  const sftp = draft.protocol === "sftp";
+  const cloud = isCloud(draft.protocol);
+  const ftp = isFtp(draft.protocol);
+  const authChoices = authChoicesFor(draft.protocol);
+  const ready = canConnect(draft);
+  const canSave = cloud ? ready : draft.host.trim() !== "";
+  const account =
+    draft.signedIn?.account ?? (draft.hasSavedSecret && draft.username ? draft.username : null);
   const secretLabel = draft.authChoice === "publicKey" ? "passphrase" : "password";
+  const namePlaceholder = cloud
+    ? `${protocolInfo(draft.protocol).label}${account ? ` (${account})` : ""}`
+    : draft.host.trim() || "Shown in saved connections";
+  const folderPlaceholder = cloud
+    ? "Top folder of the drive"
+    : ftp
+      ? "Login folder"
+      : "Home folder";
 
   const browseForKey = async () => {
     // No extension filter: OpenSSH keys such as `id_ed25519` have none.
@@ -74,19 +110,21 @@ export function ConnectDialog({
   /** Stores the draft as a saved connection; returns it with its id. */
   const store = async (): Promise<ConnectDraft> => {
     const secret = draftSecret(draft);
-    const saved = await saveConnection(savedFromDraft(draft), secret || null);
+    const grant = draft.signedIn?.grantId ?? null;
+    const saved = await saveConnection(savedFromDraft(draft), secret || null, grant);
     const stored = {
       ...draft,
       savedId: saved.id,
       name: saved.name,
-      hasSavedSecret: saved.saveSecret && (draft.hasSavedSecret || secret !== ""),
+      username: saved.username,
+      hasSavedSecret: saved.saveSecret && (draft.hasSavedSecret || secret !== "" || grant !== null),
     };
     setDraft(stored);
     return stored;
   };
 
   const saveOnly = async () => {
-    if (!hasHost || busy) return;
+    if (!canSave || busy) return;
     setBusy("saving");
     setError(null);
     try {
@@ -99,7 +137,7 @@ export function ConnectDialog({
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!canConnect || busy) return;
+    if (!ready || busy) return;
     setBusy("connecting");
     setError(null);
     let connectDraft = draft;
@@ -140,7 +178,7 @@ export function ConnectDialog({
   };
 
   return (
-    <Dialog title="Connect to server" onClose={onClose} width={800}>
+    <Dialog title="Connect" onClose={onClose} width={800}>
       <div className="site-manager">
         <aside className="site-list">
           <div className="site-list-header">
@@ -167,12 +205,10 @@ export function ConnectDialog({
                     onClick={() => select(draftFromSaved(connection))}
                     onDoubleClick={() => select(draftFromSaved(connection))}
                   >
-                    <Server size={14} />
+                    <ConnectionIcon protocol={connection.protocol} size={14} />
                     <span className="site-item-text">
                       <span className="site-item-name">{connection.name}</span>
-                      <span className="site-item-detail">
-                        {connection.username}@{connection.host}
-                      </span>
+                      <span className="site-item-detail">{connectionDetail(connection)}</span>
                     </span>
                   </button>
                 </li>
@@ -182,64 +218,100 @@ export function ConnectDialog({
         </aside>
 
         <form className="form site-form" onSubmit={submit}>
-          <label className="field">
-            <span>Name</span>
-            <input
-              value={draft.name}
-              placeholder={draft.host.trim() || "Shown in saved connections"}
-              spellCheck={false}
-              onChange={(event) => update("name", event.target.value)}
-            />
-          </label>
           <div className="form-row">
+            <label className="field protocol">
+              <span>Protocol</span>
+              <select
+                value={draft.protocol}
+                onChange={(event) => changeProtocol(event.target.value as Protocol)}
+              >
+                {PROTOCOLS.map((protocol) => (
+                  <option key={protocol.value} value={protocol.value}>
+                    {protocol.label}
+                  </option>
+                ))}
+              </select>
+            </label>
             <label className="field grow">
-              <span>Host</span>
+              <span>Name</span>
               <input
-                data-autofocus
-                value={draft.host}
-                placeholder="example.com"
+                value={draft.name}
+                placeholder={namePlaceholder}
                 spellCheck={false}
-                autoCapitalize="off"
-                onChange={(event) => update("host", event.target.value)}
-              />
-            </label>
-            <label className="field port">
-              <span>Port</span>
-              <input
-                value={draft.port}
-                inputMode="numeric"
-                onChange={(event) => update("port", event.target.value.replace(/\D/g, ""))}
+                onChange={(event) => update("name", event.target.value)}
               />
             </label>
           </div>
 
-          <label className="field">
-            <span>Username</span>
-            <input
-              value={draft.username}
-              spellCheck={false}
-              autoCapitalize="off"
-              onChange={(event) => update("username", event.target.value)}
-            />
-          </label>
-
-          <div className="field">
-            <span>Authentication</span>
-            <div className="segmented" role="radiogroup">
-              {AUTH_CHOICES.map((choice) => (
-                <button
-                  key={choice.value}
-                  type="button"
-                  role="radio"
-                  aria-checked={draft.authChoice === choice.value}
-                  className={draft.authChoice === choice.value ? "is-selected" : ""}
-                  onClick={() => update("authChoice", choice.value)}
-                >
-                  {choice.label}
-                </button>
-              ))}
+          {cloud ? (
+            <div className="field">
+              <span>Account</span>
+              <CloudSignIn
+                key={draft.protocol}
+                protocol={draft.protocol}
+                account={account}
+                onSignedIn={(signedIn) =>
+                  setDraft((current) => ({ ...current, signedIn, username: signedIn.account }))
+                }
+                onError={setError}
+              />
             </div>
-          </div>
+          ) : (
+            <>
+              <div className="form-row">
+                <label className="field grow">
+                  <span>Host</span>
+                  <input
+                    data-autofocus
+                    value={draft.host}
+                    placeholder="example.com"
+                    spellCheck={false}
+                    autoCapitalize="off"
+                    onChange={(event) => update("host", event.target.value)}
+                  />
+                </label>
+                <label className="field port">
+                  <span>Port</span>
+                  <input
+                    value={draft.port}
+                    inputMode="numeric"
+                    onChange={(event) => update("port", event.target.value.replace(/\D/g, ""))}
+                  />
+                </label>
+              </div>
+
+              <label className="field">
+                <span>Username</span>
+                <input
+                  value={draft.username}
+                  placeholder={ftp ? "anonymous" : ""}
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  onChange={(event) => update("username", event.target.value)}
+                />
+              </label>
+            </>
+          )}
+
+          {authChoices.length > 1 && (
+            <div className="field">
+              <span>Authentication</span>
+              <div className="segmented" role="radiogroup">
+                {authChoices.map((choice) => (
+                  <button
+                    key={choice}
+                    type="button"
+                    role="radio"
+                    aria-checked={draft.authChoice === choice}
+                    className={draft.authChoice === choice ? "is-selected" : ""}
+                    onClick={() => update("authChoice", choice)}
+                  >
+                    {AUTH_LABELS[choice]}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {draft.authChoice === "password" && (
             <label className="field">
@@ -297,11 +369,36 @@ export function ConnectDialog({
             <span>Remote folder (optional)</span>
             <input
               value={draft.initialPath}
-              placeholder="Home folder"
+              placeholder={folderPlaceholder}
               spellCheck={false}
               onChange={(event) => update("initialPath", event.target.value)}
             />
           </label>
+
+          {sftp && (
+            <label className="field">
+              <span>Jump host</span>
+              <select
+                value={draft.jumpConnectionId}
+                disabled={jumpHosts.length === 0 && !jumpHostMissing}
+                onChange={(event) => update("jumpConnectionId", event.target.value)}
+              >
+                <option value="">None, connect straight to the server</option>
+                {jumpHostMissing && (
+                  <option value={draft.jumpConnectionId}>A deleted connection</option>
+                )}
+                {jumpHosts.map((connection) => (
+                  <option key={connection.id} value={connection.id}>
+                    {connection.name}
+                  </option>
+                ))}
+              </select>
+              <small className="field-hint">
+                Logs in to this saved connection first and reaches the server through it, like
+                ProxyJump in OpenSSH.
+              </small>
+            </label>
+          )}
 
           <div className="checks">
             <label className="check">
@@ -310,17 +407,39 @@ export function ConnectDialog({
                 checked={draft.saveConnection}
                 onChange={(event) => update("saveConnection", event.target.checked)}
               />
-              Save this connection
+              {cloud ? "Save this connection and its sign-in" : "Save this connection"}
             </label>
-            <label className={`check ${draft.authChoice === "agent" ? "is-disabled" : ""}`}>
-              <input
-                type="checkbox"
-                checked={draft.authChoice !== "agent" && draft.saveSecret}
-                disabled={draft.authChoice === "agent"}
-                onChange={(event) => update("saveSecret", event.target.checked)}
-              />
-              Remember the {secretLabel} in the system keychain
-            </label>
+            {!cloud && (
+              <label className={`check ${draft.authChoice === "agent" ? "is-disabled" : ""}`}>
+                <input
+                  type="checkbox"
+                  checked={draft.authChoice !== "agent" && draft.saveSecret}
+                  disabled={draft.authChoice === "agent"}
+                  onChange={(event) => update("saveSecret", event.target.checked)}
+                />
+                Remember the {secretLabel} in the system keychain
+              </label>
+            )}
+            {ftp && (
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={draft.ftpActive}
+                  onChange={(event) => update("ftpActive", event.target.checked)}
+                />
+                Active mode: the server opens data connections to this computer
+              </label>
+            )}
+            {sftp && proxyEnabled && !draft.jumpConnectionId && (
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={draft.bypassProxy}
+                  onChange={(event) => update("bypassProxy", event.target.checked)}
+                />
+                Connect without the proxy
+              </label>
+            )}
           </div>
 
           {error && <p className="form-error">{error}</p>}
@@ -341,7 +460,7 @@ export function ConnectDialog({
             <button
               type="button"
               className="button"
-              disabled={!hasHost || busy !== null}
+              disabled={!canSave || busy !== null}
               onClick={() => void saveOnly()}
             >
               {busy === "saving" ? "Saving..." : "Save"}
@@ -349,7 +468,7 @@ export function ConnectDialog({
             <button
               type="submit"
               className="button button-primary"
-              disabled={!canConnect || busy !== null}
+              disabled={!ready || busy !== null}
             >
               {busy === "connecting" ? "Connecting..." : "Connect"}
             </button>

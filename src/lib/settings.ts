@@ -1,10 +1,10 @@
-// Mirrors src-tauri/src/settings.rs. The backend owns and clamps the transfer and connection
-// sections; the interface, appearance, log, sync and updates sections are stored as given, so
-// they are checked here.
+// Mirrors src-tauri/src/settings.rs. The backend owns and clamps the transfer, connection and
+// cloud sections; the interface, appearance, log, sync, updates and automation sections are
+// stored as given, so they are checked here.
 
 import { DETAIL_COLUMNS, type DetailColumn } from "./columns";
 import { SORT_KEYS, type SortSpec } from "./sort";
-import type { CompareMode, ExistsAction, LogLevel, SyncDirection } from "./types";
+import type { CompareMode, ExistsAction, LogLevel, PowerAction, SyncDirection } from "./types";
 
 export const MAX_WORKERS = 16;
 export const MAX_RECONNECT_MINUTES = 24 * 60;
@@ -44,6 +44,8 @@ export interface TransferSettings {
   deltaThresholdKib: number;
   /** The command that starts rsync on the server. */
   rsyncPath: string;
+  /** Copies between two FTP servers go directly from one to the other when both allow it. */
+  fxp: boolean;
 }
 
 export interface ConnectionSettings {
@@ -58,6 +60,35 @@ export interface ConnectionSettings {
   /** Lets the system size the TCP send buffer; off uses `sendBufferKib`. */
   autoTuneSendBuffer: boolean;
   sendBufferKib: number;
+  proxy: ProxySettings;
+}
+
+export type ProxyKind = "none" | "socks5" | "socks4" | "http";
+export const PROXY_KINDS: ProxyKind[] = ["none", "socks5", "socks4", "http"];
+
+/** The proxy every SFTP connection goes through unless it is set to connect directly. */
+export interface ProxySettings {
+  kind: ProxyKind;
+  host: string;
+  port: number;
+  username: string;
+  /** The password is in the system keychain. Only the backend changes this. */
+  hasPassword: boolean;
+  /** The proxy looks up server names, so this computer's DNS never sees them. */
+  remoteDns: boolean;
+}
+
+export function defaultProxyPort(kind: ProxyKind): number {
+  return kind === "http" ? 8080 : 1080;
+}
+
+/** The apps Poros signs in to cloud storage with; empty uses the one built into the release. */
+export interface CloudSettings {
+  googleClientId: string;
+  googleClientSecret: string;
+  microsoftClientId: string;
+  /** `common`, `consumers`, `organizations` or a directory (tenant) ID; empty means `common`. */
+  microsoftTenant: string;
 }
 
 export type DoubleClickAction = "transfer" | "edit" | "nothing";
@@ -120,14 +151,53 @@ export interface UpdateSettings {
   skippedVersion: string;
 }
 
+/** What happens when the transfer queue finishes: `close` quits Poros. */
+export type WhenDoneAction = "nothing" | "close" | PowerAction | "runCommand";
+export const WHEN_DONE_ACTIONS: WhenDoneAction[] = [
+  "nothing",
+  "close",
+  "lock",
+  "sleep",
+  "hibernate",
+  "logOff",
+  "shutDown",
+  "runCommand",
+];
+
+/** A command offered in the server's context menu. */
+export interface ServerCommand {
+  id: string;
+  name: string;
+  /** Run through the server's shell in the folder shown, with placeholders filled in. */
+  command: string;
+  /** Opens a window with the output; off runs it quietly and logs what it printed. */
+  showOutput: boolean;
+  /** Reloads the server's panes when the command finishes. */
+  refresh: boolean;
+}
+
+export interface AutomationSettings {
+  whenDone: WhenDoneAction;
+  /** Goes back to doing nothing after the action has happened once. */
+  whenDoneOnce: boolean;
+  /** Run on this computer for `runCommand`. */
+  whenDoneCommand: string;
+  notify: boolean;
+  notifyOnlyInBackground: boolean;
+  sound: boolean;
+  commands: ServerCommand[];
+}
+
 export interface Settings {
   transfers: TransferSettings;
   connection: ConnectionSettings;
+  cloud: CloudSettings;
   interface: InterfaceSettings;
   appearance: AppearanceSettings;
   log: LogSettings;
   sync: SyncSettings;
   updates: UpdateSettings;
+  automation: AutomationSettings;
 }
 
 export const FONT_SIZE_LIMITS = { min: 10, max: 20 };
@@ -166,6 +236,7 @@ export const DEFAULT_SETTINGS: Settings = {
     deltaTransfers: true,
     deltaThresholdKib: 1024,
     rsyncPath: "rsync",
+    fxp: true,
   },
   connection: {
     timeoutSecs: 20,
@@ -176,6 +247,20 @@ export const DEFAULT_SETTINGS: Settings = {
     receiveBufferKib: 128,
     autoTuneSendBuffer: true,
     sendBufferKib: 128,
+    proxy: {
+      kind: "none",
+      host: "",
+      port: 1080,
+      username: "",
+      hasPassword: false,
+      remoteDns: true,
+    },
+  },
+  cloud: {
+    googleClientId: "",
+    googleClientSecret: "",
+    microsoftClientId: "",
+    microsoftTenant: "",
   },
   interface: {
     doubleClickFile: "transfer",
@@ -217,6 +302,15 @@ export const DEFAULT_SETTINGS: Settings = {
     checkOnStart: true,
     skippedVersion: "",
   },
+  automation: {
+    whenDone: "nothing",
+    whenDoneOnce: true,
+    whenDoneCommand: "",
+    notify: true,
+    notifyOnlyInBackground: true,
+    sound: false,
+    commands: [],
+  },
 };
 
 type Section = Record<string, unknown>;
@@ -251,11 +345,13 @@ export function sanitizeSettings(stored: unknown): Settings {
   const settings: Settings = {
     transfers: mergeSection(DEFAULT_SETTINGS.transfers, source.transfers),
     connection: mergeSection(DEFAULT_SETTINGS.connection, source.connection),
+    cloud: mergeSection(DEFAULT_SETTINGS.cloud, source.cloud),
     interface: mergeSection(DEFAULT_SETTINGS.interface, source.interface),
     appearance: mergeSection(DEFAULT_SETTINGS.appearance, source.appearance),
     log: mergeSection(DEFAULT_SETTINGS.log, source.log),
     sync: mergeSection(DEFAULT_SETTINGS.sync, source.sync),
     updates: mergeSection(DEFAULT_SETTINGS.updates, source.updates),
+    automation: mergeSection(DEFAULT_SETTINGS.automation, source.automation),
   };
   const options = settings.interface;
   if (!DOUBLE_CLICK_ACTIONS.includes(options.doubleClickFile)) {
@@ -294,5 +390,38 @@ export function sanitizeSettings(stored: unknown): Settings {
     TIME_TOLERANCE_LIMITS.max,
   );
   settings.updates.skippedVersion = settings.updates.skippedVersion.trim();
+
+  const proxy = settings.connection.proxy;
+  if (!PROXY_KINDS.includes(proxy.kind)) proxy.kind = DEFAULT_SETTINGS.connection.proxy.kind;
+  if (!Number.isInteger(proxy.port) || proxy.port < 1 || proxy.port > 65535) {
+    proxy.port = defaultProxyPort(proxy.kind);
+  }
+
+  const automation = settings.automation;
+  if (!WHEN_DONE_ACTIONS.includes(automation.whenDone)) {
+    automation.whenDone = DEFAULT_SETTINGS.automation.whenDone;
+  }
+  automation.commands = sanitizeCommands(automation.commands);
   return settings;
+}
+
+/** Keeps each command that has one to run, with a unique id. */
+function sanitizeCommands(stored: unknown[]): ServerCommand[] {
+  const seen = new Set<string>();
+  return stored.flatMap((value, index) => {
+    const command = asSection(value);
+    if (typeof command.command !== "string" || command.command.trim() === "") return [];
+    let id = typeof command.id === "string" && command.id ? command.id : `command-${index + 1}`;
+    if (seen.has(id)) id = `${id}-${index + 1}`;
+    seen.add(id);
+    return [
+      {
+        id,
+        name: typeof command.name === "string" ? command.name : "",
+        command: command.command,
+        showOutput: typeof command.showOutput === "boolean" ? command.showOutput : true,
+        refresh: typeof command.refresh === "boolean" ? command.refresh : false,
+      },
+    ];
+  });
 }

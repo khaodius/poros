@@ -1,11 +1,13 @@
-//! Text files open in the editor. A document remembers where its file lives, and for a server
-//! file how to reach the server, so it still saves after its session was closed or dropped.
+//! Text files open in the editor. A document remembers where its file lives, and for a file on
+//! an SFTP server how to reach the server, so it still saves after its session was closed or
+//! dropped. Files on FTP servers and cloud drives go through their session.
 
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::UNIX_EPOCH;
 
+use bytes::Bytes;
 use futures::future;
 use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -13,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::events::{Events, LogLevel};
 use crate::format::format_size;
+use crate::protocol::{Protocol, RemoteFileSystem, RemoteStat, WriteRequest};
 use crate::remote_path;
 use crate::session::{self, RemoteTarget, SessionManager};
 use crate::sftp::{ReadChunk, RemoteFs};
@@ -279,8 +282,9 @@ impl EditorManager {
         Ok(SaveOutcome::Saved { stamp })
     }
 
-    /// Runs a request on the file's session, or on a connection of the document's own once
-    /// that session is closed or its connection has dropped.
+    /// Runs a request on the file's session. For an SFTP file it falls back to a connection of
+    /// the document's own once that session is closed or its connection has dropped; FTP
+    /// sessions reconnect by themselves and cloud drives have no connection to lose.
     async fn on_remote(
         &self,
         document: &Document,
@@ -289,11 +293,16 @@ impl EditorManager {
     ) -> AppResult<Reply> {
         let mut own = remote.own_connection.lock().await;
         if own.is_none() {
-            if let Ok(session) = self.sessions.get(&remote.target.session_id).await {
-                match perform(&session.fs, &document.path, &request).await {
-                    Err(error) if error.is_connection_lost() => {}
-                    result => return result,
-                }
+            match self.sessions.get(&remote.target.session_id).await {
+                Ok(session) => match session.sftp() {
+                    Ok(fs) => match perform(fs, &document.path, &request).await {
+                        Err(error) if error.is_connection_lost() => {}
+                        result => return result,
+                    },
+                    Err(_) => return perform_on(session.files(), &document.path, &request).await,
+                },
+                Err(error) if remote.target.protocol() != Protocol::Sftp => return Err(error),
+                Err(_) => {}
             }
         }
         if let Some(connection) = own
@@ -405,6 +414,58 @@ async fn perform(fs: &RemoteFs, path: &str, request: &Request<'_>) -> AppResult<
     }
 }
 
+/// The same requests through the file system every protocol shares, for FTP and cloud drives.
+async fn perform_on(
+    files: Arc<dyn RemoteFileSystem>,
+    path: &str,
+    request: &Request<'_>,
+) -> AppResult<Reply> {
+    match request {
+        Request::Stat => Ok(Reply {
+            stamp: files.stat(path).await?.map(remote_stamp),
+            ..Reply::default()
+        }),
+        Request::Read => {
+            let stat = existing_file(files.stat(path).await?, path)?;
+            let mut reader = files.open_read(path, 0..stat.size).await?;
+            let mut contents = Vec::new();
+            let read = async {
+                while let Some(data) = reader.next_chunk().await? {
+                    contents.extend_from_slice(&data);
+                    if contents.len() as u64 > MAX_FILE_BYTES {
+                        return Err(too_large(contents.len() as u64, path));
+                    }
+                }
+                Ok(())
+            }
+            .await;
+            let finished = reader.finish().await;
+            read.and(finished).map_err(|error| error.with_path(path))?;
+            Ok(Reply {
+                contents,
+                stamp: Some(remote_stamp(stat)),
+            })
+        }
+        Request::Write(contents) => {
+            let mut writer = files
+                .open_write(WriteRequest {
+                    path: path.to_string(),
+                    offset: 0,
+                    size: contents.len() as u64,
+                    modified: None,
+                    permissions: None,
+                })
+                .await?;
+            let written = writer.write(Bytes::copy_from_slice(contents)).await;
+            let finished = writer.finish().await;
+            written
+                .and(finished)
+                .map_err(|error| error.with_path(path))?;
+            Ok(Reply::default())
+        }
+    }
+}
+
 async fn release(document: &Document) {
     if let Origin::Remote(remote) = &document.origin {
         if let Some(connection) = remote.own_connection.lock().await.take() {
@@ -438,7 +499,21 @@ fn local_stamp(metadata: &std::fs::Metadata) -> FileStamp {
     }
 }
 
-fn remote_stamp(stat: crate::sftp::RemoteStat) -> FileStamp {
+/// A file the editor can open, from what a stat found at its path.
+fn existing_file(stat: Option<RemoteStat>, path: &str) -> AppResult<RemoteStat> {
+    let stat = stat.ok_or_else(|| {
+        AppError::new(ErrorKind::NotFound, "The file no longer exists").with_path(path)
+    })?;
+    if stat.is_dir {
+        return Err(not_a_file(path));
+    }
+    if stat.size > MAX_FILE_BYTES {
+        return Err(too_large(stat.size, path));
+    }
+    Ok(stat)
+}
+
+fn remote_stamp(stat: RemoteStat) -> FileStamp {
     FileStamp {
         size: stat.size,
         modified: stat.modified.map(|seconds| seconds * 1000),
@@ -486,15 +561,7 @@ fn save_local(path: &str, contents: &[u8], expected: Option<FileStamp>) -> AppRe
 }
 
 async fn read_remote(fs: &RemoteFs, path: &str) -> AppResult<(Vec<u8>, FileStamp)> {
-    let stat = fs.stat(path).await?.ok_or_else(|| {
-        AppError::new(ErrorKind::NotFound, "The file no longer exists").with_path(path)
-    })?;
-    if stat.is_dir {
-        return Err(not_a_file(path));
-    }
-    if stat.size > MAX_FILE_BYTES {
-        return Err(too_large(stat.size, path));
-    }
+    let stat = existing_file(fs.stat(path).await?, path)?;
     let handle = fs.open_for_read(path).await?;
     let result = read_open_file(fs, &handle, path).await;
     let _ = fs.close_handle(handle).await;

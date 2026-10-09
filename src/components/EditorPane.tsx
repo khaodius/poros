@@ -34,7 +34,7 @@ import { languageFor } from "../lib/editorLanguage";
 import { editorTheme, syntaxColors } from "../lib/editorTheme";
 import { editor, toAppError } from "../lib/ipc";
 import type { EditorTab } from "../lib/layout";
-import type { FileStamp, LineEnding, TextEncoding } from "../lib/types";
+import type { FileStamp, TextLineEnding, TextEncoding } from "../lib/types";
 import { registerEditor, useUnsavedStore } from "../state/editorRegistry";
 import { useLayoutStore } from "../state/layoutStore";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -48,7 +48,7 @@ interface EditorPaneProps {
 
 interface Format {
   encoding: TextEncoding;
-  lineEnding: LineEnding;
+  lineEnding: TextLineEnding;
 }
 
 /** The file as last read or saved; `doc` is null when this window never saw it saved. */
@@ -63,7 +63,7 @@ const ENCODING_LABELS: Record<TextEncoding, string> = {
   utf16Be: "UTF-16 BE",
   latin1: "Latin-1",
 };
-const LINE_ENDING_LABELS: Record<LineEnding, string> = { lf: "LF", crlf: "CRLF" };
+const LINE_ENDING_LABELS: Record<TextLineEnding, string> = { lf: "LF", crlf: "CRLF" };
 const WRAP_STORAGE_KEY = "poros.editor.wrap";
 
 function rememberedWrap(): boolean {
@@ -331,7 +331,7 @@ export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
       onSelect: () => changeFormat({ encoding }),
     }));
   const lineEndingMenu = () =>
-    (Object.keys(LINE_ENDING_LABELS) as LineEnding[]).map((lineEnding): MenuItem => ({
+    (Object.keys(LINE_ENDING_LABELS) as TextLineEnding[]).map((lineEnding): MenuItem => ({
       label: lineEnding === "lf" ? "LF (Linux, macOS)" : "CRLF (Windows)",
       checked: format.lineEnding === lineEnding,
       onSelect: () => changeFormat({ lineEnding }),

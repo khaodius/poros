@@ -113,6 +113,7 @@ pub async fn probe(channel: Channel<Msg>, rsync_path: &str) -> AppResult<Option<
         Ok(Ok(CommandOutput {
             exit_status: Some(0),
             output,
+            ..
         })) => protocol_version(&String::from_utf8_lossy(&output)),
         Ok(Err(error)) => return Err(error),
         _ => None,

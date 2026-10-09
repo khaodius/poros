@@ -1,19 +1,19 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { editor, toAppError } from "../lib/ipc";
 import { allTabs, editorTab, findTab, type EditorTab, type PaneTab } from "../lib/layout";
-import type { FileLocation } from "../lib/types";
+import type { DocumentLocation } from "../lib/types";
 import { getEditor, useUnsavedStore } from "./editorRegistry";
 import { useLayoutStore } from "./layoutStore";
 import { useToastStore } from "./toastStore";
 import { useUiStore } from "./uiStore";
 
-function sameFile(tab: PaneTab, location: FileLocation): tab is EditorTab {
+function sameFile(tab: PaneTab, location: DocumentLocation): tab is EditorTab {
   if (tab.kind !== "editor" || tab.path !== location.path) return false;
   return location.side === "remote" ? tab.sessionId === location.sessionId : !tab.sessionId;
 }
 
 /** Opens a file in an editor tab in the given group, or shows the tab already editing it. */
-export async function openInEditor(location: FileLocation, groupId?: string): Promise<void> {
+export async function openInEditor(location: DocumentLocation, groupId?: string): Promise<void> {
   const open = allTabs(useLayoutStore.getState().root).find((tab) => sameFile(tab, location));
   if (open) {
     useLayoutStore.getState().activateTab(open.id);

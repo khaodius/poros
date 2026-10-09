@@ -1,6 +1,7 @@
 import { useState, type MouseEvent } from "react";
 import {
   AppWindow,
+  Cloud,
   Columns2,
   CornerUpLeft,
   Plus,
@@ -10,6 +11,7 @@ import {
   XSquare,
 } from "lucide-react";
 import { welcomeTab, type GroupNode, type PaneTab } from "../lib/layout";
+import { isCloud } from "../lib/protocols";
 import { beginDrag, isLifted, tabDrag, useDragStore } from "../state/dragStore";
 import { useUnsavedStore } from "../state/editorRegistry";
 import { useLayoutStore } from "../state/layoutStore";
@@ -51,7 +53,8 @@ export function TabBar({ group }: { group: GroupNode }) {
   const menuItems = (tab: PaneTab): MenuItem[] => {
     const others = group.tabs.filter((other) => other.id !== tab.id);
     return [
-      ...(tab.kind === "remote"
+      ...(tab.kind === "remote" &&
+      useSessionStore.getState().sessions[tab.sessionId]?.info.protocol === "sftp"
         ? [
             {
               label: "Open terminal",
@@ -162,7 +165,11 @@ function TabButton({
     tab.kind === "remote" ? state.sessions[tab.sessionId]?.status !== "connected" : false,
   );
   const unsaved = useUnsavedStore((state) => Boolean(state.tabs[tab.id]));
-  const Icon = TAB_ICONS[tab.kind];
+  const cloud = useSessionStore((state) => {
+    const protocol = tab.kind === "remote" ? state.sessions[tab.sessionId]?.info.protocol : null;
+    return protocol ? isCloud(protocol) : false;
+  });
+  const Icon = cloud ? Cloud : TAB_ICONS[tab.kind];
 
   return (
     <div

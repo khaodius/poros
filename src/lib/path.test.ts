@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { breadcrumbs, parseHostInput, stemLength } from "./path";
+import { baseName, breadcrumbs, isWithin, parseHostInput, samePath, stemLength } from "./path";
 
 describe("breadcrumbs", () => {
   it("splits POSIX paths from the root", () => {
@@ -45,9 +45,12 @@ describe("parseHostInput", () => {
     ["deploy@example.com:2222", { host: "example.com", username: "deploy", port: 2222 }],
     [
       "sftp://deploy@example.com:2222/var/www",
-      { host: "example.com", username: "deploy", port: 2222, path: "/var/www" },
+      { host: "example.com", username: "deploy", port: 2222, path: "/var/www", protocol: "sftp" },
     ],
-    ["SSH://example.com", { host: "example.com" }],
+    ["SSH://example.com", { host: "example.com", protocol: "sftp" }],
+    ["ftp://files.example.com/pub", { host: "files.example.com", path: "/pub", protocol: "ftp" }],
+    ["ftpes://example.com", { host: "example.com", protocol: "ftps" }],
+    ["FTPS://example.com:990", { host: "example.com", port: 990, protocol: "ftpsImplicit" }],
     ["user%40corp@example.com", { host: "example.com", username: "user@corp" }],
     ["broken%zz@example.com", { host: "example.com", username: "broken%zz" }],
     ["[2001:db8::1]:2200", { host: "2001:db8::1", port: 2200 }],
@@ -58,7 +61,31 @@ describe("parseHostInput", () => {
       username: undefined,
       port: undefined,
       path: undefined,
+      protocol: undefined,
       ...expected,
     });
+  });
+});
+
+describe("comparing paths", () => {
+  it("names the last part of a path", () => {
+    expect(baseName("/srv/www/")).toBe("www");
+    expect(baseName("C:\\Users\\poros")).toBe("poros");
+    expect(baseName("/")).toBe("/");
+  });
+
+  it("ignores trailing separators, and case and slashes on Windows", () => {
+    expect(samePath("/srv/www/", "/srv/www", "posix")).toBe(true);
+    expect(samePath("/srv/WWW", "/srv/www", "posix")).toBe(false);
+    expect(samePath("/", "/", "posix")).toBe(true);
+    expect(samePath("C:\\Users\\", "c:/users", "windows")).toBe(true);
+  });
+
+  it("finds paths inside a folder but not beside it", () => {
+    expect(isWithin("/srv/www/site", "/srv/www", "posix")).toBe(true);
+    expect(isWithin("/srv/www", "/srv/www/", "posix")).toBe(true);
+    expect(isWithin("/srv/www-old", "/srv/www", "posix")).toBe(false);
+    expect(isWithin("/home", "/", "posix")).toBe(true);
+    expect(isWithin("D:\\Data\\x", "d:\\data", "windows")).toBe(true);
   });
 });

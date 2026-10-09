@@ -1,14 +1,18 @@
-//! End-to-end tests of the editor and the terminal against a real SSH server, set up as
-//! `sftp_server.rs` describes. Skipped unless `POROS_TEST_SSH_PORT` is set.
+//! End-to-end tests of the editor and the terminal against real servers, set up as
+//! `sftp_server.rs` and `ftp_server.rs` describe. The SSH tests are skipped unless
+//! `POROS_TEST_SSH_PORT` is set, the FTP test unless `POROS_TEST_FTP_PORT` is.
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use bytes::Bytes;
 use poros_lib::editor::{EditorManager, FileLocation, SaveOutcome, SaveRequest};
+use poros_lib::error::ErrorKind;
 use poros_lib::events::Events;
+use poros_lib::protocol::{Protocol, RemoteFileSystem, WriteRequest};
 use poros_lib::session::SessionManager;
 use poros_lib::sftp::RemoteFs;
-use poros_lib::ssh::{AuthMethod, ConnectProfile, HostKeyApproval};
+use poros_lib::ssh::{AuthMethod, ConnectProfile, HostKeyApproval, Route};
 use poros_lib::terminal::{Sink, TerminalEvent, TerminalManager};
 use poros_lib::text::{LineEnding, TextEncoding};
 
@@ -16,13 +20,23 @@ const OWNER: &str = "main";
 const WAIT: Duration = Duration::from_secs(15);
 
 fn profile() -> Option<ConnectProfile> {
-    let port = std::env::var("POROS_TEST_SSH_PORT").ok()?.parse().ok()?;
+    server_profile(Protocol::Sftp, "POROS_TEST_SSH_PORT", "POROS_TEST_SSH")
+}
+
+fn ftp_profile() -> Option<ConnectProfile> {
+    server_profile(Protocol::Ftp, "POROS_TEST_FTP_PORT", "POROS_TEST_FTP")
+}
+
+/// The test server named by `port_variable`, logging in as `{prefix}_USER`.
+fn server_profile(protocol: Protocol, port_variable: &str, prefix: &str) -> Option<ConnectProfile> {
+    let port = std::env::var(port_variable).ok()?.parse().ok()?;
     Some(ConnectProfile {
+        protocol,
         host: "127.0.0.1".into(),
         port,
-        username: std::env::var("POROS_TEST_SSH_USER").unwrap_or_else(|_| "poros".into()),
+        username: std::env::var(format!("{prefix}_USER")).unwrap_or_else(|_| "poros".into()),
         auth: AuthMethod::Password {
-            password: std::env::var("POROS_TEST_SSH_PASSWORD")
+            password: std::env::var(format!("{prefix}_PASSWORD"))
                 .unwrap_or_else(|_| "poros-pass".into()),
         },
         initial_path: None,
@@ -32,6 +46,10 @@ fn profile() -> Option<ConnectProfile> {
         receive_buffer_kib: None,
         send_buffer_kib: None,
         saved_connection_id: None,
+        ftp_active: false,
+        bypass_proxy: false,
+        jump_connection_id: None,
+        route: Route::default(),
     })
 }
 
@@ -100,8 +118,9 @@ async fn server_files_edit_save_and_survive_a_closed_session() {
     let Some(profile) = profile() else { return };
     let (_temp_dir, sessions, session_id) = connect(&profile).await;
     let session = sessions.get(&session_id).await.unwrap();
-    let path = format!("{}/editor-{}.conf", session.fs.home, uuid::Uuid::new_v4());
-    write_file(&session.fs, &path, b"listen 80;\r\nroot /srv;\r\n").await;
+    let fs = session.sftp().unwrap().clone();
+    let path = format!("{}/editor-{}.conf", fs.home, uuid::Uuid::new_v4());
+    write_file(&fs, &path, b"listen 80;\r\nroot /srv;\r\n").await;
 
     let editor = EditorManager::new(sessions.clone(), Events::default());
     let location = FileLocation::Remote {
@@ -126,22 +145,22 @@ async fn server_files_edit_save_and_survive_a_closed_session() {
         panic!("the first save should go through");
     };
     assert_eq!(
-        read_file(&session.fs, &path).await,
+        read_file(&fs, &path).await,
         b"listen 443;\r\nroot /srv;\r\n"
     );
 
-    write_file(&session.fs, &path, b"edited on the server meanwhile\n").await;
+    write_file(&fs, &path, b"edited on the server meanwhile\n").await;
     let outcome = editor
         .save(save_request(&info.id, "mine\n", Some(stamp)))
         .await
         .unwrap();
     assert!(matches!(outcome, SaveOutcome::Changed { current: Some(_) }));
     assert_eq!(
-        read_file(&session.fs, &path).await,
+        read_file(&fs, &path).await,
         b"edited on the server meanwhile\n"
     );
 
-    drop(session);
+    drop((session, fs));
     sessions.disconnect(&session_id).await.unwrap();
     let outcome = editor
         .save(save_request(&info.id, "saved after the tab closed\n", None))
@@ -151,13 +170,98 @@ async fn server_files_edit_save_and_survive_a_closed_session() {
 
     let (_check_dir, check_sessions, check_id) = connect(&profile).await;
     let check = check_sessions.get(&check_id).await.unwrap();
+    let check_fs = check.sftp().unwrap();
     assert_eq!(
-        read_file(&check.fs, &path).await,
+        read_file(check_fs, &path).await,
         b"saved after the tab closed\r\n"
     );
-    check.fs.delete(std::slice::from_ref(&path)).await.unwrap();
+    check_fs.delete(std::slice::from_ref(&path)).await.unwrap();
     editor.close(&info.id).await;
     check_sessions.disconnect_all().await;
+}
+
+async fn write_through(files: &Arc<dyn RemoteFileSystem>, path: &str, contents: &[u8]) {
+    let mut writer = files
+        .clone()
+        .open_write(WriteRequest {
+            path: path.to_string(),
+            offset: 0,
+            size: contents.len() as u64,
+            modified: None,
+            permissions: None,
+        })
+        .await
+        .unwrap();
+    writer
+        .write(Bytes::copy_from_slice(contents))
+        .await
+        .unwrap();
+    writer.finish().await.unwrap();
+}
+
+async fn read_through(files: &Arc<dyn RemoteFileSystem>, path: &str) -> Vec<u8> {
+    let size = files.stat(path).await.unwrap().unwrap().size;
+    let mut reader = files.clone().open_read(path, 0..size).await.unwrap();
+    let mut contents = Vec::new();
+    while let Some(data) = reader.next_chunk().await.unwrap() {
+        contents.extend_from_slice(&data);
+    }
+    reader.finish().await.unwrap();
+    contents
+}
+
+#[tokio::test]
+async fn ftp_files_edit_and_save_through_their_session() {
+    let Some(profile) = ftp_profile() else { return };
+    let (_temp_dir, sessions, session_id) = connect(&profile).await;
+    let files = sessions.get(&session_id).await.unwrap().files();
+    let path = format!("{}/editor-{}.txt", files.home(), uuid::Uuid::new_v4());
+    write_through(&files, &path, b"first\r\nsecond\r\n").await;
+
+    let editor = EditorManager::new(sessions.clone(), Events::default());
+    let location = FileLocation::Remote {
+        session_id: session_id.clone(),
+        path: path.clone(),
+    };
+    let info = editor.open(location, OWNER).await.unwrap();
+    let document = editor.load(&info.id, OWNER).await.unwrap();
+    assert_eq!(document.text, "first\nsecond\n");
+    assert_eq!(document.line_ending, LineEnding::Crlf);
+
+    let saved = editor
+        .save(save_request(
+            &info.id,
+            "first\nthird\n",
+            Some(document.stamp),
+        ))
+        .await
+        .unwrap();
+    let SaveOutcome::Saved { stamp } = saved else {
+        panic!("the first save should go through");
+    };
+    assert_eq!(read_through(&files, &path).await, b"first\r\nthird\r\n");
+
+    write_through(&files, &path, b"edited on the server meanwhile\n").await;
+    let outcome = editor
+        .save(save_request(&info.id, "mine\n", Some(stamp)))
+        .await
+        .unwrap();
+    assert!(matches!(outcome, SaveOutcome::Changed { current: Some(_) }));
+    assert_eq!(
+        read_through(&files, &path).await,
+        b"edited on the server meanwhile\n"
+    );
+
+    let terminals = TerminalManager::new(sessions.clone(), Events::default());
+    let refused = terminals
+        .open(&session_id, 80, 24, Screen::default().sink(), OWNER)
+        .await
+        .unwrap_err();
+    assert_eq!(refused.kind, ErrorKind::Unsupported);
+
+    files.delete(std::slice::from_ref(&path)).await.unwrap();
+    editor.close(&info.id).await;
+    sessions.disconnect_all().await;
 }
 
 /// Collects a terminal's output and tells when text shows up in it.

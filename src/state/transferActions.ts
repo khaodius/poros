@@ -17,12 +17,15 @@ function transferable(entries: FileEntry[]): TransferItem[] {
     }));
 }
 
+const VERBS: Record<Direction, string> = { upload: "upload", download: "download", relay: "copy" };
+
 async function enqueue(
   direction: Direction,
   sessionId: string,
   items: TransferItem[],
   folder: string,
   where: string,
+  sourceSessionId?: string,
 ): Promise<void> {
   const showToast = useToastStore.getState().show;
   if (items.length === 0) {
@@ -30,17 +33,24 @@ async function enqueue(
     return;
   }
   try {
-    await transfers.enqueue({ sessionId, direction, targetDirectory: folder, items });
-    const verb = direction === "upload" ? "upload" : "download";
-    useLogStore
-      .getState()
-      .write("info", `Queued ${verb} of ${pluralize(items.length, "item")} to ${where}`, sessionId);
+    await transfers.enqueue({
+      sessionId,
+      sourceSessionId: sourceSessionId ?? null,
+      direction,
+      targetDirectory: folder,
+      items,
+    });
+    const summary = `Queued ${VERBS[direction]} of ${pluralize(items.length, "item")} to ${where}`;
+    useLogStore.getState().write("info", summary, sessionId);
   } catch (caught) {
     showToast("error", toAppError(caught).message);
   }
 }
 
-/** Queues entries from one pane into a folder of another; the panes decide the direction. */
+/**
+ * Queues entries from one pane into a folder of another; the panes decide the direction. Between
+ * two servers the files are copied directly when both allow it, or stream through Poros.
+ */
 export async function transferBetween(
   source: PaneHandle,
   entries: FileEntry[],
@@ -60,8 +70,20 @@ export async function transferBetween(
     );
   } else if (source.kind === "remote" && target.kind === "local" && source.sessionId) {
     await enqueue("download", source.sessionId, transferable(entries), targetFolder, targetFolder);
-  } else if (source.kind === "remote" && target.kind === "remote") {
-    showToast("info", "Copying straight from one server to another is not supported yet.");
+  } else if (
+    source.kind === "remote" &&
+    target.kind === "remote" &&
+    source.sessionId &&
+    target.sessionId
+  ) {
+    await enqueue(
+      "relay",
+      target.sessionId,
+      transferable(entries),
+      targetFolder,
+      `${target.label}:${targetFolder}`,
+      source.sessionId,
+    );
   } else {
     showToast("info", "Drop local files on a server tab to upload them.");
   }
@@ -117,6 +139,7 @@ export async function uploadDroppedPaths(
       label: "Local",
       path: () => null,
       refresh: () => undefined,
+      selected: () => [],
       visible: false,
       activatedAt: 0,
     };

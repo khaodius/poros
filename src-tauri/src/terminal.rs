@@ -13,6 +13,7 @@ use tokio::sync::mpsc;
 
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::events::{Events, LogLevel};
+use crate::protocol::Protocol;
 use crate::session::{RemoteTarget, SessionManager};
 use crate::ssh::{self, SshHandle};
 
@@ -101,6 +102,13 @@ impl TerminalManager {
         owner: &str,
     ) -> AppResult<TerminalInfo> {
         let target = self.sessions.get(session_id).await?.target();
+        if target.protocol() != Protocol::Sftp {
+            return Err(AppError::unsupported(format!(
+                "Terminals need an SSH connection; {} uses {}",
+                target.label,
+                target.protocol().display_name()
+            )));
+        }
         let terminal = Arc::new(Terminal {
             id: uuid::Uuid::new_v4().to_string(),
             target,

@@ -1,14 +1,20 @@
+pub mod automation;
 pub mod checksum;
+pub mod cloud;
 pub mod commands;
 pub mod connections;
 pub mod editor;
 pub mod error;
 pub mod events;
+pub mod file_ops;
 pub mod fonts;
 pub mod format;
+pub mod ftp;
 pub mod local;
 pub mod model;
+pub mod protocol;
 pub mod remote_path;
+pub mod route;
 pub mod rsync;
 pub mod session;
 pub mod settings;
@@ -19,6 +25,8 @@ pub mod sync;
 pub mod terminal;
 pub mod text;
 pub mod themes;
+pub mod timestamp;
+pub mod tls;
 pub mod transfer;
 
 use std::sync::Arc;
@@ -27,10 +35,14 @@ use std::time::Duration;
 use tauri::webview::PageLoadEvent;
 use tauri::{Manager, RunEvent, WindowEvent};
 
+use automation::remote_command::CommandRunner;
+use automation::scheduler::Scheduler;
+use cloud::OAuthVault;
 use commands::PendingWindows;
 use connections::{ConnectionStore, Keychain};
 use editor::EditorManager;
 use events::Events;
+use file_ops::FileOperations;
 use session::SessionManager;
 use settings::SettingsStore;
 use sync::SyncManager;
@@ -50,6 +62,7 @@ const ADOPTION_GRACE: Duration = Duration::from_secs(5);
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
@@ -60,22 +73,44 @@ pub fn run() {
                 config_dir.join("known_hosts"),
                 events.clone(),
             ));
+            let connections = Arc::new(ConnectionStore::new(
+                config_dir.join("connections.json"),
+                Box::new(Keychain),
+            ));
+            let store = connections.clone();
+            sessions.set_secret_sink(Arc::new(move |id: &str, secret: &str| {
+                let (store, id, secret) = (store.clone(), id.to_string(), secret.to_string());
+                tauri::async_runtime::spawn_blocking(move || {
+                    if let Err(error) = store.update_secret(&id, &secret) {
+                        log::warn!("Could not keep the renewed sign-in: {}", error.message);
+                    }
+                });
+            }));
             let transfers =
                 TransferManager::new(sessions.clone(), events.clone(), settings.get().transfers);
+            let (handle, store) = (app.handle().clone(), connections.clone());
+            transfers.resolve_routes_with(Arc::new(move |profile| {
+                let settings = handle.state::<SettingsStore>().get().connection;
+                route::resolve(profile, &settings, &store)
+            }));
             transfers.keep_queue_in(config_dir.join("transfers.json"));
             app.manage(transfers);
             app.manage(SyncManager::new(sessions.clone(), events.clone()));
             app.manage(EditorManager::new(sessions.clone(), events.clone()));
             app.manage(TerminalManager::new(sessions.clone(), events.clone()));
+            app.manage(CommandRunner::new(sessions.clone(), events.clone()));
+            app.manage(FileOperations::new(sessions.clone(), events.clone()));
             app.manage(sessions);
             app.manage(settings);
-            app.manage(Arc::new(ConnectionStore::new(
-                config_dir.join("connections.json"),
-                Box::new(Keychain),
-            )));
+            app.manage(connections);
+            app.manage(OAuthVault::default());
             app.manage(ThemeStore::new(config_dir.join("themes")));
             app.manage(PendingWindows::default());
+            // Last, since tasks take everything above from the app's state.
+            let scheduler = Scheduler::load(config_dir.join("schedules.json"), events.clone());
             app.manage(events);
+            scheduler.start(app.handle().clone());
+            app.manage(scheduler);
             Ok(())
         })
         .on_page_load(|webview, payload| {
@@ -125,6 +160,13 @@ pub fn run() {
             commands::remote_mkdir,
             commands::remote_rename,
             commands::remote_delete,
+            commands::files_conflicts,
+            commands::files_move_or_copy,
+            commands::files_cancel,
+            commands::files_details,
+            commands::files_measure,
+            commands::files_set_permissions,
+            commands::files_compare,
             commands::transfer_enqueue,
             commands::transfer_list,
             commands::transfer_set_paused,
@@ -143,9 +185,13 @@ pub fn run() {
             commands::sync_run,
             commands::settings_get,
             commands::settings_set,
+            commands::proxy_password_set,
             commands::connections_list,
             commands::connections_save,
             commands::connections_delete,
+            commands::cloud_providers,
+            commands::cloud_sign_in,
+            commands::cloud_cancel_sign_in,
             commands::themes_list,
             commands::theme_save,
             commands::theme_delete,
@@ -164,6 +210,15 @@ pub fn run() {
             commands::terminal_restart,
             commands::terminal_close,
             commands::save_text_file,
+            commands::remote_command_run,
+            commands::remote_command_stop,
+            commands::power_action,
+            commands::local_command_run,
+            commands::app_exit,
+            commands::schedules_list,
+            commands::schedule_save,
+            commands::schedule_delete,
+            commands::schedule_run_now,
             commands::window_open,
             commands::window_initial_layout,
             commands::app_restart,

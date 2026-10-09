@@ -10,9 +10,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use poros_lib::events::Events;
+use poros_lib::protocol::Protocol;
 use poros_lib::session::{SessionInfo, SessionManager};
 use poros_lib::settings::TransferSettings;
-use poros_lib::ssh::{AuthMethod, ConnectProfile, HostKeyApproval};
+use poros_lib::ssh::{AuthMethod, ConnectProfile, HostKeyApproval, Route};
 use poros_lib::transfer::{
     Direction, EnqueueRequest, ExistsAction, JobState, TransferItem, TransferManager,
 };
@@ -30,6 +31,7 @@ fn profile() -> ConnectProfile {
         .parse()
         .expect("POROS_TEST_SSH_PORT is not a port number");
     ConnectProfile {
+        protocol: Protocol::Sftp,
         host: std::env::var("POROS_BENCH_HOST").unwrap_or_else(|_| "127.0.0.1".into()),
         port,
         username: std::env::var("POROS_TEST_SSH_USER").unwrap_or_else(|_| "poros".into()),
@@ -44,6 +46,10 @@ fn profile() -> ConnectProfile {
         receive_buffer_kib: None,
         send_buffer_kib: None,
         saved_connection_id: None,
+        ftp_active: false,
+        bypass_proxy: false,
+        jump_connection_id: None,
+        route: Route::default(),
     }
 }
 
@@ -118,6 +124,7 @@ async fn run(
     transfers
         .enqueue(EnqueueRequest {
             session_id: session.id.clone(),
+            source_session_id: None,
             direction,
             target_directory: target.to_string(),
             items: vec![source],
@@ -159,7 +166,8 @@ async fn main() {
         Events::default(),
     ));
     let session = connect(&manager).await;
-    let fs = &manager.get(&session.id).await.unwrap().fs;
+    let browsing = manager.get(&session.id).await.unwrap();
+    let fs = browsing.sftp().unwrap();
 
     let local = tempfile::tempdir().unwrap();
     let source = local.path().join("workload");

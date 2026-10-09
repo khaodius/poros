@@ -1,29 +1,41 @@
-import { Ban, Download, File, Folder, Upload } from "lucide-react";
+import {
+  ArrowLeftRight,
+  Ban,
+  Copy,
+  Download,
+  File,
+  Folder,
+  FolderInput,
+  Upload,
+} from "lucide-react";
+import { baseName } from "../lib/path";
 import { isDirLike } from "../lib/sort";
 import { useDragStore, type DragPayload, type DropTarget } from "../state/dragStore";
-import { getPane } from "../state/paneRegistry";
+import { dropAction } from "../state/fileOperations";
 import { TAB_ICONS } from "./tabIcons";
 
 const POINTER_OFFSET = { x: 14, y: 12 };
 
 type Hint = { icon: typeof Upload; text: string; blocked?: boolean };
 
-function hintFor(payload: DragPayload, target: DropTarget | null): Hint | null {
-  if (!target) return null;
-  if (payload.kind !== "files" || target.kind !== "pane") return null;
-  const source = getPane(payload.sourceTabId);
-  const destination = getPane(target.tabId);
-  if (!source || !destination) return null;
-  const folder = target.folder ?? destination.path() ?? "";
-  const folderName = folder.split(/[\\/]/).filter(Boolean).pop() ?? folder;
-  if (source.kind === "local" && destination.kind === "remote") {
-    return { icon: Upload, text: `Upload to ${folderName}` };
+function hintFor(payload: DragPayload, target: DropTarget | null, copy: boolean): Hint | null {
+  if (!target || payload.kind !== "files") return null;
+  const action = dropAction(payload.sourceTabId, payload.entries, target, copy);
+  if (!action) return null;
+  switch (action.kind) {
+    case "blocked":
+      return { icon: Ban, text: action.reason, blocked: true };
+    case "transfer": {
+      const folder = baseName(action.folder);
+      if (action.direction === "upload") return { icon: Upload, text: `Upload to ${folder}` };
+      if (action.direction === "download") return { icon: Download, text: `Download to ${folder}` };
+      return { icon: ArrowLeftRight, text: `Copy to ${folder}` };
+    }
+    case "place":
+      return action.mode === "copy"
+        ? { icon: Copy, text: `Copy to ${baseName(action.folder)}` }
+        : { icon: FolderInput, text: `Move to ${baseName(action.folder)}` };
   }
-  if (source.kind === "remote" && destination.kind === "local") {
-    return { icon: Download, text: `Download to ${folderName}` };
-  }
-  if (source.tabId === destination.tabId && target.folder === null) return null;
-  return { icon: Ban, text: "Only between local and server tabs", blocked: true };
 }
 
 /**
@@ -34,6 +46,7 @@ export function DragGhost() {
   const payload = useDragStore((state) => state.payload);
   const target = useDragStore((state) => state.target);
   const pointer = useDragStore((state) => state.pointer);
+  const copy = useDragStore((state) => state.copy);
   const incoming = useDragStore((state) => state.incoming);
   const style = {
     transform: `translate(${pointer.x + POINTER_OFFSET.x}px, ${pointer.y + POINTER_OFFSET.y}px)`,
@@ -53,7 +66,7 @@ export function DragGhost() {
   // carries its whole pane.
   if (!payload || payload.kind !== "files") return null;
 
-  const hint = hintFor(payload, target);
+  const hint = hintFor(payload, target, copy);
   let label: string;
   let Icon = File;
   if (payload.entries.length === 1) {
