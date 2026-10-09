@@ -29,6 +29,8 @@ import type {
   PermissionRequest,
   PermissionSummary,
   PowerAction,
+  PreviewContent,
+  PreviewPlacement,
   QueueFinished,
   SaveOutcome,
   SaveRequest,
@@ -50,6 +52,7 @@ import type {
   ThemeFile,
   TransferList,
   TransferUpdate,
+  WindowCorners,
 } from "./types";
 
 // Mirrored in src-tauri/src/events.rs.
@@ -65,9 +68,13 @@ export const FILE_OPERATION_EVENT = "poros://file-operation";
 export const RETURN_TAB_EVENT = "poros://return-tab";
 /** Sent by the window a tab is dragged out of to the window under the pointer. */
 export const TAB_DRAG_EVENT = "poros://tab-drag";
+/** Mirrored in src-tauri/src/desktop.rs. Tells the drag preview what to show. */
+export const DRAG_PREVIEW_EVENT = "poros://drag-preview";
 
 /** The label of the window Poros starts with; windows torn out of it get others. */
 export const MAIN_WINDOW = "main";
+/** The window that previews a tab dragged out onto the desktop. */
+export const DRAG_PREVIEW_WINDOW = "drag-preview";
 
 export function toAppError(rejection: unknown): AppError {
   if (rejection && typeof rejection === "object" && "kind" in rejection && "message" in rejection) {
@@ -262,6 +269,17 @@ export const windows = {
   open: (layout: unknown, width: number, height: number, x?: number, y?: number) =>
     call<string>("window_open", { layout, width, height, x: x ?? null, y: y ?? null }),
   initialLayout: () => call<unknown>("window_initial_layout"),
+  setCorners: (corners: WindowCorners) => call<void>("window_set_corners", { corners }),
+};
+
+export const dragPreview = {
+  /** Moves the preview of a tab dragged onto the desktop, opening it if needed. */
+  place: (placement: PreviewPlacement) => call<void>("drag_preview_place", { placement }),
+  hide: () => call<void>("drag_preview_hide"),
+  /** Called by the preview once it listens for content; returns what to show, if anything. */
+  ready: () => call<PreviewContent | null>("drag_preview_ready"),
+  /** Shows the preview once it has drawn its content. */
+  reveal: () => call<void>("drag_preview_reveal"),
 };
 
 export const application = {

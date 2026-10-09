@@ -3694,6 +3694,7 @@ dependencies = [
  "tokio-util",
  "ttf-parser",
  "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

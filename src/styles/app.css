@@ -593,7 +593,7 @@ input.has-error {
 }
 
 /* Small torn-out windows keep the connect button and drop the quick connect fields. */
-@media (max-width: 620px) {
+@media (max-width: 820px) {
   .quick-connect {
     display: none;
   }
@@ -1173,6 +1173,127 @@ input.has-error {
   color: var(--accent);
   font-size: var(--font-size-tiny);
   font-weight: 500;
+}
+
+/* The preview window that follows a tab dragged out onto the desktop. */
+.drag-preview {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: var(--surface-base);
+  border: 1px solid var(--border-strong);
+}
+
+.drag-preview-titlebar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 7px;
+  font-size: var(--font-size-tiny);
+  font-weight: 600;
+  background: var(--titlebar);
+  border-bottom: 1px solid var(--border);
+}
+
+.drag-preview-hint {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.drag-preview-tabs {
+  display: flex;
+  flex: none;
+  align-items: flex-end;
+  height: 24px;
+  padding: 0 6px;
+}
+
+.drag-preview-tab {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 70%;
+  height: 21px;
+  padding: 0 9px;
+  font-size: var(--font-size-tiny);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: var(--radius-small) var(--radius-small) 0 0;
+}
+
+.drag-preview-tab .tab-icon {
+  color: var(--accent);
+}
+
+.drag-preview-pane {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 7px;
+  min-height: 0;
+  padding: 9px 10px;
+  overflow: hidden;
+  background: var(--surface-raised);
+  border-top: 1px solid var(--border);
+}
+
+.drag-preview-pane.is-terminal {
+  background: var(--surface-sunken);
+}
+
+.drag-preview-pane.is-welcome {
+  align-items: center;
+  justify-content: center;
+}
+
+.drag-preview-mark {
+  opacity: 0.5;
+}
+
+.drag-preview-line {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 6px;
+}
+
+.drag-preview-icon {
+  flex: none;
+  width: 7px;
+  height: 6px;
+  background: var(--icon-folder);
+  border-radius: 1px;
+  opacity: 0.75;
+}
+
+.drag-preview-text {
+  height: 4px;
+  background: var(--text-faint);
+  border-radius: 2px;
+  opacity: 0.45;
+}
+
+.drag-preview-pane.is-editor .drag-preview-icon {
+  width: 9px;
+  background: var(--text-faint);
+  opacity: 0.35;
+}
+
+.drag-preview-pane.is-terminal .drag-preview-icon {
+  background: var(--success);
+}
+
+.drag-preview-pane.is-terminal .drag-preview-text {
+  background: var(--text-muted);
 }
 
 /* Tab bar */

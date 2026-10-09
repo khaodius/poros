@@ -24,6 +24,7 @@ import { UpdateDialog } from "./components/UpdateDialog";
 import { WhenDoneCountdown } from "./components/WhenDoneCountdown";
 import { WindowControls } from "./components/WindowControls";
 import { Workspace } from "./components/Workspace";
+import { useDragPreviewOnDesktop } from "./hooks/useDragPreviewOnDesktop";
 import { useTabDragsBetweenWindows } from "./hooks/useTabDragsBetweenWindows";
 import { useWindowMaximized } from "./hooks/useWindowMaximized";
 import { EMPTY_DRAFT } from "./lib/connectDraft";
@@ -40,6 +41,7 @@ import {
 import { findGroup, group, welcomeTab } from "./lib/layout";
 import { DEFAULT_SETTINGS, FONT_SIZE_LIMITS } from "./lib/settings";
 import { dragWindowFrom } from "./lib/windowDrag";
+import { matchWindowCorners } from "./lib/windowCorners";
 import { matchWindowBackground, revealWindow } from "./lib/windowReveal";
 import type { StoreName } from "./lib/types";
 import { startClipboard } from "./state/clipboardStore";
@@ -150,6 +152,7 @@ function AppliedTheme(): null {
     const apply = () => {
       applyTheme(theme, appearance);
       void matchWindowBackground();
+      matchWindowCorners();
     };
     apply();
     rememberTheme(theme, appearance);
@@ -341,6 +344,7 @@ export function App() {
   useBackendEvents();
   useCloseGuard();
   useTabDragsBetweenWindows();
+  useDragPreviewOnDesktop();
   useSystemFileDrops();
   useShortcuts();
   useFontSizeShortcuts();

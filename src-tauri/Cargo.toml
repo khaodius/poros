@@ -64,6 +64,10 @@ chrono = { version = "0.4.45", default-features = false, features = ["clock", "s
 # Desktop notifications when the transfer queue finishes.
 tauri-plugin-notification = "2.5"
 
+[target.'cfg(windows)'.dependencies]
+# Rounded window corners on Windows 11, and showing the drag preview without taking focus.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_UI_WindowsAndMessaging"] }
+
 [dev-dependencies]
 tempfile = "3"
 

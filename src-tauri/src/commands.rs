@@ -10,6 +10,7 @@ use crate::automation::scheduler::{ScheduledTask, Scheduler, TaskView};
 use crate::automation::system::{self, PowerAction};
 use crate::cloud::{self, CloudProvider, OAuthClient, OAuthVault, ProviderStatus, SignedIn};
 use crate::connections::{ConnectionStore, SavedConnection};
+use crate::desktop::{self, DragPreview, PreviewPlacement, WindowCorners};
 use crate::editor::{
     DocumentInfo, EditorManager, FileLocation, SaveOutcome, SaveRequest, TextDocument,
 };
@@ -747,6 +748,45 @@ pub async fn window_open(
         )));
     }
     Ok(label)
+}
+
+/// Rounds the calling window's corners to match the app's corner radius, where the system can.
+#[tauri::command]
+pub fn window_set_corners(window: WebviewWindow, corners: WindowCorners) -> AppResult<()> {
+    desktop::set_corners(&window, corners).map_err(window_error)
+}
+
+#[tauri::command]
+pub async fn drag_preview_place(
+    app: AppHandle,
+    preview: State<'_, DragPreview>,
+    placement: PreviewPlacement,
+) -> AppResult<()> {
+    preview.place(&app, placement).map_err(window_error)
+}
+
+#[tauri::command]
+pub async fn drag_preview_hide(app: AppHandle, preview: State<'_, DragPreview>) -> AppResult<()> {
+    preview.hide(&app).map_err(window_error)
+}
+
+#[tauri::command]
+pub async fn drag_preview_ready(
+    preview: State<'_, DragPreview>,
+) -> AppResult<Option<serde_json::Value>> {
+    Ok(preview.ready())
+}
+
+#[tauri::command]
+pub async fn drag_preview_reveal(
+    window: WebviewWindow,
+    preview: State<'_, DragPreview>,
+) -> AppResult<()> {
+    preview.reveal(&window).map_err(window_error)
+}
+
+fn window_error(error: tauri::Error) -> AppError {
+    AppError::invalid(format!("Window error: {error}"))
 }
 
 #[tauri::command]

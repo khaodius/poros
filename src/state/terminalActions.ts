@@ -3,11 +3,11 @@ import { findTab, terminalTab } from "../lib/layout";
 import { useLayoutStore } from "./layoutStore";
 import { useSessionStore } from "./sessionStore";
 
-/** Opens a shell on a session's server in a new tab of the given group. */
-export function openTerminal(sessionId: string, groupId?: string): void {
+/** Opens a shell on a session's server, beside the pane it was opened from. */
+export function openTerminal(sessionId: string, nearGroupId?: string): void {
   const session = useSessionStore.getState().sessions[sessionId];
   if (!session) return;
-  useLayoutStore.getState().addTab(terminalTab(sessionId, session.info.label), groupId);
+  useLayoutStore.getState().openTab(terminalTab(sessionId, session.info.label), nearGroupId);
 }
 
 /** Closes a terminal tab and ends its shell. */

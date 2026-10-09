@@ -256,6 +256,44 @@ export function dockTab(
   return normalize(replace(detachTab(root, tabId))) ?? root;
 }
 
+/** The narrowest share a pane opened beside the others may take. */
+const MIN_OPENED_SHARE = 0.2;
+
+/**
+ * Opens a tab in the group already showing a tab of its kind, else in a pane of its own after
+ * the column holding `nearGroupId`, shrinking the other columns to make room. When the columns
+ * would get too narrow, the tab joins `nearGroupId` instead.
+ */
+export function openTab(root: LayoutNode, tab: PaneTab, nearGroupId: string): LayoutNode {
+  const sameKind = allGroups(root).find(
+    (entry) => entry.tabs.find((shown) => shown.id === entry.activeTabId)?.kind === tab.kind,
+  );
+  if (sameKind) return addTab(root, sameKind.id, tab);
+
+  const placed = group([tab]);
+  if (root.type !== "split" || root.direction !== "row") {
+    return {
+      type: "split",
+      id: newId("split"),
+      direction: "row",
+      children: [root, placed],
+      sizes: [0.5, 0.5],
+    };
+  }
+  const count = root.children.length;
+  const share = 1 / (count + 1);
+  const sizes = root.sizes.map((size) => size * (1 - share));
+  if (share < MIN_OPENED_SHARE || sizes.some((size) => size < MIN_SHARE)) {
+    return addTab(root, nearGroupId, tab);
+  }
+  const near = root.children.findIndex((child) => findGroup(child, nearGroupId));
+  const at = near < 0 ? count : near + 1;
+  const children = [...root.children];
+  children.splice(at, 0, placed);
+  sizes.splice(at, 0, share);
+  return { ...root, children, sizes };
+}
+
 export function setSizes(root: LayoutNode, splitId: string, sizes: number[]): LayoutNode {
   if (root.type === "group") return root;
   if (root.id === splitId) return { ...root, sizes };

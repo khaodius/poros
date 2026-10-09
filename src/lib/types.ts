@@ -1,7 +1,7 @@
 // Mirrors the serde types in src-tauri/src (model.rs, error.rs, protocol.rs, ssh/mod.rs,
 // session.rs, events.rs, transfer/, sync/, file_ops/, connections.rs, cloud/, themes.rs,
-// fonts.rs, automation/, text.rs, editor.rs, terminal.rs). Field names are camelCase on the
-// wire.
+// fonts.rs, automation/, text.rs, editor.rs, terminal.rs, desktop.rs). Field names are camelCase
+// on the wire.
 
 export type EntryKind = "dir" | "file" | "symlink" | "other";
 export type LinkTarget = "dir" | "file" | "broken";
@@ -646,3 +646,21 @@ export interface TerminalInfo {
 }
 
 export type TerminalEvent = { type: "output"; data: string } | { type: "exit"; message: string };
+
+/** How the system draws a window's corners, where it draws them. */
+export type WindowCorners = "square" | "small" | "round";
+
+/** What the preview of a tab dragged out onto the desktop shows. */
+export interface PreviewContent {
+  label: string;
+  kind: "local" | "remote" | "welcome" | "editor" | "terminal";
+}
+
+/** Where the drag preview sits on screen, in logical pixels. */
+export interface PreviewPlacement {
+  content: PreviewContent;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
