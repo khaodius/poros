@@ -19,7 +19,14 @@ import {
 } from "../lib/docking";
 import type { DropSide, PaneTab } from "../lib/layout";
 import type { FileEntry } from "../lib/types";
-import { cursorPointer, measureWindows, windowUnder, type ScreenPointer } from "../lib/windowAreas";
+import {
+  cursorPointer,
+  dragPointer,
+  measureWindows,
+  windowUnder,
+  type DragPointer,
+  type ScreenPoint,
+} from "../lib/windowAreas";
 import { useLayoutStore } from "./layoutStore";
 
 export interface TabDrag {
@@ -46,7 +53,8 @@ export type DropTarget =
   | { kind: "tabBar"; groupId: string; index: number }
   /** Another window, with the pointer in that window's coordinates. */
   | { kind: "window"; label: string; x: number; y: number }
-  | { kind: "outside"; screenX: number; screenY: number };
+  /** Off every Poros window, at a point on the screen. */
+  | { kind: "outside"; screen: ScreenPoint };
 
 /** A tab another window is dragging over this one. */
 export interface IncomingTab {
@@ -61,6 +69,8 @@ interface DragState {
   incoming: IncomingTab | null;
   /** The copy key is held: Ctrl, or Option on macOS. Files dropped then are copied. */
   copy: boolean;
+  /** A preview window follows tabs dragged off Poros onto the desktop. */
+  desktopPreview: boolean;
 }
 
 export const useDragStore = create<DragState>(() => ({
@@ -69,6 +79,7 @@ export const useDragStore = create<DragState>(() => ({
   pointer: { x: 0, y: 0 },
   incoming: null,
   copy: false,
+  desktopPreview: false,
 }));
 
 const DRAG_THRESHOLD = 5;
@@ -139,7 +150,7 @@ function tabBarAt(groups: GroupRect[], x: number, y: number): DropTarget | null 
  * A tab bar under the pointer, else the group under the middle of the lifted pane: dropped over
  * the group's middle it joins the group's tabs, and toward an edge it splits the group there.
  */
-function tabTarget({ clientX: x, clientY: y }: ScreenPointer, payload: TabDrag): DropTarget | null {
+function tabTarget({ clientX: x, clientY: y }: DragPointer, payload: TabDrag): DropTarget | null {
   const { root } = useLayoutStore.getState();
   const groups = groupRects(root, payload.dock);
   const bar = tabBarAt(groups, x, y);
@@ -172,15 +183,17 @@ export function incomingTarget(x: number, y: number): DropTarget {
   return under ? { ...fallback, groupId: under.groupId } : fallback;
 }
 
+function outsideWindow({ clientX: x, clientY: y }: DragPointer): boolean {
+  return x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight;
+}
+
 /** Finds what is under the pointer: a folder row, a pane, a tab bar slot or a dock zone. */
-export function hitTest(position: ScreenPointer, payload: DragPayload): DropTarget | null {
+export function hitTest(position: DragPointer, payload: DragPayload): DropTarget | null {
   const { clientX: x, clientY: y } = position;
-  if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) {
+  if (outsideWindow(position)) {
     if (payload.kind !== "tab") return null;
-    const other = windowUnder(position.screenX, position.screenY);
-    return other
-      ? { kind: "window", ...other }
-      : { kind: "outside", screenX: position.screenX, screenY: position.screenY };
+    const other = windowUnder(position.screen);
+    return other ? { kind: "window", ...other } : { kind: "outside", screen: position.screen };
   }
   if (payload.kind === "tab") return tabTarget(position, payload);
   const element = document.elementFromPoint(x, y);
@@ -217,8 +230,13 @@ export function beginDrag(
   const startY = event.clientY;
   let dragging: DragPayload | null = null;
   let following = 0;
+  let reading = false;
+  /** The system cursor can be read here, so it alone places the drag off the window. */
+  let cursorKnown = false;
+  /** When this window last reported the pointer inside it. */
+  let lastInside = 0;
 
-  const track = (position: ScreenPointer) => {
+  const track = (position: DragPointer) => {
     if (!dragging) return;
     useDragStore.setState({
       payload: dragging,
@@ -226,14 +244,24 @@ export function beginDrag(
       target: hitTest(position, dragging),
     });
   };
-  // Outside the window a tab drag follows the system cursor, for webviews that stop reporting
-  // the pointer there.
-  const followCursorOutside = () => {
-    const { target } = useDragStore.getState();
-    if (target?.kind !== "outside" && target?.kind !== "window") return;
-    void cursorPointer().then((position) => {
-      if (position) track(position);
-    });
+  // Off the window a tab drag follows the system cursor: some webviews stop reporting the
+  // pointer there, and others report it in units that drift on another monitor.
+  const followCursor = () => {
+    if (reading) return;
+    reading = true;
+    const asked = performance.now();
+    void cursorPointer()
+      .then((position) => {
+        if (!position) return;
+        cursorKnown = true;
+        if (asked < lastInside) return;
+        const { target } = useDragStore.getState();
+        const away = target?.kind === "outside" || target?.kind === "window";
+        if (away || outsideWindow(position)) track(position);
+      })
+      .finally(() => {
+        reading = false;
+      });
   };
 
   const move = (moveEvent: PointerEvent) => {
@@ -249,7 +277,7 @@ export function beginDrag(
       }
       if (dragging.kind === "tab") {
         void measureWindows();
-        following = window.setInterval(followCursorOutside, CURSOR_POLL_MILLIS);
+        following = window.setInterval(followCursor, CURSOR_POLL_MILLIS);
       }
       try {
         // The body, since the source can unmount while the layout previews a drop.
@@ -259,7 +287,14 @@ export function beginDrag(
       }
     }
     useDragStore.setState({ copy: holdsCopyKey(moveEvent) });
-    track(moveEvent);
+    const position = dragPointer(moveEvent);
+    if (dragging.kind !== "tab" || !outsideWindow(position)) {
+      lastInside = performance.now();
+      track(position);
+      return;
+    }
+    if (!cursorKnown) track(position);
+    followCursor();
   };
   const release = (upEvent: PointerEvent) => {
     if (upEvent.pointerId !== pointerId) return;

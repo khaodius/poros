@@ -35,18 +35,31 @@ export interface WindowPoint {
   y: number;
 }
 
-/** A pointer position as a pointer event reports it. */
-export interface ScreenPointer {
+/**
+ * A point on the screen in physical pixels. Windows are placed in these: logical pixels differ
+ * from one monitor to the next, and a pointer event's screenX means something else again on a
+ * monitor scaled differently from the window.
+ */
+export interface ScreenPoint {
+  x: number;
+  y: number;
+}
+
+/** A dragging pointer: in this window's coordinates, and where it is on the screen. */
+export interface DragPointer {
   clientX: number;
   clientY: number;
-  screenX: number;
-  screenY: number;
+  screen: ScreenPoint;
+}
+
+/** A screen less its taskbars and docks, and how much it scales logical pixels. */
+export interface WorkArea extends ScreenRect {
+  scale: number;
 }
 
 let thisWindow: WindowArea | null = null;
 let otherWindows: WindowArea[] = [];
-/** Each screen less its taskbars and docks. */
-let workAreas: ScreenRect[] = [];
+let workAreas: WorkArea[] = [];
 
 async function areaOf(entry: Window): Promise<WindowArea | null> {
   const [position, size, scale, visible, minimized] = await Promise.all([
@@ -75,11 +88,12 @@ export async function measureWindows(): Promise<void> {
     otherWindows = areas.filter(
       (area): area is WindowArea => area !== null && area.label !== current,
     );
-    workAreas = monitors.map(({ workArea: { position, size } }) => ({
+    workAreas = monitors.map(({ workArea: { position, size }, scaleFactor }) => ({
       left: position.x,
       top: position.y,
       width: size.width,
       height: size.height,
+      scale: scaleFactor,
     }));
   } catch {
     thisWindow = null;
@@ -89,44 +103,35 @@ export async function measureWindows(): Promise<void> {
 }
 
 /**
- * Moves a rectangle onto the screen holding a point, so none of it hangs off that screen.
- * Physical pixels in and out; a point on no screen leaves the rectangle where it is.
+ * Where a window held by the pointer at `grab` (logical pixels from its top left corner) has its
+ * top left corner, in physical pixels: it follows the pointer, except that its top bar never
+ * starts above or left of the screen the pointer is on.
  */
-export function onScreen(areas: ScreenRect[], x: number, y: number, rect: ScreenRect): ScreenRect {
+export function heldWindowCorner(
+  areas: WorkArea[],
+  pointer: ScreenPoint,
+  grab: { x: number; y: number },
+  fallbackScale: number,
+): ScreenPoint {
   const area = areas.find(
     (entry) =>
-      x >= entry.left &&
-      x < entry.left + entry.width &&
-      y >= entry.top &&
-      y < entry.top + entry.height,
+      pointer.x >= entry.left &&
+      pointer.x < entry.left + entry.width &&
+      pointer.y >= entry.top &&
+      pointer.y < entry.top + entry.height,
   );
-  if (!area) return rect;
-  const fit = (start: number, length: number, areaStart: number, areaLength: number) =>
-    Math.max(areaStart, Math.min(start, areaStart + areaLength - length));
-  return {
-    ...rect,
-    left: fit(rect.left, rect.width, area.left, area.width),
-    top: fit(rect.top, rect.height, area.top, area.height),
+  const scale = area?.scale ?? fallbackScale;
+  const corner = {
+    x: Math.round(pointer.x - grab.x * scale),
+    y: Math.round(pointer.y - grab.y * scale),
   };
+  if (!area) return corner;
+  return { x: Math.max(corner.x, area.left), y: Math.max(corner.y, area.top) };
 }
 
-/**
- * Where a window about to open lands on the screen under the pointer, in this window's
- * logical pixels: where asked, unless part of it would hang off the screen.
- */
-export function landingSpot(
-  screenX: number,
-  screenY: number,
-  rect: { x: number; y: number; width: number; height: number },
-): { x: number; y: number } {
-  const scale = window.devicePixelRatio || 1;
-  const placed = onScreen(workAreas, screenX * scale, screenY * scale, {
-    left: rect.x * scale,
-    top: rect.y * scale,
-    width: rect.width * scale,
-    height: rect.height * scale,
-  });
-  return { x: placed.left / scale, y: placed.top / scale };
+/** Where a window held by the pointer at `grab` opens, in physical pixels. */
+export function landingCorner(pointer: ScreenPoint, grab: { x: number; y: number }): ScreenPoint {
+  return heldWindowCorner(workAreas, pointer, grab, window.devicePixelRatio || 1);
 }
 
 /**
@@ -143,27 +148,40 @@ export function windowAt(areas: WindowArea[], x: number, y: number): WindowPoint
   return { label: hit.label, x: (x - hit.left) / hit.scale, y: (y - hit.top) / hit.scale };
 }
 
-/** The other window under a pointer event's screen position. */
-export function windowUnder(screenX: number, screenY: number): WindowPoint | null {
-  const scale = window.devicePixelRatio;
-  return windowAt(otherWindows, screenX * scale, screenY * scale);
+/** The other window under a point on the screen. */
+export function windowUnder({ x, y }: ScreenPoint): WindowPoint | null {
+  return windowAt(otherWindows, x, y);
+}
+
+/**
+ * A pointer event's position, with its place on the screen worked out from this window's own
+ * position rather than the event's screenX, which a differently scaled monitor skews.
+ */
+export function dragPointer(event: {
+  clientX: number;
+  clientY: number;
+  screenX: number;
+  screenY: number;
+}): DragPointer {
+  const { clientX, clientY } = event;
+  if (!thisWindow) {
+    const scale = window.devicePixelRatio || 1;
+    return { clientX, clientY, screen: { x: event.screenX * scale, y: event.screenY * scale } };
+  }
+  const { left, top, scale } = thisWindow;
+  return { clientX, clientY, screen: { x: left + clientX * scale, y: top + clientY * scale } };
 }
 
 /**
  * The system cursor as a pointer event in this window would report it. Some webviews stop
  * reporting the pointer once it leaves the window, even while a button is held.
  */
-export async function cursorPointer(): Promise<ScreenPointer | null> {
+export async function cursorPointer(): Promise<DragPointer | null> {
   if (!thisWindow) return null;
   try {
     const { x, y } = await cursorPosition();
     const { left, top, scale } = thisWindow;
-    return {
-      clientX: (x - left) / scale,
-      clientY: (y - top) / scale,
-      screenX: x / scale,
-      screenY: y / scale,
-    };
+    return { clientX: (x - left) / scale, clientY: (y - top) / scale, screen: { x, y } };
   } catch {
     return null;
   }

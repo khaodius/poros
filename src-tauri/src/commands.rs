@@ -3,7 +3,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use tauri::ipc::Channel;
-use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{
+    AppHandle, LogicalSize, Manager, PhysicalPosition, State, WebviewUrl, WebviewWindow,
+    WebviewWindowBuilder,
+};
 
 use crate::automation::remote_command::{CommandRequest, CommandResult, CommandRunner};
 use crate::automation::scheduler::{ScheduledTask, Scheduler, TaskView};
@@ -721,8 +724,8 @@ pub async fn window_open(
     app: AppHandle,
     pending: State<'_, PendingWindows>,
     layout: serde_json::Value,
-    x: Option<f64>,
-    y: Option<f64>,
+    x: Option<i32>,
+    y: Option<i32>,
     width: f64,
     height: f64,
 ) -> AppResult<String> {
@@ -737,11 +740,22 @@ pub async fn window_open(
         .visible(false)
         .inner_size(width, height)
         .min_inner_size(480.0, 360.0);
-    builder = match (x, y) {
-        (Some(x), Some(y)) => builder.position(x, y),
-        _ => builder.center(),
+    let corner = match (x, y) {
+        (Some(x), Some(y)) if desktop::can_place_windows() => Some(PhysicalPosition::new(x, y)),
+        _ => None,
     };
-    if let Err(error) = builder.build() {
+    builder = match corner {
+        Some(corner) => {
+            let opening = desktop::opening_corner(&app, corner);
+            builder.position(opening.x, opening.y)
+        }
+        None => builder.center(),
+    };
+    let opened = builder.build().and_then(|window| match corner {
+        Some(corner) => desktop::place(&window, corner, LogicalSize::new(width, height)),
+        None => Ok(()),
+    });
+    if let Err(error) = opened {
         pending.0.lock().unwrap().remove(&label);
         return Err(AppError::invalid(format!(
             "Could not open a window: {error}"
@@ -763,6 +777,11 @@ pub async fn drag_preview_place(
     placement: PreviewPlacement,
 ) -> AppResult<()> {
     preview.place(&app, placement).map_err(window_error)
+}
+
+#[tauri::command]
+pub fn drag_preview_available() -> bool {
+    desktop::can_place_windows()
 }
 
 #[tauri::command]

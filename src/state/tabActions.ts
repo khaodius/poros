@@ -17,7 +17,7 @@ import {
   type PaneTab,
 } from "../lib/layout";
 import type { ConnectProfile, SessionInfo } from "../lib/types";
-import { landingSpot } from "../lib/windowAreas";
+import { landingCorner, type ScreenPoint } from "../lib/windowAreas";
 import type { DropTarget } from "./dragStore";
 import { askToSave, closeEditorTab } from "./editorActions";
 import { getEditor } from "./editorRegistry";
@@ -34,15 +34,20 @@ const TORN_OUT_MIN = { width: 640, height: 420 };
 /** Where the pointer holds a torn-out window, from its top left corner. */
 const TORN_OUT_GRAB = { x: 60, y: 16 };
 
+/** The size, in logical pixels, of a window a tab is torn out into. */
+export function tornOutSize(): { width: number; height: number } {
+  return {
+    width: Math.max(TORN_OUT_MIN.width, Math.round(window.innerWidth * TORN_OUT_SHARE)),
+    height: Math.max(TORN_OUT_MIN.height, Math.round(window.innerHeight * TORN_OUT_SHARE)),
+  };
+}
+
 /**
- * Where a tab torn out of this window at a screen point opens, in logical pixels: held by the
- * pointer near its top left corner, and kept on the screen.
+ * Where a window torn out at a point on the screen has its top left corner, in physical pixels:
+ * the pointer holds it near that corner.
  */
-export function tornOutPlacement(screenX: number, screenY: number) {
-  const width = Math.max(TORN_OUT_MIN.width, Math.round(window.innerWidth * TORN_OUT_SHARE));
-  const height = Math.max(TORN_OUT_MIN.height, Math.round(window.innerHeight * TORN_OUT_SHARE));
-  const requested = { x: screenX - TORN_OUT_GRAB.x, y: screenY - TORN_OUT_GRAB.y, width, height };
-  return { ...requested, ...landingSpot(screenX, screenY, requested) };
+export function tornOutCorner(pointer: ScreenPoint): ScreenPoint {
+  return landingCorner(pointer, TORN_OUT_GRAB);
 }
 
 /** What a window hands another when tabs move: a layout and its sessions' profiles. */
@@ -181,20 +186,13 @@ function detach(tab: PaneTab): void {
   if (tab.kind === "remote") useSessionStore.getState().release(tab.sessionId);
 }
 
-/** Opens a tab in a window of its own, near the given screen point when the system allows. */
-export async function tearOutTab(tabId: string, screenX?: number, screenY?: number) {
+/** Opens a tab in a window of its own, held at the given screen point when the system allows. */
+export async function tearOutTab(tabId: string, pointer?: ScreenPoint) {
   const tab = departingTab(tabId);
   if (!tab) return;
-  const hasPoint = screenX !== undefined && screenY !== undefined && (screenX > 0 || screenY > 0);
-  const { x, y, width, height } = tornOutPlacement(screenX ?? 0, screenY ?? 0);
+  const { width, height } = tornOutSize();
   try {
-    await windows.open(
-      handoffFor(tab),
-      width,
-      height,
-      hasPoint ? x : undefined,
-      hasPoint ? y : undefined,
-    );
+    await windows.open(handoffFor(tab), width, height, pointer && tornOutCorner(pointer));
     detach(tab);
   } catch (caught) {
     useToastStore.getState().show("error", (caught as { message?: string }).message ?? "");

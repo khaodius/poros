@@ -204,7 +204,7 @@ function useSystemFileDrops() {
       const scale = DROP_POSITION_SCALE();
       const clientX = event.position.x / scale;
       const clientY = event.position.y / scale;
-      const target = hitTest({ clientX, clientY, screenX: 0, screenY: 0 }, dragged);
+      const target = hitTest({ clientX, clientY, screen: { x: 0, y: 0 } }, dragged);
       if (event.type === "drop") {
         dragged = null;
         useDragStore.setState({ payload: null, target: null });

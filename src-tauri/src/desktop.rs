@@ -5,8 +5,8 @@ use std::sync::Mutex;
 
 use serde::Deserialize;
 use tauri::{
-    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WebviewUrl, WebviewWindow,
-    WebviewWindowBuilder,
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition, WebviewUrl,
+    WebviewWindow, WebviewWindowBuilder,
 };
 
 /// The window showing where a tab dragged out of Poros will open.
@@ -52,13 +52,39 @@ pub fn set_corners(window: &WebviewWindow, corners: WindowCorners) -> tauri::Res
     Ok(())
 }
 
-/// Where the preview sits on screen, in logical pixels, and what it shows.
+/// Where to ask for a new window to open so it lands at a point in physical pixels: the point in
+/// the logical pixels of the monitor holding it. Some systems still pick a monitor by other
+/// rules, so [`place`] moves the window there once it exists.
+pub fn opening_corner(app: &AppHandle, corner: PhysicalPosition<i32>) -> LogicalPosition<f64> {
+    let monitor = app
+        .monitor_from_point(corner.x.into(), corner.y.into())
+        .ok()
+        .flatten()
+        .or_else(|| app.primary_monitor().ok().flatten());
+    corner.to_logical(monitor.map_or(1.0, |monitor| monitor.scale_factor()))
+}
+
+/// Moves a window's top left corner to a point in physical pixels, then sizes it in logical
+/// pixels. Logical positions mean different things on monitors scaled differently, and a window
+/// converts them with the scale of the monitor it is leaving, so it would land elsewhere.
+pub fn place(
+    window: &WebviewWindow,
+    corner: PhysicalPosition<i32>,
+    size: LogicalSize<f64>,
+) -> tauri::Result<()> {
+    window.set_position(corner)?;
+    // After the move, so the size uses the scale of the monitor the window is now on.
+    window.set_size(size)
+}
+
+/// Where the preview sits on screen and what it shows: its top left corner in physical pixels,
+/// its size in logical pixels.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewPlacement {
     pub content: serde_json::Value,
-    pub x: f64,
-    pub y: f64,
+    pub x: i32,
+    pub y: i32,
     pub width: f64,
     pub height: f64,
 }
@@ -84,10 +110,13 @@ impl DragPreview {
             return Ok(());
         }
         let mut state = self.0.lock().unwrap();
+        let corner = PhysicalPosition::new(placement.x, placement.y);
+        let size = LogicalSize::new(placement.width, placement.height);
         let Some(window) = app.get_webview_window(DRAG_PREVIEW_WINDOW) else {
             state.content = Some(placement.content);
             state.ready = false;
-            WebviewWindowBuilder::new(
+            let opening = opening_corner(app, corner);
+            let window = WebviewWindowBuilder::new(
                 app,
                 DRAG_PREVIEW_WINDOW,
                 WebviewUrl::App("index.html".into()),
@@ -101,12 +130,11 @@ impl DragPreview {
             .focusable(false)
             .visible(false)
             .inner_size(placement.width, placement.height)
-            .position(placement.x, placement.y)
+            .position(opening.x, opening.y)
             .build()?;
-            return Ok(());
+            return place(&window, corner, size);
         };
-        window.set_size(LogicalSize::new(placement.width, placement.height))?;
-        window.set_position(LogicalPosition::new(placement.x, placement.y))?;
+        place(&window, corner, size)?;
         if state.content.as_ref() != Some(&placement.content) {
             if state.ready {
                 window.emit_to(DRAG_PREVIEW_WINDOW, DRAG_PREVIEW_EVENT, &placement.content)?;
@@ -146,13 +174,13 @@ impl DragPreview {
 
 /// Wayland leaves window positions to the compositor, so a preview could not follow the pointer.
 #[cfg(target_os = "linux")]
-fn can_place_windows() -> bool {
+pub fn can_place_windows() -> bool {
     let x11 = std::env::var("GDK_BACKEND").is_ok_and(|backend| backend.starts_with("x11"));
     x11 || std::env::var_os("WAYLAND_DISPLAY").is_none()
 }
 
 #[cfg(not(target_os = "linux"))]
-fn can_place_windows() -> bool {
+pub fn can_place_windows() -> bool {
     true
 }
 
