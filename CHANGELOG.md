@@ -3,6 +3,14 @@
 Installers for every version are attached to its
 [release](https://github.com/khaodius/poros/releases), with SHA-256 checksums.
 
+## 0.3.1 - 2026-10-09
+
+- **Dragging a tab out of a window** works across the whole desktop. Once the tab leaves the
+  window, its pane there fades out instead of sliding along the window's edge, and the
+  preview follows the pointer right up to the edges of the screen. The new window opens
+  exactly where the preview was, on whichever monitor it is, including monitors scaled
+  differently from the window the tab came from.
+
 ## 0.3.0 - 2026-10-09
 
 - **FTP, FTPS, Google Drive and OneDrive** alongside SFTP. Drop files from one server tab onto
