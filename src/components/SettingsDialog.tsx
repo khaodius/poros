@@ -624,13 +624,12 @@ function UpdateSettingsPage({ settings }: { settings: Settings }) {
 
   const status = checking
     ? "Checking for updates"
-    : checkError
-      ? `Could not check for updates: ${checkError}`
-      : update
+    : (checkError ??
+      (update
         ? `${formatVersion(update.version)} is available`
         : checkedAt !== null
           ? `Up to date, checked at ${formatTime(checkedAt)}`
-          : "The version you are running";
+          : "The version you are running"));
 
   return (
     <SettingGroup title="Updates">

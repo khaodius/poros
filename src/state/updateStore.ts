@@ -18,6 +18,7 @@ interface UpdateState {
   checking: boolean;
   /** When the last check finished, in epoch milliseconds. */
   checkedAt: number | null;
+  /** Why the last check failed, as a sentence for the user. */
   checkError: string | null;
   progress: InstallProgress | null;
   installError: string | null;
@@ -33,6 +34,17 @@ export const useUpdateStore = create<UpdateState>(() => ({
 }));
 
 const PROGRESS_INTERVAL_MILLIS = 100;
+/**
+ * What the updater reports when the release server answers without a latest.json, as for a
+ * release published before in-app updates existed.
+ */
+const MISSING_MANIFEST = "Could not fetch a valid release JSON from the remote";
+
+export function describeCheckError(message: string): string {
+  return message === MISSING_MANIFEST
+    ? "The latest release on GitHub does not offer in-app updates yet"
+    : `Could not check for updates: ${message}`;
+}
 
 /**
  * Asks the release server for a newer version. A check at start-up only offers a version the
@@ -54,11 +66,9 @@ export async function checkForUpdates(trigger: "start" | "manual"): Promise<void
       ui.open({ kind: "update" });
     }
   } catch (caught) {
-    const message = toAppError(caught).message;
-    useUpdateStore.setState({ checkError: message });
-    if (trigger === "start") {
-      useLogStore.getState().write("warn", `Could not check for updates: ${message}`);
-    }
+    const checkError = describeCheckError(toAppError(caught).message);
+    useUpdateStore.setState({ checkError });
+    if (trigger === "start") useLogStore.getState().write("warn", checkError);
   } finally {
     useUpdateStore.setState({ checking: false });
   }
