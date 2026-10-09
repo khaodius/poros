@@ -12,8 +12,14 @@ function sameFile(tab: PaneTab, location: DocumentLocation): tab is EditorTab {
   return location.side === "remote" ? tab.sessionId === location.sessionId : !tab.sessionId;
 }
 
-/** Opens a file in an editor tab in the given group, or shows the tab already editing it. */
-export async function openInEditor(location: DocumentLocation, groupId?: string): Promise<void> {
+/**
+ * Opens a file in the editor beside the pane it was opened from, or shows the tab already
+ * editing it.
+ */
+export async function openInEditor(
+  location: DocumentLocation,
+  nearGroupId?: string,
+): Promise<void> {
   const open = allTabs(useLayoutStore.getState().root).find((tab) => sameFile(tab, location));
   if (open) {
     useLayoutStore.getState().activateTab(open.id);
@@ -22,7 +28,7 @@ export async function openInEditor(location: DocumentLocation, groupId?: string)
   try {
     const document = await editor.open(location);
     const sessionId = location.side === "remote" ? location.sessionId : undefined;
-    useLayoutStore.getState().addTab(editorTab(document, sessionId), groupId);
+    useLayoutStore.getState().openTab(editorTab(document, sessionId), nearGroupId);
   } catch (caught) {
     useToastStore.getState().show("error", toAppError(caught).message);
   }

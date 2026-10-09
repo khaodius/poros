@@ -3,6 +3,7 @@ pub mod checksum;
 pub mod cloud;
 pub mod commands;
 pub mod connections;
+pub mod desktop;
 pub mod editor;
 pub mod error;
 pub mod events;
@@ -40,6 +41,7 @@ use automation::scheduler::Scheduler;
 use cloud::OAuthVault;
 use commands::PendingWindows;
 use connections::{ConnectionStore, Keychain};
+use desktop::{DragPreview, DRAG_PREVIEW_WINDOW};
 use editor::EditorManager;
 use events::Events;
 use file_ops::FileOperations;
@@ -106,6 +108,7 @@ pub fn run() {
             app.manage(OAuthVault::default());
             app.manage(ThemeStore::new(config_dir.join("themes")));
             app.manage(PendingWindows::default());
+            app.manage(DragPreview::default());
             // Last, since tasks take everything above from the app's state.
             let scheduler = Scheduler::load(config_dir.join("schedules.json"), events.clone());
             app.manage(events);
@@ -118,6 +121,10 @@ pub fn run() {
                 return;
             }
             let window = webview.window();
+            // The drag preview shows itself only while a tab is dragged over the desktop.
+            if window.label() == DRAG_PREVIEW_WINDOW {
+                return;
+            }
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(REVEAL_FALLBACK).await;
                 if !window.is_visible().unwrap_or(true) {
@@ -221,6 +228,11 @@ pub fn run() {
             commands::schedule_run_now,
             commands::window_open,
             commands::window_initial_layout,
+            commands::window_set_corners,
+            commands::drag_preview_place,
+            commands::drag_preview_hide,
+            commands::drag_preview_ready,
+            commands::drag_preview_reveal,
             commands::app_restart,
         ])
         .build(tauri::generate_context!())

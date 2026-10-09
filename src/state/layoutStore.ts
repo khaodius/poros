@@ -9,6 +9,7 @@ import {
   group,
   groupOfTab,
   moveTab,
+  openTab,
   parseLayout,
   persistableLayout,
   removeTab,
@@ -29,6 +30,8 @@ interface LayoutState {
   activeGroupId: string;
   setRoot: (root: LayoutNode) => void;
   addTab: (tab: PaneTab, groupId?: string, index?: number) => void;
+  /** Opens a tab beside the other panes, near the given group or the active one. */
+  openTab: (tab: PaneTab, nearGroupId?: string) => void;
   activateTab: (tabId: string) => void;
   replaceTab: (tabId: string, tab: PaneTab) => void;
   closeTab: (tabId: string) => void;
@@ -61,6 +64,10 @@ export const useLayoutStore = create<LayoutState>((set, get) => {
     addTab: (tab, groupId, index) => {
       const target = groupId ?? get().activeGroupId;
       update(addTab(get().root, target, tab, index), tab.id);
+    },
+    openTab: (tab, nearGroupId) => {
+      const near = nearGroupId ?? get().activeGroupId;
+      update(openTab(get().root, tab, near), tab.id);
     },
     activateTab: (tabId) => update(activateTab(get().root, tabId), tabId),
     replaceTab: (tabId, tab) => update(updateTab(get().root, tabId, tab)),

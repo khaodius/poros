@@ -2,12 +2,13 @@
 // window under the pointer.
 
 import {
+  availableMonitors,
   cursorPosition,
   getAllWindows,
   getCurrentWindow,
   type Window,
 } from "@tauri-apps/api/window";
-import { MAIN_WINDOW } from "./ipc";
+import { DRAG_PREVIEW_WINDOW, MAIN_WINDOW } from "./ipc";
 
 /** A window's content area on screen, in physical pixels. */
 export interface WindowArea {
@@ -17,6 +18,14 @@ export interface WindowArea {
   width: number;
   height: number;
   scale: number;
+}
+
+/** A part of the screen, in physical pixels. */
+export interface ScreenRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
 }
 
 /** A point inside a window, in that window's own coordinates. */
@@ -36,6 +45,8 @@ export interface ScreenPointer {
 
 let thisWindow: WindowArea | null = null;
 let otherWindows: WindowArea[] = [];
+/** Each screen less its taskbars and docks. */
+let workAreas: ScreenRect[] = [];
 
 async function areaOf(entry: Window): Promise<WindowArea | null> {
   const [position, size, scale, visible, minimized] = await Promise.all([
@@ -50,21 +61,72 @@ async function areaOf(entry: Window): Promise<WindowArea | null> {
   return { label: entry.label, left, top, width: size.width, height: size.height, scale };
 }
 
-/** Finds the open windows when a drag starts; they stay put while it lasts. */
+/** Finds the open windows and screens when a drag starts; they stay put while it lasts. */
 export async function measureWindows(): Promise<void> {
   thisWindow = null;
   otherWindows = [];
+  workAreas = [];
   try {
     const current = getCurrentWindow().label;
-    const areas = await Promise.all((await getAllWindows()).map(areaOf));
+    const [all, monitors] = await Promise.all([getAllWindows(), availableMonitors()]);
+    const workspaces = all.filter((entry) => entry.label !== DRAG_PREVIEW_WINDOW);
+    const areas = await Promise.all(workspaces.map(areaOf));
     thisWindow = areas.find((area) => area?.label === current) ?? null;
     otherWindows = areas.filter(
       (area): area is WindowArea => area !== null && area.label !== current,
     );
+    workAreas = monitors.map(({ workArea: { position, size } }) => ({
+      left: position.x,
+      top: position.y,
+      width: size.width,
+      height: size.height,
+    }));
   } catch {
     thisWindow = null;
     otherWindows = [];
+    workAreas = [];
   }
+}
+
+/**
+ * Moves a rectangle onto the screen holding a point, so none of it hangs off that screen.
+ * Physical pixels in and out; a point on no screen leaves the rectangle where it is.
+ */
+export function onScreen(areas: ScreenRect[], x: number, y: number, rect: ScreenRect): ScreenRect {
+  const area = areas.find(
+    (entry) =>
+      x >= entry.left &&
+      x < entry.left + entry.width &&
+      y >= entry.top &&
+      y < entry.top + entry.height,
+  );
+  if (!area) return rect;
+  const fit = (start: number, length: number, areaStart: number, areaLength: number) =>
+    Math.max(areaStart, Math.min(start, areaStart + areaLength - length));
+  return {
+    ...rect,
+    left: fit(rect.left, rect.width, area.left, area.width),
+    top: fit(rect.top, rect.height, area.top, area.height),
+  };
+}
+
+/**
+ * Where a window about to open lands on the screen under the pointer, in this window's
+ * logical pixels: where asked, unless part of it would hang off the screen.
+ */
+export function landingSpot(
+  screenX: number,
+  screenY: number,
+  rect: { x: number; y: number; width: number; height: number },
+): { x: number; y: number } {
+  const scale = window.devicePixelRatio || 1;
+  const placed = onScreen(workAreas, screenX * scale, screenY * scale, {
+    left: rect.x * scale,
+    top: rect.y * scale,
+    width: rect.width * scale,
+    height: rect.height * scale,
+  });
+  return { x: placed.left / scale, y: placed.top / scale };
 }
 
 /**

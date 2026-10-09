@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "drag-preview",
+  "description": "The preview shown while a tab is dragged out onto the desktop",
+  "windows": ["drag-preview"],
+  "permissions": [
+    "core:event:default",
+    "core:webview:allow-set-webview-background-color",
+    "core:window:allow-set-background-color"
+  ]
+}
