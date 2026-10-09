@@ -24,6 +24,10 @@
   resized, detached into their own windows and dragged from one window into another.
 - **Parallel transfers**: each worker uses its own connection, large files are split across
   idle connections, and the worker count can change while transfers run.
+- **File operations**: cut, copy and paste, Move to and Copy to, and dragging onto a folder (hold
+  Ctrl to copy) move and copy files within a server or this computer without a transfer.
+  Properties changes permissions, owner and group.
+- **File compare** of any two files, side by side with changed words highlighted.
 - **Folder sync** one way or both ways, by size and time, size alone or contents, with rsync-style
   excludes and a preview of every change before it runs.
 - **rsync delta transfers** over Poros's own SSH connection, with nothing to install locally.
@@ -110,9 +114,10 @@ The Windows installers are not code-signed yet, so SmartScreen may warn about an
 
 ## Notes
 
-- **FTP and cloud connections** have no folder sync, rsync, scheduled tasks, server commands,
-  checksum verification, proxy or jump hosts. FTP uploads are written in place rather than under a
-  temporary name.
+- **SFTP only**: folder sync, rsync, scheduled tasks, server commands, moving and copying on the
+  server, Properties, comparing server files, checksum verification, proxies and jump hosts. Files
+  pasted or dragged within an FTP or cloud server are copied through the transfer queue, and FTP
+  uploads are written in place rather than under a temporary name.
 - **Google Drive and OneDrive** sign in through the system browser. Builds without app credentials
   ask for your own under Settings > Cloud accounts; see
   [Registering the cloud apps](#registering-the-cloud-apps).
@@ -128,18 +133,21 @@ The Windows installers are not code-signed yet, so SmartScreen may warn about an
 
 ## Keyboard shortcuts
 
-| Keys                    | Action             |
-| ----------------------- | ------------------ |
-| Ctrl + L                | Type a path        |
-| Ctrl + F                | Filter             |
-| Tab                     | Switch pane        |
-| Backspace, Alt + Up     | Parent folder      |
-| Alt + Left, Alt + Right | Back, forward      |
-| F2                      | Rename             |
-| F7, Ctrl + Shift + N    | New folder         |
-| F5, Ctrl + R            | Refresh            |
-| Ctrl + T, Ctrl + W      | New tab, close tab |
-| Ctrl + ,                | Settings           |
+| Keys                         | Action                             |
+| ---------------------------- | ---------------------------------- |
+| Ctrl + L                     | Type a path                        |
+| Ctrl + F                     | Filter                             |
+| Tab                          | Switch pane                        |
+| Backspace, Alt + Up          | Parent folder                      |
+| Alt + Left, Alt + Right      | Back, forward                      |
+| F2                           | Rename                             |
+| Ctrl + X, Ctrl + C, Ctrl + V | Cut, copy, paste                   |
+| Alt + Enter                  | Properties                         |
+| Alt + Down, Alt + Up         | Next, previous change in a compare |
+| F7, Ctrl + Shift + N         | New folder                         |
+| F5, Ctrl + R                 | Refresh                            |
+| Ctrl + T, Ctrl + W           | New tab, close tab                 |
+| Ctrl + ,                     | Settings                           |
 
 ## Build from source
 
