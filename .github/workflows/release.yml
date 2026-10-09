@@ -188,6 +188,32 @@ jobs:
           done
           ls -l release
 
+      # A signature from any other key than plugins.updater.pubkey would publish an update that
+      # every installed copy rejects, and with requireSignedVersion each must name this version.
+      - name: Check the update signatures
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq minisign
+          jq -r .plugins.updater.pubkey src-tauri/tauri.conf.json | base64 -d > "$RUNNER_TEMP/update.pub"
+          for file in release/*; do
+            name=$(basename "$file")
+            if [ ! -s "signatures/$name.sig" ]; then
+              echo "::error::$name has no update signature"
+              exit 1
+            fi
+            base64 -d "signatures/$name.sig" > "$RUNNER_TEMP/update.minisig"
+            if ! minisign -V -q -p "$RUNNER_TEMP/update.pub" -m "$file" -x "$RUNNER_TEMP/update.minisig"; then
+              echo "::error::The update signature of $name does not verify with the key in src-tauri/tauri.conf.json"
+              exit 1
+            fi
+            if ! awk -F '\t' -v version="version:$VERSION" '/^trusted comment: / {
+                for (i = 1; i <= NF; i++) if ($i == version) found = 1
+              } END { exit !found }' "$RUNNER_TEMP/update.minisig"; then
+              echo "::error::The update signature of $name does not name version $VERSION"
+              exit 1
+            fi
+          done
+
       - name: Write checksums
         working-directory: release
         run: |
