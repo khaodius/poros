@@ -13,7 +13,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0"></a>
 </p>
 
-![Poros with a local folder, two server tabs and transfers running in the queue](.github/assets/screenshot.png)
+![Poros with a local folder, two server tabs, a file open in the editor and transfers running in the queue](.github/assets/screenshot.png)
 
 ## Features
 
