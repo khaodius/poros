@@ -16,6 +16,7 @@ import {
 } from "../lib/automation";
 import { system, toAppError } from "../lib/ipc";
 import type { QueueFinished } from "../lib/types";
+import { askToSave, unsavedEditorTabs } from "./editorActions";
 import { useLogStore } from "./logStore";
 import { saveSettingsSection, useSettingsStore } from "./settingsStore";
 import { useToastStore } from "./toastStore";
@@ -43,8 +44,18 @@ export function cancelCountdown(): void {
 export async function performNow(action: CountdownAction): Promise<void> {
   cancelCountdown();
   try {
-    if (action === "close") await system.exit();
-    else await system.powerAction(action);
+    if (action === "close") {
+      // Files with unsaved changes are asked about first; the window closes once they are.
+      const unsaved = unsavedEditorTabs();
+      if (unsaved.length > 0)
+        askToSave(
+          unsaved.map((tab) => tab.id),
+          true,
+        );
+      else await system.exit();
+    } else {
+      await system.powerAction(action);
+    }
   } catch (caught) {
     report("When the queue finished", caught);
   }

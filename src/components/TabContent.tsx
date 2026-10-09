@@ -1,4 +1,4 @@
-import { memo, useMemo, useState } from "react";
+import { lazy, memo, Suspense, useMemo, useState } from "react";
 import { HardDrive, RotateCw, Unplug } from "lucide-react";
 import { localSource, remoteSource, startingAt } from "../lib/fileSource";
 import type { PaneTab } from "../lib/layout";
@@ -12,6 +12,10 @@ import { ConnectionIcon } from "./ConnectionIcon";
 import { FilePane } from "./FilePane";
 import { WelcomePanel } from "./WelcomePanel";
 
+// Loaded on first use, so the editor and terminal cost nothing until one opens.
+const EditorPane = lazy(() => import("./EditorPane"));
+const TerminalPane = lazy(() => import("./TerminalPane"));
+
 interface TabContentProps {
   tab: PaneTab;
   visible: boolean;
@@ -22,6 +26,17 @@ interface TabContentProps {
 export const TabContent = memo(function TabContent({ tab, visible, active }: TabContentProps) {
   if (tab.kind === "local") return <LocalTab tab={tab} visible={visible} active={active} />;
   if (tab.kind === "remote") return <RemoteTab tab={tab} visible={visible} active={active} />;
+  if (tab.kind === "editor" || tab.kind === "terminal") {
+    return (
+      <Suspense fallback={<section className="pane" />}>
+        {tab.kind === "editor" ? (
+          <EditorPane tab={tab} visible={visible} active={active} />
+        ) : (
+          <TerminalPane tab={tab} visible={visible} active={active} />
+        )}
+      </Suspense>
+    );
+  }
   return <WelcomePanel tabId={tab.id} />;
 });
 

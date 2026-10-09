@@ -1,10 +1,44 @@
 // The dock layout of a window: groups of tabs, arranged in nested rows and columns. Every
 // operation returns a new tree, normalized so no empty group or single-child split remains.
 
+import type { DocumentInfo, FileStamp, TextLineEnding, TextEncoding } from "./types";
+
+/** Unsaved text an editor tab takes along when it moves to another window. */
+export interface EditorDraft {
+  text: string;
+  encoding: TextEncoding;
+  lineEnding: TextLineEnding;
+  /** The file as last read or saved; null when it never was. */
+  stamp: FileStamp | null;
+}
+
 export type PaneTab =
   | { id: string; kind: "local"; path?: string }
   | { id: string; kind: "remote"; sessionId: string; path?: string }
-  | { id: string; kind: "welcome" };
+  | { id: string; kind: "welcome" }
+  | {
+      id: string;
+      kind: "editor";
+      documentId: string;
+      name: string;
+      path: string;
+      /** "Local", or the server's label. */
+      origin: string;
+      /** The session the file was opened from, for server files. */
+      sessionId?: string;
+      draft?: EditorDraft;
+    }
+  | {
+      id: string;
+      kind: "terminal";
+      sessionId: string;
+      label: string;
+      /** Absent until the shell has started. */
+      terminalId?: string;
+    };
+
+export type EditorTab = Extract<PaneTab, { kind: "editor" }>;
+export type TerminalTab = Extract<PaneTab, { kind: "terminal" }>;
 
 export interface GroupNode {
   type: "group";
@@ -41,6 +75,15 @@ export function localTab(path?: string): PaneTab {
 
 export function welcomeTab(): PaneTab {
   return { id: newId("tab"), kind: "welcome" };
+}
+
+export function editorTab(document: DocumentInfo, sessionId?: string): EditorTab {
+  const { id: documentId, name, path, origin } = document;
+  return { id: newId("tab"), kind: "editor", documentId, name, path, origin, sessionId };
+}
+
+export function terminalTab(sessionId: string, label: string): TerminalTab {
+  return { id: newId("tab"), kind: "terminal", sessionId, label };
 }
 
 export function defaultLayout(): LayoutNode {
@@ -284,13 +327,34 @@ export function layoutPlacements(
   return placements;
 }
 
+const isString = (value: unknown): value is string => typeof value === "string";
+const isOptionalString = (value: unknown) => value === undefined || isString(value);
+
+function isDraft(value: unknown): value is EditorDraft {
+  if (!value || typeof value !== "object") return false;
+  const draft = value as Record<string, unknown>;
+  return isString(draft.text) && isString(draft.encoding) && isString(draft.lineEnding);
+}
+
 function isTab(value: unknown): value is PaneTab {
   if (!value || typeof value !== "object") return false;
   const tab = value as Record<string, unknown>;
   if (typeof tab.id !== "string") return false;
   if (tab.path !== undefined && typeof tab.path !== "string") return false;
-  if (tab.kind === "remote") return typeof tab.sessionId === "string";
-  return tab.kind === "local" || tab.kind === "welcome";
+  switch (tab.kind) {
+    case "remote":
+      return isString(tab.sessionId);
+    case "editor":
+      return (
+        [tab.documentId, tab.name, tab.path, tab.origin].every(isString) &&
+        isOptionalString(tab.sessionId) &&
+        (tab.draft === undefined || isDraft(tab.draft))
+      );
+    case "terminal":
+      return isString(tab.sessionId) && isString(tab.label) && isOptionalString(tab.terminalId);
+    default:
+      return tab.kind === "local" || tab.kind === "welcome";
+  }
 }
 
 /** Checks a layout read from storage or handed over by another window. */
@@ -321,13 +385,14 @@ export function parseLayout(value: unknown): LayoutNode | null {
   });
 }
 
-/** The layout worth restoring after a restart: remote tabs need a live session, so they go. */
+/** The layout worth restoring after a restart: server, editor and terminal tabs need what
+ * only this run had open, so they go. */
 export function persistableLayout(root: LayoutNode): LayoutNode | null {
   return normalize(
     mapGroups(root, (entry) =>
       withTabs(
         entry,
-        entry.tabs.filter((tab) => tab.kind !== "remote"),
+        entry.tabs.filter((tab) => tab.kind === "local" || tab.kind === "welcome"),
       ),
     ),
   );

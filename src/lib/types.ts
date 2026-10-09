@@ -1,6 +1,7 @@
 // Mirrors the serde types in src-tauri/src (model.rs, error.rs, protocol.rs, ssh/mod.rs,
 // session.rs, events.rs, transfer/, sync/, file_ops/, connections.rs, cloud/, themes.rs,
-// fonts.rs, automation/). Field names are camelCase on the wire.
+// fonts.rs, automation/, text.rs, editor.rs, terminal.rs). Field names are camelCase on the
+// wire.
 
 export type EntryKind = "dir" | "file" | "symlink" | "other";
 export type LinkTarget = "dir" | "file" | "broken";
@@ -594,3 +595,54 @@ export interface Comparison {
   identical: boolean;
   content: CompareContent;
 }
+
+/** A file the editor opens: on this computer or on the server of a session. */
+export type DocumentLocation =
+  { side: "local"; path: string } | { side: "remote"; sessionId: string; path: string };
+
+export interface DocumentInfo {
+  id: string;
+  name: string;
+  path: string;
+  /** "Local", or the label of the server the file is on. */
+  origin: string;
+}
+
+export type TextEncoding = "utf8" | "utf8Bom" | "utf16Le" | "utf16Be" | "latin1";
+export type TextLineEnding = "lf" | "crlf";
+
+export interface FileStamp {
+  size: number;
+  /** Milliseconds since the Unix epoch. */
+  modified: number | null;
+}
+
+export interface TextDocument {
+  /** Lines end in `\n` only; `lineEnding` says what the file uses. */
+  text: string;
+  encoding: TextEncoding;
+  lineEnding: TextLineEnding;
+  stamp: FileStamp;
+}
+
+export interface SaveRequest {
+  documentId: string;
+  text: string;
+  encoding: TextEncoding;
+  lineEnding: TextLineEnding;
+  /** The file as last read or saved; null overwrites whatever is there. */
+  expected: FileStamp | null;
+}
+
+export type SaveOutcome =
+  | { status: "saved"; stamp: FileStamp }
+  /** Something else changed or removed the file; `current` is null when removed. */
+  | { status: "changed"; current: FileStamp | null };
+
+export interface TerminalInfo {
+  id: string;
+  /** The server's label. */
+  label: string;
+}
+
+export type TerminalEvent = { type: "output"; data: string } | { type: "exit"; message: string };

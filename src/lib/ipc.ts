@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AppError,
@@ -10,6 +10,8 @@ import type {
   Comparison,
   ConnectProfile,
   DirListing,
+  DocumentInfo,
+  DocumentLocation,
   EnqueueRequest,
   ExistsAction,
   FileDetails,
@@ -28,6 +30,8 @@ import type {
   PermissionSummary,
   PowerAction,
   QueueFinished,
+  SaveOutcome,
+  SaveRequest,
   SavedConnection,
   ScheduledTask,
   SessionClosed,
@@ -40,6 +44,9 @@ import type {
   SyncRunRequest,
   SyncRunSummary,
   TaskView,
+  TerminalEvent,
+  TerminalInfo,
+  TextDocument,
   ThemeFile,
   TransferList,
   TransferUpdate,
@@ -205,6 +212,45 @@ export const schedules = {
 
 export const fonts = {
   list: () => call<FontFamily[]>("fonts_list"),
+};
+
+export const editor = {
+  open: (location: DocumentLocation) => call<DocumentInfo>("editor_open", { location }),
+  /** Reads the file; this window becomes the document's owner. */
+  load: (documentId: string) => call<TextDocument>("editor_load", { documentId }),
+  /** Takes over a document another window opened, without reading it again. */
+  adopt: (documentId: string) => call<void>("editor_adopt", { documentId }),
+  save: (request: SaveRequest) => call<SaveOutcome>("editor_save", { request }),
+  close: (documentId: string) => call<void>("editor_close", { documentId }),
+};
+
+function outputChannel(onEvent: (event: TerminalEvent) => void): Channel<TerminalEvent> {
+  const channel = new Channel<TerminalEvent>();
+  channel.onmessage = onEvent;
+  return channel;
+}
+
+export const terminal = {
+  open: (
+    sessionId: string,
+    columns: number,
+    rows: number,
+    onEvent: (event: TerminalEvent) => void,
+  ) =>
+    call<TerminalInfo>("terminal_open", {
+      sessionId,
+      columns,
+      rows,
+      output: outputChannel(onEvent),
+    }),
+  /** Shows the terminal's output here from now on, starting with what it showed before. */
+  attach: (terminalId: string, onEvent: (event: TerminalEvent) => void) =>
+    call<void>("terminal_attach", { terminalId, output: outputChannel(onEvent) }),
+  write: (terminalId: string, data: string) => call<void>("terminal_write", { terminalId, data }),
+  resize: (terminalId: string, columns: number, rows: number) =>
+    call<void>("terminal_resize", { terminalId, columns, rows }),
+  restart: (terminalId: string) => call<void>("terminal_restart", { terminalId }),
+  close: (terminalId: string) => call<void>("terminal_close", { terminalId }),
 };
 
 export const files = {

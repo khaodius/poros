@@ -107,6 +107,50 @@ impl Session {
             Link::Direct(files) => files.close().await,
         }
     }
+
+    pub fn target(&self) -> RemoteTarget {
+        RemoteTarget {
+            session_id: self.id.clone(),
+            label: self.info.label.clone(),
+            profile: self.profile.clone(),
+            host_key_fingerprint: self.host_key_fingerprint.clone(),
+        }
+    }
+}
+
+/// What it takes to reach a session's server again after the session itself is gone: its login
+/// and the host key it was trusted with.
+#[derive(Clone)]
+pub struct RemoteTarget {
+    pub session_id: String,
+    pub label: String,
+    profile: ConnectProfile,
+    host_key_fingerprint: String,
+}
+
+impl RemoteTarget {
+    pub fn protocol(&self) -> Protocol {
+        self.profile.protocol
+    }
+
+    /// A connection of its own that accepts the same host key the session did, logging nothing
+    /// but failures. `purpose` tells its log lines and close events apart from the session's.
+    pub async fn connect(&self, known_hosts: &KnownHosts, purpose: &str) -> AppResult<SshHandle> {
+        let approval = (!self.host_key_fingerprint.is_empty()).then(|| HostKeyApproval {
+            fingerprint: self.host_key_fingerprint.clone(),
+            remember: false,
+        });
+        let connection_id = format!("{}#{purpose}", self.session_id);
+        let connection = ssh::connect(
+            &connection_id,
+            &self.profile,
+            known_hosts,
+            approval,
+            &Events::default(),
+        )
+        .await?;
+        Ok(connection.handle)
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

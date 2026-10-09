@@ -4,6 +4,7 @@ import {
   allGroups,
   allTabs,
   dockTab,
+  editorTab,
   group,
   groupOfTab,
   layoutPlacements,
@@ -14,6 +15,7 @@ import {
   persistableLayout,
   removeTab,
   resizeShares,
+  terminalTab,
   type LayoutNode,
   type PaneTab,
 } from "./layout";
@@ -142,5 +144,27 @@ describe("layout", () => {
     expect(restored && allTabs(restored).map((tab) => tab.id)).toEqual(["a"]);
     expect(parseLayout({ type: "group", id: "g", tabs: [{ id: 1 }] })).toBeNull();
     expect(parseLayout(JSON.parse(JSON.stringify(root)))).toEqual(root);
+  });
+
+  it("hands editor and terminal tabs between windows but does not keep them", () => {
+    const editor: PaneTab = {
+      ...editorTab({
+        id: "doc-1",
+        name: "nginx.conf",
+        path: "/etc/nginx/nginx.conf",
+        origin: "srv",
+      }),
+      draft: { text: "user www;\n", encoding: "utf8", lineEnding: "lf", stamp: null },
+    };
+    const shell = terminalTab("session-1", "root@srv");
+    const root = group([{ id: "a", kind: "local" }, editor, shell]);
+    expect(parseLayout(JSON.parse(JSON.stringify(root)))).toEqual(root);
+    const restored = parseLayout(JSON.parse(JSON.stringify(persistableLayout(root))));
+    expect(restored && allTabs(restored).map((tab) => tab.kind)).toEqual(["local"]);
+
+    const broken = { ...editor, draft: { text: 4 } };
+    expect(parseLayout({ type: "group", id: "g", tabs: [broken] })).toBeNull();
+    const nameless = { id: "t", kind: "terminal", sessionId: "s" };
+    expect(parseLayout({ type: "group", id: "g", tabs: [nameless] })).toBeNull();
   });
 });

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 use crate::automation::remote_command::{CommandRequest, CommandResult, CommandRunner};
@@ -9,6 +10,9 @@ use crate::automation::scheduler::{ScheduledTask, Scheduler, TaskView};
 use crate::automation::system::{self, PowerAction};
 use crate::cloud::{self, CloudProvider, OAuthClient, OAuthVault, ProviderStatus, SignedIn};
 use crate::connections::{ConnectionStore, SavedConnection};
+use crate::editor::{
+    DocumentInfo, EditorManager, FileLocation, SaveOutcome, SaveRequest, TextDocument,
+};
 use crate::error::{AppError, AppResult};
 use crate::events::{Events, LogLevel, Store};
 use crate::file_ops::{
@@ -23,6 +27,7 @@ use crate::session::{SessionInfo, SessionManager};
 use crate::settings::{Settings, SettingsStore};
 use crate::ssh::{AuthMethod, ConnectProfile, HostKeyApproval};
 use crate::sync::{SyncManager, SyncPlanView, SyncRequest, SyncRunRequest, SyncRunSummary};
+use crate::terminal::{Sink, TerminalEvent, TerminalInfo, TerminalManager};
 use crate::themes::{self, ThemeFile, ThemeStore};
 use crate::transfer::{
     EnqueueRequest, ExistsAction, JobId, JobState, TransferList, TransferManager,
@@ -526,6 +531,119 @@ pub fn themes_open_folder(themes: State<'_, ThemeStore>) -> AppResult<()> {
 #[tauri::command]
 pub async fn fonts_list() -> AppResult<Vec<FontFamily>> {
     Ok(tokio::task::spawn_blocking(fonts::installed_families).await?)
+}
+
+#[tauri::command]
+pub async fn editor_open(
+    window: WebviewWindow,
+    editor: State<'_, EditorManager>,
+    location: FileLocation,
+) -> AppResult<DocumentInfo> {
+    editor.open(location, window.label()).await
+}
+
+#[tauri::command]
+pub async fn editor_load(
+    window: WebviewWindow,
+    editor: State<'_, EditorManager>,
+    document_id: String,
+) -> AppResult<TextDocument> {
+    editor.load(&document_id, window.label()).await
+}
+
+#[tauri::command]
+pub fn editor_adopt(
+    window: WebviewWindow,
+    editor: State<'_, EditorManager>,
+    document_id: String,
+) -> AppResult<()> {
+    editor.adopt(&document_id, window.label())
+}
+
+#[tauri::command]
+pub async fn editor_save(
+    editor: State<'_, EditorManager>,
+    request: SaveRequest,
+) -> AppResult<SaveOutcome> {
+    editor.save(request).await
+}
+
+#[tauri::command]
+pub async fn editor_close(editor: State<'_, EditorManager>, document_id: String) -> AppResult<()> {
+    editor.close(&document_id).await;
+    Ok(())
+}
+
+fn terminal_sink(output: Channel<TerminalEvent>) -> Sink {
+    Arc::new(move |event| {
+        let _ = output.send(event);
+    })
+}
+
+#[tauri::command]
+pub async fn terminal_open(
+    window: WebviewWindow,
+    terminals: State<'_, TerminalManager>,
+    session_id: String,
+    columns: u32,
+    rows: u32,
+    output: Channel<TerminalEvent>,
+) -> AppResult<TerminalInfo> {
+    terminals
+        .open(
+            &session_id,
+            columns,
+            rows,
+            terminal_sink(output),
+            window.label(),
+        )
+        .await
+}
+
+#[tauri::command]
+pub fn terminal_attach(
+    window: WebviewWindow,
+    terminals: State<'_, TerminalManager>,
+    terminal_id: String,
+    output: Channel<TerminalEvent>,
+) -> AppResult<()> {
+    terminals.attach(&terminal_id, terminal_sink(output), window.label())
+}
+
+#[tauri::command]
+pub fn terminal_write(
+    terminals: State<'_, TerminalManager>,
+    terminal_id: String,
+    data: String,
+) -> AppResult<()> {
+    terminals.write(&terminal_id, data.into_bytes())
+}
+
+#[tauri::command]
+pub fn terminal_resize(
+    terminals: State<'_, TerminalManager>,
+    terminal_id: String,
+    columns: u32,
+    rows: u32,
+) -> AppResult<()> {
+    terminals.resize(&terminal_id, columns, rows)
+}
+
+#[tauri::command]
+pub async fn terminal_restart(
+    terminals: State<'_, TerminalManager>,
+    terminal_id: String,
+) -> AppResult<()> {
+    terminals.restart(&terminal_id).await
+}
+
+#[tauri::command]
+pub async fn terminal_close(
+    terminals: State<'_, TerminalManager>,
+    terminal_id: String,
+) -> AppResult<()> {
+    terminals.close(&terminal_id).await;
+    Ok(())
 }
 
 #[tauri::command]

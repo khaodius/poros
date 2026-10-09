@@ -21,6 +21,8 @@ export type AppDialog =
   /** Folders to start with; the panes looked at last fill in what is not given. */
   | { kind: "sync"; localPath?: string; sessionId?: string; remotePath?: string }
   | { kind: "closeTab"; tabId: string; sessionId: string; label: string; pendingTransfers: number }
+  /** Editor tabs with unsaved changes that are about to close, or whose window is. */
+  | { kind: "unsavedChanges"; tabIds: string[]; closeWindow: boolean }
   /** `returnTo` reopens the dialog the update was found from once this one closes. */
   | { kind: "update"; returnTo?: AppDialog }
   | { kind: "runCommand"; sessionId: string; target: CommandTarget }

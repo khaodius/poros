@@ -91,7 +91,8 @@ export interface CloudSettings {
   microsoftTenant: string;
 }
 
-export type DoubleClickAction = "transfer" | "nothing";
+export type DoubleClickAction = "transfer" | "edit" | "nothing";
+const DOUBLE_CLICK_ACTIONS: DoubleClickAction[] = ["transfer", "edit", "nothing"];
 export type DateFormat = "minutes" | "seconds" | "locale";
 export const DATE_FORMATS: DateFormat[] = ["minutes", "seconds", "locale"];
 
@@ -353,7 +354,7 @@ export function sanitizeSettings(stored: unknown): Settings {
     automation: mergeSection(DEFAULT_SETTINGS.automation, source.automation),
   };
   const options = settings.interface;
-  if (!["transfer", "nothing"].includes(options.doubleClickFile)) {
+  if (!DOUBLE_CLICK_ACTIONS.includes(options.doubleClickFile)) {
     options.doubleClickFile = DEFAULT_SETTINGS.interface.doubleClickFile;
   }
   if (!DATE_FORMATS.includes(options.dateFormat)) {

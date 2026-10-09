@@ -1,13 +1,5 @@
 import { useMemo, useRef, useState, type CSSProperties, type PointerEvent } from "react";
-import {
-  Columns2,
-  HardDrive,
-  Layers,
-  Rows2,
-  Server,
-  Sparkles,
-  SquareArrowOutUpRight,
-} from "lucide-react";
+import { Columns2, Layers, Rows2, SquareArrowOutUpRight } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import {
   DOCK_GAP,
@@ -37,6 +29,7 @@ import { isLifted, useDragStore, type DropTarget, type TabDrag } from "../state/
 import { useLayoutStore } from "../state/layoutStore";
 import { TabBar } from "./TabBar";
 import { TabContent } from "./TabContent";
+import { TAB_ICONS } from "./tabIcons";
 
 const cssLength = ({ share, pixels }: Extent) => `calc(${share * 100}% + ${pixels}px)`;
 
@@ -341,7 +334,7 @@ function leavingHint(target: DropTarget): string {
 }
 
 function FloatingFrame({ tab, label, leavingTo, style }: FloatingFrameProps) {
-  const Icon = tab?.kind === "local" ? HardDrive : tab?.kind === "remote" ? Server : Sparkles;
+  const Icon = TAB_ICONS[tab?.kind ?? "welcome"];
   return (
     <div className="dock-floating" style={style}>
       <div className="dock-floating-title">

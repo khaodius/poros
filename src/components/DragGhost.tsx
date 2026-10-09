@@ -6,15 +6,13 @@ import {
   File,
   Folder,
   FolderInput,
-  HardDrive,
-  Server,
-  Sparkles,
   Upload,
 } from "lucide-react";
 import { baseName } from "../lib/path";
 import { isDirLike } from "../lib/sort";
 import { useDragStore, type DragPayload, type DropTarget } from "../state/dragStore";
 import { dropAction } from "../state/fileOperations";
+import { TAB_ICONS } from "./tabIcons";
 
 const POINTER_OFFSET = { x: 14, y: 12 };
 
@@ -54,8 +52,7 @@ export function DragGhost() {
     transform: `translate(${pointer.x + POINTER_OFFSET.x}px, ${pointer.y + POINTER_OFFSET.y}px)`,
   };
   if (incoming) {
-    const TabIcon =
-      incoming.kind === "local" ? HardDrive : incoming.kind === "remote" ? Server : Sparkles;
+    const TabIcon = TAB_ICONS[incoming.kind];
     return (
       <div className="drag-ghost" style={style}>
         <span className="drag-ghost-label">

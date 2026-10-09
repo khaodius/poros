@@ -1,6 +1,7 @@
 import { Fragment, useMemo } from "react";
 import { formatSize, formatVersion, pluralize } from "../lib/format";
 import { parseReleaseNotes, type NoteSpan } from "../lib/releaseNotes";
+import { useUnsavedStore } from "../state/editorRegistry";
 import { useSettingsStore } from "../state/settingsStore";
 import { useTransferStore } from "../state/transferStore";
 import {
@@ -19,6 +20,7 @@ export function UpdateDialog({ onClose }: { onClose: () => void }) {
     ({ snapshot }) => snapshot.stats.counts.queued + snapshot.stats.counts.running,
   );
   const keepQueue = useSettingsStore((state) => state.settings.transfers.keepQueue);
+  const unsavedFiles = useUnsavedStore((state) => Object.keys(state.tabs).length);
   const notes = useMemo(() => parseReleaseNotes(update?.body ?? ""), [update]);
   if (!update) return null;
 
@@ -69,6 +71,11 @@ export function UpdateDialog({ onClose }: { onClose: () => void }) {
           <p className="warning-text">
             {pluralize(pendingTransfers, "transfer")} in the queue will stop when Poros restarts
             {keepQueue ? " and come back paused." : "."}
+          </p>
+        )}
+        {unsavedFiles > 0 && (
+          <p className="warning-text">
+            Unsaved changes in {pluralize(unsavedFiles, "file")} will be lost when Poros restarts.
           </p>
         )}
       </div>

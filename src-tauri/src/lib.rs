@@ -3,6 +3,7 @@ pub mod checksum;
 pub mod cloud;
 pub mod commands;
 pub mod connections;
+pub mod editor;
 pub mod error;
 pub mod events;
 pub mod file_ops;
@@ -21,6 +22,8 @@ pub mod sftp;
 pub mod ssh;
 pub mod storage;
 pub mod sync;
+pub mod terminal;
+pub mod text;
 pub mod themes;
 pub mod timestamp;
 pub mod tls;
@@ -37,11 +40,13 @@ use automation::scheduler::Scheduler;
 use cloud::OAuthVault;
 use commands::PendingWindows;
 use connections::{ConnectionStore, Keychain};
+use editor::EditorManager;
 use events::Events;
 use file_ops::FileOperations;
 use session::SessionManager;
 use settings::SettingsStore;
 use sync::SyncManager;
+use terminal::TerminalManager;
 use themes::ThemeStore;
 use transfer::TransferManager;
 
@@ -49,6 +54,9 @@ const MAIN_WINDOW: &str = "main";
 /// Windows open hidden and their page shows them once its first frame is ready, so they never
 /// flash white. A page that fails before then still gets its window shown after this long.
 const REVEAL_FALLBACK: Duration = Duration::from_secs(2);
+/// A tab moving to another window is taken over there after its old window may have closed, so
+/// editor files and terminals a closed window owned are kept this long before they go.
+const ADOPTION_GRACE: Duration = Duration::from_secs(5);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -88,6 +96,8 @@ pub fn run() {
             transfers.keep_queue_in(config_dir.join("transfers.json"));
             app.manage(transfers);
             app.manage(SyncManager::new(sessions.clone(), events.clone()));
+            app.manage(EditorManager::new(sessions.clone(), events.clone()));
+            app.manage(TerminalManager::new(sessions.clone(), events.clone()));
             app.manage(CommandRunner::new(sessions.clone(), events.clone()));
             app.manage(FileOperations::new(sessions.clone(), events.clone()));
             app.manage(sessions);
@@ -115,19 +125,24 @@ pub fn run() {
                 }
             });
         })
-        .on_window_event(|window, event| match event {
-            WindowEvent::CloseRequested { .. } if window.label() == MAIN_WINDOW => {
+        .on_window_event(|window, event| {
+            if !matches!(event, WindowEvent::Destroyed) {
+                return;
+            }
+            // Closing is confirmed by the page first, which may have unsaved files to ask about.
+            if window.label() == MAIN_WINDOW {
                 window.app_handle().exit(0);
+                return;
             }
-            WindowEvent::Destroyed => {
-                let app = window.app_handle().clone();
-                let label = window.label().to_string();
-                tauri::async_runtime::spawn(async move {
-                    let sessions = app.state::<Arc<SessionManager>>();
-                    sessions.disconnect_owned_by(&label).await;
-                });
-            }
-            _ => {}
+            let app = window.app_handle().clone();
+            let label = window.label().to_string();
+            tauri::async_runtime::spawn(async move {
+                let sessions = app.state::<Arc<SessionManager>>();
+                sessions.disconnect_owned_by(&label).await;
+                tokio::time::sleep(ADOPTION_GRACE).await;
+                app.state::<EditorManager>().close_owned_by(&label).await;
+                app.state::<TerminalManager>().close_owned_by(&label).await;
+            });
         })
         .invoke_handler(tauri::generate_handler![
             commands::local_home,
@@ -183,6 +198,17 @@ pub fn run() {
             commands::theme_import,
             commands::themes_open_folder,
             commands::fonts_list,
+            commands::editor_open,
+            commands::editor_load,
+            commands::editor_adopt,
+            commands::editor_save,
+            commands::editor_close,
+            commands::terminal_open,
+            commands::terminal_attach,
+            commands::terminal_write,
+            commands::terminal_resize,
+            commands::terminal_restart,
+            commands::terminal_close,
             commands::save_text_file,
             commands::remote_command_run,
             commands::remote_command_stop,
@@ -204,7 +230,11 @@ pub fn run() {
         if let RunEvent::Exit = event {
             handle.state::<TransferManager>().save_queue();
             let sessions = handle.state::<Arc<SessionManager>>();
-            tauri::async_runtime::block_on(sessions.disconnect_all());
+            let terminals = handle.state::<TerminalManager>();
+            tauri::async_runtime::block_on(async {
+                terminals.close_all().await;
+                sessions.disconnect_all().await;
+            });
         }
     });
 }
