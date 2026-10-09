@@ -3,6 +3,35 @@
 Installers for every version are attached to its
 [release](https://github.com/khaodius/poros/releases), with SHA-256 checksums.
 
+## 0.3.0 - 2026-10-09
+
+- **FTP, FTPS, Google Drive and OneDrive** alongside SFTP. Drop files from one server tab onto
+  another to copy between servers; two FTP servers send the file straight to each other (FXP)
+  when both allow it.
+- **Built-in editor and SSH terminal**: edit local and server files in a tab, keeping their
+  encoding and line endings, with a warning when a server file changed since it was opened.
+  Any server tab can open a shell in a tab of its own.
+- **File operations on the server**: cut, copy and paste, Move to and Copy to, Properties for
+  permissions, owner, group and folder sizes, and a side-by-side compare of any two files,
+  local or on a server.
+- **Automation**: scheduled folder synchronizations and server commands, actions for when the
+  queue finishes (notify, play a sound, sleep, shut down or run a command), saved server
+  commands, SOCKS and HTTP proxies, and jump hosts.
+- **Safer transfers**: files are written under a temporary name and renamed into place once
+  complete, resumes check the data already there, checksums can be compared after each file,
+  and transfers wait out dropped connections and carry on. Unfinished transfers come back
+  paused at the next start.
+- **In-app updates**: Poros checks for a new release at start-up or from Settings, and installs
+  it only after verifying its signature against the update key built into the app.
+- **Tabs and windows**: drag a tab from one Poros window into another. A tab dragged out over
+  the desktop shows a small preview of the window it will become, and the window opens exactly
+  there, kept on screen. The editor and terminal open in a pane of their own beside the pane
+  they came from, and the other panes make room.
+- **Rounded window corners** on Windows 11, following the corner roundness setting.
+
+Copies installed from the 0.2.0 release have no updater, so install 0.3.0 over them once; later
+versions arrive through the in-app updater. Settings and saved connections are kept.
+
 ## 0.2.0 - 2026-10-08
 
 The first published release of Poros, a dual-pane SFTP and rsync client for Linux and Windows.
