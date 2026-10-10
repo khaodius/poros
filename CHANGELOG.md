@@ -3,6 +3,42 @@
 Installers for every version are attached to its
 [release](https://github.com/khaodius/poros/releases), with SHA-256 checksums.
 
+## 0.3.2 - 2026-10-10
+
+Fixes from a code review, each with a test of the failure it fixes.
+
+- **Interrupted transfers keep your files.** Pausing a transfer as its last bytes arrive keeps
+  it paused until the file is renamed into place, instead of showing it done with the data left
+  in a hidden temporary file. Two transfers to the same file take turns instead of writing into
+  one temporary file. On servers without OpenSSH's rename extension, overwriting a file moves
+  the old copy aside until the new one is in place, so a dropped connection never leaves
+  nothing behind.
+- **Synchronization leaves alone what it cannot read.** A folder either side could not list is
+  no longer treated as missing, so it is neither deleted nor copied over. A scheduled
+  synchronization never deletes files to mirror an empty folder, such as an unplugged drive,
+  and reports why it held back.
+- **Moving a folder to another disk** moves it one item at a time, locally and on servers that
+  do not allow commands, so anything that fails to copy stays where it was instead of being
+  deleted with the original.
+- **Two crashes fixed**: long terminal output mixing plain text with accented letters or emoji,
+  and a malformed checksum reply from a server during an rsync upload.
+- **Security**: a known server that shows a different kind of host key gets the changed-key
+  warning instead of the new-server prompt. File names from a server that would land outside
+  the chosen folder on Windows, such as `C:x.dll`, are refused. Names that look like options,
+  such as `-rf`, get `./` in front in server commands. A saved password is sent only to the
+  host, port, user and sign-in method it was saved with, so editing a site's host asks for it
+  again.
+- **Slow and stalled connections**: SFTP and cloud transfers fail only when no data has moved
+  for the timeout, not when a slow link takes longer than that. An FTP server that stops
+  sending mid-transfer or mid-listing is given up on instead of hanging the connection.
+- **Opening Poros a second time** brings the open window forward instead of starting a second
+  copy that would run every scheduled task twice.
+- **Damaged settings, schedules or queue files** are kept as `<name>.corrupt-<time>` and
+  reported at start-up, instead of being silently replaced.
+- **Keyboard and mouse**: opening a folder while it refreshes always opens it, arrow keys work
+  again after a dialog or menu closes, and Ctrl+W and Ctrl+T do nothing while you type in a
+  field or a dialog is open.
+
 ## 0.3.1 - 2026-10-09
 
 - **Dragging a tab out of a window** works across the whole desktop. Once the tab leaves the
