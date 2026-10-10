@@ -552,26 +552,46 @@ async fn synchronize(
             excludes: excludes.clone(),
         })
         .await?;
+    let empty_folder = context.sync.empty_mirrored_folder(&plan.plan_id);
+    let held_back = |action: SyncAction| {
+        empty_folder.is_some()
+            && matches!(action, SyncAction::DeleteLocal | SyncAction::DeleteRemote)
+    };
+    let conflicts = plan
+        .items
+        .iter()
+        .filter(|item| item.action == SyncAction::Conflict)
+        .count();
     let choices: Vec<SyncChoice> = plan
         .items
         .iter()
-        .filter(|item| item.action != SyncAction::Conflict)
+        .filter(|item| item.action != SyncAction::Conflict && !held_back(item.action))
         .map(|item| SyncChoice {
             id: item.id,
             action: item.action,
         })
         .collect();
-    let conflicts = plan.items.len() - choices.len();
-    let conflict_note = match conflicts {
+    let mut notes = match conflicts {
         0 => String::new(),
         1 => ", 1 conflict left for you to settle".into(),
         count => format!(", {count} conflicts left for you to settle"),
     };
+    if let Some(folder) = &empty_folder {
+        notes.push_str(&format!(
+            ", nothing deleted because {folder} was empty (synchronize from Poros once if it is meant to be)"
+        ));
+    }
+    let settled = conflicts == 0 && empty_folder.is_none();
     if choices.is_empty() {
         context.sync.discard(&plan.plan_id);
+        let message = if empty_folder.is_some() {
+            format!("Nothing copied{notes}")
+        } else {
+            format!("The folders already match{notes}")
+        };
         return Ok(Outcome {
-            succeeded: conflicts == 0,
-            message: format!("The folders already match{conflict_note}"),
+            succeeded: settled,
+            message,
         });
     }
 
@@ -607,9 +627,9 @@ async fn synchronize(
             plural(summary.failures.len() as u64, "item")
         ));
     }
-    message.push_str(&conflict_note);
+    message.push_str(&notes);
     Ok(Outcome {
-        succeeded: failed == 0 && summary.failures.is_empty() && conflicts == 0,
+        succeeded: failed == 0 && summary.failures.is_empty() && settled,
         message,
     })
 }

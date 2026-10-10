@@ -31,10 +31,12 @@ pub struct Tree {
     pub root: String,
     /// Keyed by path relative to the root, with `/` between components.
     pub nodes: BTreeMap<String, Node>,
-    /// Folders with excluded entries somewhere inside, which are never deleted whole.
+    /// Folders with excluded or passed over entries somewhere inside, which are never deleted
+    /// whole.
     pub holds_excluded: HashSet<String>,
     pub excluded: u64,
-    /// Links that lead nowhere or in a circle, special files, and unreadable folders.
+    /// Links that lead nowhere or in a circle, special files, and unreadable folders. What
+    /// they are is unknown, so a plan leaves these paths alone on both sides.
     pub passed_over: Vec<String>,
 }
 
@@ -56,7 +58,7 @@ impl Tree {
         let is_dir = entry.is_dir_like();
         let is_file = entry.kind == EntryKind::File || entry.link_target == Some(LinkTarget::File);
         if !is_dir && !is_file {
-            self.passed_over.push(relative);
+            self.pass_over(relative);
             return None;
         }
         if filter.excludes(&relative, is_dir) {
@@ -73,6 +75,14 @@ impl Tree {
             },
         );
         is_dir.then_some(relative)
+    }
+
+    fn pass_over(&mut self, relative: String) {
+        self.nodes.remove(&relative);
+        if let Some((parent, _)) = relative.rsplit_once('/') {
+            self.mark_excluded(parent);
+        }
+        self.passed_over.push(relative);
     }
 
     fn mark_excluded(&mut self, folder: &str) {
@@ -114,15 +124,10 @@ pub fn walk_local(
                 continue;
             };
             match local::list_dir(&entry.path) {
-                Ok(inner) if chain.contains(&inner.path) => {
-                    tree.nodes.remove(&folder);
-                    tree.passed_over.push(folder);
+                Ok(inner) if !chain.contains(&inner.path) => {
+                    pending.push((folder, chain.clone(), inner));
                 }
-                Ok(inner) => pending.push((folder, chain.clone(), inner)),
-                Err(_) => {
-                    tree.nodes.remove(&folder);
-                    tree.passed_over.push(folder);
-                }
+                _ => tree.pass_over(folder),
             }
         }
     }
@@ -196,10 +201,7 @@ fn take_listing(
 ) {
     match listing {
         Ok(listing) if !chain.contains(&listing.path) => ready.push((relative, chain, listing)),
-        _ => {
-            tree.nodes.remove(&relative);
-            tree.passed_over.push(relative);
-        }
+        _ => tree.pass_over(relative),
     }
 }
 
