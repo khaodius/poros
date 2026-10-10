@@ -28,6 +28,7 @@ import { useDragPreviewOnDesktop } from "./hooks/useDragPreviewOnDesktop";
 import { useTabDragsBetweenWindows } from "./hooks/useTabDragsBetweenWindows";
 import { useWindowMaximized } from "./hooks/useWindowMaximized";
 import { EMPTY_DRAFT } from "./lib/connectDraft";
+import { isTextEntryTarget } from "./lib/focus";
 import {
   RETURN_TAB_EVENT,
   onLog,
@@ -239,10 +240,16 @@ function useShortcuts() {
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
-      if (useUiStore.getState().dialog) return;
+      // Nothing acts behind a dialog, and dialogs a pane opens are not in the ui store.
+      if (useUiStore.getState().dialog || document.querySelector("dialog[open]")) return;
       // Ctrl+W, Ctrl+T and the like edit the command line in a shell.
       if ((event.target as HTMLElement).closest?.(".terminal-host")) return;
       const key = event.key.toLowerCase();
+      // Typing a name or a filter leaves the tabs as they are. The editor's tab closes like
+      // any editor's, asking about unsaved changes, and Settings opens from anywhere.
+      const typing =
+        isTextEntryTarget(event.target) && !(event.target as HTMLElement).closest?.(".cm-editor");
+      if ((key === "t" || key === "w") && typing) return;
       if (key === "t") {
         useLayoutStore.getState().addTab(welcomeTab());
       } else if (key === "w") {

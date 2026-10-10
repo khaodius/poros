@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { focusReturnCandidates, type FocusReturn } from "./focus";
+import { focusReturnCandidates, isTextEntryTarget, type FocusReturn } from "./focus";
 
 interface FakeElement {
   label: string;
@@ -54,5 +54,28 @@ describe("focusReturnCandidates", () => {
 
   it("offers the file list once when it is also the fallback", () => {
     expect(closing({ fallback: fileList })).toEqual([fileList]);
+  });
+});
+
+function fakeTarget(fields: { tagName: string; type?: string; isContentEditable?: boolean }) {
+  return fields as unknown as EventTarget;
+}
+
+describe("isTextEntryTarget", () => {
+  it("finds the fields people type in", () => {
+    expect(isTextEntryTarget(fakeTarget({ tagName: "INPUT", type: "text" }))).toBe(true);
+    expect(isTextEntryTarget(fakeTarget({ tagName: "INPUT", type: "search" }))).toBe(true);
+    expect(isTextEntryTarget(fakeTarget({ tagName: "INPUT", type: "number" }))).toBe(true);
+    expect(isTextEntryTarget(fakeTarget({ tagName: "INPUT", type: "password" }))).toBe(true);
+    expect(isTextEntryTarget(fakeTarget({ tagName: "TEXTAREA" }))).toBe(true);
+    expect(isTextEntryTarget(fakeTarget({ tagName: "DIV", isContentEditable: true }))).toBe(true);
+  });
+
+  it("leaves out controls without text, and nothing at all", () => {
+    expect(isTextEntryTarget(fakeTarget({ tagName: "INPUT", type: "checkbox" }))).toBe(false);
+    expect(isTextEntryTarget(fakeTarget({ tagName: "INPUT", type: "range" }))).toBe(false);
+    expect(isTextEntryTarget(fakeTarget({ tagName: "BUTTON", type: "button" }))).toBe(false);
+    expect(isTextEntryTarget(fakeTarget({ tagName: "DIV", isContentEditable: false }))).toBe(false);
+    expect(isTextEntryTarget(null)).toBe(false);
   });
 });

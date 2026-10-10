@@ -1,4 +1,4 @@
-// Keyboard focus around dialogs and menus.
+// Keyboard focus around dialogs, menus and text fields.
 
 /** The tab group the user works in. */
 const ACTIVE_GROUP = ".tab-group.is-focused";
@@ -74,4 +74,32 @@ export function rememberFocus(): (closing: Element | null) => void {
       if (document.activeElement === candidate) return;
     }
   };
+}
+
+const NON_TEXT_INPUT_TYPES = new Set([
+  "button",
+  "checkbox",
+  "color",
+  "file",
+  "hidden",
+  "image",
+  "radio",
+  "range",
+  "reset",
+  "submit",
+]);
+
+/** The parts of an element that tell whether it takes typed text. */
+interface TypingTarget {
+  tagName?: string;
+  type?: string;
+  isContentEditable?: boolean;
+}
+
+/** Whether a key press went to something the user types in: a text field, or the editor. */
+export function isTextEntryTarget(target: EventTarget | null): boolean {
+  const element = target as TypingTarget | null;
+  if (!element) return false;
+  if (element.isContentEditable || element.tagName === "TEXTAREA") return true;
+  return element.tagName === "INPUT" && !NON_TEXT_INPUT_TYPES.has(element.type ?? "text");
 }
