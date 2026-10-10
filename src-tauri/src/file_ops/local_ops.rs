@@ -159,10 +159,33 @@ impl Work<'_> {
                 Ok(())
             }
             Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {
+                self.move_across_devices(source, kind, destination)
+            }
+            Err(error) => Err(with_path(error, source)),
+        }
+    }
+
+    fn move_across_devices(
+        &self,
+        source: &Path,
+        kind: Kind,
+        destination: &Destination,
+    ) -> AppResult<()> {
+        match (kind, destination) {
+            // Moved one entry at a time, so whatever fails to copy stays where it was.
+            (Kind::Dir, Destination::Fresh(target)) => {
+                let metadata = source
+                    .metadata()
+                    .map_err(|error| with_path(error, source))?;
+                fs::create_dir(target).map_err(|error| with_path(error, target))?;
+                self.merge_into(source, target)?;
+                copy_folder_attributes(&metadata, target);
+                Ok(())
+            }
+            _ => {
                 self.copy_to(source, kind, destination)?;
                 local::delete(&[display(source)])
             }
-            Err(error) => Err(with_path(error, source)),
         }
     }
 
@@ -187,7 +210,11 @@ impl Work<'_> {
             }
         }
         if all_moved {
-            fs::remove_dir(source).map_err(|error| with_path(error, source))?;
+            match fs::remove_dir(source) {
+                // Something deeper inside failed to move, and was reported there.
+                Err(error) if error.kind() == io::ErrorKind::DirectoryNotEmpty => {}
+                removed => removed.map_err(|error| with_path(error, source))?,
+            }
         }
         Ok(())
     }
@@ -243,10 +270,7 @@ impl Work<'_> {
             let metadata = source
                 .metadata()
                 .map_err(|error| with_path(error, source))?;
-            let _ = fs::set_permissions(target, metadata.permissions());
-            if let Ok(modified) = metadata.modified() {
-                let _ = fs::File::open(target).and_then(|folder| folder.set_modified(modified));
-            }
+            copy_folder_attributes(&metadata, target);
         }
         Ok(())
     }
@@ -289,6 +313,14 @@ impl Work<'_> {
             .map_err(|error| with_path(error, destination.path()))?;
         self.progress.file_done();
         Ok(())
+    }
+}
+
+/// Set once the folder's contents are in place, since adding them changes its modified time.
+fn copy_folder_attributes(source: &fs::Metadata, target: &Path) {
+    let _ = fs::set_permissions(target, source.permissions());
+    if let Ok(modified) = source.modified() {
+        let _ = fs::File::open(target).and_then(|folder| folder.set_modified(modified));
     }
 }
 
@@ -464,6 +496,43 @@ mod tests {
         assert_eq!(fs::read(root.join("live/docs/b.txt")).unwrap(), b"new b");
         assert_eq!(fs::read(root.join("live/docs/keep.txt")).unwrap(), b"keep");
         assert!(!root.join("new/docs").exists());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn moving_a_folder_to_another_disk_keeps_what_could_not_be_copied() {
+        use std::os::unix::fs::MetadataExt;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let root = temp_dir.path();
+        // A tmpfs, so a rename into it crosses devices.
+        let Ok(other_disk) = tempfile::tempdir_in("/dev/shm") else {
+            return;
+        };
+        let device = |path: &Path| fs::metadata(path).unwrap().dev();
+        if device(root) == device(other_disk.path()) {
+            return;
+        }
+        fs::create_dir_all(root.join("photos/2024")).unwrap();
+        fs::write(root.join("photos/a.jpg"), b"a").unwrap();
+        fs::write(root.join("photos/2024/b.jpg"), b"b").unwrap();
+        // A socket is neither a file, a folder nor a link, so copying it fails.
+        let _socket =
+            std::os::unix::net::UnixListener::bind(root.join("photos/2024/socket")).unwrap();
+
+        let summary = run(&request(
+            Mode::Move,
+            &[&root.join("photos")],
+            other_disk.path(),
+            Conflict::KeepBoth,
+        ));
+        let moved = other_disk.path().join("photos");
+        assert_eq!(fs::read(moved.join("a.jpg")).unwrap(), b"a");
+        assert_eq!(fs::read(moved.join("2024/b.jpg")).unwrap(), b"b");
+        assert!(!root.join("photos/a.jpg").exists());
+        assert!(!root.join("photos/2024/b.jpg").exists());
+        assert!(root.join("photos/2024/socket").exists());
+        assert_eq!(summary.failures.len(), 1);
     }
 
     #[test]
