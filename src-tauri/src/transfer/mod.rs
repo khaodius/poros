@@ -878,6 +878,31 @@ mod tests {
         assert!(target.login().profile.route.proxy.is_some());
     }
 
+    #[test]
+    fn an_unreadable_saved_queue_is_kept_and_reported() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file = temp_dir.path().join("transfers.json");
+        std::fs::write(&file, "{\"servers\": [], \"jobs\": [").unwrap();
+        let events = Events::keeping_startup_log();
+        let sessions = Arc::new(SessionManager::new(
+            temp_dir.path().join("known_hosts"),
+            events.clone(),
+        ));
+
+        let manager = TransferManager::new(sessions, events.clone(), TransferSettings::default());
+        manager.keep_queue_in(file.clone());
+        let notices = events.take_startup_log();
+        assert_eq!(notices.len(), 1);
+        assert!(matches!(notices[0].level, LogLevel::Warn));
+        assert!(notices[0].message.contains("transfers.json is not valid"));
+        let kept = crate::storage::tests::kept_copies(temp_dir.path(), "transfers.json.corrupt-");
+        assert_eq!(kept.len(), 1);
+        assert_eq!(
+            std::fs::read_to_string(&kept[0]).unwrap(),
+            "{\"servers\": [], \"jobs\": ["
+        );
+    }
+
     #[tokio::test]
     async fn live_targets_keep_the_route_of_their_session() {
         let calls = Arc::new(AtomicU64::new(0));
