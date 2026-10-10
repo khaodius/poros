@@ -398,15 +398,13 @@ fn append_backlog(backlog: &mut String, text: &str) {
     if backlog.len() <= BACKLOG_BYTES {
         return;
     }
-    let keep_from = backlog.len() - BACKLOG_BYTES * 3 / 4;
+    let mut keep_from = backlog.len() - BACKLOG_BYTES * 3 / 4;
+    while !backlog.is_char_boundary(keep_from) {
+        keep_from += 1;
+    }
     let cut = backlog[keep_from..]
         .find('\n')
-        .map(|offset| keep_from + offset + 1)
-        .unwrap_or_else(|| {
-            (keep_from..backlog.len())
-                .find(|&index| backlog.is_char_boundary(index))
-                .unwrap_or(backlog.len())
-        });
+        .map_or(keep_from, |offset| keep_from + offset + 1);
     backlog.drain(..cut);
 }
 
@@ -493,5 +491,15 @@ mod tests {
         append_backlog(&mut backlog, &"é".repeat(BACKLOG_BYTES));
         assert!(backlog.len() <= BACKLOG_BYTES);
         assert!(backlog.chars().all(|character| character == 'é'));
+
+        // An odd length puts the first byte kept in the middle of a two-byte character.
+        let mut backlog = String::new();
+        append_backlog(
+            &mut backlog,
+            &format!("{}a", "é".repeat(BACKLOG_BYTES / 2 + 1)),
+        );
+        assert!(backlog.len() <= BACKLOG_BYTES);
+        assert!(backlog.starts_with('é'));
+        assert!(backlog.ends_with("éa"));
     }
 }
