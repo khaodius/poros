@@ -12,7 +12,7 @@ use crate::automation::remote_command::{CommandRequest, CommandResult, CommandRu
 use crate::automation::scheduler::{ScheduledTask, Scheduler, TaskView};
 use crate::automation::system::{self, PowerAction};
 use crate::cloud::{self, CloudProvider, OAuthClient, OAuthVault, ProviderStatus, SignedIn};
-use crate::connections::{ConnectionStore, SavedConnection};
+use crate::connections::{ConnectionStore, SavedConnection, SecretScope};
 use crate::desktop::{self, DragPreview, PreviewPlacement, WindowCorners};
 use crate::editor::{
     DocumentInfo, EditorManager, FileLocation, SaveOutcome, SaveRequest, TextDocument,
@@ -85,8 +85,10 @@ pub async fn connect(
     prepare_cloud_sign_in(&window, &mut profile)?;
     if let Some(saved_id) = profile.saved_connection_id.clone() {
         if profile.lacks_secret() {
+            // The profile may have been edited to point elsewhere since the secret was saved.
+            let scope = SecretScope::of_profile(&profile);
             let store = connections.inner().clone();
-            match tokio::task::spawn_blocking(move || store.secret(&saved_id)).await? {
+            match tokio::task::spawn_blocking(move || store.secret_for(&saved_id, &scope)).await? {
                 Ok(Some(secret)) => profile.set_secret(secret),
                 Ok(None) => {}
                 Err(error) => events.log(LogLevel::Warn, None, error.message),

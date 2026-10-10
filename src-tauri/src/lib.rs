@@ -40,7 +40,7 @@ use automation::remote_command::CommandRunner;
 use automation::scheduler::Scheduler;
 use cloud::OAuthVault;
 use commands::PendingWindows;
-use connections::{ConnectionStore, Keychain};
+use connections::{ConnectionStore, Keychain, SecretScope};
 use desktop::{DragPreview, DRAG_PREVIEW_WINDOW};
 use editor::EditorManager;
 use events::Events;
@@ -80,14 +80,21 @@ pub fn run() {
                 Box::new(Keychain),
             ));
             let store = connections.clone();
-            sessions.set_secret_sink(Arc::new(move |id: &str, secret: &str| {
-                let (store, id, secret) = (store.clone(), id.to_string(), secret.to_string());
-                tauri::async_runtime::spawn_blocking(move || {
-                    if let Err(error) = store.update_secret(&id, &secret) {
-                        log::warn!("Could not keep the renewed sign-in: {}", error.message);
-                    }
-                });
-            }));
+            sessions.set_secret_sink(Arc::new(
+                move |id: &str, scope: &SecretScope, secret: &str| {
+                    let (store, id, scope, secret) = (
+                        store.clone(),
+                        id.to_string(),
+                        scope.clone(),
+                        secret.to_string(),
+                    );
+                    tauri::async_runtime::spawn_blocking(move || {
+                        if let Err(error) = store.update_secret(&id, &scope, &secret) {
+                            log::warn!("Could not keep the renewed sign-in: {}", error.message);
+                        }
+                    });
+                },
+            ));
             let transfers =
                 TransferManager::new(sessions.clone(), events.clone(), settings.get().transfers);
             let (handle, store) = (app.handle().clone(), connections.clone());

@@ -7,6 +7,7 @@ import {
   findSameAccount,
   profileFromDraft,
   savedFromDraft,
+  withField,
   withProtocol,
 } from "./connectDraft";
 import type { SavedConnection } from "./types";
@@ -97,6 +98,19 @@ describe("saved connections", () => {
     expect(savedFromDraft(draft).name).toBe("h");
   });
 
+  it("forgets a saved secret once the connection points elsewhere", () => {
+    const draft = draftFromSaved(saved);
+    expect(withField(draft, "name", "Renamed").hasSavedSecret).toBe(true);
+    expect(withField(draft, "initialPath", "/tmp").hasSavedSecret).toBe(true);
+    expect(withField(draft, "host", draft.host).hasSavedSecret).toBe(true);
+    const moved = withField(draft, "host", "evil.example.com");
+    expect(moved.host).toBe("evil.example.com");
+    expect(moved.hasSavedSecret).toBe(false);
+    expect(withField(draft, "port", "22").hasSavedSecret).toBe(false);
+    expect(withField(draft, "username", "root").hasSavedSecret).toBe(false);
+    expect(withField(draft, "authChoice", "password").hasSavedSecret).toBe(false);
+  });
+
   it("finds the same account regardless of host case", () => {
     const account = { protocol: "sftp" as const, username: "ci" };
     expect(findSameAccount([saved], { ...account, host: "BUILD.example.com", port: 2222 })).toBe(
@@ -130,9 +144,10 @@ describe("protocols", () => {
     expect(drive.host).toBe("");
   });
 
-  it("forgets a stored secret that no longer fits the sign-in method", () => {
-    const stored = { ...EMPTY_DRAFT, host: "example.com", hasSavedSecret: true };
+  it("forgets a stored secret that no longer fits the sign-in method or port", () => {
+    const stored = { ...EMPTY_DRAFT, host: "example.com", port: "2222", hasSavedSecret: true };
     expect(withProtocol(stored, "ftp").hasSavedSecret).toBe(true);
+    expect(withProtocol({ ...stored, port: "22" }, "ftp").hasSavedSecret).toBe(false);
     const keyDraft = { ...stored, authChoice: "publicKey" as const };
     expect(withProtocol(keyDraft, "ftp").hasSavedSecret).toBe(false);
     expect(withProtocol(stored, "oneDrive").hasSavedSecret).toBe(false);
