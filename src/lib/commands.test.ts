@@ -4,6 +4,7 @@ import {
   describeResult,
   expandCommand,
   needsSelection,
+  shellArgument,
   shellQuote,
 } from "./commands";
 
@@ -21,6 +22,19 @@ describe("shellQuote", () => {
     expect(shellQuote("a b; rm -rf /")).toBe("'a b; rm -rf /'");
     expect(shellQuote("it's")).toBe("'it'\\''s'");
     expect(shellQuote("")).toBe("''");
+  });
+});
+
+describe("shellArgument", () => {
+  it("keeps names that start with a dash from reading as options", () => {
+    expect(shellArgument("-rf")).toBe("'./-rf'");
+    expect(shellArgument("--checkpoint-action=exec=sh x.sh")).toBe(
+      "'./--checkpoint-action=exec=sh x.sh'",
+    );
+    expect(shellArgument("-it's")).toBe("'./-it'\\''s'");
+    expect(shellArgument("a-b")).toBe("'a-b'");
+    expect(shellArgument("/srv/site/-rf")).toBe("'/srv/site/-rf'");
+    expect(shellArgument("")).toBe("''");
   });
 });
 
@@ -42,6 +56,33 @@ describe("expandCommand", () => {
     ]);
     expect(expandCommand("tar -czf backup.tgz {names}", target)).toEqual([
       "tar -czf backup.tgz 'index.html' 'it'\\''s here'",
+    ]);
+  });
+
+  it("never passes a selected name as an option", () => {
+    const dashed = {
+      folder: "/srv/site",
+      items: [
+        { path: "/srv/site/-rf", name: "-rf" },
+        {
+          path: "/srv/site/--checkpoint-action=exec=sh x.sh",
+          name: "--checkpoint-action=exec=sh x.sh",
+        },
+      ],
+    };
+    expect(expandCommand("rm {name}", dashed)).toEqual([
+      "rm './-rf'",
+      "rm './--checkpoint-action=exec=sh x.sh'",
+    ]);
+    expect(expandCommand("tar -cf backup.tar {names}", dashed)).toEqual([
+      "tar -cf backup.tar './-rf' './--checkpoint-action=exec=sh x.sh'",
+    ]);
+    expect(expandCommand("rm {path}", dashed)).toEqual([
+      "rm '/srv/site/-rf'",
+      "rm '/srv/site/--checkpoint-action=exec=sh x.sh'",
+    ]);
+    expect(expandCommand("ls {paths}", dashed)).toEqual([
+      "ls '/srv/site/-rf' '/srv/site/--checkpoint-action=exec=sh x.sh'",
     ]);
   });
 
