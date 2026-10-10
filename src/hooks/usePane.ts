@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FileSource } from "../lib/fileSource";
 import { toAppError } from "../lib/ipc";
+import { ListingLoads } from "../lib/listingLoads";
 import { filterEntries, isDirLike, sortEntries, type SortKey, type SortSpec } from "../lib/sort";
 import type { AppError, DirListing, FileEntry } from "../lib/types";
 
@@ -74,7 +75,7 @@ export function usePane(
   const [sort, setSortState] = useState<SortSpec>(initialSort);
   const [filter, setFilter] = useState("");
   const [showHidden, setShowHidden] = useState(showHiddenByDefault);
-  const latestRequest = useRef(0);
+  const loads = useRef(new ListingLoads());
   const listedPath = useRef<string | null>(null);
 
   const visibleEntries = useMemo(
@@ -93,11 +94,12 @@ export function usePane(
 
   const load = useCallback(
     async (target: string, mode: NavigationMode, focusPath?: string): Promise<boolean> => {
-      const request = ++latestRequest.current;
+      const request = loads.current.start(mode === "replace" ? "refresh" : "navigation");
+      if (request === null) return false;
       setLoading(true);
       try {
         const next = await source.list(target);
-        if (request !== latestRequest.current) return false;
+        if (!loads.current.isCurrent(request)) return false;
         const existing = new Set(next.entries.map((entry) => entry.path));
         const sameDirectory = listedPath.current === next.path;
         listedPath.current = next.path;
@@ -127,10 +129,11 @@ export function usePane(
         });
         return true;
       } catch (caught) {
-        if (request === latestRequest.current) setError(toAppError(caught));
+        if (loads.current.isCurrent(request)) setError(toAppError(caught));
         return false;
       } finally {
-        if (request === latestRequest.current) setLoading(false);
+        loads.current.finish(request);
+        if (loads.current.isCurrent(request)) setLoading(false);
       }
     },
     [source],
@@ -152,10 +155,13 @@ export function usePane(
   }, [source, load]);
 
   const navigate = useCallback((path: string) => load(path, "push"), [load]);
+  // Reloads the folder last listed, which a navigation sets before the pane renders its listing.
   const refresh = useCallback(
     (focusPath?: string) =>
-      listing ? load(listing.path, "replace", focusPath) : Promise.resolve(false),
-    [listing, load],
+      listedPath.current !== null
+        ? load(listedPath.current, "replace", focusPath)
+        : Promise.resolve(false),
+    [load],
   );
 
   const goUp = useCallback(() => {
