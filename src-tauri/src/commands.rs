@@ -18,7 +18,7 @@ use crate::editor::{
     DocumentInfo, EditorManager, FileLocation, SaveOutcome, SaveRequest, TextDocument,
 };
 use crate::error::{AppError, AppResult};
-use crate::events::{Events, LogLevel, Store};
+use crate::events::{Events, LogLevel, LogRecord, Store};
 use crate::file_ops::{
     CompareRequest, Comparison, Details, FileOperations, Location, MoveCopyRequest,
     OperationSummary, PermissionRequest, PermissionSummary, Usage,
@@ -816,6 +816,12 @@ pub fn window_initial_layout(
     pending: State<'_, PendingWindows>,
 ) -> Option<serde_json::Value> {
     pending.0.lock().unwrap().remove(window.label())
+}
+
+/// What was logged before the main window listened. Called once it does.
+#[tauri::command]
+pub fn log_startup(events: State<'_, Events>) -> Vec<LogRecord> {
+    events.take_startup_log()
 }
 
 /// Starts the app again after an update replaced it. Goes through the normal exit, so open

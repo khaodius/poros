@@ -31,6 +31,7 @@ import { EMPTY_DRAFT } from "./lib/connectDraft";
 import { isTextEntryTarget } from "./lib/focus";
 import {
   RETURN_TAB_EVENT,
+  application,
   onLog,
   onQueueFinished,
   onSessionClosed,
@@ -44,7 +45,7 @@ import { DEFAULT_SETTINGS, FONT_SIZE_LIMITS } from "./lib/settings";
 import { dragWindowFrom } from "./lib/windowDrag";
 import { matchWindowCorners } from "./lib/windowCorners";
 import { matchWindowBackground, revealWindow } from "./lib/windowReveal";
-import type { StoreName } from "./lib/types";
+import type { LogRecord, StoreName } from "./lib/types";
 import { startClipboard } from "./state/clipboardStore";
 import { hitTest, useDragStore, type DragPayload } from "./state/dragStore";
 import { persistLayout, restoreLayout, useLayoutStore } from "./state/layoutStore";
@@ -56,6 +57,7 @@ import { useSessionStore } from "./state/sessionStore";
 import { saveSettingsSection, useSettingsStore } from "./state/settingsStore";
 import { adoptHandoff, isMainWindow, receiveTabs, requestCloseTab } from "./state/tabActions";
 import { applyTheme, findTheme, rememberTheme, useThemeStore } from "./state/themeStore";
+import { useToastStore } from "./state/toastStore";
 import { uploadDroppedPaths } from "./state/transferActions";
 import { useTransferStore } from "./state/transferStore";
 import { useUiStore } from "./state/uiStore";
@@ -117,10 +119,21 @@ function activeTabId(): string | null {
   return findGroup(root, activeGroupId)?.activeTabId ?? null;
 }
 
+/** Nobody was watching the log while Poros started, so problems from then also get a notice. */
+function showStartupLog(records: LogRecord[]): void {
+  for (const record of records) {
+    useLogStore.getState().append(record);
+    if (record.level === "warn" || record.level === "error") {
+      useToastStore.getState().show("error", record.message);
+    }
+  }
+}
+
 function useBackendEvents() {
   useEffect(() => {
+    const logged = onLog((record) => useLogStore.getState().append(record));
     const subscriptions = [
-      onLog((record) => useLogStore.getState().append(record)),
+      logged,
       onSessionClosed(({ sessionId, reason }) =>
         useSessionStore.getState().markLost(sessionId, reason),
       ),
@@ -135,6 +148,11 @@ function useBackendEvents() {
         // Only the main window acts, so the action happens once however many windows are open.
         onQueueFinished((finished) => void handleQueueFinished(finished)),
       );
+      // Taken once the listener is in place, so no line falls between the two.
+      void logged
+        .then(() => application.startupLog())
+        .then(showStartupLog)
+        .catch((caught) => reportError("Could not read the start-up log", caught));
     }
     return () => {
       for (const subscription of subscriptions) void subscription.then((unlisten) => unlisten());

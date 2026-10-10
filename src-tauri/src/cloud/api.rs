@@ -1,11 +1,13 @@
 //! HTTP plumbing shared by the Google Drive and OneDrive clients: one pooled HTTPS client,
 //! access tokens renewed before they expire, and retries while the service is busy.
 
+use std::convert::Infallible;
 use std::sync::{Arc, Mutex as SyncMutex};
 use std::time::{Duration, Instant};
 
-use reqwest::header::RETRY_AFTER;
-use reqwest::{Client, Method, RequestBuilder, Response, StatusCode};
+use bytes::Bytes;
+use reqwest::header::{HeaderValue, CONTENT_LENGTH, RETRY_AFTER};
+use reqwest::{Body, Client, Method, Request, RequestBuilder, Response, StatusCode};
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
@@ -14,6 +16,7 @@ use tokio::sync::Mutex;
 use super::oauth::{self, OAuthClient};
 use super::TokenRotation;
 use crate::error::{AppError, AppResult, ErrorKind};
+use crate::stall::Activity;
 
 const ATTEMPTS: u32 = 5;
 const FIRST_BACKOFF: Duration = Duration::from_millis(500);
@@ -21,13 +24,20 @@ const MAX_BACKOFF: Duration = Duration::from_secs(30);
 /// An access token is renewed this long before it expires, so none lapses mid-request.
 const RENEW_BEFORE: Duration = Duration::from_secs(120);
 const DEFAULT_TOKEN_LIFETIME: Duration = Duration::from_secs(3600);
+/// How long a request may move no bytes, in either direction, before it counts as stalled.
+pub const STALL_TIMEOUT: Duration = Duration::from_secs(60);
+/// Request bodies go out in pieces this size, each taken once the connection has room for it,
+/// which is how a slow upload shows that it is still moving.
+const BODY_PIECE: usize = 64 * 1024;
 
 pub fn http_client() -> AppResult<Client> {
     let tls = crate::tls::platform_config(&[b"h2", b"http/1.1"])?;
     Client::builder()
         .tls_backend_preconfigured(tls)
+        // No read timeout: reqwest's runs from the start of a request to its answer, which a
+        // large upload on a slow link never beats. `send_request` and `next_chunk` time out
+        // stalls instead.
         .connect_timeout(Duration::from_secs(crate::ssh::DEFAULT_TIMEOUT_SECS))
-        .read_timeout(Duration::from_secs(60))
         .pool_idle_timeout(Duration::from_secs(90))
         .user_agent(concat!("Poros/", env!("CARGO_PKG_VERSION")))
         .build()
@@ -62,6 +72,76 @@ pub fn transport_error(error: reqwest::Error) -> AppError {
         ),
     };
     AppError::new(kind, message)
+}
+
+fn stalled() -> AppError {
+    AppError::new(ErrorKind::Timeout, "The service did not respond in time")
+}
+
+/// Why a request got no answer.
+#[derive(Debug)]
+pub enum SendFailure {
+    Transport(reqwest::Error),
+    Stalled,
+}
+
+impl SendFailure {
+    fn is_connect(&self) -> bool {
+        matches!(self, Self::Transport(error) if error.is_connect())
+    }
+}
+
+impl From<SendFailure> for AppError {
+    fn from(failure: SendFailure) -> Self {
+        match failure {
+            SendFailure::Transport(error) => transport_error(error),
+            SendFailure::Stalled => stalled(),
+        }
+    }
+}
+
+/// Sends `request`, giving up once it has gone `stall_limit` without moving any bytes. Its
+/// body counts as moving while the connection takes it piece by piece, so an upload is never
+/// cut off just for taking long.
+pub async fn send_request(
+    http: &Client,
+    mut request: Request,
+    stall_limit: Duration,
+) -> Result<Response, SendFailure> {
+    let activity = Activity::new(stall_limit);
+    let started = tokio::time::Instant::now();
+    if let Some(content) = request
+        .body()
+        .and_then(Body::as_bytes)
+        .map(Bytes::copy_from_slice)
+    {
+        // A body handed over in pieces has no length of its own, and both services need one.
+        request
+            .headers_mut()
+            .insert(CONTENT_LENGTH, HeaderValue::from(content.len()));
+        *request.body_mut() = Some(body_in_pieces(content, activity.clone()));
+    }
+    tokio::select! {
+        response = http.execute(request) => response.map_err(SendFailure::Transport),
+        () = activity.stalled(started) => Err(SendFailure::Stalled),
+    }
+}
+
+fn body_in_pieces(content: Bytes, activity: Activity) -> Body {
+    let length = content.len();
+    let pieces = (0..length).step_by(BODY_PIECE).map(move |start| {
+        activity.mark_progress();
+        Ok::<_, Infallible>(content.slice(start..(start + BODY_PIECE).min(length)))
+    });
+    Body::wrap_stream(futures::stream::iter(pieces))
+}
+
+/// The next piece of a response body, failing once none arrives within `STALL_TIMEOUT`.
+pub async fn next_chunk(response: &mut Response) -> AppResult<Option<Bytes>> {
+    tokio::time::timeout(STALL_TIMEOUT, response.chunk())
+        .await
+        .map_err(|_| stalled())?
+        .map_err(transport_error)
 }
 
 /// The innermost cause, which says more than reqwest's own wording.
@@ -187,14 +267,14 @@ impl Api {
             }
             let request = builder.build().map_err(transport_error)?;
             let repeatable = request.method() != Method::POST;
-            let response = match self.tokens.http.execute(request).await {
+            let response = match send_request(&self.tokens.http, request, STALL_TIMEOUT).await {
                 Ok(response) => response,
-                Err(error) => {
-                    if attempt < ATTEMPTS && (repeatable || error.is_connect()) {
+                Err(failure) => {
+                    if attempt < ATTEMPTS && (repeatable || failure.is_connect()) {
                         tokio::time::sleep(backoff(attempt)).await;
                         continue;
                     }
-                    return Err(transport_error(error));
+                    return Err(failure.into());
                 }
             };
             let status = response.status();
@@ -229,8 +309,17 @@ impl Api {
     }
 }
 
-pub async fn decode<T: DeserializeOwned>(response: Response) -> AppResult<T> {
-    response.json::<T>().await.map_err(transport_error)
+pub async fn decode<T: DeserializeOwned>(mut response: Response) -> AppResult<T> {
+    let mut body = Vec::new();
+    while let Some(chunk) = next_chunk(&mut response).await? {
+        body.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&body).map_err(|error| {
+        AppError::new(
+            ErrorKind::Cloud,
+            format!("Unexpected answer from the service: {error}"),
+        )
+    })
 }
 
 /// Doubles from half a second, with up to a quarter second of jitter so parallel workers do
@@ -287,7 +376,7 @@ struct ServiceError {
 impl ServiceError {
     async fn read(response: Response) -> Self {
         let status = response.status();
-        let body: ErrorBody = response.json().await.unwrap_or_default();
+        let body: ErrorBody = decode(response).await.unwrap_or_default();
         let detail = body.error;
         let reasons: Vec<&str> = detail
             .errors
@@ -345,6 +434,109 @@ impl ServiceError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::Ipv4Addr;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::{TcpListener, TcpSocket};
+
+    const MEBIBYTE: usize = 1024 * 1024;
+
+    /// A local server whose small receive window makes a large upload wait for it to read.
+    fn small_window_listener() -> TcpListener {
+        let socket = TcpSocket::new_v4().unwrap();
+        socket.set_recv_buffer_size(64 * 1024).unwrap();
+        socket.bind((Ipv4Addr::LOCALHOST, 0).into()).unwrap();
+        socket.listen(1).unwrap()
+    }
+
+    /// Reads one request, pausing before each read until `slow_bytes` of its body are in, then
+    /// answers it unless told not to. Returns the request head, lowercased, and the body.
+    async fn serve_one_request(
+        listener: TcpListener,
+        slow_bytes: usize,
+        answer: bool,
+    ) -> (String, Vec<u8>) {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut received = Vec::new();
+        let mut piece = vec![0u8; 64 * 1024];
+        let head_end = loop {
+            let read = stream.read(&mut piece).await.unwrap();
+            assert!(read > 0, "the request ended early");
+            received.extend_from_slice(&piece[..read]);
+            if let Some(position) = received.windows(4).position(|window| window == b"\r\n\r\n") {
+                break position + 4;
+            }
+        };
+        let head = String::from_utf8_lossy(&received[..head_end]).to_ascii_lowercase();
+        let length: usize = head
+            .lines()
+            .find_map(|line| line.strip_prefix("content-length:"))
+            .map_or(0, |value| value.trim().parse().unwrap());
+        let mut body = received.split_off(head_end);
+        while body.len() < length {
+            if body.len() < slow_bytes {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            let read = stream.read(&mut piece).await.unwrap();
+            assert!(read > 0, "the body ended early");
+            body.extend_from_slice(&piece[..read]);
+        }
+        if !answer {
+            std::future::pending::<()>().await;
+        }
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n")
+            .await
+            .unwrap();
+        (head, body)
+    }
+
+    #[tokio::test]
+    async fn an_upload_slower_than_the_stall_limit_completes_while_it_moves() {
+        let listener = small_window_listener();
+        let url = format!("http://{}/upload", listener.local_addr().unwrap());
+        // The socket buffers take the first megabytes at once. The server reads slowly through
+        // the middle, then takes the rest at full speed, so what is buffered at the end drains
+        // quickly.
+        let server = tokio::spawn(serve_one_request(listener, 8 * MEBIBYTE, true));
+        let content: Bytes = (0..16 * MEBIBYTE)
+            .map(|index| (index % 251) as u8)
+            .collect();
+        let http = http_client().unwrap();
+        let request = http.put(&url).body(content.clone()).build().unwrap();
+        let stall_limit = Duration::from_secs(3);
+        let started = std::time::Instant::now();
+        let response = send_request(&http, request, stall_limit).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        // Otherwise the server read too fast to show the upload outlasting the limit.
+        assert!(started.elapsed() > stall_limit, "{:?}", started.elapsed());
+        let (head, body) = server.await.unwrap();
+        assert!(head.contains(&format!("content-length: {}", content.len())));
+        assert!(!head.contains("transfer-encoding"));
+        assert!(body == content);
+    }
+
+    #[tokio::test]
+    async fn a_service_that_stops_answering_counts_as_stalled() {
+        let listener = small_window_listener();
+        let url = format!("http://{}/files", listener.local_addr().unwrap());
+        tokio::spawn(serve_one_request(listener, 0, false));
+        let http = http_client().unwrap();
+        let request = http.get(&url).build().unwrap();
+        let stall_limit = Duration::from_millis(300);
+        let started = std::time::Instant::now();
+        let failure = tokio::time::timeout(
+            Duration::from_secs(20),
+            send_request(&http, request, stall_limit),
+        )
+        .await
+        .expect("the request gives up by itself")
+        .unwrap_err();
+        assert!(matches!(failure, SendFailure::Stalled));
+        assert!(started.elapsed() >= stall_limit);
+        let error = AppError::from(failure);
+        assert_eq!(error.kind, ErrorKind::Timeout);
+        assert!(error.is_connection_lost());
+    }
 
     #[test]
     fn backoff_grows_and_is_capped() {

@@ -21,6 +21,7 @@ pub mod session;
 pub mod settings;
 pub mod sftp;
 pub mod ssh;
+pub mod stall;
 pub mod storage;
 pub mod sync;
 pub mod terminal;
@@ -63,6 +64,17 @@ const ADOPTION_GRACE: Duration = Duration::from_secs(5);
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
+        // First, so a second copy of Poros hands over to the running one and exits before it
+        // sets anything up, such as scheduled tasks that would then run twice.
+        .plugin(tauri_plugin_single_instance::init(
+            |app, _arguments, _directory| {
+                if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
+                    let _ = window.unminimize();
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            },
+        ))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -70,7 +82,7 @@ pub fn run() {
             let config_dir = app.path().app_config_dir()?;
             std::fs::create_dir_all(&config_dir)?;
             let events = Events::new(app.handle().clone());
-            let settings = SettingsStore::load(config_dir.join("settings.json"));
+            let settings = SettingsStore::load(config_dir.join("settings.json"), &events);
             let sessions = Arc::new(SessionManager::new(
                 config_dir.join("known_hosts"),
                 events.clone(),
@@ -242,6 +254,7 @@ pub fn run() {
             commands::drag_preview_ready,
             commands::drag_preview_reveal,
             commands::app_restart,
+            commands::log_startup,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Poros");

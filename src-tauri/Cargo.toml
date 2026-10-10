@@ -56,13 +56,16 @@ async-trait = "0.1"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
 rustls-platform-verifier = "0.7"
-reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2", "json", "form", "query"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2", "json", "form", "query", "stream"] }
 ring = "0.17"
 percent-encoding = "2"
 # Local time for scheduled tasks, daylight saving changes included.
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 # Desktop notifications when the transfer queue finishes.
 tauri-plugin-notification = "2.5"
+# A second launch brings the running window forward instead of starting another copy, which
+# would run every scheduled task twice and overwrite the saved schedules.
+tauri-plugin-single-instance = "2.5"
 
 [target.'cfg(windows)'.dependencies]
 # Rounded window corners on Windows 11, and showing the drag preview without taking focus.
@@ -70,6 +73,8 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphic
 
 [dev-dependencies]
 tempfile = "3"
+# Paused clocks, so tests of minute-long timeouts run instantly.
+tokio = { version = "1", features = ["test-util"] }
 
 [profile.release]
 codegen-units = 1

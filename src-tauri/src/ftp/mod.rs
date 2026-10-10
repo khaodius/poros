@@ -13,7 +13,6 @@ use std::time::Duration;
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::future::BoxFuture;
-use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use crate::error::{AppError, AppResult, ErrorKind};
@@ -26,7 +25,7 @@ use crate::protocol::{
 use crate::remote_path;
 use crate::ssh::{ConnectProfile, HostKeyApproval, DEFAULT_KEEPALIVE_SECS};
 use crate::tls::{ServerTls, TrustedCertificates};
-use control::{Control, DataStart, Features, Stream};
+use control::{Control, DataConnection, DataStart, Features};
 use listing::RawEntry;
 
 /// A connection idle this long is checked with `NOOP` before use, since servers drop idle
@@ -490,7 +489,7 @@ impl RemoteFileSystem for FtpFs {
 /// Holds the control connection for the length of a download.
 struct FtpReader {
     guard: ControlGuard,
-    data: Option<Stream>,
+    data: Option<DataConnection>,
     remaining: u64,
     /// The server closed the data connection: the file ended.
     ended: bool,
@@ -560,7 +559,7 @@ impl Drop for FtpReader {
 /// Holds the control connection for the length of an upload.
 struct FtpWriter {
     guard: ControlGuard,
-    data: Option<Stream>,
+    data: Option<DataConnection>,
     finished: bool,
 }
 
@@ -581,12 +580,7 @@ impl WriteStream for FtpWriter {
                 .and_then(Result::ok)
                 .filter(|reply| reply.class() >= 4)
                 .map(|reply| control::reply_error(&reply));
-            return Err(explained.unwrap_or_else(|| {
-                AppError::new(
-                    ErrorKind::Connection,
-                    format!("The data connection failed: {error}"),
-                )
-            }));
+            return Err(explained.unwrap_or(error));
         }
         Ok(())
     }
