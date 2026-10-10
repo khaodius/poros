@@ -374,12 +374,6 @@ impl TransferManager {
         let mut specs = Vec::with_capacity(request.items.len());
         for item in &request.items {
             local::validate_name(&item.name)?;
-            if item.name.contains('/') {
-                return Err(AppError::invalid(format!(
-                    "\"{}\" is not a valid name",
-                    item.name
-                )));
-            }
             let target = match request.direction {
                 Direction::Upload | Direction::Relay => {
                     remote_path::join(&request.target_directory, &item.name)

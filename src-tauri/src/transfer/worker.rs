@@ -752,7 +752,7 @@ pub(super) async fn expand_folder(
         let is_dir = entry.is_dir_like();
         let is_file = entry.kind == EntryKind::File || entry.link_target == Some(LinkTarget::File);
         // A server could send names that climb out of the target folder.
-        let valid_name = local::validate_name(&entry.name).is_ok() && !entry.name.contains('/');
+        let valid_name = local::validate_name(&entry.name).is_ok();
         if !(is_dir || is_file) || !valid_name {
             skipped += 1;
             continue;
