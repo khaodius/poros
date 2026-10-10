@@ -444,7 +444,8 @@ impl RemoteFs {
 
     /// Moves `from` over `to`, replacing a file there: in one step where the server offers
     /// `posix-rename@openssh.com` (OpenSSH), with a plain rename where that replaces files
-    /// (SFTPGo), and otherwise by removing the old file just before the rename.
+    /// (SFTPGo), and otherwise by moving the old file aside first. It is deleted only once
+    /// the new one is in place, so a connection lost in between leaves it on the server.
     pub async fn replace(&self, from: &str, to: &str) -> AppResult<()> {
         if self.posix_rename {
             return self.posix_rename(from, to).await;
@@ -455,15 +456,17 @@ impl RemoteFs {
         if !matches!(self.stat(to).await, Ok(Some(existing)) if !existing.is_dir) {
             return Err(AppError::from(refused).with_path(from));
         }
+        let aside = aside_path(to);
         self.raw
-            .remove(to)
+            .rename(to, &aside)
             .await
             .map_err(|error| AppError::from(error).with_path(to))?;
-        self.raw
-            .rename(from, to)
-            .await
-            .map(|_| ())
-            .map_err(|error| AppError::from(error).with_path(from))
+        if let Err(error) = self.raw.rename(from, to).await {
+            let _ = self.raw.rename(&aside, to).await;
+            return Err(AppError::from(error).with_path(from));
+        }
+        let _ = self.raw.remove(&aside).await;
+        Ok(())
     }
 
     async fn posix_rename(&self, from: &str, to: &str) -> AppResult<()> {
@@ -831,6 +834,15 @@ fn owner_group(longname: &str, attributes: &FileAttributes) -> (Option<String>, 
     )
 }
 
+/// A hidden name beside `path` for the file a replace moves out of the way.
+fn aside_path(path: &str) -> String {
+    let name = format!(".poros-replaced-{}", uuid::Uuid::new_v4().simple());
+    match remote_path::parent(path) {
+        Some(parent) => remote_path::join(&parent, &name),
+        None => name,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -853,6 +865,15 @@ mod tests {
             owner_group("", &attributes),
             (Some("1000".into()), Some("1000".into()))
         );
+    }
+
+    #[test]
+    fn replaced_files_move_aside_into_their_own_folder() {
+        let aside = aside_path("/srv/www/index.html");
+        assert!(aside.starts_with("/srv/www/.poros-replaced-"));
+        assert_ne!(aside, aside_path("/srv/www/index.html"));
+        assert!(aside_path("/top").starts_with("/.poros-replaced-"));
+        assert!(aside_path("relative").starts_with(".poros-replaced-"));
     }
 
     #[test]

@@ -506,7 +506,7 @@ async fn execute(shared: &Shared, connections: &mut Connections, claim: Claim) {
             if !run.restart.load(Ordering::Relaxed) {
                 trim_partial(connections.existing(&spec.session_id), &run, &spec).await;
             }
-            outcome
+            run.unfinalized(outcome)
         }
     };
 

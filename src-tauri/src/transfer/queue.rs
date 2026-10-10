@@ -83,6 +83,31 @@ impl JobSpec {
     pub fn involves(&self, session_id: &str) -> bool {
         self.session_id == session_id || self.source_session_id.as_deref() == Some(session_id)
     }
+
+    /// The file a file job writes, told apart from the files other jobs write.
+    fn written_file(&self) -> Option<WrittenFile> {
+        if self.kind != JobKind::File {
+            return None;
+        }
+        Some(match self.direction {
+            // Local file systems may ignore case, so names that differ only in case are one file.
+            Direction::Download => WrittenFile {
+                session_id: None,
+                path: self.target.to_lowercase(),
+            },
+            Direction::Upload | Direction::Relay => WrittenFile {
+                session_id: Some(self.session_id.clone()),
+                path: self.target.clone(),
+            },
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct WrittenFile {
+    /// The server written to; `None` for this computer.
+    session_id: Option<String>,
+    path: String,
 }
 
 #[derive(Debug, Clone)]
@@ -232,6 +257,16 @@ impl JobRun {
             .unwrap()
             .as_ref()
             .map(Pieces::complete_prefix)
+    }
+
+    /// What a run that ends without `Release::Finalize` comes to. Its bytes stay in the
+    /// temporary file, or lack their time and permissions, until finalized, so a run stopped
+    /// after the last byte arrived but before that has not completed.
+    pub fn unfinalized(&self, outcome: RunOutcome) -> RunOutcome {
+        match outcome {
+            RunOutcome::Completed if self.plan.get().is_some() => RunOutcome::Stopped,
+            outcome => outcome,
+        }
     }
 
     pub fn add_progress(&self, bytes: u64) {
@@ -469,6 +504,9 @@ pub struct Queue {
     changed_directories: Vec<ChangedDirectory>,
     outages: HashMap<String, Outage>,
     abandoned: Vec<Abandoned>,
+    /// Files that running jobs write. Two jobs writing one file would share its temporary
+    /// file, so a job waits while another writes its target.
+    writing: HashMap<WrittenFile, JobId>,
     /// Jobs were added, removed, reordered or changed state since the queue was last saved.
     pub unsaved: bool,
 }
@@ -617,9 +655,16 @@ impl Queue {
                         .source_session_id
                         .as_deref()
                         .is_none_or(|source| !self.server_unreachable(source, now))
+                    && job
+                        .spec
+                        .written_file()
+                        .is_none_or(|file| !self.writing.contains_key(&file))
             })
             .map(|(rank, id)| (rank.clone(), *id))?;
         self.pending.remove(&rank);
+        if let Some(file) = self.jobs[&id].spec.written_file() {
+            self.writing.insert(file, id);
+        }
         let job = self.jobs.get_mut(&id)?;
         let start = job.resume.as_ref().map_or(0, |resume| resume.offset);
         let run = Arc::new(JobRun::new(start));
@@ -668,6 +713,11 @@ impl Queue {
             job.spec.name = name;
             self.dirty.insert(id);
             self.unsaved = true;
+            let file = job.run.as_ref().and_then(|_| job.spec.written_file());
+            if let Some(file) = file {
+                self.writing.retain(|_, writer| *writer != id);
+                self.writing.insert(file, id);
+            }
         }
     }
 
@@ -709,6 +759,7 @@ impl Queue {
         now: Instant,
     ) -> Option<ServerChange> {
         self.segmented.retain(|segmented| *segmented != id);
+        self.writing.retain(|_, writer| *writer != id);
         self.unsaved = true;
         let job = self.jobs.get_mut(&id)?;
         let run = job.run.take();
@@ -1572,6 +1623,82 @@ mod tests {
         assert!(!job.reconnecting);
         assert!(job.not_before.is_some());
         assert_eq!(job.attempts, 1);
+    }
+
+    #[test]
+    fn pausing_as_the_last_bytes_arrive_keeps_the_job_until_it_is_finalized() {
+        let mut queue = Queue::new();
+        let id = queue.add(file("big", 100));
+        let claim = queue.claim(Instant::now()).unwrap();
+        claim
+            .run
+            .plan
+            .set(Plan {
+                rename_to: Some("/remote/big".into()),
+                ..plan("/remote/.big.poros-part", 100)
+            })
+            .unwrap();
+        claim.run.start_pieces(Pieces::new(0, 100, 100));
+        let piece = claim.run.claim_piece().unwrap();
+        claim.run.complete_piece(piece.start);
+
+        // The worker read every byte, then the pause arrived during its last round trip.
+        queue.pause(&[id]);
+        assert!(matches!(
+            queue.release(id, &RunOutcome::Completed),
+            Release::Settle
+        ));
+        let outcome = claim.run.unfinalized(RunOutcome::Completed);
+        queue.settle(id, outcome, &settings(), Instant::now());
+        let job = queue.job(id).unwrap();
+        assert_eq!(job.state, JobState::Paused);
+        assert_eq!(
+            job.resume
+                .as_ref()
+                .map(|resume| (resume.offset, resume.partial.as_deref())),
+            Some((100, Some("/remote/.big.poros-part")))
+        );
+        assert!(queue.take_abandoned().is_empty());
+
+        queue.resume(&[id]);
+        let claim = queue.claim(Instant::now()).unwrap();
+        assert_eq!(claim.resume.map(|resume| resume.offset), Some(100));
+    }
+
+    #[test]
+    fn transfers_that_need_no_finalizing_complete_as_they_end() {
+        let mut queue = Queue::new();
+        let id = queue.add(file("delta", 100));
+        let claim = queue.claim(Instant::now()).unwrap();
+        let outcome = claim.run.unfinalized(RunOutcome::Completed);
+        finish(&mut queue, id, outcome);
+        assert_eq!(queue.job(id).unwrap().state, JobState::Done);
+    }
+
+    #[test]
+    fn jobs_writing_the_same_file_take_turns() {
+        let mut queue = Queue::new();
+        let first = queue.add(file("same", 1));
+        let second = queue.add(file("same", 1));
+        let other = queue.add(file("other", 1));
+        let mut download = file("same", 1);
+        download.direction = Direction::Download;
+        download.target = "/LOCAL/Same".into();
+        let local_first = queue.add(download.clone());
+        download.target = "/local/same".into();
+        let local_second = queue.add(download);
+
+        let claimed: Vec<JobId> = std::iter::from_fn(|| queue.claim(Instant::now()))
+            .map(|claim| claim.id)
+            .collect();
+        assert_eq!(claimed, [first, other, local_first]);
+
+        finish(&mut queue, first, RunOutcome::Completed);
+        finish(&mut queue, local_first, RunOutcome::Completed);
+        let claimed: Vec<JobId> = std::iter::from_fn(|| queue.claim(Instant::now()))
+            .map(|claim| claim.id)
+            .collect();
+        assert_eq!(claimed, [second, local_second]);
     }
 
     #[test]
