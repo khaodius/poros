@@ -1154,12 +1154,18 @@ mod tests {
     #[tokio::test]
     async fn a_server_that_stops_taking_data_times_out() {
         let (mut data, _server) = data_connection().await;
-        // More than the socket buffers on both ends hold, so the peer must read to take it.
-        let file = vec![0u8; 64 * 1024 * 1024];
-        let error = tokio::time::timeout(HANG, data.write_all(&file))
-            .await
-            .expect("the write gives up by itself")
-            .unwrap_err();
+        // Chunk by chunk, as uploads write, until the socket buffers on both ends are full.
+        // Windows takes a single write of any size whole while its send buffer has room.
+        let chunk = vec![0u8; 256 * 1024];
+        let error = tokio::time::timeout(HANG, async {
+            loop {
+                if let Err(error) = data.write_all(&chunk).await {
+                    break error;
+                }
+            }
+        })
+        .await
+        .expect("the write gives up by itself");
         assert_eq!(error.kind, ErrorKind::Timeout);
         assert!(error.is_connection_lost());
     }
