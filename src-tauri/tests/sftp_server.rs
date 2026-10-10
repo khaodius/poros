@@ -1320,6 +1320,72 @@ async fn a_jump_host_trusted_once_stays_trusted_until_exit() {
     assert!(!temp_dir.path().join("known_hosts").exists());
 }
 
+async fn connect_with_password(
+    server: &Server,
+    known_hosts: &poros_lib::ssh::known_hosts::KnownHosts,
+    approval: Option<HostKeyApproval>,
+) -> AppResult<poros_lib::ssh::Connection> {
+    let auth = AuthMethod::Password {
+        password: server.password.clone(),
+    };
+    poros_lib::ssh::connect(
+        "test",
+        &profile(server, auth),
+        known_hosts,
+        approval,
+        &Events::default(),
+    )
+    .await
+}
+
+/// Needs a server with an RSA host key besides its Ed25519 one, as the CI server has.
+#[tokio::test]
+async fn a_host_on_record_is_asked_for_the_key_type_on_record() {
+    let Some(server) = server() else { return };
+    let temp_dir = tempfile::tempdir().unwrap();
+    let host = format!("[127.0.0.1]:{}", server.port);
+
+    // Only another RSA key is on record: the server has to show its RSA key, which is then a
+    // changed key rather than a new host.
+    let system_file = temp_dir.path().join("system_known_hosts");
+    let recorded_rsa = std::fs::read_to_string(fixture("rsa.pub")).unwrap();
+    std::fs::write(&system_file, format!("{host} {recorded_rsa}")).unwrap();
+    let known_hosts = poros_lib::ssh::known_hosts::KnownHosts::new(
+        temp_dir.path().join("known_hosts"),
+        vec![system_file],
+    );
+    let error = connect_with_password(&server, &known_hosts, None)
+        .await
+        .err()
+        .expect("the recorded RSA key is not the server's");
+    assert_eq!(error.kind, ErrorKind::HostKeyChanged);
+    let host_key = error.host_key.unwrap();
+    assert_eq!(host_key.algorithm, "ssh-rsa");
+    let approval = HostKeyApproval {
+        fingerprint: host_key.fingerprint,
+        remember: true,
+    };
+    let replaced = connect_with_password(&server, &known_hosts, Some(approval))
+        .await
+        .unwrap();
+    poros_lib::ssh::disconnect(&replaced.handle).await;
+    let trusted = connect_with_password(&server, &known_hosts, None)
+        .await
+        .unwrap();
+    poros_lib::ssh::disconnect(&trusted.handle).await;
+
+    // Only a key type the server does not have is on record.
+    let ecdsa_file = temp_dir.path().join("ecdsa_known_hosts");
+    let recorded_ecdsa = std::fs::read_to_string(fixture("ecdsa256.pub")).unwrap();
+    std::fs::write(&ecdsa_file, format!("{host} {recorded_ecdsa}")).unwrap();
+    let known_hosts = poros_lib::ssh::known_hosts::KnownHosts::new(ecdsa_file, Vec::new());
+    let error = connect_with_password(&server, &known_hosts, None)
+        .await
+        .err()
+        .expect("the server has no ECDSA key");
+    assert_eq!(error.kind, ErrorKind::HostKeyChanged);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn runs_commands_on_the_server() {
     let Some(server) = server() else { return };
