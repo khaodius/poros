@@ -29,6 +29,9 @@ const MAX_REPLY_LINES: usize = 10_000;
 const MAX_LISTING_BYTES: usize = 64 * 1024 * 1024;
 /// Servers may take a while to answer once a large upload ends, while they flush or scan it.
 const FINAL_REPLY_TIMEOUT_FACTOR: u32 = 6;
+/// A data connection may pause while the server reads a slow disk or builds a long listing, so
+/// it gets this many reply timeouts without moving a byte before it counts as stalled.
+const DATA_STALL_TIMEOUT_FACTOR: u32 = 3;
 
 /// A control or data connection, in the clear or inside TLS.
 pub enum Stream {
@@ -89,15 +92,45 @@ impl AsyncWrite for Stream {
     }
 }
 
-impl Stream {
+/// The connection a listing or a file moves over. Each read and write fails once the server
+/// has moved nothing for the stall limit, so a server that stops partway cannot hold the
+/// session, and the control connection it locks, forever.
+pub struct DataConnection {
+    stream: Stream,
+    stall_limit: Duration,
+}
+
+impl DataConnection {
+    fn new(stream: Stream, stall_limit: Duration) -> Self {
+        Self {
+            stream,
+            stall_limit,
+        }
+    }
+
     /// Reads into `buffer`. A TLS peer that closes without a close_notify alert counts as the
     /// end of the data; the server's final reply still says whether the transfer completed.
     pub async fn read_some(&mut self, buffer: &mut [u8]) -> AppResult<usize> {
-        match self.read(buffer).await {
-            Ok(read) => Ok(read),
-            Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => Ok(0),
-            Err(error) => Err(data_error(error)),
+        match tokio::time::timeout(self.stall_limit, self.stream.read(buffer)).await {
+            Err(_) => Err(self.stalled()),
+            Ok(Ok(read)) => Ok(read),
+            Ok(Err(error)) if error.kind() == io::ErrorKind::UnexpectedEof => Ok(0),
+            Ok(Err(error)) => Err(data_error(error)),
         }
+    }
+
+    pub async fn write_all(&mut self, mut data: &[u8]) -> AppResult<()> {
+        while !data.is_empty() {
+            let written = tokio::time::timeout(self.stall_limit, self.stream.write(data))
+                .await
+                .map_err(|_| self.stalled())?
+                .map_err(data_error)?;
+            if written == 0 {
+                return Err(data_error(io::ErrorKind::WriteZero.into()));
+            }
+            data = &data[written..];
+        }
+        Ok(())
     }
 
     /// Ends an upload: closes the sending side, then reads until the server closes its side.
@@ -105,12 +138,28 @@ impl Stream {
     /// unread data resets it, which can lose the end of the file on the server. Reading them
     /// also keeps tickets for later data connections, which servers may require to resume.
     pub async fn finish_sending(mut self, limit: Duration) {
-        let _ = self.shutdown().await;
+        if tokio::time::timeout(self.stall_limit, self.stream.shutdown())
+            .await
+            .is_err()
+        {
+            return;
+        }
         let mut buffer = [0u8; 4096];
         let _ = tokio::time::timeout(limit, async {
             while matches!(self.read_some(&mut buffer).await, Ok(read) if read > 0) {}
         })
         .await;
+    }
+
+    /// A timeout, which callers take for a lost connection and reconnect.
+    fn stalled(&self) -> AppError {
+        AppError::new(
+            ErrorKind::Timeout,
+            format!(
+                "The data connection stalled: nothing moved for {}s",
+                self.stall_limit.as_secs()
+            ),
+        )
     }
 }
 
@@ -230,7 +279,7 @@ enum PreparedData {
 
 /// How a command that moves data started.
 pub enum DataStart {
-    Opened(Stream),
+    Opened(DataConnection),
     /// The server answered without opening a data connection, as some do for empty folders.
     Finished,
 }
@@ -624,13 +673,15 @@ impl Control {
         self.wrap_data(tcp).await.map(DataStart::Opened)
     }
 
-    pub async fn wrap_data(&self, tcp: TcpStream) -> AppResult<Stream> {
-        match (&self.tls, self.encrypted_data) {
-            (Some(tls), true) => Ok(Stream::Tls(Box::new(
-                handshake(tcp, tls, self.timeout).await?,
-            ))),
-            _ => Ok(Stream::Plain(tcp)),
-        }
+    pub async fn wrap_data(&self, tcp: TcpStream) -> AppResult<DataConnection> {
+        let stream = match (&self.tls, self.encrypted_data) {
+            (Some(tls), true) => Stream::Tls(Box::new(handshake(tcp, tls, self.timeout).await?)),
+            _ => Stream::Plain(tcp),
+        };
+        Ok(DataConnection::new(
+            stream,
+            self.timeout * DATA_STALL_TIMEOUT_FACTOR,
+        ))
     }
 
     /// The reply that ends a transfer, once its data connection is closed.
@@ -660,7 +711,7 @@ impl Control {
     /// 226 alone, or 225), so a `NOOP` afterwards finds where the replies end. Some servers
     /// read commands in bulk during a transfer and drop whatever follows `ABOR`, so the
     /// `NOOP` waits for the first answer.
-    pub async fn abort_transfer(&mut self, data: Stream) -> AppResult<()> {
+    pub async fn abort_transfer(&mut self, data: DataConnection) -> AppResult<()> {
         self.send("ABOR").await?;
         drop(data);
         let first = self.read_reply().await?;
@@ -1074,6 +1125,72 @@ fn passive_ip(offered: Ipv4Addr, peer: IpAddr) -> IpAddr {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const STALL_LIMIT: Duration = Duration::from_millis(300);
+    /// Far beyond the stall limit: a test that reaches it found a connection that never gave up.
+    const HANG: Duration = Duration::from_secs(20);
+
+    /// A data connection to a local peer, which the test then drives or leaves idle.
+    async fn data_connection() -> (DataConnection, TcpStream) {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (client, accepted) = tokio::join!(TcpStream::connect(address), listener.accept());
+        let data = DataConnection::new(Stream::Plain(client.unwrap()), STALL_LIMIT);
+        (data, accepted.unwrap().0)
+    }
+
+    #[tokio::test]
+    async fn a_server_that_stops_sending_times_out() {
+        let (mut data, _server) = data_connection().await;
+        let mut buffer = [0u8; 64];
+        let error = tokio::time::timeout(HANG, data.read_some(&mut buffer))
+            .await
+            .expect("the read gives up by itself")
+            .unwrap_err();
+        assert_eq!(error.kind, ErrorKind::Timeout);
+        assert!(error.is_connection_lost());
+    }
+
+    #[tokio::test]
+    async fn a_server_that_stops_taking_data_times_out() {
+        let (mut data, _server) = data_connection().await;
+        // Chunk by chunk, as uploads write, until the socket buffers on both ends are full.
+        // Windows takes a single write of any size whole while its send buffer has room.
+        let chunk = vec![0u8; 256 * 1024];
+        let error = tokio::time::timeout(HANG, async {
+            loop {
+                if let Err(error) = data.write_all(&chunk).await {
+                    break error;
+                }
+            }
+        })
+        .await
+        .expect("the write gives up by itself");
+        assert_eq!(error.kind, ErrorKind::Timeout);
+        assert!(error.is_connection_lost());
+    }
+
+    #[tokio::test]
+    async fn a_slow_server_that_keeps_sending_does_not_time_out() {
+        let (mut data, mut server) = data_connection().await;
+        let sending = tokio::spawn(async move {
+            for _ in 0..10 {
+                tokio::time::sleep(STALL_LIMIT / 3).await;
+                server.write_all(b"listing ").await.unwrap();
+            }
+        });
+        let mut received = Vec::new();
+        let mut buffer = [0u8; 64];
+        loop {
+            let read = data.read_some(&mut buffer).await.unwrap();
+            if read == 0 {
+                break;
+            }
+            received.extend_from_slice(&buffer[..read]);
+        }
+        sending.await.unwrap();
+        assert_eq!(received.len(), 80);
+    }
 
     #[test]
     fn reply_text_drops_codes() {

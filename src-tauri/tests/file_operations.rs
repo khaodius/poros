@@ -564,6 +564,62 @@ async fn moves_across_disks() {
     fixture.close().await;
 }
 
+/// Without commands, a folder moves to another disk one entry at a time, so a file that cannot
+/// be read stays where it was instead of being deleted with the folder.
+#[tokio::test]
+async fn moving_across_disks_keeps_what_could_not_be_copied() {
+    let Some(server) = server() else { return };
+    let fixture = Fixture::new(&server, "disks-unreadable").await;
+    let other_disk = format!("/dev/shm/poros-fileops-unreadable-{}", std::process::id());
+    let session = fixture.session().await;
+    let fs = session.sftp().unwrap();
+    let _ = fs.delete(std::slice::from_ref(&other_disk)).await;
+    if fs.make_dir_at(&other_disk, None).await.is_err() {
+        drop(session);
+        fixture.close().await;
+        return;
+    }
+    fixture.mkdir("photos").await;
+    fixture.mkdir("photos/2024").await;
+    fixture.write("photos/a.jpg", b"a").await;
+    fixture.write("photos/2024/b.jpg", b"b").await;
+    fixture.write("photos/2024/locked.jpg", b"locked").await;
+    fs.set_attributes(&fixture.path("photos/2024/locked.jpg"), None, Some(0))
+        .await
+        .unwrap();
+
+    let summary = fixture
+        .operations(EVERY_WAY[3])
+        .move_or_copy(MoveCopyRequest {
+            operation_id: "disks-unreadable".into(),
+            location: fixture.location(),
+            mode: Mode::Move,
+            sources: vec![fixture.path("photos")],
+            target_directory: other_disk.clone(),
+            conflict: Conflict::KeepBoth,
+        })
+        .await
+        .unwrap();
+    assert_eq!(summary.failures.len(), 1, "{:?}", summary.failures);
+    assert!(summary.failures[0].path.ends_with("locked.jpg"));
+    for (path, contents) in [("a.jpg", b"a"), ("2024/b.jpg", b"b")] {
+        let moved = fs
+            .read_to_end(&format!("{other_disk}/photos/{path}"), 16)
+            .await
+            .unwrap();
+        assert_eq!(moved, contents);
+        assert!(!fixture.exists(&format!("photos/{path}")).await);
+    }
+    assert!(fixture.exists("photos/2024/locked.jpg").await);
+
+    fs.set_attributes(&fixture.path("photos/2024/locked.jpg"), None, Some(0o600))
+        .await
+        .unwrap();
+    fs.delete(std::slice::from_ref(&other_disk)).await.unwrap();
+    drop(session);
+    fixture.close().await;
+}
+
 #[tokio::test]
 async fn changes_permissions_and_owners() {
     let Some(server) = server() else { return };

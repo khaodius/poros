@@ -3,7 +3,7 @@
 //! says to skip it. Mirrored in `src/lib/types.ts`.
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -257,13 +257,20 @@ pub struct Scheduler {
 }
 
 impl Scheduler {
-    /// Reads the tasks and settles runs missed while Poros was closed. A missing or unreadable
-    /// file yields no tasks; it is rewritten on the next save.
+    /// Reads the tasks and settles runs missed while Poros was closed. A missing file yields no
+    /// tasks. One that cannot be read or understood is kept aside and reported.
     pub fn load(file: PathBuf, events: Events) -> Self {
-        let tasks = read(&file).unwrap_or_else(|error| {
-            log::warn!("No scheduled tasks loaded, {}: {error}", file.display());
-            Vec::new()
-        });
+        let tasks = match storage::read_json::<Vec<ScheduledTask>>(&file) {
+            Ok(tasks) => tasks.unwrap_or_default(),
+            Err(problem) => {
+                events.log(
+                    LogLevel::Warn,
+                    None,
+                    format!("{problem} Poros started with no scheduled tasks."),
+                );
+                Vec::new()
+            }
+        };
         let scheduler = Self {
             inner: Arc::new(Inner {
                 file,
@@ -419,14 +426,6 @@ impl Scheduler {
     }
 }
 
-fn read(file: &Path) -> Result<Vec<ScheduledTask>, String> {
-    match std::fs::read(file) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| error.to_string()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
-        Err(error) => Err(error.to_string()),
-    }
-}
-
 async fn execute(inner: Arc<Inner>, app: AppHandle, task: ScheduledTask) {
     inner.changed();
     inner.events.log(
@@ -552,26 +551,46 @@ async fn synchronize(
             excludes: excludes.clone(),
         })
         .await?;
+    let empty_folder = context.sync.empty_mirrored_folder(&plan.plan_id);
+    let held_back = |action: SyncAction| {
+        empty_folder.is_some()
+            && matches!(action, SyncAction::DeleteLocal | SyncAction::DeleteRemote)
+    };
+    let conflicts = plan
+        .items
+        .iter()
+        .filter(|item| item.action == SyncAction::Conflict)
+        .count();
     let choices: Vec<SyncChoice> = plan
         .items
         .iter()
-        .filter(|item| item.action != SyncAction::Conflict)
+        .filter(|item| item.action != SyncAction::Conflict && !held_back(item.action))
         .map(|item| SyncChoice {
             id: item.id,
             action: item.action,
         })
         .collect();
-    let conflicts = plan.items.len() - choices.len();
-    let conflict_note = match conflicts {
+    let mut notes = match conflicts {
         0 => String::new(),
         1 => ", 1 conflict left for you to settle".into(),
         count => format!(", {count} conflicts left for you to settle"),
     };
+    if let Some(folder) = &empty_folder {
+        notes.push_str(&format!(
+            ", nothing deleted because {folder} was empty (synchronize from Poros once if it is meant to be)"
+        ));
+    }
+    let settled = conflicts == 0 && empty_folder.is_none();
     if choices.is_empty() {
         context.sync.discard(&plan.plan_id);
+        let message = if empty_folder.is_some() {
+            format!("Nothing copied{notes}")
+        } else {
+            format!("The folders already match{notes}")
+        };
         return Ok(Outcome {
-            succeeded: conflicts == 0,
-            message: format!("The folders already match{conflict_note}"),
+            succeeded: settled,
+            message,
         });
     }
 
@@ -607,9 +626,9 @@ async fn synchronize(
             plural(summary.failures.len() as u64, "item")
         ));
     }
-    message.push_str(&conflict_note);
+    message.push_str(&notes);
     Ok(Outcome {
-        succeeded: failed == 0 && summary.failures.is_empty() && conflicts == 0,
+        succeeded: failed == 0 && summary.failures.is_empty() && settled,
         message,
     })
 }
@@ -742,6 +761,34 @@ mod tests {
 
         let reloaded = Scheduler::load(scheduler.inner.file.clone(), Events::default());
         assert_eq!(reloaded.list()[0].task.name, "Hourly");
+    }
+
+    #[test]
+    fn a_corrupt_file_is_kept_and_reported_instead_of_overwritten() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file = temp_dir.path().join("schedules.json");
+        std::fs::write(&file, "[{\"id\": \"nightly\"").unwrap();
+        let events = Events::keeping_startup_log();
+
+        let scheduler = Scheduler::load(file.clone(), events.clone());
+        assert!(scheduler.list().is_empty());
+        let notices = events.take_startup_log();
+        assert_eq!(notices.len(), 1);
+        assert!(matches!(notices[0].level, LogLevel::Warn));
+        assert!(notices[0].message.contains("schedules.json is not valid"));
+        assert!(notices[0].message.contains("no scheduled tasks"));
+
+        let hourly = Trigger::Every {
+            minutes: 60,
+            start: at(9, 0).timestamp(),
+        };
+        scheduler.save_at(task(hourly), &at(9, 30)).unwrap();
+        let kept = crate::storage::tests::kept_copies(temp_dir.path(), "schedules.json.corrupt-");
+        assert_eq!(kept.len(), 1);
+        assert_eq!(
+            std::fs::read_to_string(&kept[0]).unwrap(),
+            "[{\"id\": \"nightly\""
+        );
     }
 
     #[test]

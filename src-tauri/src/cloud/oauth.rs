@@ -18,7 +18,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
-use super::CloudProvider;
+use super::{api, CloudProvider};
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::settings::CloudSettings;
 
@@ -364,18 +364,15 @@ async fn request_tokens(
     if client.provider == CloudProvider::Microsoft {
         form.push(("scope", client.scopes()));
     }
-    let response = http
+    let request = http
         .post(client.token_url())
         .form(&form)
-        .send()
-        .await
-        .map_err(super::api::transport_error)?;
+        .build()
+        .map_err(api::transport_error)?;
+    let response = api::send_request(http, request, api::STALL_TIMEOUT).await?;
     let status = response.status();
     if status.is_success() {
-        return response
-            .json::<TokenResponse>()
-            .await
-            .map_err(super::api::transport_error);
+        return api::decode::<TokenResponse>(response).await;
     }
     let provider = client.provider.name();
     if status.is_server_error() {
@@ -384,7 +381,7 @@ async fn request_tokens(
             format!("{provider} sign-in is not available right now ({status})"),
         ));
     }
-    let refusal = response.json::<TokenError>().await.ok();
+    let refusal = api::decode::<TokenError>(response).await.ok();
     let description = refusal
         .as_ref()
         .and_then(|refusal| refusal.error_description.clone())

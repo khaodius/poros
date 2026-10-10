@@ -1,15 +1,19 @@
 //! Saved connections, in `connections.json` in the app config folder. Passwords and key
 //! passphrases are never written there: when the user opts in they go to the system keychain
 //! (Windows Credential Manager, or the Secret Service on Linux), and they never travel back to
-//! the frontend. Mirrored in `src/lib/types.ts`.
+//! the frontend. Each is kept for the server, account and sign-in method it was saved with, so
+//! a connection edited to point elsewhere does not take it along. Mirrored in
+//! `src/lib/types.ts`.
 
 use std::path::PathBuf;
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::protocol::Protocol;
+use crate::ssh::{AuthMethod, ConnectProfile};
 use crate::storage;
 
 const KEYCHAIN_SERVICE: &str = "io.github.khaodius.poros";
@@ -60,6 +64,67 @@ pub struct SavedConnection {
     pub jump_connection_id: Option<String>,
 }
 
+/// What a stored secret may be used for: the server, account and sign-in method it was saved
+/// with.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SecretScope {
+    host: String,
+    port: u16,
+    username: String,
+    auth_type: AuthType,
+}
+
+impl SecretScope {
+    fn new(protocol: Protocol, host: &str, port: u16, username: &str, auth_type: AuthType) -> Self {
+        // A cloud service has one address, whatever a profile carries.
+        let (host, port) = match protocol.service_host() {
+            Some(service_host) => (service_host.to_string(), protocol.default_port()),
+            None => (host.trim().to_ascii_lowercase(), port),
+        };
+        Self {
+            host,
+            port,
+            username: username.trim().to_string(),
+            auth_type,
+        }
+    }
+
+    pub fn of_saved(saved: &SavedConnection) -> Self {
+        Self::new(
+            saved.protocol,
+            &saved.host,
+            saved.port,
+            &saved.username,
+            saved.auth_type,
+        )
+    }
+
+    pub fn of_profile(profile: &ConnectProfile) -> Self {
+        let auth_type = match profile.auth {
+            AuthMethod::Password { .. } => AuthType::Password,
+            AuthMethod::PublicKey { .. } => AuthType::PublicKey,
+            AuthMethod::Agent => AuthType::Agent,
+            AuthMethod::OAuth { .. } => AuthType::OAuth,
+        };
+        Self::new(
+            profile.protocol,
+            &profile.host,
+            profile.port,
+            &profile.username,
+            auth_type,
+        )
+    }
+
+    /// Keeps host and user names out of the keychain entry names, which the system lists.
+    fn fingerprint(&self) -> String {
+        let canonical = serde_json::to_vec(self).expect("a scope always serializes");
+        Sha256::digest(canonical)[..16]
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+}
+
 /// Where secrets live, by account name. The keychain in the app, memory in tests.
 pub trait SecretStore: Send + Sync {
     fn get(&self, account: &str) -> AppResult<Option<String>>;
@@ -98,7 +163,14 @@ impl SecretStore for Keychain {
     }
 }
 
-fn connection_account(id: &str) -> String {
+/// Secrets are looked up by the scope they are wanted for, so one is only ever found for the
+/// scope it was saved with.
+fn connection_account(id: &str, scope: &SecretScope) -> String {
+    format!("connection:{id}:{}", scope.fingerprint())
+}
+
+/// Where versions up to 0.3.1 kept a connection's secret, whatever the connection pointed at.
+fn unscoped_account(id: &str) -> String {
     format!("connection:{id}")
 }
 
@@ -130,7 +202,8 @@ impl ConnectionStore {
         self.read()
     }
 
-    /// `secret` replaces the stored one when given; `save_secret: false` deletes it.
+    /// `secret` replaces the stored one when given; `save_secret: false` deletes it, and so does
+    /// a change of server, account or sign-in method without a new one.
     pub fn save(
         &self,
         mut connection: SavedConnection,
@@ -179,18 +252,32 @@ impl ConnectionStore {
             connection.bypass_proxy = false;
         }
 
-        let account = connection_account(&connection.id);
-        if !connection.save_secret {
-            self.secrets.delete(&account)?;
-        } else if let Some(secret) = secret.filter(|secret| !secret.is_empty()) {
-            self.secrets.set(&account, &secret)?;
+        let existing = connections
+            .iter()
+            .position(|existing| existing.id == connection.id);
+        let scope = SecretScope::of_saved(&connection);
+        let previous_scope = existing
+            .map(|index| SecretScope::of_saved(&connections[index]))
+            .filter(|previous| *previous != scope);
+        let id = &connection.id;
+        let secret = secret.filter(|secret| !secret.is_empty());
+        match (&secret, connection.save_secret) {
+            (_, false) => self.secrets.delete(&connection_account(id, &scope))?,
+            (Some(secret), true) => self.secrets.set(&connection_account(id, &scope), secret)?,
+            (None, true) => {}
+        }
+        if let Some(previous_scope) = &previous_scope {
+            self.secrets
+                .delete(&connection_account(id, previous_scope))?;
+            // What is stored was for the server, account or sign-in method of before.
+            connection.save_secret &= secret.is_some();
+        }
+        if !connection.save_secret || secret.is_some() {
+            self.secrets.delete(&unscoped_account(id))?;
         }
 
-        match connections
-            .iter_mut()
-            .find(|existing| existing.id == connection.id)
-        {
-            Some(existing) => *existing = connection.clone(),
+        match existing {
+            Some(index) => connections[index] = connection.clone(),
             None => connections.push(connection.clone()),
         }
         storage::write_json(&self.file, &connections)?;
@@ -200,33 +287,72 @@ impl ConnectionStore {
     pub fn delete(&self, id: &str) -> AppResult<()> {
         let _guard = self.lock.lock().unwrap();
         let mut connections = self.read()?;
-        connections.retain(|connection| connection.id != id);
+        let removed = connections
+            .iter()
+            .position(|connection| connection.id == id)
+            .map(|index| connections.remove(index));
         storage::write_json(&self.file, &connections)?;
-        self.secrets.delete(&connection_account(id))
+        if let Some(removed) = removed {
+            self.secrets
+                .delete(&connection_account(id, &SecretScope::of_saved(&removed)))?;
+        }
+        self.secrets.delete(&unscoped_account(id))
     }
 
+    /// The stored secret of a saved connection, for connecting to it as saved.
     pub fn secret(&self, id: &str) -> AppResult<Option<String>> {
         let saved = self
             .list()?
             .into_iter()
-            .any(|connection| connection.id == id && connection.save_secret);
-        if saved {
-            self.secrets.get(&connection_account(id))
-        } else {
-            Ok(None)
+            .find(|connection| connection.id == id);
+        match saved {
+            Some(saved) => self.secret_for(id, &SecretScope::of_saved(&saved)),
+            None => Ok(None),
         }
     }
 
-    /// Replaces the stored secret of a saved connection that keeps one, as when a cloud
-    /// provider issues a new refresh token.
-    pub fn update_secret(&self, id: &str, secret: &str) -> AppResult<()> {
+    /// The stored secret of a saved connection, if it was saved for `scope`.
+    pub fn secret_for(&self, id: &str, scope: &SecretScope) -> AppResult<Option<String>> {
         let _guard = self.lock.lock().unwrap();
-        let keeps_secret = self
+        let Some(saved) = self
             .read()?
-            .iter()
-            .any(|connection| connection.id == id && connection.save_secret);
+            .into_iter()
+            .find(|connection| connection.id == id && connection.save_secret)
+        else {
+            return Ok(None);
+        };
+        let account = connection_account(id, scope);
+        if let Some(secret) = self.secrets.get(&account)? {
+            return Ok(Some(secret));
+        }
+        // An unscoped secret belongs to the connection as saved now, since saving it with
+        // another server, account or sign-in method deletes it.
+        if *scope != SecretScope::of_saved(&saved) {
+            return Ok(None);
+        }
+        let unscoped = unscoped_account(id);
+        let Some(secret) = self.secrets.get(&unscoped)? else {
+            return Ok(None);
+        };
+        if self.secrets.set(&account, &secret).is_ok() {
+            // Best effort: the scoped copy is found first from now on.
+            let _ = self.secrets.delete(&unscoped);
+        }
+        Ok(Some(secret))
+    }
+
+    /// Replaces the stored secret of a saved connection that keeps one, as when a cloud
+    /// provider issues a new refresh token. A session opened with details other than the saved
+    /// ones, such as another account, leaves it alone.
+    pub fn update_secret(&self, id: &str, scope: &SecretScope, secret: &str) -> AppResult<()> {
+        let _guard = self.lock.lock().unwrap();
+        let keeps_secret = self.read()?.iter().any(|connection| {
+            connection.id == id
+                && connection.save_secret
+                && SecretScope::of_saved(connection) == *scope
+        });
         if keeps_secret {
-            self.secrets.set(&connection_account(id), secret)?;
+            self.secrets.set(&connection_account(id, scope), secret)?;
         }
         Ok(())
     }
@@ -333,7 +459,9 @@ pub(crate) mod tests {
         assert_eq!(store.secret(&saved.id).unwrap(), None);
         assert_eq!(store.list().unwrap().len(), 1);
 
-        store.update_secret(&saved.id, "rotated").unwrap();
+        store
+            .update_secret(&saved.id, &SecretScope::of_saved(&saved), "rotated")
+            .unwrap();
         assert_eq!(store.secret(&saved.id).unwrap(), None);
 
         store.touch(&saved.id, 42).unwrap();
@@ -361,14 +489,182 @@ pub(crate) mod tests {
         assert!(saved.save_secret);
         assert_eq!(saved.host, "drive.google.com");
         assert_eq!(saved.port, 443);
-        store.update_secret(&saved.id, "rotated").unwrap();
+        store
+            .update_secret(&saved.id, &SecretScope::of_saved(&saved), "rotated")
+            .unwrap();
         assert_eq!(store.secret(&saved.id).unwrap().as_deref(), Some("rotated"));
+
+        // A session signed in to another account does not replace the saved account's sign-in.
+        let other_account = SecretScope::of_saved(&SavedConnection {
+            username: "eve@example.com".into(),
+            ..saved.clone()
+        });
+        store
+            .update_secret(&saved.id, &other_account, "other")
+            .unwrap();
+        assert_eq!(store.secret(&saved.id).unwrap().as_deref(), Some("rotated"));
+        assert_eq!(store.secret_for(&saved.id, &other_account).unwrap(), None);
 
         let mismatched = SavedConnection {
             auth_type: AuthType::Password,
             ..saved
         };
         assert!(store.save(mismatched, None).is_err());
+    }
+
+    fn profile_scope(
+        host: &str,
+        port: u16,
+        username: &str,
+        auth: serde_json::Value,
+    ) -> SecretScope {
+        let profile: ConnectProfile = serde_json::from_value(serde_json::json!({
+            "host": host,
+            "port": port,
+            "username": username,
+            "auth": auth,
+        }))
+        .unwrap();
+        SecretScope::of_profile(&profile)
+    }
+
+    fn password() -> serde_json::Value {
+        serde_json::json!({ "type": "password", "password": "" })
+    }
+
+    #[test]
+    fn a_saved_secret_is_only_released_to_the_server_it_was_saved_for() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store = ConnectionStore::new(
+            temp_dir.path().join("connections.json"),
+            Box::<MemorySecrets>::default(),
+        );
+        let saved = store.save(connection(), Some("hunter2".into())).unwrap();
+        let secret_for = |scope: SecretScope| store.secret_for(&saved.id, &scope).unwrap();
+
+        assert_eq!(
+            secret_for(profile_scope(" EXAMPLE.com ", 22, "alice", password())).as_deref(),
+            Some("hunter2")
+        );
+        assert_eq!(
+            secret_for(profile_scope("evil.example", 22, "alice", password())),
+            None
+        );
+        assert_eq!(
+            secret_for(profile_scope("example.com", 2222, "alice", password())),
+            None
+        );
+        assert_eq!(
+            secret_for(profile_scope("example.com", 22, "root", password())),
+            None
+        );
+        let key = serde_json::json!({ "type": "publicKey", "keyPath": "/k", "passphrase": null });
+        assert_eq!(
+            secret_for(profile_scope("example.com", 22, "alice", key)),
+            None
+        );
+
+        // Editing anything else keeps the secret.
+        let renamed = SavedConnection {
+            name: "Renamed".into(),
+            remote_path: Some("/srv".into()),
+            ..saved.clone()
+        };
+        assert!(store.save(renamed, None).unwrap().save_secret);
+        assert_eq!(store.secret(&saved.id).unwrap().as_deref(), Some("hunter2"));
+
+        // Pointing the connection at another server without a new password forgets the old one.
+        let moved = SavedConnection {
+            host: "evil.example".into(),
+            ..saved.clone()
+        };
+        let moved = store.save(moved, None).unwrap();
+        assert!(!moved.save_secret);
+        assert_eq!(store.secret(&saved.id).unwrap(), None);
+        assert_eq!(
+            store
+                .secret_for(&saved.id, &SecretScope::of_saved(&saved))
+                .unwrap(),
+            None
+        );
+
+        // A password typed for the new server is kept for that server only.
+        let retyped = SavedConnection {
+            save_secret: true,
+            ..moved
+        };
+        let retyped = store.save(retyped, Some("new-pass".into())).unwrap();
+        assert!(retyped.save_secret);
+        assert_eq!(
+            store.secret(&saved.id).unwrap().as_deref(),
+            Some("new-pass")
+        );
+        let back = SavedConnection {
+            host: "example.com".into(),
+            ..retyped
+        };
+        assert!(!store.save(back, None).unwrap().save_secret);
+        assert_eq!(
+            secret_for(profile_scope("evil.example", 22, "alice", password())),
+            None
+        );
+    }
+
+    #[test]
+    fn secrets_saved_before_scopes_keep_working_for_unchanged_connections() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store = ConnectionStore::new(
+            temp_dir.path().join("connections.json"),
+            Box::<MemorySecrets>::default(),
+        );
+        let saved = store.save(connection(), None).unwrap();
+        assert!(saved.save_secret);
+        store
+            .secrets
+            .set(&unscoped_account(&saved.id), "from-0.3.1")
+            .unwrap();
+
+        let elsewhere = profile_scope("evil.example", 22, "alice", password());
+        assert_eq!(store.secret_for(&saved.id, &elsewhere).unwrap(), None);
+        assert_eq!(
+            store.secret(&saved.id).unwrap().as_deref(),
+            Some("from-0.3.1")
+        );
+        // Moved under its scope on first use.
+        assert_eq!(
+            store.secrets.get(&unscoped_account(&saved.id)).unwrap(),
+            None
+        );
+        assert_eq!(
+            store.secret(&saved.id).unwrap().as_deref(),
+            Some("from-0.3.1")
+        );
+
+        let other = store.save(connection(), None).unwrap();
+        store
+            .secrets
+            .set(&unscoped_account(&other.id), "older")
+            .unwrap();
+        let moved = SavedConnection {
+            host: "evil.example".into(),
+            ..other.clone()
+        };
+        assert!(!store.save(moved, None).unwrap().save_secret);
+        assert_eq!(
+            store.secrets.get(&unscoped_account(&other.id)).unwrap(),
+            None
+        );
+        assert_eq!(store.secret_for(&other.id, &elsewhere).unwrap(), None);
+
+        store.delete(&saved.id).unwrap();
+        let scope = SecretScope::of_saved(&saved);
+        assert_eq!(
+            store
+                .secrets
+                .get(&connection_account(&saved.id, &scope))
+                .unwrap(),
+            None
+        );
     }
 
     #[test]

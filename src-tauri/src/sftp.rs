@@ -3,6 +3,7 @@
 
 use std::ops::Range;
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -15,6 +16,7 @@ use russh_sftp::client::rawsession::Limits;
 use russh_sftp::client::{Config, RawSftpSession};
 use russh_sftp::extensions;
 use russh_sftp::protocol::{FileAttributes, OpenFlags, Packet, StatusCode};
+use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::model::{kind_from_mode, DirListing, EntryKind, FileEntry, LinkTarget};
@@ -23,13 +25,21 @@ use crate::protocol::{
     Capabilities, Protocol, ReadStream, RemoteFileSystem, WriteRequest, WriteStream,
 };
 use crate::remote_path;
+use crate::stall::Activity;
 
 mod ops;
+mod stall;
 
 pub use ops::EntryStat;
+use stall::{StallGuardedSession, TrackedStream};
 
 const PARALLEL_REQUESTS: usize = 16;
-const REQUEST_TIMEOUT_SECS: u64 = 30;
+/// How long a connection may move no bytes while requests wait before they fail.
+const STALL_TIMEOUT: Duration = Duration::from_secs(30);
+/// The library's own deadline runs from when a request is queued, so on a slow link it passes
+/// before requests deep in the pipeline are even sent. This many seconds overflows the
+/// deadline, which turns it off, and `stall` times requests out instead.
+const NO_LIBRARY_DEADLINE_SECS: u64 = u64::MAX;
 /// Requests kept in flight by the streams other protocols' transfers read and write through.
 const STREAM_REQUESTS: usize = 32;
 const STREAM_CHUNK: u32 = 32 * 1024;
@@ -37,7 +47,7 @@ const STREAM_CHUNK: u32 = 32 * 1024;
 const POSIX_RENAME: &str = "posix-rename@openssh.com";
 
 pub struct RemoteFs {
-    raw: RawSftpSession,
+    raw: StallGuardedSession,
     pub home: String,
     /// Largest read and write payloads the server accepts (`limits@openssh.com`).
     read_limit: Option<u32>,
@@ -67,11 +77,22 @@ impl From<&FileAttributes> for RemoteStat {
 impl RemoteFs {
     pub async fn open(channel: Channel<Msg>) -> AppResult<Self> {
         channel.request_subsystem(true, "sftp").await?;
+        Self::over(channel.into_stream()).await
+    }
+
+    /// Starts SFTP over any byte stream: a channel, or an in-memory pipe in tests.
+    async fn over<S>(stream: S) -> AppResult<Self>
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
         let config = Config {
-            request_timeout_secs: REQUEST_TIMEOUT_SECS,
+            request_timeout_secs: NO_LIBRARY_DEADLINE_SECS,
             ..Default::default()
         };
-        let mut raw = RawSftpSession::new_with_config(channel.into_stream(), config);
+        let activity = Activity::new(STALL_TIMEOUT);
+        let stream = TrackedStream::new(stream, activity.clone());
+        let session = RawSftpSession::new_with_config(stream, config);
+        let mut raw = StallGuardedSession::new(session, activity);
         let version = raw.init().await?;
         let mut limits = Limits::default();
         let offers = |name: &str| version.extensions.contains_key(name);
@@ -444,7 +465,8 @@ impl RemoteFs {
 
     /// Moves `from` over `to`, replacing a file there: in one step where the server offers
     /// `posix-rename@openssh.com` (OpenSSH), with a plain rename where that replaces files
-    /// (SFTPGo), and otherwise by removing the old file just before the rename.
+    /// (SFTPGo), and otherwise by moving the old file aside first. It is deleted only once
+    /// the new one is in place, so a connection lost in between leaves it on the server.
     pub async fn replace(&self, from: &str, to: &str) -> AppResult<()> {
         if self.posix_rename {
             return self.posix_rename(from, to).await;
@@ -455,15 +477,17 @@ impl RemoteFs {
         if !matches!(self.stat(to).await, Ok(Some(existing)) if !existing.is_dir) {
             return Err(AppError::from(refused).with_path(from));
         }
+        let aside = aside_path(to);
         self.raw
-            .remove(to)
+            .rename(to, &aside)
             .await
             .map_err(|error| AppError::from(error).with_path(to))?;
-        self.raw
-            .rename(from, to)
-            .await
-            .map(|_| ())
-            .map_err(|error| AppError::from(error).with_path(from))
+        if let Err(error) = self.raw.rename(from, to).await {
+            let _ = self.raw.rename(&aside, to).await;
+            return Err(AppError::from(error).with_path(from));
+        }
+        let _ = self.raw.remove(&aside).await;
+        Ok(())
     }
 
     async fn posix_rename(&self, from: &str, to: &str) -> AppResult<()> {
@@ -760,7 +784,7 @@ impl WriteStream for SftpWriter {
     }
 }
 
-async fn canonicalize(raw: &RawSftpSession, path: &str) -> AppResult<String> {
+async fn canonicalize(raw: &StallGuardedSession, path: &str) -> AppResult<String> {
     let name = raw.realpath(path).await?;
     name.files
         .into_iter()
@@ -831,9 +855,96 @@ fn owner_group(longname: &str, attributes: &FileAttributes) -> (Option<String>, 
     )
 }
 
+/// A hidden name beside `path` for the file a replace moves out of the way.
+fn aside_path(path: &str) -> String {
+    let name = format!(".poros-replaced-{}", uuid::Uuid::new_v4().simple());
+    match remote_path::parent(path) {
+        Some(parent) => remote_path::join(&parent, &name),
+        None => name,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::future::join_all;
+    use russh_sftp::protocol::{Data, File, Name, Version};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream};
+    use tokio::time::Instant;
+
+    /// Answers like a server at the far end of a slow link: one request at a time, each read
+    /// after `delay`, and nothing more after `reads_answered` reads.
+    async fn slow_server(mut stream: DuplexStream, delay: Duration, reads_answered: usize) {
+        let mut answered = 0;
+        loop {
+            let Ok(length) = stream.read_u32().await else {
+                return;
+            };
+            let mut body = vec![0; length as usize];
+            if stream.read_exact(&mut body).await.is_err() {
+                return;
+            }
+            let reply = match Packet::try_from(&mut Bytes::from(body)).expect("a valid request") {
+                Packet::Init(_) => Packet::Version(Version::new()),
+                Packet::RealPath(request) => Packet::Name(Name {
+                    id: request.id,
+                    files: vec![File::dummy("/home/poros")],
+                }),
+                Packet::Read(request) => {
+                    if answered == reads_answered {
+                        std::future::pending::<()>().await;
+                    }
+                    answered += 1;
+                    tokio::time::sleep(delay).await;
+                    Packet::Data(Data {
+                        id: request.id,
+                        data: vec![0; request.len as usize],
+                    })
+                }
+                other => panic!("unexpected request {other:?}"),
+            };
+            let reply = Bytes::try_from(reply).expect("an encodable reply");
+            if stream.write_all(&reply).await.is_err() {
+                return;
+            }
+        }
+    }
+
+    async fn connect_to_slow_server(reads_answered: usize) -> RemoteFs {
+        let (client, server) = tokio::io::duplex(1024 * 1024);
+        tokio::spawn(slow_server(server, Duration::from_secs(5), reads_answered));
+        RemoteFs::over(client).await.unwrap()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn reads_queued_behind_slow_replies_do_not_time_out() {
+        let fs = connect_to_slow_server(usize::MAX).await;
+        let started = Instant::now();
+        // The last of these is answered 100 seconds after it was sent, while every reply before
+        // it shows the connection is moving.
+        let results =
+            join_all((0..20).map(|index| fs.read_chunk("file", index * 1024, 1024))).await;
+        assert_eq!(started.elapsed(), Duration::from_secs(100));
+        for result in results {
+            assert!(matches!(result, Ok(ReadChunk::Data(data)) if data.len() == 1024));
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn reads_time_out_once_the_connection_stops_moving() {
+        let fs = connect_to_slow_server(3).await;
+        let started = Instant::now();
+        let results = join_all((0..6).map(|index| fs.read_chunk("file", index * 1024, 1024))).await;
+        // The third reply arrives at 15 seconds, and nothing moves after it.
+        assert_eq!(started.elapsed(), Duration::from_secs(15) + STALL_TIMEOUT);
+        let (answered, stalled) = results.split_at(3);
+        assert!(answered.iter().all(|result| result.is_ok()));
+        for result in stalled {
+            let error = result.as_ref().err().expect("a stalled read fails");
+            assert_eq!(error.kind, ErrorKind::Timeout);
+            assert!(error.is_connection_lost());
+        }
+    }
 
     #[test]
     fn owner_group_from_longname() {
@@ -853,6 +964,15 @@ mod tests {
             owner_group("", &attributes),
             (Some("1000".into()), Some("1000".into()))
         );
+    }
+
+    #[test]
+    fn replaced_files_move_aside_into_their_own_folder() {
+        let aside = aside_path("/srv/www/index.html");
+        assert!(aside.starts_with("/srv/www/.poros-replaced-"));
+        assert_ne!(aside, aside_path("/srv/www/index.html"));
+        assert!(aside_path("/top").starts_with("/.poros-replaced-"));
+        assert!(aside_path("relative").starts_with(".poros-replaced-"));
     }
 
     #[test]

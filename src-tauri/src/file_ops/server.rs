@@ -286,7 +286,17 @@ impl<'a> Work<'a> {
             }
         }
         if all_moved {
-            self.fs.remove_empty_dir(source).await?;
+            if let Err(error) = self.fs.remove_empty_dir(source).await {
+                // Something deeper inside failed to move, and was reported there.
+                let still_holds_entries = self
+                    .fs
+                    .entries(source)
+                    .await
+                    .is_ok_and(|left| !left.is_empty());
+                if !still_holds_entries {
+                    return Err(error);
+                }
+            }
         }
         Ok(())
     }
@@ -313,8 +323,24 @@ impl<'a> Work<'a> {
             self.progress.file_done();
             return Ok(());
         }
-        self.copy_to(source, stat, destination, false).await?;
-        self.fs.delete(&[source.to_string()]).await
+        match (stat.kind, destination) {
+            // Moved one entry at a time, so whatever fails to copy stays where it was.
+            (EntryKind::Dir, Destination::Fresh(target)) => {
+                // Writable by its owner while it fills; the real permissions are set last.
+                let permissions = stat.permissions.map(|mode| mode | 0o700);
+                self.fs.make_dir_at(target, permissions).await?;
+                self.merge_into(source, target).await?;
+                let _ = self
+                    .fs
+                    .set_attributes(target, stat.modified, stat.permissions)
+                    .await;
+                Ok(())
+            }
+            _ => {
+                self.copy_to(source, stat, destination, false).await?;
+                self.fs.delete(&[source.to_string()]).await
+            }
+        }
     }
 
     fn copy_to<'b>(

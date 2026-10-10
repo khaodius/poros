@@ -85,11 +85,35 @@ export function withProtocol(draft: ConnectDraft, protocol: Protocol): ConnectDr
     authChoice,
     host: isCloud(protocol) ? "" : draft.host,
     username: changedService ? "" : draft.username,
-    // A stored password is no use as a key passphrase, nor the other way around.
+    // A stored password is no use as a key passphrase, nor the other way around, and the
+    // keychain keeps it for one port.
     hasSavedSecret:
-      changedService || authChoice !== draft.authChoice ? false : draft.hasSavedSecret,
+      changedService || authChoice !== draft.authChoice || port !== draft.port
+        ? false
+        : draft.hasSavedSecret,
     signedIn: null,
   };
+}
+
+/**
+ * The keychain releases a saved secret only to the server, account and sign-in method it was
+ * saved for.
+ */
+const SECRET_SCOPE: ReadonlySet<keyof ConnectDraft> = new Set<keyof ConnectDraft>([
+  "host",
+  "port",
+  "username",
+  "authChoice",
+]);
+
+/** Changes one field of a draft, forgetting a saved secret that would no longer be used. */
+export function withField<K extends keyof ConnectDraft>(
+  draft: ConnectDraft,
+  key: K,
+  value: ConnectDraft[K],
+): ConnectDraft {
+  const leavesScope = SECRET_SCOPE.has(key) && draft[key] !== value;
+  return { ...draft, [key]: value, hasSavedSecret: draft.hasSavedSecret && !leavesScope };
 }
 
 /** Whether a draft has everything a connection attempt needs. */

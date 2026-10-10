@@ -261,6 +261,15 @@ impl SyncManager {
         }
     }
 
+    /// The folder a plan's deletions mirror, when it listed empty. Nobody reviews a scheduled
+    /// run, so it leaves those deletions out.
+    pub fn empty_mirrored_folder(&self, plan_id: &str) -> Option<String> {
+        let plans = self.plans.lock().unwrap();
+        let stored = plans.iter().find(|stored| stored.id == plan_id)?;
+        plan::deletions_mirror_empty_folder(&stored.local, &stored.remote, &stored.items)
+            .map(str::to_string)
+    }
+
     pub fn discard(&self, plan_id: &str) {
         self.plans
             .lock()

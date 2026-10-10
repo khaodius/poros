@@ -9,6 +9,7 @@ import {
   type RefObject,
 } from "react";
 import { Check, ChevronRight } from "lucide-react";
+import { rememberFocus } from "../lib/focus";
 
 interface MenuAction {
   label: string;
@@ -48,6 +49,14 @@ function levelButtons(panel: HTMLElement | null): HTMLButtonElement[] {
 export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState({ left: x, top: y });
+
+  // Noted as the menu first renders, before it focuses its first item.
+  const [returnFocus] = useState(rememberFocus);
+
+  useEffect(() => {
+    const menu = menuRef.current;
+    return () => returnFocus(menu);
+  }, [returnFocus]);
 
   useLayoutEffect(() => {
     const menu = menuRef.current;

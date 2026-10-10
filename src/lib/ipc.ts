@@ -296,6 +296,11 @@ export const dragPreview = {
 export const application = {
   /** Starts Poros again, once an update has replaced it. */
   restart: () => call<void>("app_restart"),
+  /**
+   * What the backend logged before the main window listened, such as a settings file it could
+   * not read. Taken once; later lines arrive as log events.
+   */
+  startupLog: () => call<LogRecord[]>("log_startup"),
 };
 
 function subscribe<T>(event: string, handler: (payload: T) => void): Promise<UnlistenFn> {

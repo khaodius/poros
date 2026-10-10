@@ -9,15 +9,27 @@ use std::sync::{Arc, Mutex};
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use hmac::{Hmac, Mac};
-use russh::keys::{HashAlg, PublicKey};
+use russh::keys::{Algorithm, HashAlg, PublicKey};
 use sha1::Sha1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostKeyStatus {
     Trusted,
     Unknown,
-    /// Also returned for a `@revoked` key.
+    /// Also returned for a `@revoked` key, and for a key of a type the host is not on record
+    /// with when it is on record with others.
     Changed,
+}
+
+/// What one known_hosts file says about a host's key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Record {
+    NotListed,
+    Trusted,
+    /// Revoked, or another key of the same type is listed.
+    Changed,
+    /// The host is listed, but only with keys of other types.
+    OtherKeyTypes,
 }
 
 #[derive(Debug, Clone)]
@@ -57,13 +69,70 @@ impl KnownHosts {
         if trusted_for_now {
             return HostKeyStatus::Trusted;
         }
-        for file in std::iter::once(&self.app_file).chain(&self.system_files) {
+        let mut listed_with_other_key_types = false;
+        for file in self.files() {
             match check_file(file, &host_port, key) {
-                HostKeyStatus::Unknown => continue,
-                decided => return decided,
+                Record::Trusted => return HostKeyStatus::Trusted,
+                Record::Changed => return HostKeyStatus::Changed,
+                Record::OtherKeyTypes => listed_with_other_key_types = true,
+                Record::NotListed => {}
             }
         }
-        HostKeyStatus::Unknown
+        // The handshake asks for the recorded key types first, so a server that presents
+        // another type no longer has the recorded keys or is not the server on record.
+        if listed_with_other_key_types {
+            HostKeyStatus::Changed
+        } else {
+            HostKeyStatus::Unknown
+        }
+    }
+
+    /// `defaults` reordered so the key types on record for the host come first, keeping
+    /// their order otherwise. Without this the server would present the key type the client
+    /// likes best, and a host on record with another type would look new.
+    pub fn preferred_algorithms(
+        &self,
+        host: &str,
+        port: u16,
+        defaults: &[Algorithm],
+    ) -> Vec<Algorithm> {
+        let recorded = self.recorded_algorithms(host, port);
+        let (on_record, others): (Vec<Algorithm>, Vec<Algorithm>) =
+            defaults.iter().cloned().partition(|candidate| {
+                recorded
+                    .iter()
+                    .any(|algorithm| same_key_type(algorithm, candidate))
+            });
+        on_record.into_iter().chain(others).collect()
+    }
+
+    fn recorded_algorithms(&self, host: &str, port: u16) -> Vec<Algorithm> {
+        let host_port = host_pattern(host, port);
+        let mut recorded: Vec<Algorithm> = self
+            .trusted_until_exit
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(trusted_host, _)| *trusted_host == host_port)
+            .map(|(_, key)| key.algorithm())
+            .collect();
+        for file in self.files() {
+            let Ok(contents) = fs::read_to_string(file) else {
+                continue;
+            };
+            recorded.extend(
+                contents
+                    .lines()
+                    .filter_map(parse_line)
+                    .filter(|entry| entry.marker == Marker::None && entry.matches_host(&host_port))
+                    .map(|entry| entry.key.algorithm()),
+            );
+        }
+        recorded
+    }
+
+    fn files(&self) -> impl Iterator<Item = &PathBuf> {
+        std::iter::once(&self.app_file).chain(&self.system_files)
     }
 
     /// Trusts a key without saving it. Used for jump hosts the user accepted once, which
@@ -119,6 +188,14 @@ pub fn fingerprint(key: &PublicKey) -> String {
     key.fingerprint(HashAlg::Sha256).to_string()
 }
 
+/// Every RSA signature algorithm verifies with the same RSA key.
+fn same_key_type(recorded: &Algorithm, candidate: &Algorithm) -> bool {
+    match (recorded, candidate) {
+        (Algorithm::Rsa { .. }, Algorithm::Rsa { .. }) => true,
+        _ => recorded == candidate,
+    }
+}
+
 /// OpenSSH writes non-default ports as `[host]:port`.
 fn host_pattern(host: &str, port: u16) -> String {
     let host = host.to_ascii_lowercase();
@@ -129,29 +206,31 @@ fn host_pattern(host: &str, port: u16) -> String {
     }
 }
 
-fn check_file(path: &Path, host_port: &str, key: &PublicKey) -> HostKeyStatus {
+fn check_file(path: &Path, host_port: &str, key: &PublicKey) -> Record {
     let Ok(contents) = fs::read_to_string(path) else {
-        return HostKeyStatus::Unknown;
+        return Record::NotListed;
     };
-    let mut status = HostKeyStatus::Unknown;
+    let mut record = Record::NotListed;
     for entry in contents.lines().filter_map(parse_line) {
         if !entry.matches_host(host_port) {
             continue;
         }
         let same_key = entry.key.key_data() == key.key_data();
         match entry.marker {
-            Marker::Revoked if same_key => return HostKeyStatus::Changed,
+            Marker::Revoked if same_key => return Record::Changed,
             Marker::Revoked | Marker::CertAuthority => continue,
             Marker::None => {}
         }
         if same_key {
-            return HostKeyStatus::Trusted;
+            return Record::Trusted;
         }
         if entry.key.key_data().algorithm() == key.key_data().algorithm() {
-            status = HostKeyStatus::Changed;
+            record = Record::Changed;
+        } else if record == Record::NotListed {
+            record = Record::OtherKeyTypes;
         }
     }
-    status
+    record
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -370,6 +449,97 @@ mod tests {
         assert_eq!(
             known_hosts.check("a.example.com", 22, &key(KEY_B)),
             HostKeyStatus::Changed
+        );
+    }
+
+    fn fixture_key(public_key_file: &str) -> &str {
+        public_key_file.split_whitespace().nth(1).unwrap()
+    }
+
+    #[test]
+    fn a_host_on_record_with_other_key_types_is_changed_not_new() {
+        let ecdsa = fixture_key(include_str!("../../tests/fixtures/keys/ecdsa256.pub"));
+        let (_dir, known_hosts) = store("", &format!("example.com ecdsa-sha2-nistp256 {ecdsa}\n"));
+        assert_eq!(
+            known_hosts.check("example.com", 22, &key(KEY_A)),
+            HostKeyStatus::Changed
+        );
+
+        let (_dir, known_hosts) = store(
+            &format!("[example.com]:2222 ecdsa-sha2-nistp256 {ecdsa}\n"),
+            "",
+        );
+        assert_eq!(
+            known_hosts.check("example.com", 2222, &key(KEY_A)),
+            HostKeyStatus::Changed
+        );
+
+        // A key the system file vouches for still passes when the app file lists another type.
+        let (_dir, known_hosts) = store(
+            &format!("example.com ecdsa-sha2-nistp256 {ecdsa}\n"),
+            &format!("example.com ssh-ed25519 {KEY_A}\n"),
+        );
+        assert_eq!(
+            known_hosts.check("example.com", 22, &key(KEY_A)),
+            HostKeyStatus::Trusted
+        );
+
+        // Revoked keys and certificate authorities do not put a host on record.
+        let (_dir, known_hosts) = store(
+            "",
+            &format!(
+                "@revoked example.com ecdsa-sha2-nistp256 {ecdsa}\n\
+                 @cert-authority example.com ecdsa-sha2-nistp256 {ecdsa}\n"
+            ),
+        );
+        assert_eq!(
+            known_hosts.check("example.com", 22, &key(KEY_A)),
+            HostKeyStatus::Unknown
+        );
+    }
+
+    #[test]
+    fn key_types_on_record_are_asked_for_first() {
+        let defaults = russh::Preferred::default().key.into_owned();
+        let ecdsa = fixture_key(include_str!("../../tests/fixtures/keys/ecdsa256.pub"));
+        let rsa = fixture_key(include_str!("../../tests/fixtures/keys/rsa.pub"));
+        let (_dir, known_hosts) = store(
+            &format!("[ecdsa.example]:2222 ecdsa-sha2-nistp256 {ecdsa}\n"),
+            &format!("rsa.example ssh-rsa {rsa}\n@revoked new.example ssh-rsa {rsa}\n"),
+        );
+
+        let ecdsa_first = known_hosts.preferred_algorithms("ecdsa.example", 2222, &defaults);
+        let nist_p256 = Algorithm::Ecdsa {
+            curve: russh::keys::EcdsaCurve::NistP256,
+        };
+        assert_eq!(ecdsa_first[0], nist_p256);
+        let rest: Vec<Algorithm> = defaults
+            .iter()
+            .filter(|algorithm| **algorithm != nist_p256)
+            .cloned()
+            .collect();
+        assert_eq!(ecdsa_first[1..], rest[..]);
+
+        let rsa_first = known_hosts.preferred_algorithms("rsa.example", 22, &defaults);
+        let rsa_count = defaults
+            .iter()
+            .filter(|algorithm| matches!(algorithm, Algorithm::Rsa { .. }))
+            .count();
+        assert!(rsa_count > 1);
+        assert!(rsa_first[..rsa_count]
+            .iter()
+            .all(|algorithm| matches!(algorithm, Algorithm::Rsa { .. })));
+        assert_eq!(rsa_first.len(), defaults.len());
+
+        assert_eq!(
+            known_hosts.preferred_algorithms("new.example", 22, &defaults),
+            defaults
+        );
+
+        known_hosts.trust_until_exit("bastion", 22, &key(ecdsa));
+        assert_eq!(
+            known_hosts.preferred_algorithms("bastion", 22, &defaults)[0],
+            nist_p256
         );
     }
 

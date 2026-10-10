@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use crate::error::{AppError, AppResult};
@@ -105,13 +105,18 @@ fn child_path(parent: &str, name: &str) -> AppResult<PathBuf> {
     Ok(Path::new(parent).join(name))
 }
 
+/// Accepts only a name that is one plain path component, so joining it to a folder stays in
+/// that folder. Servers supply names too, and on Windows `C:x` or `\x` would replace the
+/// folder instead of extending it, and `x:y` would write an alternate data stream.
 pub fn validate_name(name: &str) -> AppResult<()> {
-    let invalid = name.is_empty()
-        || name == "."
-        || name == ".."
-        || name.contains('/')
-        || (cfg!(windows) && name.contains('\\'))
-        || name.contains('\0');
+    let mut components = Path::new(name).components();
+    let single_plain_component = matches!(
+        (components.next(), components.next()),
+        (Some(Component::Normal(component)), None) if component == name
+    );
+    let invalid = !single_plain_component
+        || name.contains(['/', '\0'])
+        || (cfg!(windows) && name.contains(['\\', ':']));
     if invalid {
         Err(AppError::invalid(format!("\"{name}\" is not a valid name")))
     } else {
@@ -288,5 +293,47 @@ mod tests {
         assert!(validate_name("a/b").is_err());
         assert!(validate_name("").is_err());
         assert!(validate_name("ok name.txt").is_ok());
+    }
+
+    #[test]
+    fn rejects_names_that_are_paths_on_any_platform() {
+        for name in [".", "..", "/", "a/", "/etc", "../escaped", "a\0b"] {
+            assert!(validate_name(name).is_err(), "{name:?}");
+        }
+        for name in ["...", ".hidden", "ok name.txt", "naïve"] {
+            assert!(validate_name(name).is_ok(), "{name:?}");
+        }
+        // A backslash is an ordinary character in names outside Windows.
+        #[cfg(not(windows))]
+        assert!(validate_name("a\\b").is_ok());
+        let temp_dir = tempfile::tempdir().unwrap();
+        let parent = temp_dir.path().join("parent");
+        fs::create_dir(&parent).unwrap();
+        assert!(make_dir(parent.to_str().unwrap(), "../escaped").is_err());
+        assert_eq!(fs::read_dir(temp_dir.path()).unwrap().count(), 1);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rejects_windows_drive_prefixes_and_streams() {
+        for name in [
+            "C:x.dll",
+            "C:",
+            "c:\\x",
+            "\\\\?\\C:\\x",
+            "file.txt:stream",
+            "a:b",
+            "..\\evil.dll",
+            "a\\b",
+            "\\x",
+        ] {
+            assert!(validate_name(name).is_err(), "{name:?}");
+        }
+        let temp_dir = tempfile::tempdir().unwrap();
+        let parent = temp_dir.path().to_str().unwrap();
+        assert!(child_path(parent, "C:x.dll").is_err());
+        assert!(child_path(parent, "x.dll")
+            .unwrap()
+            .starts_with(temp_dir.path()));
     }
 }

@@ -10,6 +10,7 @@ import {
   draftSecret,
   profileFromDraft,
   savedFromDraft,
+  withField,
   withProtocol,
   type AuthChoice,
   type ConnectDraft,
@@ -64,7 +65,7 @@ export function ConnectDialog({
     !jumpHosts.some((connection) => connection.id === draft.jumpConnectionId);
 
   const update = <K extends keyof ConnectDraft>(key: K, value: ConnectDraft[K]) =>
-    setDraft((current) => ({ ...current, [key]: value }));
+    setDraft((current) => withField(current, key, value));
 
   const select = (next: ConnectDraft) => {
     setDraft(next);

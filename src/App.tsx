@@ -28,8 +28,10 @@ import { useDragPreviewOnDesktop } from "./hooks/useDragPreviewOnDesktop";
 import { useTabDragsBetweenWindows } from "./hooks/useTabDragsBetweenWindows";
 import { useWindowMaximized } from "./hooks/useWindowMaximized";
 import { EMPTY_DRAFT } from "./lib/connectDraft";
+import { isTextEntryTarget } from "./lib/focus";
 import {
   RETURN_TAB_EVENT,
+  application,
   onLog,
   onQueueFinished,
   onSessionClosed,
@@ -43,7 +45,7 @@ import { DEFAULT_SETTINGS, FONT_SIZE_LIMITS } from "./lib/settings";
 import { dragWindowFrom } from "./lib/windowDrag";
 import { matchWindowCorners } from "./lib/windowCorners";
 import { matchWindowBackground, revealWindow } from "./lib/windowReveal";
-import type { StoreName } from "./lib/types";
+import type { LogRecord, StoreName } from "./lib/types";
 import { startClipboard } from "./state/clipboardStore";
 import { hitTest, useDragStore, type DragPayload } from "./state/dragStore";
 import { persistLayout, restoreLayout, useLayoutStore } from "./state/layoutStore";
@@ -55,6 +57,7 @@ import { useSessionStore } from "./state/sessionStore";
 import { saveSettingsSection, useSettingsStore } from "./state/settingsStore";
 import { adoptHandoff, isMainWindow, receiveTabs, requestCloseTab } from "./state/tabActions";
 import { applyTheme, findTheme, rememberTheme, useThemeStore } from "./state/themeStore";
+import { useToastStore } from "./state/toastStore";
 import { uploadDroppedPaths } from "./state/transferActions";
 import { useTransferStore } from "./state/transferStore";
 import { useUiStore } from "./state/uiStore";
@@ -116,10 +119,21 @@ function activeTabId(): string | null {
   return findGroup(root, activeGroupId)?.activeTabId ?? null;
 }
 
+/** Nobody was watching the log while Poros started, so problems from then also get a notice. */
+function showStartupLog(records: LogRecord[]): void {
+  for (const record of records) {
+    useLogStore.getState().append(record);
+    if (record.level === "warn" || record.level === "error") {
+      useToastStore.getState().show("error", record.message);
+    }
+  }
+}
+
 function useBackendEvents() {
   useEffect(() => {
+    const logged = onLog((record) => useLogStore.getState().append(record));
     const subscriptions = [
-      onLog((record) => useLogStore.getState().append(record)),
+      logged,
       onSessionClosed(({ sessionId, reason }) =>
         useSessionStore.getState().markLost(sessionId, reason),
       ),
@@ -134,6 +148,11 @@ function useBackendEvents() {
         // Only the main window acts, so the action happens once however many windows are open.
         onQueueFinished((finished) => void handleQueueFinished(finished)),
       );
+      // Taken once the listener is in place, so no line falls between the two.
+      void logged
+        .then(() => application.startupLog())
+        .then(showStartupLog)
+        .catch((caught) => reportError("Could not read the start-up log", caught));
     }
     return () => {
       for (const subscription of subscriptions) void subscription.then((unlisten) => unlisten());
@@ -239,10 +258,16 @@ function useShortcuts() {
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
-      if (useUiStore.getState().dialog) return;
+      // Nothing acts behind a dialog, and dialogs a pane opens are not in the ui store.
+      if (useUiStore.getState().dialog || document.querySelector("dialog[open]")) return;
       // Ctrl+W, Ctrl+T and the like edit the command line in a shell.
       if ((event.target as HTMLElement).closest?.(".terminal-host")) return;
       const key = event.key.toLowerCase();
+      // Typing a name or a filter leaves the tabs as they are. The editor's tab closes like
+      // any editor's, asking about unsaved changes, and Settings opens from anywhere.
+      const typing =
+        isTextEntryTarget(event.target) && !(event.target as HTMLElement).closest?.(".cm-editor");
+      if ((key === "t" || key === "w") && typing) return;
       if (key === "t") {
         useLayoutStore.getState().addTab(welcomeTab());
       } else if (key === "w") {

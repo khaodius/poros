@@ -3,12 +3,13 @@
 //! sections belong to the frontend and are stored as given. Mirrored in
 //! `src/lib/settings.ts`.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::RwLock;
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppResult;
+use crate::events::{Events, LogLevel};
 use crate::ssh::proxy::ProxyKind;
 use crate::storage;
 use crate::transfer::ExistsAction;
@@ -331,12 +332,20 @@ pub struct SettingsStore {
 }
 
 impl SettingsStore {
-    /// A missing or unreadable file yields defaults; it is rewritten on the next save.
-    pub fn load(file: PathBuf) -> Self {
-        let current = read(&file).unwrap_or_else(|error| {
-            log::warn!("Using default settings, {}: {error}", file.display());
-            Settings::default()
-        });
+    /// A missing file yields defaults. One that cannot be read or understood is kept aside
+    /// and reported, and defaults take its place.
+    pub fn load(file: PathBuf, events: &Events) -> Self {
+        let current = match storage::read_json::<Settings>(&file) {
+            Ok(settings) => settings.map(Settings::sanitize).unwrap_or_default(),
+            Err(problem) => {
+                events.log(
+                    LogLevel::Warn,
+                    None,
+                    format!("{problem} Poros started with default settings."),
+                );
+                Settings::default()
+            }
+        };
         Self {
             file,
             current: RwLock::new(current),
@@ -364,16 +373,6 @@ impl SettingsStore {
         storage::write_json(&self.file, &settings)?;
         *current = settings.clone();
         Ok(settings)
-    }
-}
-
-fn read(file: &Path) -> Result<Settings, String> {
-    match std::fs::read(file) {
-        Ok(bytes) => serde_json::from_slice::<Settings>(&bytes)
-            .map(Settings::sanitize)
-            .map_err(|error| error.to_string()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Settings::default()),
-        Err(error) => Err(error.to_string()),
     }
 }
 
@@ -411,7 +410,7 @@ mod tests {
     #[test]
     fn proxy_fields_are_tidied_and_the_password_flag_stays_with_the_backend() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let store = SettingsStore::load(temp_dir.path().join("settings.json"));
+        let store = SettingsStore::load(temp_dir.path().join("settings.json"), &Events::default());
         let mut changed = store.get();
         changed.connection.proxy = ProxySettings {
             kind: ProxyKind::Http,
@@ -462,10 +461,34 @@ mod tests {
     }
 
     #[test]
+    fn a_corrupt_file_is_kept_and_reported_instead_of_overwritten() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file = temp_dir.path().join("settings.json");
+        std::fs::write(&file, "{\"transfers\": {\"workers\": 8").unwrap();
+        let events = Events::keeping_startup_log();
+
+        let store = SettingsStore::load(file.clone(), &events);
+        assert_eq!(store.get(), Settings::default());
+        let notices = events.take_startup_log();
+        assert_eq!(notices.len(), 1);
+        assert!(matches!(notices[0].level, LogLevel::Warn));
+        assert!(notices[0].message.contains("settings.json is not valid"));
+        assert!(notices[0].message.contains("default settings"));
+
+        store.set(store.get()).unwrap();
+        let kept = crate::storage::tests::kept_copies(temp_dir.path(), "settings.json.corrupt-");
+        assert_eq!(kept.len(), 1);
+        assert_eq!(
+            std::fs::read_to_string(&kept[0]).unwrap(),
+            "{\"transfers\": {\"workers\": 8"
+        );
+    }
+
+    #[test]
     fn round_trips_through_the_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let file = temp_dir.path().join("settings.json");
-        let store = SettingsStore::load(file.clone());
+        let store = SettingsStore::load(file.clone(), &Events::default());
         assert_eq!(store.get(), Settings::default());
 
         let mut changed = store.get();
@@ -474,7 +497,7 @@ mod tests {
         changed.updates = serde_json::json!({ "checkOnStart": false });
         store.set(changed).unwrap();
 
-        let reloaded = SettingsStore::load(file);
+        let reloaded = SettingsStore::load(file, &Events::default());
         assert_eq!(reloaded.get().transfers.workers, 8);
         assert_eq!(reloaded.get().appearance["theme"], "dusk");
         assert_eq!(reloaded.get().updates["checkOnStart"], false);

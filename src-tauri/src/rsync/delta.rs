@@ -74,7 +74,9 @@ impl Signature {
     }
 
     fn full_blocks(&self) -> usize {
-        self.blocks.len() - usize::from(self.remainder != 0)
+        self.blocks
+            .len()
+            .saturating_sub(usize::from(self.remainder != 0))
     }
 
     fn strong_matches(&self, index: usize, strong: &[u8; STRONG_SUM_BYTES]) -> bool {
@@ -205,7 +207,7 @@ pub fn find_matches(
         }
     }
     let end = input.buffer.len();
-    if signature.remainder != 0 {
+    if signature.remainder != 0 && !signature.blocks.is_empty() {
         let last = signature.blocks.len() - 1;
         let tail_start = end.saturating_sub(signature.remainder as usize);
         let tail = &input.buffer[tail_start..end];
@@ -458,6 +460,26 @@ mod tests {
         })
         .unwrap();
         assert!(largest < LITERAL_FLUSH + 700, "{largest}");
+    }
+
+    #[test]
+    fn a_short_last_block_without_blocks_matches_nothing() {
+        let signature = Signature {
+            block_length: 700,
+            remainder: 120,
+            strong_length: STRONG_SUM_BYTES as u32,
+            blocks: Vec::new(),
+        };
+        let source = pattern(1000, 3);
+        let mut literal = 0;
+        find_matches(&signature, 0, &source[..], |token| {
+            if let Token::Literal(data) = token {
+                literal += data.len();
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(literal, source.len());
     }
 
     #[test]

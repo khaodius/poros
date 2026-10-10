@@ -127,6 +127,22 @@ pub struct Plan {
     pub counts: Counts,
 }
 
+/// The root of the folder a plan's deletions mirror, when that folder listed empty. A folder
+/// on a disk that is not mounted, or a share that is not there, lists as empty, which reads as
+/// "delete everything on the other side".
+pub fn deletions_mirror_empty_folder<'a>(
+    local: &'a Tree,
+    remote: &'a Tree,
+    items: &[SyncItem],
+) -> Option<&'a str> {
+    let mirrored = items.iter().find_map(|item| match item.action {
+        SyncAction::DeleteRemote => Some(local),
+        SyncAction::DeleteLocal => Some(remote),
+        _ => None,
+    })?;
+    mirrored.nodes.is_empty().then_some(mirrored.root.as_str())
+}
+
 /// Files on both sides whose contents decide the comparison.
 pub fn files_to_hash(local: &Tree, remote: &Tree, options: &Options) -> Vec<String> {
     if options.compare != CompareMode::Checksum || options.ignore_existing {
@@ -167,10 +183,16 @@ pub fn plan(
             ..Plan::default()
         },
         whole_folders: HashSet::new(),
+        passed_over: local
+            .passed_over
+            .iter()
+            .chain(&remote.passed_over)
+            .map(String::as_str)
+            .collect(),
     };
     let paths: BTreeSet<&String> = local.nodes.keys().chain(remote.nodes.keys()).collect();
     for path in paths {
-        if !planner.within_whole_folder(path) {
+        if !planner.within_whole_folder(path) && !planner.within_passed_over(path) {
             planner.decide(path);
         }
     }
@@ -185,6 +207,9 @@ struct Planner<'a> {
     plan: Plan,
     /// Folders handled as one item, so nothing inside them is looked at again.
     whole_folders: HashSet<String>,
+    /// Paths either side could not read. A folder that failed to list is not absent, so
+    /// nothing is copied over it or deleted to match it.
+    passed_over: HashSet<&'a str>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -338,6 +363,19 @@ impl Planner<'_> {
         }
     }
 
+    fn within_passed_over(&self, path: &str) -> bool {
+        let mut current = path;
+        loop {
+            if self.passed_over.contains(current) {
+                return true;
+            }
+            match current.rsplit_once('/') {
+                Some((parent, _)) => current = parent,
+                None => return false,
+            }
+        }
+    }
+
     fn within_whole_folder(&self, path: &str) -> bool {
         let mut current = path;
         while let Some((parent, _)) = current.rsplit_once('/') {
@@ -482,6 +520,84 @@ mod tests {
                     2
                 ),
             ]
+        );
+    }
+
+    #[test]
+    fn deletions_that_mirror_an_empty_folder_are_noticed() {
+        let mut local = tree(&[]);
+        local.root = "/mnt/backup".into();
+        let remote = tree(&[("a.txt", Some((1, 1))), ("b", None)]);
+        let mirror = Options {
+            delete_extraneous: true,
+            ..options(SyncDirection::Upload)
+        };
+        let plan = run(&local, &remote, &mirror);
+        assert_eq!(
+            deletions_mirror_empty_folder(&local, &remote, &plan.items),
+            Some("/mnt/backup")
+        );
+
+        let local = tree(&[("a.txt", Some((1, 1)))]);
+        let plan = run(&local, &remote, &mirror);
+        assert_eq!(
+            deletions_mirror_empty_folder(&local, &remote, &plan.items),
+            None
+        );
+        let plan = run(&local, &tree(&[]), &options(SyncDirection::Download));
+        assert_eq!(
+            deletions_mirror_empty_folder(&local, &tree(&[]), &plan.items),
+            None
+        );
+    }
+
+    #[test]
+    fn folders_one_side_could_not_read_are_left_alone() {
+        let delete = |direction| Options {
+            delete_extraneous: true,
+            ..options(direction)
+        };
+        // The server folder timed out while listing, so it looks absent from the server.
+        let local = tree(&[("photos", None), ("photos/a.jpg", Some((5, 1)))]);
+        let mut remote = tree(&[]);
+        remote.passed_over.push("photos".into());
+        assert!(run(&local, &remote, &delete(SyncDirection::Upload))
+            .items
+            .is_empty());
+        assert!(run(&local, &remote, &delete(SyncDirection::Download))
+            .items
+            .is_empty());
+
+        // The local folder could not be read, so it looks absent from this computer.
+        let mut local = tree(&[("keep.txt", Some((1, 1))), ("private", None)]);
+        local.passed_over.push("private/secrets".into());
+        local.holds_excluded.insert("private".into());
+        let remote = tree(&[
+            ("keep.txt", Some((1, 1))),
+            ("private", None),
+            ("private/secrets", None),
+            ("private/secrets/key", Some((2, 1))),
+            ("private/stale.txt", Some((3, 1))),
+        ]);
+        assert_eq!(
+            summary(&run(&local, &remote, &delete(SyncDirection::Upload))),
+            [(
+                "private/stale.txt".into(),
+                SyncAction::DeleteRemote,
+                SyncReason::Extraneous,
+                1,
+                3
+            )]
+        );
+        assert_eq!(
+            summary(&run(&local, &remote, &delete(SyncDirection::Download))),
+            [(
+                "private/stale.txt".into(),
+                SyncAction::Download,
+                SyncReason::New,
+                1,
+                3
+            )]
         );
     }
 

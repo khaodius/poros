@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use super::conflict::ExistsAction;
 use super::queue::{Direction, JobKind, JobSpec, JobState, ResumePoint, Unfinished};
 use super::{Login, SessionTarget, Shared};
+use crate::events::LogLevel;
 use crate::protocol::Protocol;
 use crate::ssh::{AuthMethod, ConnectProfile, Route};
 use crate::storage;
@@ -259,15 +260,17 @@ pub(super) fn save(shared: &Shared) {
 
 /// Puts the saved jobs back in the queue, paused; returns how many there were.
 pub(super) fn restore(shared: &Shared, file: &Path) -> usize {
-    let saved: SavedQueue = match std::fs::read(file) {
-        Ok(bytes) => match serde_json::from_slice(&bytes) {
-            Ok(saved) => saved,
-            Err(error) => {
-                log::warn!("Ignoring the saved transfer queue: {error}");
-                return 0;
-            }
-        },
-        Err(_) => return 0,
+    let saved: SavedQueue = match storage::read_json(file) {
+        Ok(Some(saved)) => saved,
+        Ok(None) => return 0,
+        Err(problem) => {
+            shared.events.log(
+                LogLevel::Warn,
+                None,
+                format!("The saved transfer queue was not restored: {problem}"),
+            );
+            return 0;
+        }
     };
     let session_ids: Vec<String> = saved
         .servers

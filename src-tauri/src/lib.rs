@@ -21,6 +21,7 @@ pub mod session;
 pub mod settings;
 pub mod sftp;
 pub mod ssh;
+pub mod stall;
 pub mod storage;
 pub mod sync;
 pub mod terminal;
@@ -40,7 +41,7 @@ use automation::remote_command::CommandRunner;
 use automation::scheduler::Scheduler;
 use cloud::OAuthVault;
 use commands::PendingWindows;
-use connections::{ConnectionStore, Keychain};
+use connections::{ConnectionStore, Keychain, SecretScope};
 use desktop::{DragPreview, DRAG_PREVIEW_WINDOW};
 use editor::EditorManager;
 use events::Events;
@@ -63,6 +64,17 @@ const ADOPTION_GRACE: Duration = Duration::from_secs(5);
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
+        // First, so a second copy of Poros hands over to the running one and exits before it
+        // sets anything up, such as scheduled tasks that would then run twice.
+        .plugin(tauri_plugin_single_instance::init(
+            |app, _arguments, _directory| {
+                if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
+                    let _ = window.unminimize();
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            },
+        ))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -70,7 +82,7 @@ pub fn run() {
             let config_dir = app.path().app_config_dir()?;
             std::fs::create_dir_all(&config_dir)?;
             let events = Events::new(app.handle().clone());
-            let settings = SettingsStore::load(config_dir.join("settings.json"));
+            let settings = SettingsStore::load(config_dir.join("settings.json"), &events);
             let sessions = Arc::new(SessionManager::new(
                 config_dir.join("known_hosts"),
                 events.clone(),
@@ -80,14 +92,21 @@ pub fn run() {
                 Box::new(Keychain),
             ));
             let store = connections.clone();
-            sessions.set_secret_sink(Arc::new(move |id: &str, secret: &str| {
-                let (store, id, secret) = (store.clone(), id.to_string(), secret.to_string());
-                tauri::async_runtime::spawn_blocking(move || {
-                    if let Err(error) = store.update_secret(&id, &secret) {
-                        log::warn!("Could not keep the renewed sign-in: {}", error.message);
-                    }
-                });
-            }));
+            sessions.set_secret_sink(Arc::new(
+                move |id: &str, scope: &SecretScope, secret: &str| {
+                    let (store, id, scope, secret) = (
+                        store.clone(),
+                        id.to_string(),
+                        scope.clone(),
+                        secret.to_string(),
+                    );
+                    tauri::async_runtime::spawn_blocking(move || {
+                        if let Err(error) = store.update_secret(&id, &scope, &secret) {
+                            log::warn!("Could not keep the renewed sign-in: {}", error.message);
+                        }
+                    });
+                },
+            ));
             let transfers =
                 TransferManager::new(sessions.clone(), events.clone(), settings.get().transfers);
             let (handle, store) = (app.handle().clone(), connections.clone());
@@ -235,6 +254,7 @@ pub fn run() {
             commands::drag_preview_ready,
             commands::drag_preview_reveal,
             commands::app_restart,
+            commands::log_startup,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Poros");

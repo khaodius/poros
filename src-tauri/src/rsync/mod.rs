@@ -603,17 +603,21 @@ async fn read_signature_head(process: &mut RemoteProcess) -> AppResult<[i32; 4]>
     for value in &mut head {
         *value = process.read_int().await?;
     }
-    let [count, length, strong_length, remainder] = head;
-    let valid = (0..=MAX_BLOCK_COUNT).contains(&count)
-        && (0..=MAX_BLOCK_LENGTH).contains(&length)
-        && (0..=STRONG_SUM_BYTES as i32).contains(&strong_length)
-        && (0..=length).contains(&remainder)
-        && (count == 0 || (length > 0 && strong_length >= MIN_STRONG_LENGTH));
-    if valid {
+    if valid_signature_head(head) {
         Ok(head)
     } else {
         Err(process.error("rsync on the server sent malformed block sums"))
     }
+}
+
+fn valid_signature_head([count, length, strong_length, remainder]: [i32; 4]) -> bool {
+    (0..=MAX_BLOCK_COUNT).contains(&count)
+        && (0..=MAX_BLOCK_LENGTH).contains(&length)
+        && (0..=STRONG_SUM_BYTES as i32).contains(&strong_length)
+        && (0..=length).contains(&remainder)
+        // The short last block is one of the blocks, so there is none without blocks.
+        && (count > 0 || remainder == 0)
+        && (count == 0 || (length > 0 && strong_length >= MIN_STRONG_LENGTH))
 }
 
 async fn read_signature(process: &mut RemoteProcess) -> AppResult<Signature> {
@@ -653,6 +657,15 @@ mod tests {
             Some(31)
         );
         assert_eq!(protocol_version("bash: rsync: command not found"), None);
+    }
+
+    #[test]
+    fn block_sums_need_a_block_for_a_short_last_block() {
+        assert!(valid_signature_head([0, 0, 0, 0]));
+        assert!(valid_signature_head([3, 700, 16, 120]));
+        assert!(!valid_signature_head([0, 700, 16, 120]));
+        assert!(!valid_signature_head([3, 700, 16, 701]));
+        assert!(!valid_signature_head([-1, 700, 16, 0]));
     }
 
     #[test]

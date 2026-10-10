@@ -510,8 +510,15 @@ impl Attempt<'_> {
         let timeout = timeout_of(self.profile);
         let rejection = Arc::new(Mutex::new(None));
         let accepted_fingerprint = Arc::new(Mutex::new(None));
+        let host = hop_profile.host.trim().to_string();
+        let mut config = client_config(self.profile);
+        config.preferred.key = Cow::Owned(self.known_hosts.preferred_algorithms(
+            &host,
+            hop_profile.port,
+            &config.preferred.key,
+        ));
         let handler = ClientHandler {
-            host: hop_profile.host.trim().to_string(),
+            host,
             port: hop_profile.port,
             hop,
             session_id: session_id.to_string(),
@@ -523,8 +530,7 @@ impl Attempt<'_> {
             _tunnel: tunnel,
         };
 
-        let handshake =
-            client::connect_stream(Arc::new(client_config(self.profile)), transport, handler);
+        let handshake = client::connect_stream(Arc::new(config), transport, handler);
         let mut handle = match tokio::time::timeout(timeout, handshake).await {
             Err(_) => {
                 return Err(AppError::new(

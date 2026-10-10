@@ -243,7 +243,7 @@ impl ReadStream for HttpReader {
             self.response = None;
             return Ok(None);
         }
-        match response.chunk().await.map_err(api::transport_error)? {
+        match api::next_chunk(response).await? {
             Some(mut chunk) => {
                 if chunk.len() as u64 > self.remaining {
                     chunk.truncate(self.remaining as usize);

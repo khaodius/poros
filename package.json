@@ -1,7 +1,7 @@
 {
   "name": "poros",
   "private": true,
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "SFTP and rsync client",
   "license": "Apache-2.0",
   "type": "module",

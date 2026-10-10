@@ -1,5 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { X } from "lucide-react";
+import { rememberFocus } from "../lib/focus";
 import { dragWindowFromBackdrop } from "../lib/windowDrag";
 
 interface DialogProps {
@@ -26,11 +27,17 @@ export function Dialog({
   useEffect(() => {
     const dialog = dialogRef.current;
     if (!dialog) return;
+    const returnFocus = rememberFocus();
     dialog.showModal();
     const autofocus = dialog.querySelector<HTMLElement>("[data-autofocus]");
     autofocus?.focus();
     if (autofocus instanceof HTMLInputElement) autofocus.select();
-    return () => dialog.close();
+    return () => {
+      // Off the page it no longer shows. Closing it then would make WebKit focus what had focus
+      // as it opened, even in a tab group the user has left since.
+      if (dialog.isConnected) dialog.close();
+      returnFocus(dialog);
+    };
   }, []);
 
   return (

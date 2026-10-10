@@ -9,6 +9,7 @@ use serde::Serialize;
 use tokio::sync::RwLock;
 
 use crate::cloud;
+use crate::connections::SecretScope;
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::events::{Events, LogLevel};
 use crate::ftp::FtpFs;
@@ -18,9 +19,9 @@ use crate::ssh::known_hosts::KnownHosts;
 use crate::ssh::{self, ConnectProfile, HostKeyApproval, SshHandle};
 use crate::tls::TrustedCertificates;
 
-/// Called with a saved connection's id and its new secret when a cloud provider replaces a
-/// refresh token, so the keychain keeps the current one.
-pub type SecretSink = Arc<dyn Fn(&str, &str) + Send + Sync>;
+/// Called with a saved connection's id, what the session signed in to and its new secret when
+/// a cloud provider replaces a refresh token, so the keychain keeps the current one.
+pub type SecretSink = Arc<dyn Fn(&str, &SecretScope, &str) + Send + Sync>;
 
 pub struct Session {
     pub id: String,
@@ -199,8 +200,11 @@ impl SessionManager {
     /// Where a session's rotated refresh tokens go: the keychain entry of its saved connection.
     fn rotation_hook(&self, profile: &ConnectProfile) -> Option<cloud::TokenRotation> {
         let saved_id = profile.saved_connection_id.clone()?;
+        let scope = SecretScope::of_profile(profile);
         let sink = self.secret_sink.read().unwrap().clone()?;
-        Some(Arc::new(move |secret: &str| sink(&saved_id, secret)))
+        Some(Arc::new(move |secret: &str| {
+            sink(&saved_id, &scope, secret)
+        }))
     }
 
     pub async fn connect(
