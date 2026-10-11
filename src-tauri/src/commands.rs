@@ -63,6 +63,11 @@ pub async fn local_mkdir(parent: String, name: String) -> AppResult<String> {
 }
 
 #[tauri::command]
+pub async fn local_make_file(parent: String, name: String) -> AppResult<String> {
+    tokio::task::spawn_blocking(move || local::make_file(&parent, &name)).await?
+}
+
+#[tauri::command]
 pub async fn local_rename(path: String, new_name: String) -> AppResult<String> {
     tokio::task::spawn_blocking(move || local::rename(&path, &new_name)).await?
 }
@@ -193,6 +198,21 @@ pub async fn remote_mkdir(
         .await?
         .files()
         .make_dir(&parent, &name)
+        .await
+}
+
+#[tauri::command]
+pub async fn remote_make_file(
+    sessions: State<'_, Arc<SessionManager>>,
+    session_id: String,
+    parent: String,
+    name: String,
+) -> AppResult<String> {
+    sessions
+        .get(&session_id)
+        .await?
+        .files()
+        .make_file(&parent, &name)
         .await
 }
 

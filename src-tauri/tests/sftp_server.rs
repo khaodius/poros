@@ -277,6 +277,26 @@ async fn browse_and_manage_files() {
     let renamed = fs.rename(&sub, "renamed").await.unwrap();
     assert!(renamed.ends_with("/renamed"));
 
+    let created = session.files().make_file(&root, "new.txt").await.unwrap();
+    assert_eq!(created, format!("{root}/new.txt"));
+    assert_eq!(
+        fs.stat(&created).await.unwrap().map(|stat| stat.size),
+        Some(0)
+    );
+    let kept = fs.make_file(&renamed, "kept.txt").await.unwrap();
+    let handle = fs.open_for_write(&kept, true, None).await.unwrap();
+    fs.write_chunk(&handle, 0, b"kept".to_vec()).await.unwrap();
+    fs.close_handle(handle).await.unwrap();
+    let taken = fs.make_file(&renamed, "kept.txt").await.unwrap_err();
+    assert_eq!(taken.kind, ErrorKind::AlreadyExists);
+    assert_eq!(fs.read_to_end(&kept, 1024).await.unwrap(), b"kept");
+    let folder_taken = session
+        .files()
+        .make_file(&root, "renamed")
+        .await
+        .unwrap_err();
+    assert_eq!(folder_taken.kind, ErrorKind::AlreadyExists);
+
     // Symlinks are resolved so the UI can navigate into linked folders.
     let home = fs.list_dir("~").await.unwrap();
     if let Some(link) = home.entries.iter().find(|entry| entry.name == "data-link") {

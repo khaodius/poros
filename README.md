@@ -24,9 +24,10 @@
   merged, split, resized, detached into their own windows and dragged from one window into another.
 - **Parallel transfers**: each worker uses its own connection, large files are split across
   idle connections, and the worker count can change while transfers run.
-- **File operations**: cut, copy and paste, Move to and Copy to, and dragging onto a folder (hold
-  Ctrl to copy) move and copy files within a server or this computer without a transfer.
-  Properties changes permissions, owner and group.
+- **File operations**: new files and folders on any server or this computer. Cut, copy and
+  paste, Move to and Copy to, and dragging onto a folder (hold Ctrl to copy) move and copy files
+  within a server or this computer without a transfer. Properties changes permissions, owner and
+  group.
 - **File compare** of any two files, side by side with changed words highlighted.
 - **Built-in editor** for text files up to 16 MiB, local or on any server, with syntax highlighting
   and find and replace. Each save uploads the file and warns first if it changed on the server.
@@ -151,6 +152,7 @@ The Windows installers are not code-signed yet, so SmartScreen may warn about an
 | Ctrl + Shift + C, Ctrl + Shift + V | Copy, paste in the terminal        |
 | Alt + Down, Alt + Up               | Next, previous change in a compare |
 | F7, Ctrl + Shift + N               | New folder                         |
+| Shift + F4                         | New file                           |
 | F5, Ctrl + R                       | Refresh                            |
 | Ctrl + T, Ctrl + W                 | New tab, close tab                 |
 | Ctrl + ,                           | Settings                           |

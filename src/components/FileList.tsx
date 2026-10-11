@@ -35,6 +35,7 @@ export interface FileListActions {
   /** F4 on a row: opens the file in the editor. */
   onEdit: (entry: FileEntry) => void;
   onNewFolder: () => void;
+  onNewFile: () => void;
   onEditPath: () => void;
   onFocusFilter: () => void;
   onSwitchPane: (from: HTMLElement) => void;
@@ -260,7 +261,8 @@ export function FileList({
           if (pane.selection.size === 1) actions.onRename();
           return true;
         case "F4":
-          if (cursorEntry) actions.onEdit(cursorEntry);
+          if (event.shiftKey) actions.onNewFile();
+          else if (cursorEntry) actions.onEdit(cursorEntry);
           return true;
         case "F5":
           void pane.refresh();

@@ -3,6 +3,12 @@
 Installers for every version are attached to its
 [release](https://github.com/khaodius/poros/releases), with SHA-256 checksums.
 
+## 0.3.4 - 2026-10-11
+
+- **New file** next to New folder, in each pane's toolbar and right-click menu, or with
+  Shift+F4. It creates an empty file on this computer or on any server, SFTP, FTP, FTPS, Google
+  Drive or OneDrive, and never replaces a file already there.
+
 ## 0.3.3 - 2026-10-11
 
 - **Dragging a tab out of a window** is one smooth motion. Near the window's edge the pane
