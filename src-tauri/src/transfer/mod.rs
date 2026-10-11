@@ -955,6 +955,7 @@ mod tests {
                 bypass_proxy: false,
                 jump_connection_id: None,
                 rsync_path: None,
+                s3: Default::default(),
                 route: Route::default(),
             },
             host_key_fingerprint: String::new(),

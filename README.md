@@ -5,7 +5,7 @@
 <h1 align="center">Poros</h1>
 
 <p align="center">
-  A fast, keyboard-friendly SFTP, FTP and cloud storage client for Linux and Windows.
+  A fast, keyboard-friendly SFTP, FTP, WebDAV and cloud storage client for Linux and Windows.
 </p>
 
 <p align="center">
@@ -17,7 +17,9 @@
 
 ## Features
 
-- **Protocols**: SFTP, FTP, FTPS with explicit or implicit TLS, Google Drive and OneDrive.
+- **Protocols**: SFTP, FTP, FTPS with explicit or implicit TLS, WebDAV over HTTP or HTTPS, Amazon
+  S3 and S3-compatible services (any endpoint and region), Backblaze B2, Google Drive, OneDrive
+  and Box.
 - **Server-to-server copies** by dragging files from one server tab onto another. Two FTP servers
   send files straight to each other (FXP) when both allow it.
 - **Tabs and docking**: local folders, server sessions, editors and terminals are tabs that can be
@@ -54,7 +56,8 @@
 - **Authentication** with OpenSSH, PEM, PKCS#8 and PuTTY `.ppk` (v2, v3) keys, SSH agents,
   Pageant, password and keyboard-interactive login.
 - **Host key verification** against your existing `~/.ssh/known_hosts`, which Poros never modifies.
-  FTPS certificates the system does not trust get the same approval prompt, by fingerprint.
+  FTPS, WebDAV and S3 certificates the system does not trust get the same approval prompt, by
+  fingerprint.
 - **Saved connections**, with passwords and cloud sign-ins stored only on request and only in the
   system keychain.
 - **Themes** as shareable JSON files, ten built in, with every color editable in settings.
@@ -156,9 +159,15 @@ The Windows installers are not code-signed yet, so SmartScreen may warn about an
   copying on the server, Properties, comparing server files, checksum verification, proxies and
   jump hosts. Files pasted or dragged within an FTP or cloud server are copied through the transfer
   queue, and FTP uploads are written in place rather than under a temporary name.
-- **Google Drive and OneDrive** sign in through the system browser. Builds without app credentials
-  ask for your own under Settings > Cloud accounts; see
+- **Google Drive, OneDrive and Box** sign in through the system browser. Builds without app
+  credentials ask for your own under Settings > Cloud accounts; see
   [Registering the cloud apps](#registering-the-cloud-apps).
+- **S3 and Backblaze B2** sign in with an access key and secret key, or a B2 application key ID
+  and application key. Leave the S3 endpoint empty for Amazon S3, or enter another service's,
+  such as `s3.eu-central-003.backblazeb2.com` or `http://localhost:9000`. Buckets show as
+  folders at the top level; a key restricted to one bucket opens in it. Renaming copies and then
+  deletes, and deleting on B2 hides the file, so earlier versions stay until the bucket's
+  lifecycle rules remove them.
 - **rsync** runs over SSH only and needs rsync 2.6.4 or newer on the server. rsync daemons
   (`rsync://`, port 873) are not supported. Servers without rsync fall back to SFTP.
 - **Data** is stored in `~/.config/io.github.khaodius.poros/` on Linux and
@@ -214,8 +223,9 @@ cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings &
 ```
 
 End-to-end tests in `src-tauri/tests/` run against a real SSH server when `POROS_TEST_SSH_PORT`
-is set, and against FTP servers when the `POROS_TEST_FTP*` variables listed in `ftp_server.rs` are
-set. The CI workflow shows how to start them.
+is set, against FTP servers when the `POROS_TEST_FTP*` variables listed in `ftp_server.rs` are
+set, and against WebDAV and S3 servers when the variables listed in `http_storage.rs` are set. The
+CI workflow shows how to start them.
 
 To release, set the new version in `package.json`, `src-tauri/Cargo.toml` and
 `src-tauri/tauri.conf.json`, update the lockfiles (`npm install`, then `cargo check` in
@@ -223,9 +233,9 @@ To release, set the new version in `package.json`, `src-tauri/Cargo.toml` and
 workflow builds, tags and publishes it, and signs the installers for the updater with the
 `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` repository secrets, which
 hold the private key matching the public key in `src-tauri/tauri.conf.json`. Without them the
-release stops before building. The `POROS_GOOGLE_CLIENT_ID`, `POROS_GOOGLE_CLIENT_SECRET` and
-`POROS_MICROSOFT_CLIENT_ID` secrets give release builds their cloud sign-in; without them, users
-enter their own.
+release stops before building. The `POROS_GOOGLE_CLIENT_ID`, `POROS_GOOGLE_CLIENT_SECRET`,
+`POROS_MICROSOFT_CLIENT_ID`, `POROS_BOX_CLIENT_ID` and `POROS_BOX_CLIENT_SECRET` secrets give
+release builds their cloud sign-in; without them, users enter their own.
 
 ### Registering the cloud apps
 
@@ -253,6 +263,15 @@ requires Google's verification.
 3. Under API permissions, add the Microsoft Graph delegated permissions `Files.ReadWrite.All` and
    `offline_access`.
 4. Copy the Application (client) ID. There is no secret.
+
+**Box**
+
+1. In the [Box Developer Console](https://app.box.com/developers/console), select New App, choose
+   the User app type, which signs in with OAuth 2.0, and select Create.
+2. On the Configuration tab, set the OAuth 2.0 Redirect URI to `http://localhost`.
+3. Under Application Scopes, keep Read all files and folders stored in Box, turn on Write all
+   files and folders stored in Box, and save.
+4. Copy the client ID and client secret from OAuth 2.0 Credentials on the same tab.
 
 ## License
 

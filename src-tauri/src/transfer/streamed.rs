@@ -439,7 +439,7 @@ pub(super) async fn finalize(job: &JobRef<'_>, connections: &mut Connections) ->
             }
         )));
     }
-    if files.protocol().is_cloud() {
+    if files.protocol().uploads_carry_time() {
         return Ok(());
     }
     let modified = preserved_time(job, plan.source_modified);

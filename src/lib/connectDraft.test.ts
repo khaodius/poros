@@ -192,6 +192,62 @@ describe("protocols", () => {
     });
   });
 
+  it("signs in to S3 and Backblaze B2 with keys", () => {
+    const s3 = {
+      ...withProtocol({ ...EMPTY_DRAFT, host: "example.com", username: "root" }, "s3"),
+      username: "AKIAEXAMPLE",
+      password: "secret",
+      s3Region: " eu-west-1 ",
+    };
+    expect(s3.host).toBe("");
+    expect(s3.port).toBe("443");
+    expect(s3.authChoice).toBe("password");
+    expect(canConnect(s3)).toBe(true);
+    expect(canConnect({ ...s3, username: "" })).toBe(false);
+    expect(profileFromDraft(s3)).toEqual({
+      protocol: "s3",
+      host: "",
+      port: 443,
+      username: "AKIAEXAMPLE",
+      auth: { type: "password", password: "secret" },
+      initialPath: null,
+      s3: { region: "eu-west-1", addressing: "automatic" },
+    });
+    const minio = { ...s3, host: "http://localhost:9000", s3Addressing: "path" as const };
+    const stored = savedFromDraft(minio);
+    expect(stored).toMatchObject({
+      name: "http://localhost:9000",
+      s3: { region: "eu-west-1", addressing: "path" },
+    });
+    expect(draftFromSaved(stored)).toMatchObject({ s3Region: "eu-west-1", s3Addressing: "path" });
+    expect(savedFromDraft(s3).name).toBe("Amazon S3");
+
+    const b2 = { ...withProtocol(s3, "backblazeB2"), username: "0012ab", password: "K001" };
+    expect(b2.username).toBe("0012ab");
+    expect(canConnect(b2)).toBe(true);
+    expect(profileFromDraft(b2)).toMatchObject({ host: "", port: 443, username: "0012ab" });
+    expect(profileFromDraft(b2).s3).toBeUndefined();
+    expect(savedFromDraft(b2)).toMatchObject({ name: "Backblaze B2 (0012ab)", saveSecret: false });
+    expect(withProtocol(b2, "s3").username).toBe("");
+    expect(withProtocol(b2, "sftp").username).toBe("");
+  });
+
+  it("lets WebDAV connect without a username and Box only once signed in", () => {
+    const dav = withProtocol(
+      { ...EMPTY_DRAFT, host: "dav.example.com", username: "ada" },
+      "webDavs",
+    );
+    expect(dav.host).toBe("dav.example.com");
+    expect(dav.username).toBe("ada");
+    expect(dav.port).toBe("443");
+    expect(withProtocol(dav, "webDav").port).toBe("80");
+    expect(canConnect({ ...dav, username: "" })).toBe(true);
+    const box = withProtocol(dav, "box");
+    expect(box.authChoice).toBe("oauth");
+    expect(box.host).toBe("");
+    expect(canConnect(box)).toBe(false);
+  });
+
   it("describes saved connections by protocol", () => {
     expect(connectionDetail(saved)).toBe("ci@build.example.com:2222");
     expect(connectionDetail({ ...saved, protocol: "ftp", port: 21, username: "" })).toBe(
@@ -199,6 +255,15 @@ describe("protocols", () => {
     );
     expect(connectionDetail({ ...saved, protocol: "oneDrive", username: "ada@contoso.com" })).toBe(
       "OneDrive, ada@contoso.com",
+    );
+    expect(connectionDetail({ ...saved, protocol: "webDavs", port: 443, username: "" })).toBe(
+      "WebDAVS, build.example.com",
+    );
+    expect(
+      connectionDetail({ ...saved, protocol: "s3", host: "localhost", port: 9000, username: "K" }),
+    ).toBe("S3, localhost:9000");
+    expect(connectionDetail({ ...saved, protocol: "backblazeB2", username: "0012ab" })).toBe(
+      "Backblaze B2, 0012ab",
     );
   });
 });

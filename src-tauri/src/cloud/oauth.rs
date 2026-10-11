@@ -1,6 +1,7 @@
-//! Browser sign-in for Google and Microsoft accounts: the OAuth 2.0 authorization code flow
-//! with PKCE, redirected to a one-time listener on the loopback interface (RFC 8252). Poros
-//! never sees the account password, and the refresh token it receives stays in the backend.
+//! Browser sign-in for Google, Microsoft and Box accounts: the OAuth 2.0 authorization code
+//! flow, with PKCE where the provider supports it, redirected to a one-time listener on the
+//! loopback interface (RFC 8252). Poros never sees the account password, and the refresh token
+//! it receives stays in the backend.
 
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr};
@@ -34,18 +35,24 @@ const MICROSOFT_LOGIN_URL: &str = "https://login.microsoftonline.com";
 const MICROSOFT_SCOPES: &str = "openid profile offline_access Files.ReadWrite.All";
 /// Work, school and personal Microsoft accounts.
 pub const DEFAULT_TENANT: &str = "common";
+const BOX_AUTHORIZE_URL: &str = "https://account.box.com/api/oauth2/authorize";
+const BOX_TOKEN_URL: &str = "https://api.box.com/oauth2/token";
+/// Box sends no ID token, so the account is asked for once signed in.
+const BOX_ACCOUNT_URL: &str = "https://api.box.com/2.0/users/me?fields=login,name";
 
 /// OAuth apps a release build was configured with, used when Settings names none.
 const BUILT_IN_GOOGLE_CLIENT_ID: Option<&str> = option_env!("POROS_GOOGLE_CLIENT_ID");
 const BUILT_IN_GOOGLE_CLIENT_SECRET: Option<&str> = option_env!("POROS_GOOGLE_CLIENT_SECRET");
 const BUILT_IN_MICROSOFT_CLIENT_ID: Option<&str> = option_env!("POROS_MICROSOFT_CLIENT_ID");
+const BUILT_IN_BOX_CLIENT_ID: Option<&str> = option_env!("POROS_BOX_CLIENT_ID");
+const BUILT_IN_BOX_CLIENT_SECRET: Option<&str> = option_env!("POROS_BOX_CLIENT_SECRET");
 
 /// The app registration Poros signs in as.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OAuthClient {
     pub provider: CloudProvider,
     pub client_id: String,
-    /// Google gives desktop apps a secret and wants it with every token request, although an
+    /// Google and Box give apps a secret and want it with every token request, although an
     /// installed app cannot keep it secret. Microsoft desktop apps have none.
     pub client_secret: String,
     pub tenant: String,
@@ -67,6 +74,15 @@ impl OAuthClient {
                 (settings.microsoft_client_id.clone(), String::new())
             }
             CloudProvider::Microsoft => (built_in(BUILT_IN_MICROSOFT_CLIENT_ID)?, String::new()),
+            // Box refuses a token request without the secret.
+            CloudProvider::Box if !settings.box_client_id.is_empty() => (
+                settings.box_client_id.clone(),
+                Some(settings.box_client_secret.clone()).filter(|secret| !secret.is_empty())?,
+            ),
+            CloudProvider::Box => (
+                built_in(BUILT_IN_BOX_CLIENT_ID)?,
+                built_in(BUILT_IN_BOX_CLIENT_SECRET)?,
+            ),
         };
         let tenant = match settings.microsoft_tenant.as_str() {
             "" => DEFAULT_TENANT.to_string(),
@@ -89,6 +105,7 @@ impl OAuthClient {
                     self.tenant
                 )
             }
+            CloudProvider::Box => BOX_AUTHORIZE_URL.to_string(),
         }
     }
 
@@ -98,14 +115,22 @@ impl OAuthClient {
             CloudProvider::Microsoft => {
                 format!("{MICROSOFT_LOGIN_URL}/{}/oauth2/v2.0/token", self.tenant)
             }
+            CloudProvider::Box => BOX_TOKEN_URL.to_string(),
         }
     }
 
-    fn scopes(&self) -> &'static str {
+    /// Box grants the scopes chosen for the app in its developer console.
+    fn scopes(&self) -> Option<&'static str> {
         match self.provider {
-            CloudProvider::Google => GOOGLE_SCOPES,
-            CloudProvider::Microsoft => MICROSOFT_SCOPES,
+            CloudProvider::Google => Some(GOOGLE_SCOPES),
+            CloudProvider::Microsoft => Some(MICROSOFT_SCOPES),
+            CloudProvider::Box => None,
         }
+    }
+
+    /// Box does not document PKCE; its client secret proves the app instead.
+    fn uses_pkce(&self) -> bool {
+        self.provider != CloudProvider::Box
     }
 }
 
@@ -117,8 +142,12 @@ fn built_in(value: Option<&'static str>) -> Option<String> {
 }
 
 pub fn missing_client(provider: CloudProvider) -> AppError {
+    let what = match provider {
+        CloudProvider::Box => "client ID and client secret",
+        _ => "client ID",
+    };
     AppError::invalid(format!(
-        "Add a {} client ID in Settings, under Cloud accounts, to sign in",
+        "Add a {} {what} in Settings, under Cloud accounts, to sign in",
         provider.name()
     ))
 }
@@ -135,12 +164,13 @@ pub struct ProviderStatus {
 }
 
 pub fn provider_statuses(settings: &CloudSettings) -> Vec<ProviderStatus> {
-    [CloudProvider::Google, CloudProvider::Microsoft]
+    CloudProvider::ALL
         .into_iter()
         .map(|provider| {
             let from_settings = match provider {
                 CloudProvider::Google => !settings.google_client_id.is_empty(),
                 CloudProvider::Microsoft => !settings.microsoft_client_id.is_empty(),
+                CloudProvider::Box => !settings.box_client_id.is_empty(),
             };
             let configured = OAuthClient::configured(provider, settings).is_some();
             ProviderStatus {
@@ -186,6 +216,14 @@ impl OAuthVault {
             },
         );
         grant_id
+    }
+
+    /// Keeps a grant current when its provider replaced the refresh token, as Box does on every
+    /// renewal, so saving the connection later stores one that still works.
+    pub fn replace(&self, grant_id: &str, refresh_token: &str) {
+        if let Some(grant) = self.grants.lock().unwrap().get_mut(grant_id) {
+            grant.refresh_token = refresh_token.to_string();
+        }
     }
 
     pub fn refresh_token(&self, grant_id: &str, provider: CloudProvider) -> AppResult<String> {
@@ -255,10 +293,15 @@ pub async fn sign_in(
         .append_pair("client_id", &client.client_id)
         .append_pair("response_type", "code")
         .append_pair("redirect_uri", &redirect_uri)
-        .append_pair("scope", client.scopes())
-        .append_pair("state", &state)
-        .append_pair("code_challenge", &challenge)
-        .append_pair("code_challenge_method", "S256");
+        .append_pair("state", &state);
+    if let Some(scopes) = client.scopes() {
+        url.query_pairs_mut().append_pair("scope", scopes);
+    }
+    if client.uses_pkce() {
+        url.query_pairs_mut()
+            .append_pair("code_challenge", &challenge)
+            .append_pair("code_challenge_method", "S256");
+    }
     match client.provider {
         // Offline access with `consent` gets a refresh token on every sign-in, not only the
         // first; `select_account` offers the account chooser even when one account is signed in.
@@ -271,6 +314,7 @@ pub async fn sign_in(
             url.query_pairs_mut()
                 .append_pair("prompt", "select_account");
         }
+        CloudProvider::Box => {}
     }
     open_browser(url.as_str())?;
 
@@ -282,17 +326,15 @@ pub async fn sign_in(
         }
         code = loopback.wait_for_code(&state) => code?,
     };
-    let tokens = request_tokens(
-        http,
-        client,
-        &[
-            ("grant_type", "authorization_code"),
-            ("code", &code),
-            ("redirect_uri", &redirect_uri),
-            ("code_verifier", &verifier),
-        ],
-    )
-    .await?;
+    let mut parameters = vec![
+        ("grant_type", "authorization_code"),
+        ("code", code.as_str()),
+        ("redirect_uri", redirect_uri.as_str()),
+    ];
+    if client.uses_pkce() {
+        parameters.push(("code_verifier", verifier.as_str()));
+    }
+    let tokens = request_tokens(http, client, &parameters).await?;
     let refresh_token = tokens
         .refresh_token
         .filter(|token| !token.is_empty())
@@ -305,11 +347,11 @@ pub async fn sign_in(
                 ),
             )
         })?;
-    let account = tokens
-        .id_token
-        .as_deref()
-        .and_then(account_name)
-        .unwrap_or_else(|| format!("{} account", client.provider.name()));
+    let account = match client.provider {
+        CloudProvider::Box => box_account(http, &tokens.access_token).await,
+        _ => tokens.id_token.as_deref().and_then(account_name),
+    }
+    .unwrap_or_else(|| format!("{} account", client.provider.name()));
     Ok(Authorization {
         account,
         refresh_token,
@@ -361,8 +403,8 @@ async fn request_tokens(
     if !client.client_secret.is_empty() {
         form.push(("client_secret", &client.client_secret));
     }
-    if client.provider == CloudProvider::Microsoft {
-        form.push(("scope", client.scopes()));
+    if let (CloudProvider::Microsoft, Some(scopes)) = (client.provider, client.scopes()) {
+        form.push(("scope", scopes));
     }
     let request = http
         .post(client.token_url())
@@ -397,6 +439,34 @@ async fn request_tokens(
         _ => format!("{provider} refused the sign-in: {description}"),
     };
     Err(AppError::new(ErrorKind::AuthFailed, message))
+}
+
+/// The login of the Box account an access token belongs to. Only displayed, so a failure
+/// just leaves the account unnamed.
+async fn box_account(http: &Client, access_token: &str) -> Option<String> {
+    #[derive(Deserialize)]
+    struct BoxUser {
+        #[serde(default)]
+        login: String,
+        #[serde(default)]
+        name: String,
+    }
+    let request = http
+        .get(BOX_ACCOUNT_URL)
+        .bearer_auth(access_token)
+        .build()
+        .ok()?;
+    let response = api::send_request(http, request, api::STALL_TIMEOUT)
+        .await
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let user: BoxUser = api::decode(response).await.ok()?;
+    [user.login, user.name]
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .find(|value| !value.is_empty())
 }
 
 /// Microsoft appends trace and correlation ids on further lines.
@@ -445,12 +515,14 @@ impl Loopback {
         Ok(Self { listeners, port })
     }
 
-    /// The address each provider's desktop app registration accepts with any port: Google
-    /// asks for the IP literal, Microsoft for `http://localhost`.
+    /// The address each provider's app registration accepts with any port: Google takes the
+    /// IP literal, Microsoft and Box want `http://localhost`.
     fn redirect_uri(&self, provider: CloudProvider) -> String {
         match provider {
             CloudProvider::Google => format!("http://127.0.0.1:{}", self.port),
-            CloudProvider::Microsoft => format!("http://localhost:{}", self.port),
+            CloudProvider::Microsoft | CloudProvider::Box => {
+                format!("http://localhost:{}", self.port)
+            }
         }
     }
 
@@ -616,6 +688,8 @@ mod tests {
             google_client_secret: "secret".into(),
             microsoft_client_id: "00000000-0000-0000-0000-000000000000".into(),
             microsoft_tenant: String::new(),
+            box_client_id: "box-id".into(),
+            box_client_secret: "box-secret".into(),
         };
         let google = OAuthClient::configured(CloudProvider::Google, &settings).unwrap();
         assert_eq!(google.client_id, "id.apps.googleusercontent.com");
@@ -624,6 +698,19 @@ mod tests {
         assert_eq!(microsoft.tenant, DEFAULT_TENANT);
         assert!(microsoft.client_secret.is_empty());
         assert!(microsoft.token_url().ends_with("/common/oauth2/v2.0/token"));
+        let from_box = OAuthClient::configured(CloudProvider::Box, &settings).unwrap();
+        assert_eq!(from_box.client_secret, "box-secret");
+        assert!(!from_box.uses_pkce());
+        assert_eq!(from_box.scopes(), None);
+    }
+
+    #[test]
+    fn box_needs_its_secret() {
+        let settings = CloudSettings {
+            box_client_id: "box-id".into(),
+            ..CloudSettings::default()
+        };
+        assert!(OAuthClient::configured(CloudProvider::Box, &settings).is_none());
     }
 
     #[tokio::test]

@@ -17,8 +17,16 @@ import {
   type ConnectDraft,
 } from "../lib/connectDraft";
 import { toAppError } from "../lib/ipc";
-import { PROTOCOLS, isCloud, isFtp, protocolInfo } from "../lib/protocols";
-import type { Protocol } from "../lib/types";
+import {
+  PROTOCOLS,
+  isFtp,
+  isWebDav,
+  keyLabels,
+  protocolInfo,
+  signsInWithBrowser,
+  usesAccessKeys,
+} from "../lib/protocols";
+import type { Protocol, S3Addressing } from "../lib/types";
 import { connectInTab } from "../state/connectActions";
 import { byRecentUse, useSavedConnections } from "../state/savedConnectionsStore";
 import { CloudSignIn } from "./CloudSignIn";
@@ -83,22 +91,40 @@ export function ConnectDialog({
   };
 
   const sftp = draft.protocol === "sftp";
-  const cloud = isCloud(draft.protocol);
+  const s3 = draft.protocol === "s3";
+  const b2 = draft.protocol === "backblazeB2";
+  const browser = signsInWithBrowser(draft.protocol);
   const ftp = isFtp(draft.protocol);
+  const webDav = isWebDav(draft.protocol);
+  const keys = keyLabels(draft.protocol);
   const authChoices = authChoicesFor(draft.protocol);
   const ready = canConnect(draft);
-  const canSave = cloud ? ready : draft.host.trim() !== "";
+  const canSave = browser
+    ? ready
+    : usesAccessKeys(draft.protocol)
+      ? draft.username.trim() !== ""
+      : draft.host.trim() !== "";
   const account =
     draft.signedIn?.account ?? (draft.hasSavedSecret && draft.username ? draft.username : null);
-  const secretLabel = draft.authChoice === "publicKey" ? "passphrase" : "password";
-  const namePlaceholder = cloud
+  const secretLabel = keys
+    ? keys.secret.toLowerCase()
+    : draft.authChoice === "publicKey"
+      ? "passphrase"
+      : "password";
+  const namePlaceholder = browser
     ? `${protocolInfo(draft.protocol).label}${account ? ` (${account})` : ""}`
-    : draft.host.trim() || "Shown in saved connections";
-  const folderPlaceholder = cloud
+    : b2
+      ? "Backblaze B2"
+      : draft.host.trim() || (s3 ? "Amazon S3" : "Shown in saved connections");
+  const folderPlaceholder = browser
     ? "Top folder of the drive"
-    : ftp
-      ? "Login folder"
-      : "Home folder";
+    : s3 || b2
+      ? "/bucket or /bucket/folder"
+      : ftp
+        ? "Login folder"
+        : webDav
+          ? "The folder in the address, or the top"
+          : "Home folder";
 
   const browseForKey = async () => {
     // No extension filter: OpenSSH keys such as `id_ed25519` have none.
@@ -246,7 +272,7 @@ export function ConnectDialog({
             </label>
           </div>
 
-          {cloud ? (
+          {browser ? (
             <div className="field">
               <span>Account</span>
               <CloudSignIn
@@ -261,33 +287,49 @@ export function ConnectDialog({
             </div>
           ) : (
             <>
-              <div className="form-row">
-                <label className="field grow">
-                  <span>Host</span>
-                  <input
-                    data-autofocus
-                    value={draft.host}
-                    placeholder="example.com"
-                    spellCheck={false}
-                    autoCapitalize="off"
-                    onChange={(event) => update("host", event.target.value)}
-                  />
-                </label>
-                <label className="field port">
-                  <span>Port</span>
-                  <input
-                    value={draft.port}
-                    inputMode="numeric"
-                    onChange={(event) => update("port", event.target.value.replace(/\D/g, ""))}
-                  />
-                </label>
-              </div>
+              {!b2 && (
+                <div className="form-row">
+                  <label className="field grow">
+                    <span>{s3 ? "Endpoint" : "Host"}</span>
+                    <input
+                      data-autofocus
+                      value={draft.host}
+                      placeholder={
+                        s3
+                          ? "Empty for Amazon S3"
+                          : webDav
+                            ? "example.com or example.com/remote.php/dav"
+                            : "example.com"
+                      }
+                      spellCheck={false}
+                      autoCapitalize="off"
+                      onChange={(event) => update("host", event.target.value)}
+                    />
+                  </label>
+                  <label className="field port">
+                    <span>Port</span>
+                    <input
+                      value={draft.port}
+                      inputMode="numeric"
+                      onChange={(event) => update("port", event.target.value.replace(/\D/g, ""))}
+                    />
+                  </label>
+                </div>
+              )}
+              {s3 && (
+                <small className="field-hint">
+                  For another service, enter its endpoint, such as{" "}
+                  <code>s3.eu-central-1.wasabisys.com</code>, or <code>http://localhost:9000</code>{" "}
+                  for a server without TLS.
+                </small>
+              )}
 
               <label className="field">
-                <span>Username</span>
+                <span>{keys ? keys.id : "Username"}</span>
                 <input
+                  data-autofocus={b2 ? true : undefined}
                   value={draft.username}
-                  placeholder={ftp ? "anonymous" : ""}
+                  placeholder={ftp ? "anonymous" : webDav ? "Empty if the server needs none" : ""}
                   spellCheck={false}
                   autoCapitalize="off"
                   onChange={(event) => update("username", event.target.value)}
@@ -318,7 +360,7 @@ export function ConnectDialog({
 
           {draft.authChoice === "password" && (
             <label className="field">
-              <span>Password</span>
+              <span>{keys ? keys.secret : "Password"}</span>
               <input
                 type="password"
                 value={draft.password}
@@ -366,6 +408,32 @@ export function ConnectDialog({
               Uses keys loaded in your SSH agent: <code>SSH_AUTH_SOCK</code> on Linux and macOS, the
               OpenSSH Authentication Agent service or Pageant on Windows.
             </p>
+          )}
+
+          {s3 && (
+            <div className="form-row">
+              <label className="field grow">
+                <span>Region</span>
+                <input
+                  value={draft.s3Region}
+                  placeholder="From the endpoint, or us-east-1"
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  onChange={(event) => update("s3Region", event.target.value)}
+                />
+              </label>
+              <label className="field grow">
+                <span>Bucket address</span>
+                <select
+                  value={draft.s3Addressing}
+                  onChange={(event) => update("s3Addressing", event.target.value as S3Addressing)}
+                >
+                  <option value="automatic">Automatic</option>
+                  <option value="path">Path (endpoint/bucket)</option>
+                  <option value="virtualHosted">Virtual-hosted (bucket.endpoint)</option>
+                </select>
+              </label>
+            </div>
           )}
 
           <label className="field">
@@ -420,9 +488,9 @@ export function ConnectDialog({
                 checked={draft.saveConnection}
                 onChange={(event) => update("saveConnection", event.target.checked)}
               />
-              {cloud ? "Save this connection and its sign-in" : "Save this connection"}
+              {browser ? "Save this connection and its sign-in" : "Save this connection"}
             </label>
-            {!cloud && (
+            {!browser && (
               <label className={`check ${draft.authChoice === "agent" ? "is-disabled" : ""}`}>
                 <input
                   type="checkbox"

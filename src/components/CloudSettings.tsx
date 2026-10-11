@@ -76,6 +76,41 @@ export function CloudSettingsPage({ settings }: { settings: Settings }) {
           onCommit={(microsoftTenant) => set({ microsoftTenant })}
         />
       </SettingGroup>
+
+      <SettingGroup title="Box">
+        <p className="setting-note">
+          {statuses?.box.builtIn
+            ? "This release signs in with its own Box app. To use yours instead:"
+            : "Poros signs in to Box with a Box app you register:"}
+        </p>
+        <ol className="setting-steps">
+          <li>
+            In the Box Developer Console, select New App and choose the User app type, which signs
+            in with OAuth 2.0.
+          </li>
+          <li>
+            On the Configuration tab, add the OAuth 2.0 redirect URI <code>http://localhost</code>.
+          </li>
+          <li>
+            Under Application Scopes, keep Read all files and folders stored in Box, turn on Write
+            all files and folders stored in Box, and save the changes.
+          </li>
+          <li>Copy the client ID and client secret from OAuth 2.0 Credentials on the same tab.</li>
+        </ol>
+        <TextSetting
+          label="Client ID"
+          value={cloud.boxClientId}
+          wide
+          onCommit={(boxClientId) => set({ boxClientId })}
+        />
+        <TextSetting
+          label="Client secret"
+          hint="Box asks for it with every sign-in."
+          value={cloud.boxClientSecret}
+          wide
+          onCommit={(boxClientSecret) => set({ boxClientSecret })}
+        />
+      </SettingGroup>
     </>
   );
 }

@@ -237,8 +237,8 @@ impl ConnectionSettings {
     }
 }
 
-/// The OAuth apps Poros signs in to Google Drive and OneDrive with. An empty client ID falls
-/// back to the app built into the release, if it has one.
+/// The OAuth apps Poros signs in to Google Drive, OneDrive and Box with. An empty client ID
+/// falls back to the app built into the release, if it has one.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct CloudSettings {
@@ -249,6 +249,8 @@ pub struct CloudSettings {
     pub microsoft_client_id: String,
     /// `common` (any account), `consumers`, `organizations`, or a directory (tenant) ID.
     pub microsoft_tenant: String,
+    pub box_client_id: String,
+    pub box_client_secret: String,
 }
 
 impl CloudSettings {
@@ -258,6 +260,8 @@ impl CloudSettings {
             &mut self.google_client_secret,
             &mut self.microsoft_client_id,
             &mut self.microsoft_tenant,
+            &mut self.box_client_id,
+            &mut self.box_client_secret,
         ] {
             *value = value.trim().to_string();
         }

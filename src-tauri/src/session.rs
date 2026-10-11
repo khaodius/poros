@@ -23,6 +23,10 @@ use crate::tls::TrustedCertificates;
 /// a cloud provider replaces a refresh token, so the keychain keeps the current one.
 pub type SecretSink = Arc<dyn Fn(&str, &SecretScope, &str) + Send + Sync>;
 
+/// Called with a browser sign-in's grant id and the refresh token that replaced its own, so a
+/// connection saved from the session later keeps one that still works.
+pub type GrantSink = Arc<dyn Fn(&str, &str) + Send + Sync>;
+
 pub struct Session {
     pub id: String,
     /// Kept (with credentials) so transfer workers can open more connections.
@@ -94,7 +98,7 @@ impl Session {
     fn is_closed(&self) -> bool {
         match &self.link {
             Link::Ssh { handle, .. } => handle.is_closed(),
-            // FTP connections reopen by themselves, and cloud APIs have no connection to lose.
+            // FTP connections reopen by themselves, and HTTP services have no connection to lose.
             Link::Direct(_) => false,
         }
     }
@@ -176,6 +180,7 @@ pub struct SessionManager {
     pub known_hosts: KnownHosts,
     pub certificates: TrustedCertificates,
     secret_sink: SyncRwLock<Option<SecretSink>>,
+    grant_sink: SyncRwLock<Option<GrantSink>>,
     events: Events,
 }
 
@@ -189,6 +194,7 @@ impl SessionManager {
             known_hosts: KnownHosts::with_defaults(known_hosts_file),
             certificates: TrustedCertificates::new(certificates_file),
             secret_sink: SyncRwLock::new(None),
+            grant_sink: SyncRwLock::new(None),
             events,
         }
     }
@@ -197,13 +203,35 @@ impl SessionManager {
         *self.secret_sink.write().unwrap() = Some(sink);
     }
 
-    /// Where a session's rotated refresh tokens go: the keychain entry of its saved connection.
+    pub fn set_grant_sink(&self, sink: GrantSink) {
+        *self.grant_sink.write().unwrap() = Some(sink);
+    }
+
+    /// Where a session's rotated refresh tokens go: the keychain entry of its saved connection,
+    /// and the browser sign-in it was opened with.
     fn rotation_hook(&self, profile: &ConnectProfile) -> Option<cloud::TokenRotation> {
-        let saved_id = profile.saved_connection_id.clone()?;
+        let saved = profile
+            .saved_connection_id
+            .clone()
+            .zip(self.secret_sink.read().unwrap().clone());
         let scope = SecretScope::of_profile(profile);
-        let sink = self.secret_sink.read().unwrap().clone()?;
+        let grant = match &profile.auth {
+            ssh::AuthMethod::OAuth {
+                grant_id: Some(grant_id),
+                ..
+            } => Some(grant_id.clone()).zip(self.grant_sink.read().unwrap().clone()),
+            _ => None,
+        };
+        if saved.is_none() && grant.is_none() {
+            return None;
+        }
         Some(Arc::new(move |secret: &str| {
-            sink(&saved_id, &scope, secret)
+            if let Some((saved_id, sink)) = &saved {
+                sink(saved_id, &scope, secret);
+            }
+            if let Some((grant_id, sink)) = &grant {
+                sink(grant_id, secret);
+            }
         }))
     }
 
@@ -288,10 +316,14 @@ impl SessionManager {
                 (Link::Direct(files), fingerprint)
             }
             _ => {
-                let files =
-                    cloud::connect(id, &profile, self.rotation_hook(&profile), &self.events)
-                        .await?;
-                (Link::Direct(files), String::new())
+                let login = cloud::Login {
+                    certificates: &self.certificates,
+                    approval,
+                    rotation: self.rotation_hook(&profile),
+                };
+                let (files, fingerprint) =
+                    cloud::connect(id, &profile, login, &self.events).await?;
+                (Link::Direct(files), fingerprint)
             }
         };
         let files = match &link {

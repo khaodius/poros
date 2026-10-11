@@ -50,6 +50,7 @@ fn profile() -> ConnectProfile {
         bypass_proxy: false,
         jump_connection_id: None,
         rsync_path: None,
+        s3: Default::default(),
         route: Route::default(),
     }
 }
