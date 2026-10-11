@@ -20,7 +20,8 @@ import type { FileEntry } from "../lib/types";
 import { useDragStore } from "../state/dragStore";
 import { FileIcon } from "./FileIcon";
 
-const SCROLLBAR_GUTTER = 10;
+/** Matches `--scrollbar-size`: the list always shows its vertical scrollbar. */
+const SCROLLBAR_GUTTER = 8;
 /** Empty space right of the last column that belongs to no row: dropping there targets the
  * folder on show rather than the row under the pointer. */
 const DROP_STRIP_WIDTH = 44;
