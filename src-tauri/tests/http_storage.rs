@@ -96,6 +96,7 @@ fn profile(server: &Server, password: &str) -> ConnectProfile {
         ftp_active: false,
         bypass_proxy: false,
         jump_connection_id: None,
+        rsync_path: None,
         s3: S3Options {
             region: "us-east-1".into(),
             addressing: Addressing::Path,
