@@ -515,14 +515,14 @@ impl Loopback {
         Ok(Self { listeners, port })
     }
 
-    /// The address each provider's app registration accepts with any port: Google and Box
-    /// take the IP literal, Microsoft wants `http://localhost`.
+    /// The address each provider's app registration accepts with any port: Google takes the
+    /// IP literal, Microsoft and Box want `http://localhost`.
     fn redirect_uri(&self, provider: CloudProvider) -> String {
         match provider {
-            CloudProvider::Google | CloudProvider::Box => {
-                format!("http://127.0.0.1:{}", self.port)
+            CloudProvider::Google => format!("http://127.0.0.1:{}", self.port),
+            CloudProvider::Microsoft | CloudProvider::Box => {
+                format!("http://localhost:{}", self.port)
             }
-            CloudProvider::Microsoft => format!("http://localhost:{}", self.port),
         }
     }
 

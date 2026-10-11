@@ -7,10 +7,13 @@ export function HostKeyDialog() {
   if (!question) return null;
   const { hostKey, changed, answer } = question;
   const problem = hostKey.certificateProblem;
-  // FTPS servers prove themselves with a TLS certificate instead of an SSH host key.
+  // FTPS, WebDAV and S3 servers prove themselves with a TLS certificate instead of an SSH host
+  // key.
   const certificate = problem !== undefined;
-  const usualPort = certificate ? 21 : 22;
-  const target = hostKey.port === usualPort ? hostKey.host : `${hostKey.host}:${hostKey.port}`;
+  const usualPorts = certificate ? [21, 443] : [22];
+  const target = usualPorts.includes(hostKey.port)
+    ? hostKey.host
+    : `${hostKey.host}:${hostKey.port}`;
   const title = certificate
     ? changed
       ? "Certificate changed"

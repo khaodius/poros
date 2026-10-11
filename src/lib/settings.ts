@@ -89,6 +89,9 @@ export interface CloudSettings {
   microsoftClientId: string;
   /** `common`, `consumers`, `organizations` or a directory (tenant) ID; empty means `common`. */
   microsoftTenant: string;
+  boxClientId: string;
+  /** Box needs the app's secret with every token request. */
+  boxClientSecret: string;
 }
 
 export type DoubleClickAction = "transfer" | "edit" | "nothing";
@@ -261,6 +264,8 @@ export const DEFAULT_SETTINGS: Settings = {
     googleClientSecret: "",
     microsoftClientId: "",
     microsoftTenant: "",
+    boxClientId: "",
+    boxClientSecret: "",
   },
   interface: {
     doubleClickFile: "transfer",
