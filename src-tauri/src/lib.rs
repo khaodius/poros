@@ -135,7 +135,7 @@ pub fn run() {
             ));
             app.manage(ThemeStore::new(config_dir.join("themes")));
             app.manage(PendingWindows::default());
-            app.manage(DragPreview::default());
+            app.manage(DragPreview::new(desktop::can_see_through_windows()));
             // Last, since tasks take everything above from the app's state.
             let scheduler = Scheduler::load(config_dir.join("schedules.json"), events.clone());
             app.manage(events);

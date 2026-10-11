@@ -71,6 +71,13 @@ interface DragState {
   copy: boolean;
   /** A preview window follows tabs dragged off Poros onto the desktop. */
   desktopPreview: boolean;
+  /** The preview window can be see-through, so it draws a dragged pane's shadow as well. */
+  previewSeeThrough: boolean;
+  /**
+   * The preview window draws the dragged tab, which reaches past this window's edge, so this
+   * window leaves it out.
+   */
+  drawnOnDesktop: boolean;
 }
 
 export const useDragStore = create<DragState>(() => ({
@@ -80,6 +87,8 @@ export const useDragStore = create<DragState>(() => ({
   incoming: null,
   copy: false,
   desktopPreview: false,
+  previewSeeThrough: false,
+  drawnOnDesktop: false,
 }));
 
 const DRAG_THRESHOLD = 5;
@@ -266,6 +275,11 @@ export function beginDrag(
 
   const move = (moveEvent: PointerEvent) => {
     if (moveEvent.pointerId !== pointerId) return;
+    // Released where this window could not see it: the press is over, and the drag with it.
+    if (!(moveEvent.buttons & 1)) {
+      stop();
+      return;
+    }
     if (!dragging) {
       if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < DRAG_THRESHOLD) {
         return;
@@ -317,6 +331,7 @@ export function beginDrag(
     window.removeEventListener("pointermove", move);
     window.removeEventListener("pointerup", release);
     window.removeEventListener("pointercancel", stop);
+    window.removeEventListener("blur", stop);
     window.removeEventListener("keydown", followKeys, true);
     window.removeEventListener("keyup", followKeys, true);
     useDragStore.setState({ payload: null, target: null, copy: false });
@@ -324,6 +339,9 @@ export function beginDrag(
   window.addEventListener("pointermove", move);
   window.addEventListener("pointerup", release);
   window.addEventListener("pointercancel", stop);
+  // Another program took the pointer and keyboard, such as a screenshot tool: the release goes
+  // to it, so the drag ends here, as with Escape.
+  window.addEventListener("blur", stop);
   window.addEventListener("keydown", followKeys, true);
   window.addEventListener("keyup", followKeys, true);
 }

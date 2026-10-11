@@ -33,6 +33,7 @@ import type {
   PowerAction,
   PreviewContent,
   PreviewPlacement,
+  PreviewSupport,
   QueueFinished,
   SaveOutcome,
   SaveRequest,
@@ -76,6 +77,8 @@ export const TAB_DRAG_EVENT = "poros://tab-drag";
 export const DRAG_PREVIEW_EVENT = "poros://drag-preview";
 /** Mirrored in src-tauri/src/desktop.rs. Gives the drag preview the picture of the pane. */
 export const DRAG_PREVIEW_PICTURE_EVENT = "poros://drag-preview-picture";
+/** Mirrored in src-tauri/src/desktop.rs. Says the drag preview shows a drag's tab. */
+export const DRAG_PREVIEW_SHOWN_EVENT = "poros://drag-preview-shown";
 
 /** The label of the window Poros starts with; windows torn out of it get others. */
 export const MAIN_WINDOW = "main";
@@ -296,8 +299,8 @@ export const windows = {
 export const dragPreview = {
   /** Moves the preview of a tab dragged onto the desktop, opening it if needed. */
   place: (placement: PreviewPlacement) => call<void>("drag_preview_place", { placement }),
-  /** Whether the system lets the preview follow the pointer. */
-  available: () => call<boolean>("drag_preview_available"),
+  /** Whether the system lets the preview follow the pointer, and see through it. */
+  available: () => call<PreviewSupport>("drag_preview_available"),
   /** Opens the preview hidden, so it shows at once when first placed. */
   prepare: () => call<void>("drag_preview_prepare"),
   /** Gives the preview the picture of the dragged pane to draw. */
@@ -330,6 +333,9 @@ function subscribe<T>(event: string, handler: (payload: T) => void): Promise<Unl
 }
 
 export const onLog = (handler: (record: LogRecord) => void) => subscribe(LOG_EVENT, handler);
+/** The drag preview has come up showing the tab of the drag `drag`. */
+export const onDragPreviewShown = (handler: (drag: number) => void) =>
+  subscribe(DRAG_PREVIEW_SHOWN_EVENT, handler);
 export const onSessionClosed = (handler: (closed: SessionClosed) => void) =>
   subscribe(SESSION_CLOSED_EVENT, handler);
 export const onTransfers = (handler: (update: TransferUpdate) => void) =>

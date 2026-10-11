@@ -17,11 +17,32 @@ export interface LiftedPane {
 }
 
 /**
+ * A pane moved so its corner falls on a pixel of the screen. The preview window sits on whole
+ * pixels, so a pane placed between two would be drawn half a pixel apart in the two windows.
+ */
+function onDevicePixels(rect: Rect, dock: Rect): Rect {
+  const ratio = window.devicePixelRatio || 1;
+  const snap = (value: number, offset: number) =>
+    Math.round((offset + value) * ratio) / ratio - offset;
+  return { ...rect, left: snap(rect.left, dock.left), top: snap(rect.top, dock.top) };
+}
+
+/**
  * Where a lifted pane floats in the dock, and how far it has turned into the window it would
  * open as. Where no preview can follow it off the window, it is held inside the dock instead
  * while a drop would leave, so it can say where the tab will go.
  */
 export function liftedPane(
+  payload: TabDrag,
+  pointer: Point,
+  target: DropTarget | null,
+  desktopPreview: boolean,
+): LiftedPane {
+  const { rect, toward } = floatingPane(payload, pointer, target, desktopPreview);
+  return { rect: onDevicePixels(rect, payload.dock), toward };
+}
+
+function floatingPane(
   payload: TabDrag,
   pointer: Point,
   target: DropTarget | null,

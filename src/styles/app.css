@@ -656,8 +656,17 @@ input.has-error {
 /* A tab dragged off the window shows on the desktop or in the window under the pointer instead. */
 .dock.is-tab-away > .tab-panel.is-floating,
 .dock.is-tab-away > .dock-floating,
-.dock.is-tab-away > .dock-floating-window {
+.dock.is-tab-away > .dock-floating-window,
+.dock.is-tab-away > .dock-floating-shadow {
   opacity: 0;
+}
+
+/* The preview window draws the lifted pane exactly over it, so it goes at once. */
+.dock.is-drawn-on-desktop > .tab-panel.is-floating,
+.dock.is-drawn-on-desktop > .dock-floating,
+.dock.is-drawn-on-desktop > .dock-floating-window,
+.dock.is-drawn-on-desktop > .dock-floating-shadow {
+  visibility: hidden;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -755,6 +764,16 @@ input.has-error {
   z-index: 30;
   background: var(--surface-raised);
   border-radius: var(--radius);
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+/* The lifted pane's edge and shadow, over the drop marker rather than under it: past the
+   window's edge they are drawn by the preview window, which lies over the marker. */
+.dock-floating-shadow {
+  position: absolute;
+  z-index: 33;
+  border-radius: var(--radius);
   box-shadow: var(--shadow-popover);
   pointer-events: none;
   transition: opacity 120ms ease;
@@ -799,45 +818,61 @@ input.has-error {
   pointer-events: none;
 }
 
-/* The page of the preview window: the lifted pane, drawn from a picture of it, with the window
-   it turns into over it. */
+/* The page of the preview window: the lifted pane laid out as in the dock, drawn from a picture
+   of it, with the window it turns into over it. See-through, it shows the window behind
+   everywhere but the pane and its shadow. */
+:root.is-see-through,
+:root.is-see-through body {
+  background: transparent;
+}
+
 .drag-preview {
   position: relative;
   height: 100%;
   overflow: hidden;
-  background: var(--surface-raised);
 }
 
-.drag-preview::after {
+.drag-preview > .tab-panel {
+  position: absolute;
+  z-index: 31;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+/* The drop marker where it falls on the pane; the window behind draws the rest of it. */
+.drag-preview-marker {
+  position: absolute;
+  z-index: 32;
+  overflow: hidden;
+  border-radius: var(--radius);
+  pointer-events: none;
+}
+
+/* Placed anew as the preview moves, so it keeps still on screen. */
+.drag-preview-marker > .dock-drop {
+  transition: none;
+}
+
+/* Where the window cannot be see-through, the pane fills it, square, with its edge inside. */
+.drag-preview.is-opaque > .dock-floating,
+.drag-preview.is-opaque > .dock-floating-window,
+.drag-preview.is-opaque > .drag-preview-marker {
+  border-radius: 0;
+}
+
+.drag-preview.is-opaque::after {
   position: absolute;
   inset: 0;
-  z-index: 1;
+  z-index: 33;
   border: 1px solid var(--border-strong);
   pointer-events: none;
   content: "";
 }
 
-.drag-preview-picture {
-  position: absolute;
-  left: 0;
-  pointer-events: none;
-}
-
-.drag-preview-sketch {
-  position: absolute;
-  inset: 0;
-}
-
-/* Placed anew as the preview moves, so it keeps still on screen. */
-.drag-preview > .dock-drop {
-  transition: none;
-}
-
-.dock > .dock-floating-window {
+.dock-floating-window {
   position: absolute;
   z-index: 31;
   border-radius: var(--radius);
-  box-shadow: var(--shadow-popover);
   transition: opacity 120ms ease;
 }
 

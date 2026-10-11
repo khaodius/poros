@@ -16,6 +16,9 @@ pub const DRAG_PREVIEW_WINDOW: &str = "drag-preview";
 pub const DRAG_PREVIEW_EVENT: &str = "poros://drag-preview";
 /// Mirrored in `src/lib/ipc.ts`. Gives the preview window the picture of the dragged pane.
 pub const DRAG_PREVIEW_PICTURE_EVENT: &str = "poros://drag-preview-picture";
+/// Mirrored in `src/lib/ipc.ts`. Tells every window that the preview is showing a drag's tab,
+/// with the drag, so the window it is dragged in can leave the tab to the preview.
+pub const DRAG_PREVIEW_SHOWN_EVENT: &str = "poros://drag-preview-shown";
 /// How long the preview waits for the window a tab dropped on the desktop opens in, in case it
 /// never says it has drawn.
 const HAND_OFF_LIMIT: Duration = Duration::from_secs(3);
@@ -70,15 +73,29 @@ pub fn opening_corner(app: &AppHandle, corner: PhysicalPosition<i32>) -> Logical
     corner.to_logical(monitor.map_or(1.0, |monitor| monitor.scale_factor()))
 }
 
-/// Moves a window's top left corner to a point in physical pixels, then sizes it in logical
-/// pixels. Logical positions mean different things on monitors scaled differently, and a window
-/// converts them with the scale of the monitor it is leaving, so it would land elsewhere.
+/// How far in from a window's outer corner its content starts, in physical pixels. Windows keeps
+/// invisible borders around a frameless window that has a shadow, to resize it by, and moves a
+/// window by its outer corner.
+pub fn content_inset(window: &WebviewWindow) -> tauri::Result<PhysicalPosition<i32>> {
+    let inner = window.inner_position()?;
+    let outer = window.outer_position()?;
+    Ok(PhysicalPosition::new(inner.x - outer.x, inner.y - outer.y))
+}
+
+/// Moves a window so its content's top left corner lands on a point in physical pixels, then
+/// sizes its content in logical pixels. `inset` is how far in from the window's outer corner its
+/// content starts. Logical positions mean different things on monitors scaled differently, and a
+/// window converts them with the scale of the monitor it is leaving, so it would land elsewhere.
 pub fn place(
     window: &WebviewWindow,
     corner: PhysicalPosition<i32>,
+    inset: PhysicalPosition<i32>,
     size: LogicalSize<f64>,
 ) -> tauri::Result<()> {
-    window.set_position(corner)?;
+    window.set_position(PhysicalPosition::new(
+        corner.x - inset.x,
+        corner.y - inset.y,
+    ))?;
     // After the move, so the size uses the scale of the monitor the window is now on.
     window.set_size(size)
 }
@@ -98,8 +115,21 @@ pub struct PreviewPlacement {
 /// The preview of a dragged tab, drawn where the window it is dragged in cannot draw: past its
 /// edge and out on the desktop. Its window opens on the first tab drag and is hidden, not
 /// closed, between drags so it shows at once the next time.
-#[derive(Default)]
-pub struct DragPreview(Mutex<PreviewState>);
+pub struct DragPreview {
+    state: Mutex<PreviewState>,
+    /// The preview is see-through around what it draws, so it draws the pane's shadow too.
+    see_through: bool,
+}
+
+/// What the drag preview can do on this system.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewSupport {
+    /// It can follow the pointer.
+    available: bool,
+    /// It can be see-through, and so draw the pane as it looks in its window, shadow and all.
+    see_through: bool,
+}
 
 #[derive(Default)]
 struct PreviewState {
@@ -114,26 +144,42 @@ struct PreviewState {
     /// The window a tab dropped on the desktop is opening in. The preview stays in its place
     /// until it has drawn, so nothing flickers in between.
     successor: Option<String>,
+    /// How far in from the window's outer corner its page starts.
+    inset: PhysicalPosition<i32>,
 }
 
 impl DragPreview {
+    pub fn new(see_through: bool) -> Self {
+        Self {
+            state: Mutex::default(),
+            see_through,
+        }
+    }
+
+    pub fn support(&self) -> PreviewSupport {
+        PreviewSupport {
+            available: can_place_windows(),
+            see_through: self.see_through,
+        }
+    }
+
     /// Moves the preview and sends its page what to show; the page shows the window once it has
     /// drawn that, so the window never appears with the previous drag's tab.
     pub fn place(&self, app: &AppHandle, placement: PreviewPlacement) -> tauri::Result<()> {
         if !can_place_windows() {
             return Ok(());
         }
-        let mut state = self.0.lock().unwrap();
+        let mut state = self.state.lock().unwrap();
         let corner = PhysicalPosition::new(placement.x, placement.y);
         let size = LogicalSize::new(placement.width, placement.height);
         let Some(window) = app.get_webview_window(DRAG_PREVIEW_WINDOW) else {
             state.content = Some(placement.content);
             state.ready = false;
             state.visible = false;
-            open_preview(app, corner, size)?;
+            state.inset = open_preview(app, corner, size, self.see_through)?;
             return Ok(());
         };
-        place(&window, corner, size)?;
+        place(&window, corner, state.inset, size)?;
         if state.content.as_ref() != Some(&placement.content) {
             if state.ready {
                 window.emit_to(DRAG_PREVIEW_WINDOW, DRAG_PREVIEW_EVENT, &placement.content)?;
@@ -148,7 +194,7 @@ impl DragPreview {
         if !can_place_windows() {
             return Ok(());
         }
-        let mut state = self.0.lock().unwrap();
+        let mut state = self.state.lock().unwrap();
         if state.ready {
             if let Some(window) = app.get_webview_window(DRAG_PREVIEW_WINDOW) {
                 window.emit_to(DRAG_PREVIEW_WINDOW, DRAG_PREVIEW_PICTURE_EVENT, &picture)?;
@@ -164,16 +210,17 @@ impl DragPreview {
         if !can_place_windows() {
             return Ok(());
         }
-        let mut state = self.0.lock().unwrap();
+        let mut state = self.state.lock().unwrap();
         if app.get_webview_window(DRAG_PREVIEW_WINDOW).is_some() {
             return Ok(());
         }
         state.ready = false;
         state.visible = false;
-        open_preview(
+        state.inset = open_preview(
             app,
             PhysicalPosition::new(0, 0),
             LogicalSize::new(640.0, 420.0),
+            self.see_through,
         )?;
         Ok(())
     }
@@ -181,7 +228,7 @@ impl DragPreview {
     /// Keeps the preview up for the window a tab dropped on the desktop is opening in, until
     /// that window says it has drawn, or for a few seconds if it never does.
     pub fn hand_off(&self, app: &AppHandle, label: &str) {
-        let mut state = self.0.lock().unwrap();
+        let mut state = self.state.lock().unwrap();
         if state.content.is_none() {
             return;
         }
@@ -196,7 +243,7 @@ impl DragPreview {
 
     /// A window has drawn: if the preview was standing in for it, the preview leaves.
     pub fn taken_over(&self, app: &AppHandle, label: &str) -> tauri::Result<()> {
-        let mut state = self.0.lock().unwrap();
+        let mut state = self.state.lock().unwrap();
         if state.successor.as_deref() != Some(label) {
             return Ok(());
         }
@@ -205,7 +252,7 @@ impl DragPreview {
 
     /// Marks the preview page ready and returns what it should show, if anything.
     pub fn ready(&self) -> PreviewStart {
-        let mut state = self.0.lock().unwrap();
+        let mut state = self.state.lock().unwrap();
         state.ready = true;
         PreviewStart {
             content: state.content.clone(),
@@ -213,18 +260,24 @@ impl DragPreview {
         }
     }
 
-    /// Shows the preview once its page has drawn the content, unless the drag left meanwhile.
+    /// Shows the preview once its page has drawn the content, unless the drag left meanwhile,
+    /// and tells the windows whose drag it shows.
     pub fn reveal(&self, window: &WebviewWindow) -> tauri::Result<()> {
-        let mut state = self.0.lock().unwrap();
-        if state.content.is_none() || state.visible {
+        let mut state = self.state.lock().unwrap();
+        let Some(content) = &state.content else {
+            return Ok(());
+        };
+        if state.visible {
             return Ok(());
         }
+        let drag = content.get("drag").cloned().unwrap_or_default();
         state.visible = true;
-        show_without_focus(window)
+        show_without_focus(window)?;
+        window.emit(DRAG_PREVIEW_SHOWN_EVENT, drag)
     }
 
     pub fn hide(&self, app: &AppHandle) -> tauri::Result<()> {
-        let mut state = self.0.lock().unwrap();
+        let mut state = self.state.lock().unwrap();
         hide_preview(app, &mut state)
     }
 }
@@ -248,14 +301,17 @@ fn hide_preview(app: &AppHandle, state: &mut PreviewState) -> tauri::Result<()> 
     }
 }
 
-/// Opens the preview window hidden. It never takes focus, which would end the drag, and stays
-/// above the window the tab is dragged from. It is resizable only so that it can be sized as it
-/// follows the pane: some systems ignore new sizes for windows that are not.
+/// Opens the preview window hidden, and returns how far in from its outer corner its page
+/// starts. It never takes focus, which would end the drag, and stays above the window the tab is
+/// dragged from. Where it can be see-through, the system draws no frame, corners or shadow of its
+/// own: the page draws the pane as it looks in its window. It is resizable only so that it can be
+/// sized as it follows the pane: some systems ignore new sizes for windows that are not.
 fn open_preview(
     app: &AppHandle,
     corner: PhysicalPosition<i32>,
     size: LogicalSize<f64>,
-) -> tauri::Result<WebviewWindow> {
+    see_through: bool,
+) -> tauri::Result<PhysicalPosition<i32>> {
     let opening = opening_corner(app, corner);
     let window = WebviewWindowBuilder::new(
         app,
@@ -264,6 +320,8 @@ fn open_preview(
     )
     .title("Poros")
     .decorations(false)
+    .transparent(see_through)
+    .shadow(false)
     .skip_taskbar(true)
     .always_on_top(true)
     .focused(false)
@@ -272,8 +330,56 @@ fn open_preview(
     .inner_size(size.width, size.height)
     .position(opening.x, opening.y)
     .build()?;
-    place(&window, corner, size)?;
-    Ok(window)
+    if see_through {
+        undecorate(&window)?;
+    }
+    let inset = content_inset(&window)?;
+    place(&window, corner, inset, size)?;
+    Ok(inset)
+}
+
+/// Whether windows can be see-through: Windows composites every window, and Linux does under a
+/// compositing window manager.
+#[cfg(windows)]
+pub fn can_see_through_windows() -> bool {
+    true
+}
+
+#[cfg(target_os = "linux")]
+pub fn can_see_through_windows() -> bool {
+    gtk::gdk::Screen::default().is_some_and(|screen| screen.is_composited())
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+pub fn can_see_through_windows() -> bool {
+    false
+}
+
+/// Keeps Windows 11 from rounding a window's corners and drawing a border around it, which it
+/// does for some frameless windows.
+#[cfg(windows)]
+fn undecorate(window: &WebviewWindow) -> tauri::Result<()> {
+    use windows_sys::Win32::Graphics::Dwm::{
+        DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE,
+    };
+    set_corners(window, WindowCorners::Square)?;
+    let hwnd = window.hwnd()?;
+    let color: u32 = DWMWA_COLOR_NONE;
+    // Windows 10 has no such border and refuses the attribute.
+    unsafe {
+        DwmSetWindowAttribute(
+            hwnd.0,
+            DWMWA_BORDER_COLOR as u32,
+            (&color as *const u32).cast(),
+            std::mem::size_of_val(&color) as u32,
+        );
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn undecorate(_window: &WebviewWindow) -> tauri::Result<()> {
+    Ok(())
 }
 
 /// Wayland leaves window positions to the compositor, so a preview could not follow the pointer.

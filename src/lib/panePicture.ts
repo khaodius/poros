@@ -50,11 +50,12 @@ export function takePanePicture(panel: HTMLElement, drag: number): PanePicture |
   const html = copy.innerHTML;
   if (html.length > MAX_HTML_LENGTH) return null;
   const root = document.documentElement;
+  const { width, height } = panel.getBoundingClientRect();
   return {
     drag,
     html,
-    width: panel.offsetWidth,
-    height: panel.offsetHeight,
+    width,
+    height,
     rootStyle: root.style.cssText,
     theme: root.dataset.theme ?? null,
   };
