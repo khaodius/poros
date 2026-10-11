@@ -1,37 +1,22 @@
 import { useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  DEFAULT_PANEL_SHARE,
+  clampPanelShare,
+  storePanelShare,
+  storedPanelShare,
+} from "../lib/panelShare";
 import { BottomPanel } from "./BottomPanel";
 import { DockArea } from "./DockArea";
 
-const STORAGE_KEY = "poros.bottomPanelShare";
-const DEFAULT_SHARE = 0.3;
-const SHARE_LIMITS = { min: 0.12, max: 0.75 };
-
-function clampShare(share: number): number {
-  return Math.min(SHARE_LIMITS.max, Math.max(SHARE_LIMITS.min, share));
-}
-
-function readShare(): number {
-  try {
-    const stored = Number(localStorage.getItem(STORAGE_KEY));
-    return stored > 0 ? clampShare(stored) : DEFAULT_SHARE;
-  } catch {
-    return DEFAULT_SHARE;
-  }
-}
-
 /** The docked panes above the transfer queue and log, split by a draggable bar. */
 export function Workspace() {
-  const [share, setShare] = useState(readShare);
+  const [share, setShare] = useState(storedPanelShare);
   const containerRef = useRef<HTMLElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
   const commit = (next: number) => {
     setShare(next);
-    try {
-      localStorage.setItem(STORAGE_KEY, String(next));
-    } catch {
-      // The panel then opens at its default height next time.
-    }
+    storePanelShare(next);
   };
 
   // Like the dock splits, dragging resizes the panel directly and commits on release.
@@ -47,7 +32,7 @@ export function Workspace() {
     let frame = 0;
 
     const move = (moveEvent: PointerEvent) => {
-      next = clampShare((bounds.bottom - moveEvent.clientY) / Math.max(1, bounds.height));
+      next = clampPanelShare((bounds.bottom - moveEvent.clientY) / Math.max(1, bounds.height));
       if (frame) return;
       frame = requestAnimationFrame(() => {
         frame = 0;
@@ -77,7 +62,7 @@ export function Workspace() {
         aria-orientation="horizontal"
         title="Drag to resize, double-click to reset"
         onPointerDown={startResize}
-        onDoubleClick={() => commit(DEFAULT_SHARE)}
+        onDoubleClick={() => commit(DEFAULT_PANEL_SHARE)}
       />
       <div ref={panelRef} className="workspace-bottom" style={{ flexBasis: `${share * 100}%` }}>
         <BottomPanel />

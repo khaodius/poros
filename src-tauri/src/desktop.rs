@@ -2,6 +2,7 @@
 //! that follows a tab dragged out of Poros onto the desktop.
 
 use std::sync::Mutex;
+use std::time::Duration;
 
 use serde::Deserialize;
 use tauri::{
@@ -13,6 +14,9 @@ use tauri::{
 pub const DRAG_PREVIEW_WINDOW: &str = "drag-preview";
 /// Mirrored in `src/lib/ipc.ts`. Tells the preview window what to show.
 pub const DRAG_PREVIEW_EVENT: &str = "poros://drag-preview";
+/// How long the preview waits for the window a tab dropped on the desktop opens in, in case it
+/// never says it has drawn.
+const HAND_OFF_LIMIT: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -100,6 +104,9 @@ struct PreviewState {
     content: Option<serde_json::Value>,
     /// The preview page has loaded and listens for content.
     ready: bool,
+    /// The window a tab dropped on the desktop is opening in. The preview stays in its place
+    /// until it has drawn, so nothing flickers in between.
+    successor: Option<String>,
 }
 
 impl DragPreview {
@@ -115,24 +122,8 @@ impl DragPreview {
         let Some(window) = app.get_webview_window(DRAG_PREVIEW_WINDOW) else {
             state.content = Some(placement.content);
             state.ready = false;
-            let opening = opening_corner(app, corner);
-            let window = WebviewWindowBuilder::new(
-                app,
-                DRAG_PREVIEW_WINDOW,
-                WebviewUrl::App("index.html".into()),
-            )
-            .title("Poros")
-            .decorations(false)
-            .resizable(false)
-            .skip_taskbar(true)
-            .always_on_top(true)
-            .focused(false)
-            .focusable(false)
-            .visible(false)
-            .inner_size(placement.width, placement.height)
-            .position(opening.x, opening.y)
-            .build()?;
-            return place(&window, corner, size);
+            open_preview(app, corner, size)?;
+            return Ok(());
         };
         place(&window, corner, size)?;
         if state.content.as_ref() != Some(&placement.content) {
@@ -142,6 +133,50 @@ impl DragPreview {
             state.content = Some(placement.content);
         }
         Ok(())
+    }
+
+    /// Opens the preview hidden and empty, so its page has loaded by the time a drag first
+    /// leaves the window.
+    pub fn prepare(&self, app: &AppHandle) -> tauri::Result<()> {
+        if !can_place_windows() {
+            return Ok(());
+        }
+        let mut state = self.0.lock().unwrap();
+        if app.get_webview_window(DRAG_PREVIEW_WINDOW).is_some() {
+            return Ok(());
+        }
+        state.ready = false;
+        open_preview(
+            app,
+            PhysicalPosition::new(0, 0),
+            LogicalSize::new(640.0, 420.0),
+        )?;
+        Ok(())
+    }
+
+    /// Keeps the preview up for the window a tab dropped on the desktop is opening in, until
+    /// that window says it has drawn, or for a few seconds if it never does.
+    pub fn hand_off(&self, app: &AppHandle, label: &str) {
+        let mut state = self.0.lock().unwrap();
+        if state.content.is_none() {
+            return;
+        }
+        state.successor = Some(label.to_owned());
+        let app = app.clone();
+        let label = label.to_owned();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(HAND_OFF_LIMIT).await;
+            let _ = app.state::<DragPreview>().taken_over(&app, &label);
+        });
+    }
+
+    /// A window has drawn: if the preview was standing in for it, the preview leaves.
+    pub fn taken_over(&self, app: &AppHandle, label: &str) -> tauri::Result<()> {
+        let mut state = self.0.lock().unwrap();
+        if state.successor.as_deref() != Some(label) {
+            return Ok(());
+        }
+        hide_preview(app, &mut state)
     }
 
     /// Marks the preview page ready and returns what it should show, if anything.
@@ -162,14 +197,47 @@ impl DragPreview {
 
     pub fn hide(&self, app: &AppHandle) -> tauri::Result<()> {
         let mut state = self.0.lock().unwrap();
-        if state.content.take().is_none() {
-            return Ok(());
-        }
-        match app.get_webview_window(DRAG_PREVIEW_WINDOW) {
-            Some(window) => hide_window(&window),
-            None => Ok(()),
-        }
+        hide_preview(app, &mut state)
     }
+}
+
+fn hide_preview(app: &AppHandle, state: &mut PreviewState) -> tauri::Result<()> {
+    state.successor = None;
+    if state.content.take().is_none() {
+        return Ok(());
+    }
+    match app.get_webview_window(DRAG_PREVIEW_WINDOW) {
+        Some(window) => hide_window(&window),
+        None => Ok(()),
+    }
+}
+
+/// Opens the preview window hidden. It never takes focus, which would end the drag, and stays
+/// above the window the tab is dragged from.
+fn open_preview(
+    app: &AppHandle,
+    corner: PhysicalPosition<i32>,
+    size: LogicalSize<f64>,
+) -> tauri::Result<WebviewWindow> {
+    let opening = opening_corner(app, corner);
+    let window = WebviewWindowBuilder::new(
+        app,
+        DRAG_PREVIEW_WINDOW,
+        WebviewUrl::App("index.html".into()),
+    )
+    .title("Poros")
+    .decorations(false)
+    .resizable(false)
+    .skip_taskbar(true)
+    .always_on_top(true)
+    .focused(false)
+    .focusable(false)
+    .visible(false)
+    .inner_size(size.width, size.height)
+    .position(opening.x, opening.y)
+    .build()?;
+    place(&window, corner, size)?;
+    Ok(window)
 }
 
 /// Wayland leaves window positions to the compositor, so a preview could not follow the pointer.

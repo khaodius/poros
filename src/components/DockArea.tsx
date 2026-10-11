@@ -4,8 +4,11 @@ import { useShallow } from "zustand/react/shallow";
 import {
   DOCK_GAP,
   TAB_BAR_HEIGHT,
+  between,
   floatingRect,
   resolveExtent,
+  smoothstep,
+  tearingOut,
   type Point,
   type Rect,
 } from "../lib/docking";
@@ -27,9 +30,11 @@ import {
 import { MAIN_WINDOW } from "../lib/ipc";
 import { isLifted, useDragStore, type DropTarget, type TabDrag } from "../state/dragStore";
 import { useLayoutStore } from "../state/layoutStore";
+import { tornOutFrame } from "../state/tabActions";
 import { TabBar } from "./TabBar";
 import { TabContent } from "./TabContent";
 import { TAB_ICONS } from "./tabIcons";
+import { WindowSketch } from "./WindowSketch";
 
 const cssLength = ({ share, pixels }: Extent) => `calc(${share * 100}% + ${pixels}px)`;
 
@@ -88,18 +93,29 @@ function dropPlacement(placement: Placement, side: DropSide): Placement {
   return { ...placement, top: addExtents(placement.top, shift), height: length };
 }
 
-/** Where the lifted pane floats in the dock; held inside it while a drop would leave the
- * window, where it can say so, and where it never stretches the page. */
-function floatingIn(payload: TabDrag, pointer: Point, leaving: boolean): Rect {
+/**
+ * Where the lifted pane floats in the dock, `toward` of the way to the window it would open
+ * as. Where no preview can follow it off the window, it is held inside the dock instead while
+ * a drop would leave, so it can say where the tab will go.
+ */
+function floatingIn(payload: TabDrag, pointer: Point, toward: number, held: boolean): Rect {
   const { dock } = payload;
   const rect = floatingRect(payload, { x: pointer.x - dock.left, y: pointer.y - dock.top });
-  if (!leaving) return rect;
-  const clamp = (value: number, room: number) => Math.min(Math.max(0, value), Math.max(0, room));
-  return {
-    ...rect,
-    left: clamp(rect.left, dock.width - rect.width),
-    top: clamp(rect.top, dock.height - rect.height),
-  };
+  if (held) {
+    const clamp = (value: number, room: number) => Math.min(Math.max(0, value), Math.max(0, room));
+    return {
+      ...rect,
+      left: clamp(rect.left, dock.width - rect.width),
+      top: clamp(rect.top, dock.height - rect.height),
+    };
+  }
+  if (toward <= 0) return rect;
+  const opened = tornOutFrame(pointer);
+  return between(
+    rect,
+    { ...opened, left: opened.left - dock.left, top: opened.top - dock.top },
+    toward,
+  );
 }
 
 interface Resizing {
@@ -145,10 +161,25 @@ export function DockArea() {
 
   const leaving = target?.kind === "outside" || target?.kind === "window";
   // Off the window the tab shows as a preview on the desktop, or in the window under the
-  // pointer, so the pane here fades out. Where the system cannot place a preview, the pane
-  // stays at the edge of the dock saying where the tab will go.
+  // pointer, so the pane here fades out, having turned into the preview on its way to the edge.
+  // Where the system cannot place a preview, the pane stays at the edge of the dock saying
+  // where the tab will go.
   const away = leaving && desktopPreview;
-  const floating = drag && liftedTabId ? floatingIn(drag.payload, drag.pointer, leaving) : null;
+  const toward =
+    drag && liftedTabId && desktopPreview
+      ? tearingOut(drag.pointer, drag.payload.dock, {
+          width: window.innerWidth,
+          height: window.innerHeight,
+        })
+      : 0;
+  const floating =
+    drag && liftedTabId
+      ? floatingIn(drag.payload, drag.pointer, toward, leaving && !desktopPreview)
+      : null;
+  const liftedTab = tabs.find((tab) => tab.id === liftedTabId);
+  // The pane's own content gives way to the drawing of the window in the first half of the way.
+  const sketchOpacity = smoothstep(toward * 2);
+  const contentOpacity = toward > 0 ? 1 - sketchOpacity : undefined;
 
   // Dragging a handle previews the sizes in this component only and commits on release.
   const startResize = (split: SplitNode, index: number, event: PointerEvent<HTMLDivElement>) => {
@@ -244,12 +275,14 @@ export function DockArea() {
             active={visible && owner.id === activeGroupId}
             floating={lifted}
             style={
-              floating && lifted
+              floating && drag && lifted
                 ? {
+                    // Its own size all along, so its content never reflows while it changes.
                     left: floating.left,
                     top: floating.top + TAB_BAR_HEIGHT - 1,
-                    width: floating.width,
-                    height: floating.height - TAB_BAR_HEIGHT + 1,
+                    width: drag.payload.size.width,
+                    height: drag.payload.size.height - TAB_BAR_HEIGHT + 1,
+                    opacity: contentOpacity,
                   }
                 : placementStyle(belowTabBar(placements.get(owner.id)!))
             }
@@ -258,10 +291,18 @@ export function DockArea() {
       })}
       {floating && drag && (
         <FloatingFrame
-          tab={tabs.find((tab) => tab.id === liftedTabId)}
+          tab={liftedTab}
           label={drag.payload.label}
           leavingTo={leaving && !away ? target : null}
+          titleOpacity={contentOpacity}
           style={floating}
+        />
+      )}
+      {floating && drag && toward > 0 && (
+        <WindowSketch
+          className="dock-floating-window"
+          content={{ label: drag.payload.label, kind: liftedTab?.kind ?? "welcome" }}
+          style={{ ...floating, opacity: away ? undefined : sketchOpacity }}
         />
       )}
       {dropTarget && placements.has(dropTarget.groupId) && (
@@ -332,6 +373,7 @@ interface FloatingFrameProps {
   label: string;
   /** Where the pane goes when the pointer is outside the window. */
   leavingTo: DropTarget | null;
+  titleOpacity: number | undefined;
   style: CSSProperties;
 }
 
@@ -340,11 +382,11 @@ function leavingHint(target: DropTarget): string {
   return target.label === MAIN_WINDOW ? "Move to main window" : "Move to that window";
 }
 
-function FloatingFrame({ tab, label, leavingTo, style }: FloatingFrameProps) {
+function FloatingFrame({ tab, label, leavingTo, titleOpacity, style }: FloatingFrameProps) {
   const Icon = TAB_ICONS[tab?.kind ?? "welcome"];
   return (
     <div className="dock-floating" style={style}>
-      <div className="dock-floating-title">
+      <div className="dock-floating-title" style={{ opacity: titleOpacity }}>
         <Icon size={14} className={`tab-icon tab-icon-${tab?.kind}`} />
         <span className="tab-label">{label}</span>
         {leavingTo && (

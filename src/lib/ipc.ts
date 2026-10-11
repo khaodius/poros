@@ -286,7 +286,14 @@ export const dragPreview = {
   place: (placement: PreviewPlacement) => call<void>("drag_preview_place", { placement }),
   /** Whether the system lets the preview follow the pointer. */
   available: () => call<boolean>("drag_preview_available"),
+  /** Opens the preview hidden, so it shows at once when first placed. */
+  prepare: () => call<void>("drag_preview_prepare"),
   hide: () => call<void>("drag_preview_hide"),
+  /**
+   * Called by a new window once it has drawn: if a tab dropped on the desktop opened in it, the
+   * preview that stood in its place leaves.
+   */
+  takenOver: () => call<void>("drag_preview_taken_over"),
   /** Called by the preview once it listens for content; returns what to show, if anything. */
   ready: () => call<PreviewContent | null>("drag_preview_ready"),
   /** Shows the preview once it has drawn its content. */

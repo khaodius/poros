@@ -1,5 +1,6 @@
 import { emitTo } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import type { Point, Rect } from "../lib/docking";
 import { MAIN_WINDOW, RETURN_TAB_EVENT, TAB_DRAG_EVENT, transfers, windows } from "../lib/ipc";
 import {
   allGroups,
@@ -17,7 +18,7 @@ import {
   type PaneTab,
 } from "../lib/layout";
 import type { ConnectProfile, SessionInfo } from "../lib/types";
-import { landingCorner, type ScreenPoint } from "../lib/windowAreas";
+import { landingCorner, landingCornerHere, type ScreenPoint } from "../lib/windowAreas";
 import type { DropTarget } from "./dragStore";
 import { askToSave, closeEditorTab } from "./editorActions";
 import { getEditor } from "./editorRegistry";
@@ -48,6 +49,12 @@ export function tornOutSize(): { width: number; height: number } {
  */
 export function tornOutCorner(pointer: ScreenPoint): ScreenPoint {
   return landingCorner(pointer, TORN_OUT_GRAB);
+}
+
+/** Where a window torn out with the pointer at a point in this window would be, in its pixels. */
+export function tornOutFrame(pointer: Point): Rect {
+  const corner = landingCornerHere(pointer, TORN_OUT_GRAB);
+  return { left: corner.x, top: corner.y, ...tornOutSize() };
 }
 
 /** What a window hands another when tabs move: a layout and its sessions' profiles. */
@@ -186,16 +193,37 @@ function detach(tab: PaneTab): void {
   if (tab.kind === "remote") useSessionStore.getState().release(tab.sessionId);
 }
 
+/** The window a tab just dropped on the desktop is opening in: true once it has opened. */
+let droppedOnDesktop: Promise<boolean> | null = null;
+
+/**
+ * Takes the window a tab dropped on the desktop is opening in, which the preview there stays up
+ * for. The drop is handled right after the drag ends.
+ */
+export function takeWindowDroppedOnDesktop(): Promise<boolean> | null {
+  const opening = droppedOnDesktop;
+  droppedOnDesktop = null;
+  return opening;
+}
+
 /** Opens a tab in a window of its own, held at the given screen point when the system allows. */
-export async function tearOutTab(tabId: string, pointer?: ScreenPoint) {
+export function tearOutTab(tabId: string, pointer?: ScreenPoint): Promise<boolean> {
+  const opening = openInWindow(tabId, pointer);
+  if (pointer) droppedOnDesktop = opening;
+  return opening;
+}
+
+async function openInWindow(tabId: string, pointer?: ScreenPoint): Promise<boolean> {
   const tab = departingTab(tabId);
-  if (!tab) return;
+  if (!tab) return false;
   const { width, height } = tornOutSize();
   try {
     await windows.open(handoffFor(tab), width, height, pointer && tornOutCorner(pointer));
     detach(tab);
+    return true;
   } catch (caught) {
     useToastStore.getState().show("error", (caught as { message?: string }).message ?? "");
+    return false;
   }
 }
 
