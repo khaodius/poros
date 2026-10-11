@@ -1,4 +1,4 @@
-import { useState, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import {
   AppWindow,
   Cloud,
@@ -106,7 +106,19 @@ export function TabBar({ group }: { group: GroupNode }) {
   };
 
   return (
-    <div className="tab-bar" data-tab-bar={group.id} role="tablist">
+    <div
+      className="tab-bar"
+      data-tab-bar={group.id}
+      role="tablist"
+      onWheel={(event) => {
+        // Tabs that do not fit scroll sideways under the wheel.
+        if (Math.abs(event.deltaY) > Math.abs(event.deltaX))
+          event.currentTarget.scrollLeft += event.deltaY;
+      }}
+      onDoubleClick={(event) => {
+        if (event.target === event.currentTarget) addTab(welcomeTab(), group.id);
+      }}
+    >
       {group.tabs.map((tab, index) => (
         <TabButton
           key={tab.id}
@@ -124,7 +136,7 @@ export function TabBar({ group }: { group: GroupNode }) {
       <button
         type="button"
         className="icon-button tab-add"
-        title="New tab"
+        title="New tab (Ctrl+T)"
         aria-label="New tab"
         onClick={() => addTab(welcomeTab(), group.id)}
       >
@@ -170,9 +182,22 @@ function TabButton({
     return protocol ? isCloud(protocol) : false;
   });
   const Icon = cloud ? Cloud : TAB_ICONS[tab.kind];
+  const tabRef = useRef<HTMLDivElement>(null);
+
+  // A tab chosen with the keyboard, or opened past the end of a full bar, scrolls into view.
+  useEffect(() => {
+    const element = tabRef.current;
+    const bar = element?.parentElement;
+    if (!selected || !element || !bar) return;
+    const tabBounds = element.getBoundingClientRect();
+    const barBounds = bar.getBoundingClientRect();
+    if (tabBounds.left < barBounds.left) bar.scrollLeft -= barBounds.left - tabBounds.left;
+    else if (tabBounds.right > barBounds.right) bar.scrollLeft += tabBounds.right - barBounds.right;
+  }, [selected]);
 
   return (
     <div
+      ref={tabRef}
       className={[
         "tab-button",
         selected && "is-selected",
@@ -218,7 +243,7 @@ function TabButton({
         type="button"
         className="tab-close"
         aria-label={`Close ${label}`}
-        title="Close"
+        title="Close (Ctrl+W)"
         onClick={() => void requestCloseTab(tab.id)}
       >
         <X size={12} />

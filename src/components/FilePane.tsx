@@ -40,8 +40,10 @@ import {
   Upload,
   X,
 } from "lucide-react";
+import { useBackForwardButtons } from "../hooks/useBackForwardButtons";
 import { usePane } from "../hooks/usePane";
 import { COLUMN_LABELS, availableColumns, type DetailColumn } from "../lib/columns";
+import { entryAfterRemoval } from "../lib/cursor";
 import { sameFilesystem, toLocation, worksInPlace } from "../lib/fileOrigin";
 import type { FileSource } from "../lib/fileSource";
 import { formatSize, pluralize } from "../lib/format";
@@ -78,7 +80,7 @@ import { useUiStore } from "../state/uiStore";
 import { CompareDialog, type CompareSide } from "./CompareDialog";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
-import { FileList } from "./FileList";
+import { FileList, type MenuPosition } from "./FileList";
 import { PathBar } from "./PathBar";
 import { PromptDialog } from "./PromptDialog";
 import { PropertiesDialog } from "./PropertiesDialog";
@@ -192,6 +194,7 @@ export function FilePane({
   const [dialog, setDialog] = useState<PaneDialog | null>(null);
   const [menu, setMenu] = useState<OpenMenu | null>(null);
   const [pathEditRequest, setPathEditRequest] = useState(0);
+  const sectionRef = useRef<HTMLElement>(null);
   const filterRef = useRef<HTMLInputElement>(null);
   const writeLog = useLogStore((state) => state.write);
   const showToast = useToastStore((state) => state.show);
@@ -211,6 +214,13 @@ export function FilePane({
   useLayoutEffect(() => {
     paneRef.current = pane;
   });
+  useBackForwardButtons(sectionRef, pane.goBack, pane.goForward);
+
+  /** Back to the file list, so the keyboard works on files again after typing a path or filter. */
+  const focusList = () =>
+    sectionRef.current
+      ?.querySelector<HTMLElement>(".file-list-body")
+      ?.focus({ preventScroll: true });
 
   useEffect(
     () =>
@@ -374,8 +384,8 @@ export function FilePane({
     };
   };
 
-  const showContextMenu = (event: MouseEvent, entry: FileEntry | null) => {
-    setMenu({ x: event.clientX, y: event.clientY, items: contextMenuItems(entry) });
+  const showContextMenu = (position: MenuPosition, entry: FileEntry | null) => {
+    setMenu({ ...position, items: contextMenuItems(entry) });
   };
 
   const showDriveMenu = async (event: MouseEvent<HTMLButtonElement>) => {
@@ -607,6 +617,7 @@ export function FilePane({
 
   return (
     <section
+      ref={sectionRef}
       className={["pane", active && "is-active", dropFolder === "" && "is-drop-target"]
         .filter(Boolean)
         .join(" ")}
@@ -648,7 +659,7 @@ export function FilePane({
           <ToolbarButton label="Up (Backspace)" onClick={pane.goUp} disabled={!pane.canGoUp}>
             <ArrowUp size={15} />
           </ToolbarButton>
-          <ToolbarButton label="Home" onClick={pane.goHome}>
+          <ToolbarButton label="Home (Alt+Home)" onClick={pane.goHome}>
             <Home size={15} />
           </ToolbarButton>
           {source.roots && (
@@ -671,7 +682,7 @@ export function FilePane({
             <FilePlus size={15} />
           </ToolbarButton>
           <ToolbarButton
-            label={pane.showHidden ? "Hide hidden files" : "Show hidden files"}
+            label={pane.showHidden ? "Hide hidden files (Ctrl+H)" : "Show hidden files (Ctrl+H)"}
             onClick={pane.toggleHidden}
             pressed={pane.showHidden}
           >
@@ -686,6 +697,7 @@ export function FilePane({
           pathStyle={source.pathStyle}
           editRequest={pathEditRequest}
           onNavigate={pane.navigate}
+          onDone={focusList}
         />
         <label className="filter">
           <Search size={13} />
@@ -693,13 +705,14 @@ export function FilePane({
             ref={filterRef}
             value={pane.filter}
             placeholder="Filter"
+            title="Filter this folder (Ctrl+F)"
             spellCheck={false}
             onChange={(event) => pane.setFilter(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                pane.setFilter("");
-                event.currentTarget.blur();
-              }
+              if (event.key === "Escape") pane.setFilter("");
+              else if (event.key !== "Enter" && event.key !== "ArrowDown") return;
+              event.preventDefault();
+              focusList();
             }}
           />
           {pane.filter && (
@@ -874,12 +887,14 @@ export function FilePane({
           danger
           onClose={() => setDialog(null)}
           onConfirm={async () => {
-            await source.remove(dialog.entries.map((entry) => entry.path));
+            const removed = dialog.entries.map((entry) => entry.path);
+            const next = entryAfterRemoval(pane.visibleEntries, new Set(removed), pane.cursorPath);
+            await source.remove(removed);
             writeLog(
               "info",
               `Deleted ${pluralize(dialog.entries.length, `${where} item`)} in ${pane.listing?.path ?? ""}`,
             );
-            await pane.refresh();
+            await pane.refresh(next);
           }}
         >
           <DeleteSummary entries={dialog.entries} where={where} />

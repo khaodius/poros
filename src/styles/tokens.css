@@ -17,6 +17,13 @@
   --radius: 6px;
   --radius-large: 10px;
 
+  /* The scrollbar's grab area, the thumb drawn in it (wider under the pointer), and how far each
+     end of the thumb flares into the edge it runs along. */
+  --scrollbar-size: 8px;
+  --scrollbar-thumb-thickness: 4px;
+  --scrollbar-thumb-thickness-hover: 6px;
+  --scrollbar-ramp: 12px;
+
   --surface-base: #111317;
   --surface-sunken: #0c0e11;
   --surface-raised: #181b20;

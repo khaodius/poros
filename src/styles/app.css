@@ -54,25 +54,97 @@ textarea {
   outline-offset: -2px;
 }
 
+/* Scrollbars: a thin thumb against the edge it scrolls along, so in a pane it lies on the pane's
+   border. Each end flares into that edge: a quarter ellipse hollowed out on the edge side meets
+   one rounding off the thumb, an S that leaves the edge at a tangent and joins the thumb at one.
+   Background layers draw it, as scrollbar parts take no clip paths or masks. */
+
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--scrollbar);
-  border: 2px solid transparent;
-  border-radius: 6px;
-  background-clip: padding-box;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background-color: var(--scrollbar-hover);
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
 }
 
 ::-webkit-scrollbar-track,
 ::-webkit-scrollbar-corner {
   background: transparent;
+}
+
+::-webkit-scrollbar-thumb,
+.terminal-host .xterm .xterm-scrollable-element > .scrollbar > .slider {
+  --thumb-thickness: var(--scrollbar-thumb-thickness);
+  --thumb-color: var(--scrollbar);
+  --half-thickness: calc(var(--thumb-thickness) / 2);
+  /* Short thumbs get shorter flares, which then meet in the middle. */
+  --ramp-length: min(var(--scrollbar-ramp), 50%);
+  --thumb-fill: linear-gradient(var(--thumb-color), var(--thumb-color));
+  /* Each straddles the ellipse's edge, so the curve is antialiased where it lies. */
+  --hollow: transparent 85%, var(--thumb-color) 115%;
+  --round: var(--thumb-color) 85%, transparent 115%;
+  background-color: transparent;
+  background-repeat: no-repeat;
+}
+
+::-webkit-scrollbar-thumb:hover,
+::-webkit-scrollbar-thumb:active,
+.terminal-host .xterm .xterm-scrollable-element > .scrollbar > .slider:hover,
+.terminal-host .xterm .xterm-scrollable-element > .scrollbar > .slider.active {
+  --thumb-thickness: var(--scrollbar-thumb-thickness-hover);
+  --thumb-color: var(--scrollbar-hover);
+}
+
+::-webkit-scrollbar-thumb:vertical {
+  min-height: calc(2 * var(--scrollbar-ramp) + 8px);
+}
+
+::-webkit-scrollbar-thumb:horizontal {
+  min-width: calc(2 * var(--scrollbar-ramp) + 8px);
+}
+
+/* The rounded ends span the whole thickness and the middle overlaps them by a pixel, so no two
+   layers merely touch: abutting antialiased edges leave seams at fractional display scales. */
+::-webkit-scrollbar-thumb:vertical,
+.terminal-host .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
+  background-image:
+    radial-gradient(100% 50% at 0 0, var(--hollow)),
+    radial-gradient(50% 50% at 50% 100%, var(--round)),
+    radial-gradient(100% 50% at 0 100%, var(--hollow)),
+    radial-gradient(50% 50% at 50% 0, var(--round)), var(--thumb-fill), var(--thumb-fill);
+  background-position:
+    right top,
+    right top,
+    right bottom,
+    right bottom,
+    right center,
+    right center;
+  background-size:
+    var(--half-thickness) var(--ramp-length),
+    var(--thumb-thickness) var(--ramp-length),
+    var(--half-thickness) var(--ramp-length),
+    var(--thumb-thickness) var(--ramp-length),
+    var(--half-thickness) calc(100% - var(--ramp-length)),
+    var(--thumb-thickness) calc(100% - 2 * var(--ramp-length) + 2px);
+}
+
+::-webkit-scrollbar-thumb:horizontal {
+  background-image:
+    radial-gradient(50% 100% at 0 0, var(--hollow)),
+    radial-gradient(50% 50% at 100% 50%, var(--round)),
+    radial-gradient(50% 100% at 100% 0, var(--hollow)),
+    radial-gradient(50% 50% at 0 50%, var(--round)), var(--thumb-fill), var(--thumb-fill);
+  background-position:
+    left bottom,
+    left bottom,
+    right bottom,
+    right bottom,
+    center bottom,
+    center bottom;
+  background-size:
+    var(--ramp-length) var(--half-thickness),
+    var(--ramp-length) var(--thumb-thickness),
+    var(--ramp-length) var(--half-thickness),
+    var(--ramp-length) var(--thumb-thickness),
+    calc(100% - var(--ramp-length)) var(--half-thickness),
+    calc(100% - 2 * var(--ramp-length) + 2px) var(--thumb-thickness);
 }
 
 input:not([type="checkbox"], [type="radio"]) {
@@ -322,242 +394,6 @@ input.has-error {
     opacity: 1;
     transform: scale(1);
   }
-}
-
-/* Automation */
-
-.when-done-control {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 0 auto 0 8px;
-  padding-left: 10px;
-  color: var(--text-muted);
-  font-size: var(--font-size-small);
-  white-space: nowrap;
-  border-left: 1px solid var(--border);
-}
-
-.when-done-control select {
-  height: 22px;
-  max-width: 150px;
-  font-size: var(--font-size-small);
-}
-
-.when-done-control select.is-set {
-  color: var(--accent);
-  border-color: var(--accent);
-}
-
-.setting-control .input-with-button input {
-  width: 160px;
-}
-
-.placeholder-list {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 4px 12px;
-  margin: 0 0 12px;
-  font-size: var(--font-size-small);
-}
-
-.placeholder-list > div {
-  display: contents;
-}
-
-.placeholder-list dt {
-  color: var(--text);
-}
-
-.placeholder-list dd {
-  margin: 0;
-  color: var(--text-muted);
-}
-
-.command-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding-bottom: 4px;
-}
-
-.command-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.command-row .command-name {
-  flex: 0 0 150px;
-}
-
-.command-row .command-text {
-  flex: 1;
-  font-family: var(--font-mono);
-  font-size: var(--font-size-small);
-}
-
-.command-row .toggle {
-  height: 26px;
-  border: 1px solid var(--border);
-}
-
-.command-row-new {
-  padding-top: 6px;
-  border-top: 1px dashed var(--border);
-}
-
-.command-output-dialog {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.command-output-where {
-  overflow: hidden;
-  color: var(--text-muted);
-  font-size: var(--font-size-small);
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.command-output-where code {
-  color: var(--text);
-}
-
-.command-output {
-  height: 320px;
-  margin: 0;
-  padding: 8px 10px;
-  overflow: auto;
-  font-family: var(--font-mono);
-  font-size: var(--font-size-tiny);
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
-  background: var(--surface-sunken);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-small);
-  cursor: text;
-}
-
-.command-output-stderr {
-  color: var(--warning);
-}
-
-.command-output-note {
-  color: var(--text-faint);
-}
-
-.command-output-dialog .dialog-actions {
-  align-items: center;
-  margin-top: 0;
-}
-
-.command-output-status {
-  display: flex;
-  flex: 1;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  color: var(--text-muted);
-  font-size: var(--font-size-small);
-}
-
-.command-output-status.is-failed {
-  color: var(--danger);
-}
-
-.countdown-text {
-  color: var(--text-muted);
-}
-
-.countdown-text strong {
-  color: var(--text);
-  font-variant-numeric: tabular-nums;
-}
-
-.task-manager {
-  height: min(700px, calc(100vh - 120px));
-}
-
-.task-form {
-  gap: 12px;
-  padding-bottom: 0;
-  overflow-y: auto;
-}
-
-.task-form .segmented button {
-  padding: 0 12px;
-  white-space: nowrap;
-}
-
-.task-form .dialog-actions {
-  position: sticky;
-  bottom: 0;
-  margin-top: auto;
-  padding: 10px 0 20px;
-  background: var(--surface-overlay);
-}
-
-.task-form .form-row {
-  align-items: flex-end;
-}
-
-.task-enabled {
-  flex: none;
-  height: 28px;
-}
-
-.site-item.is-off .site-item-name {
-  color: var(--text-faint);
-}
-
-.task-failed {
-  color: var(--danger);
-}
-
-.trigger-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-.trigger-row .stepper {
-  height: 28px;
-}
-
-.trigger-label {
-  color: var(--text-muted);
-  font-size: var(--font-size-small);
-}
-
-.task-status {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 8px 10px;
-  color: var(--text-muted);
-  font-size: var(--font-size-small);
-  background: var(--surface-sunken);
-  border-radius: var(--radius-small);
-}
-
-.task-status > span {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.task-status strong {
-  color: var(--text);
-  font-weight: 500;
-}
-
-.task-status .task-failed strong {
-  color: var(--danger);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -822,242 +658,6 @@ input.has-error {
 .dock.is-tab-away > .dock-floating,
 .dock.is-tab-away > .dock-floating-window {
   opacity: 0;
-}
-
-/* Automation */
-
-.when-done-control {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 0 auto 0 8px;
-  padding-left: 10px;
-  color: var(--text-muted);
-  font-size: var(--font-size-small);
-  white-space: nowrap;
-  border-left: 1px solid var(--border);
-}
-
-.when-done-control select {
-  height: 22px;
-  max-width: 150px;
-  font-size: var(--font-size-small);
-}
-
-.when-done-control select.is-set {
-  color: var(--accent);
-  border-color: var(--accent);
-}
-
-.setting-control .input-with-button input {
-  width: 160px;
-}
-
-.placeholder-list {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 4px 12px;
-  margin: 0 0 12px;
-  font-size: var(--font-size-small);
-}
-
-.placeholder-list > div {
-  display: contents;
-}
-
-.placeholder-list dt {
-  color: var(--text);
-}
-
-.placeholder-list dd {
-  margin: 0;
-  color: var(--text-muted);
-}
-
-.command-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding-bottom: 4px;
-}
-
-.command-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.command-row .command-name {
-  flex: 0 0 150px;
-}
-
-.command-row .command-text {
-  flex: 1;
-  font-family: var(--font-mono);
-  font-size: var(--font-size-small);
-}
-
-.command-row .toggle {
-  height: 26px;
-  border: 1px solid var(--border);
-}
-
-.command-row-new {
-  padding-top: 6px;
-  border-top: 1px dashed var(--border);
-}
-
-.command-output-dialog {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.command-output-where {
-  overflow: hidden;
-  color: var(--text-muted);
-  font-size: var(--font-size-small);
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.command-output-where code {
-  color: var(--text);
-}
-
-.command-output {
-  height: 320px;
-  margin: 0;
-  padding: 8px 10px;
-  overflow: auto;
-  font-family: var(--font-mono);
-  font-size: var(--font-size-tiny);
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
-  background: var(--surface-sunken);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-small);
-  cursor: text;
-}
-
-.command-output-stderr {
-  color: var(--warning);
-}
-
-.command-output-note {
-  color: var(--text-faint);
-}
-
-.command-output-dialog .dialog-actions {
-  align-items: center;
-  margin-top: 0;
-}
-
-.command-output-status {
-  display: flex;
-  flex: 1;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  color: var(--text-muted);
-  font-size: var(--font-size-small);
-}
-
-.command-output-status.is-failed {
-  color: var(--danger);
-}
-
-.countdown-text {
-  color: var(--text-muted);
-}
-
-.countdown-text strong {
-  color: var(--text);
-  font-variant-numeric: tabular-nums;
-}
-
-.task-manager {
-  height: min(700px, calc(100vh - 120px));
-}
-
-.task-form {
-  gap: 12px;
-  padding-bottom: 0;
-  overflow-y: auto;
-}
-
-.task-form .segmented button {
-  padding: 0 12px;
-  white-space: nowrap;
-}
-
-.task-form .dialog-actions {
-  position: sticky;
-  bottom: 0;
-  margin-top: auto;
-  padding: 10px 0 20px;
-  background: var(--surface-overlay);
-}
-
-.task-form .form-row {
-  align-items: flex-end;
-}
-
-.task-enabled {
-  flex: none;
-  height: 28px;
-}
-
-.site-item.is-off .site-item-name {
-  color: var(--text-faint);
-}
-
-.task-failed {
-  color: var(--danger);
-}
-
-.trigger-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-.trigger-row .stepper {
-  height: 28px;
-}
-
-.trigger-label {
-  color: var(--text-muted);
-  font-size: var(--font-size-small);
-}
-
-.task-status {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 8px 10px;
-  color: var(--text-muted);
-  font-size: var(--font-size-small);
-  background: var(--surface-sunken);
-  border-radius: var(--radius-small);
-}
-
-.task-status > span {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.task-status strong {
-  color: var(--text);
-  font-weight: 500;
-}
-
-.task-status .task-failed strong {
-  color: var(--danger);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1936,7 +1536,7 @@ form.path-bar {
   display: grid;
   flex: none;
   height: 28px;
-  padding-right: 10px;
+  padding-right: var(--scrollbar-size);
   background: var(--list-header);
   border-bottom: 1px solid var(--border);
 }
@@ -2870,7 +2470,7 @@ option {
 .transfer-header {
   flex: none;
   height: 26px;
-  padding-right: 10px;
+  padding-right: var(--scrollbar-size);
   color: var(--text-muted);
   font-size: var(--font-size-tiny);
   font-weight: 600;
@@ -5155,8 +4755,19 @@ textarea::placeholder {
   height: 100%;
 }
 
-.terminal-host .xterm-viewport {
-  scrollbar-color: var(--scrollbar) transparent;
+/* The terminal draws its own scrollbar, sized inline; this makes it match the others. */
+.terminal-host .xterm .xterm-scrollable-element > .scrollbar.vertical {
+  width: var(--scrollbar-size) !important;
+}
+
+.terminal-host .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
+  left: 0 !important;
+  width: 100% !important;
+}
+
+/* Below the last whole row; the terminal's own stylesheet paints it black. */
+.terminal-host .xterm .xterm-viewport {
+  background-color: transparent;
 }
 
 .terminal-ended {

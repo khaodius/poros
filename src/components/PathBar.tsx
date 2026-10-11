@@ -8,9 +8,11 @@ interface PathBarProps {
   pathStyle: PathStyle;
   editRequest: number;
   onNavigate: (path: string) => Promise<boolean>;
+  /** After Enter or Escape ends an edit. */
+  onDone: () => void;
 }
 
-export function PathBar({ path, pathStyle, editRequest, onNavigate }: PathBarProps) {
+export function PathBar({ path, pathStyle, editRequest, onNavigate, onDone }: PathBarProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [handledEditRequest, setHandledEditRequest] = useState(editRequest);
@@ -36,7 +38,9 @@ export function PathBar({ path, pathStyle, editRequest, onNavigate }: PathBarPro
         className="path-bar"
         onSubmit={async (event) => {
           event.preventDefault();
-          if (await onNavigate(draft.trim())) setEditing(false);
+          if (!(await onNavigate(draft.trim()))) return;
+          setEditing(false);
+          onDone();
         }}
       >
         <input
@@ -47,7 +51,9 @@ export function PathBar({ path, pathStyle, editRequest, onNavigate }: PathBarPro
           onChange={(event) => setDraft(event.target.value)}
           onBlur={() => setEditing(false)}
           onKeyDown={(event) => {
-            if (event.key === "Escape") setEditing(false);
+            if (event.key !== "Escape") return;
+            setEditing(false);
+            onDone();
           }}
         />
       </form>
