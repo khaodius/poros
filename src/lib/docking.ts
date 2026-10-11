@@ -38,6 +38,8 @@ export const TAB_BAR_HEIGHT = 31;
 const MERGE_ZONE = 0.5;
 /** The lifted pane is never larger than this share of the dock, so the layout under it shows. */
 const FLOATING_MAX = { width: 0.5, height: 0.6 };
+/** How near an edge of the window, in pixels, a lifted pane starts turning into a window. */
+const EDGE_ZONE = 80;
 
 export function resolveExtent({ share, pixels }: Extent, total: number): number {
   return share * total + pixels;
@@ -144,4 +146,39 @@ export function floatingFrame(frame: Rect, dock: Rect, start: Point): { grab: Po
 
 export function floatingRect({ grab, size }: { grab: Point; size: Size }, pointer: Point): Rect {
   return { left: pointer.x - grab.x, top: pointer.y - grab.y, ...size };
+}
+
+/** Eases from 0 to 1, slow at both ends. */
+export function smoothstep(value: number): number {
+  const t = Math.min(1, Math.max(0, value));
+  return t * t * (3 - 2 * t);
+}
+
+/**
+ * How far a lifted pane has turned into the window it opens as when dropped off Poros, from 0
+ * to 1: it starts as the pointer nears an edge of the window and is done at the edge, where the
+ * preview on the desktop takes over at the same size and place. Above the dock the title bar
+ * is the whole ramp, which keeps the tab bars below it clear.
+ */
+export function tearingOut(pointer: Point, dock: Rect, viewport: Size): number {
+  const near = (distance: number, zone: number) => 1 - distance / Math.max(1, zone);
+  return smoothstep(
+    Math.max(
+      near(pointer.y, dock.top),
+      near(pointer.x, EDGE_ZONE),
+      near(viewport.width - pointer.x, EDGE_ZONE),
+      near(viewport.height - pointer.y, EDGE_ZONE),
+    ),
+  );
+}
+
+/** The rect `t` of the way from one to another. */
+export function between(from: Rect, to: Rect, t: number): Rect {
+  const at = (start: number, end: number) => start + (end - start) * t;
+  return {
+    left: at(from.left, to.left),
+    top: at(from.top, to.top),
+    width: at(from.width, to.width),
+    height: at(from.height, to.height),
+  };
 }

@@ -213,6 +213,9 @@ input.has-error {
   display: flex;
   flex-direction: column;
   height: 100%;
+  /* Clipped rather than scrollable, so a pane dragged past the edge never scrolls the page. */
+  overflow: hidden;
+  overflow: clip;
 }
 
 .app.has-drawn-border {
@@ -816,7 +819,8 @@ input.has-error {
 
 /* A tab dragged off the window shows on the desktop or in the window under the pointer instead. */
 .dock.is-tab-away > .tab-panel.is-floating,
-.dock.is-tab-away > .dock-floating {
+.dock.is-tab-away > .dock-floating,
+.dock.is-tab-away > .dock-floating-window {
   opacity: 0;
 }
 
@@ -1185,125 +1189,215 @@ input.has-error {
   font-weight: 500;
 }
 
-/* The preview window that follows a tab dragged out onto the desktop. */
-.drag-preview {
+/* The window a tab dragged out of Poros opens in, drawn at its size and laid out like it. The
+   lifted pane turns into it near the window's edge, and the preview on the desktop shows it. */
+.window-sketch {
   display: flex;
   flex-direction: column;
-  height: 100%;
   overflow: hidden;
   background: var(--surface-base);
+  pointer-events: none;
+}
+
+/* The page of the preview window. */
+.window-sketch.drag-preview {
+  height: 100%;
   border: 1px solid var(--border-strong);
 }
 
-.drag-preview-titlebar {
+.dock > .dock-floating-window {
+  position: absolute;
+  z-index: 31;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-popover);
+  transition: opacity 120ms ease;
+}
+
+.window-sketch-titlebar {
   display: flex;
   flex: none;
   align-items: center;
-  gap: 5px;
-  height: 22px;
-  padding: 0 7px;
-  font-size: var(--font-size-tiny);
+  gap: 8px;
+  height: 46px;
+  padding: 0 12px;
+  font-size: 14px;
   font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
   background: var(--titlebar);
   border-bottom: 1px solid var(--border);
 }
 
-.drag-preview-hint {
+.window-sketch-hint {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   margin-left: auto;
   color: var(--accent);
+  font-size: var(--font-size-small);
   font-weight: 500;
+  letter-spacing: normal;
 }
 
-.drag-preview-tabs {
-  display: flex;
-  flex: none;
-  align-items: flex-end;
-  height: 24px;
-  padding: 0 6px;
-}
-
-.drag-preview-tab {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  max-width: 70%;
-  height: 21px;
-  padding: 0 9px;
-  font-size: var(--font-size-tiny);
-  background: var(--surface-raised);
-  border: 1px solid var(--border);
-  border-bottom: none;
-  border-radius: var(--radius-small) var(--radius-small) 0 0;
-}
-
-.drag-preview-tab .tab-icon {
-  color: var(--accent);
-}
-
-.drag-preview-pane {
+.window-sketch-workspace {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 7px;
   min-height: 0;
-  padding: 9px 10px;
-  overflow: hidden;
-  background: var(--surface-raised);
-  border-top: 1px solid var(--border);
+  padding: 4px 8px 0;
 }
 
-.drag-preview-pane.is-terminal {
+.window-sketch-tabs {
+  display: flex;
+  flex: none;
+  align-items: flex-end;
+  height: 31px;
+}
+
+.window-sketch-tab {
+  position: relative;
+  display: flex;
+  flex: 0 1 200px;
+  align-items: center;
+  gap: 7px;
+  min-width: 96px;
+  height: 29px;
+  padding: 0 10px 1px;
+  font-size: var(--font-size-small);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+
+.window-sketch-tab::before {
+  position: absolute;
+  top: -1px;
+  right: 8px;
+  left: 8px;
+  height: 2px;
+  background: var(--tab-indicator);
+  border-radius: 0 0 2px 2px;
+  content: "";
+}
+
+.window-sketch-tab .tab-icon {
+  color: var(--accent);
+}
+
+.window-sketch-pane {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-height: 0;
+  margin-top: -1px;
+  overflow: hidden;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 0 var(--radius) var(--radius);
+}
+
+.window-sketch-pane.is-terminal {
   background: var(--surface-sunken);
 }
 
-.drag-preview-pane.is-welcome {
+.window-sketch-pane.is-welcome {
   align-items: center;
   justify-content: center;
 }
 
-.drag-preview-mark {
+.window-sketch-mark {
   opacity: 0.5;
 }
 
-.drag-preview-line {
+.window-sketch-bar {
+  flex: none;
+  height: 36px;
+  border-bottom: 1px solid var(--border);
+}
+
+.window-sketch-lines {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 12px;
+}
+
+.window-sketch-line {
   display: flex;
   flex: none;
   align-items: center;
-  gap: 6px;
-  height: 6px;
+  gap: 9px;
+  height: 26px;
 }
 
-.drag-preview-icon {
+.window-sketch-icon {
   flex: none;
-  width: 7px;
-  height: 6px;
+  width: 16px;
+  height: 13px;
   background: var(--icon-folder);
-  border-radius: 1px;
+  border-radius: 2px;
   opacity: 0.75;
 }
 
-.drag-preview-text {
-  height: 4px;
+.window-sketch-text {
+  height: 7px;
   background: var(--text-faint);
-  border-radius: 2px;
+  border-radius: 4px;
   opacity: 0.45;
 }
 
-.drag-preview-pane.is-editor .drag-preview-icon {
-  width: 9px;
+.window-sketch-pane.is-editor .window-sketch-line,
+.window-sketch-pane.is-terminal .window-sketch-line {
+  height: 20px;
+}
+
+.window-sketch-pane.is-editor .window-sketch-icon {
+  width: 18px;
+  height: 7px;
   background: var(--text-faint);
   opacity: 0.35;
 }
 
-.drag-preview-pane.is-terminal .drag-preview-icon {
+.window-sketch-pane.is-terminal .window-sketch-icon {
+  width: 9px;
+  height: 7px;
   background: var(--success);
 }
 
-.drag-preview-pane.is-terminal .drag-preview-text {
+.window-sketch-pane.is-terminal .window-sketch-text {
   background: var(--text-muted);
+}
+
+.window-sketch-panel {
+  display: flex;
+  flex-direction: column;
+  flex-grow: 0;
+  flex-shrink: 1;
+  min-height: 96px;
+  margin-top: 8px;
+  overflow: hidden;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.window-sketch-panel-header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 24px;
+  height: 32px;
+  padding: 0 16px;
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+  font-weight: 500;
+  border-bottom: 1px solid var(--border);
+}
+
+.window-sketch-statusbar {
+  flex: none;
+  height: 24px;
+  background: var(--statusbar);
 }
 
 /* Tab bar */

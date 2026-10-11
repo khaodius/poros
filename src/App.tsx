@@ -32,6 +32,7 @@ import { isTextEntryTarget } from "./lib/focus";
 import {
   RETURN_TAB_EVENT,
   application,
+  dragPreview,
   onLog,
   onQueueFinished,
   onSessionClosed,
@@ -366,6 +367,15 @@ export function App() {
       .finally(() => setReady(true));
   }, []);
   useEffect(() => startClipboard(), []);
+  // A window a tab was dropped onto the desktop in opens under the preview that showed it, which
+  // leaves once this window has drawn its tabs.
+  useEffect(() => {
+    if (!ready || isMainWindow()) return;
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => void dragPreview.takenOver().catch(() => undefined));
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [ready]);
   useBackendEvents();
   useCloseGuard();
   useTabDragsBetweenWindows();

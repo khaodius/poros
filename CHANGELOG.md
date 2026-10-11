@@ -3,6 +3,13 @@
 Installers for every version are attached to its
 [release](https://github.com/khaodius/poros/releases), with SHA-256 checksums.
 
+## 0.3.3 - 2026-10-11
+
+- **Dragging a tab out of a window** is one smooth motion. Near the window's edge the pane
+  turns into the window it will open as, and the preview on the desktop is that window at its
+  real size instead of a small copy. When you drop the tab, the preview stays until the new
+  window has drawn in its place, so nothing jumps in size or blinks on the way.
+
 ## 0.3.2 - 2026-10-10
 
 Fixes from a code review, each with a test of the failure it fixes.

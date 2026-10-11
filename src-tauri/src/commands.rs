@@ -763,6 +763,10 @@ pub async fn window_open(
             "Could not open a window: {error}"
         )));
     }
+    // Dropped on the desktop: the preview there stands in for the window until it has drawn.
+    if corner.is_some() {
+        app.state::<DragPreview>().hand_off(&app, &label);
+    }
     Ok(label)
 }
 
@@ -787,8 +791,27 @@ pub fn drag_preview_available() -> bool {
 }
 
 #[tauri::command]
+pub async fn drag_preview_prepare(
+    app: AppHandle,
+    preview: State<'_, DragPreview>,
+) -> AppResult<()> {
+    preview.prepare(&app).map_err(window_error)
+}
+
+#[tauri::command]
 pub async fn drag_preview_hide(app: AppHandle, preview: State<'_, DragPreview>) -> AppResult<()> {
     preview.hide(&app).map_err(window_error)
+}
+
+#[tauri::command]
+pub async fn drag_preview_taken_over(
+    app: AppHandle,
+    window: WebviewWindow,
+    preview: State<'_, DragPreview>,
+) -> AppResult<()> {
+    preview
+        .taken_over(&app, window.label())
+        .map_err(window_error)
 }
 
 #[tauri::command]

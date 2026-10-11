@@ -135,6 +135,20 @@ export function landingCorner(pointer: ScreenPoint, grab: { x: number; y: number
 }
 
 /**
+ * Where a window held at `grab` by the pointer at a point in this window would open, in this
+ * window's coordinates.
+ */
+export function landingCornerHere(
+  pointer: { x: number; y: number },
+  grab: { x: number; y: number },
+): { x: number; y: number } {
+  if (!thisWindow) return { x: pointer.x - grab.x, y: pointer.y - grab.y };
+  const { left, top, scale } = thisWindow;
+  const corner = landingCorner({ x: left + pointer.x * scale, y: top + pointer.y * scale }, grab);
+  return { x: (corner.x - left) / scale, y: (corner.y - top) / scale };
+}
+
+/**
  * The window at a point on screen, in physical pixels. Torn-out windows open above the main
  * window, so where the two overlap the torn-out one is the window the pointer is over.
  */

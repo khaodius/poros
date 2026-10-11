@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  between,
   changesLayout,
   dropSide,
   floatingFrame,
   groupNearest,
   groupRects,
+  tearingOut,
   type Rect,
 } from "./docking";
 import { group, type LayoutNode } from "./layout";
@@ -80,5 +82,23 @@ describe("docking geometry", () => {
     const { grab, size } = floatingFrame(rect(0, 40, 1008, 600), DOCK, { x: 504, y: 55 });
     expect(size).toEqual({ width: 504, height: 360 });
     expect(grab).toEqual({ x: 252, y: 15 });
+  });
+
+  it("turns a lifted pane into a window only as the pointer nears the window's edge", () => {
+    const viewport = { width: 1024, height: 700 };
+    expect(tearingOut({ x: 512, y: 300 }, DOCK, viewport)).toBe(0);
+    // The tab bars just below the title bar are clear of it.
+    expect(tearingOut({ x: 512, y: 60 }, DOCK, viewport)).toBe(0);
+    expect(tearingOut({ x: 512, y: 20 }, DOCK, viewport)).toBe(0.5);
+    expect(tearingOut({ x: 984, y: 300 }, DOCK, viewport)).toBe(0.5);
+    expect(tearingOut({ x: 1024, y: 300 }, DOCK, viewport)).toBe(1);
+    expect(tearingOut({ x: -30, y: 300 }, DOCK, viewport)).toBe(1);
+    expect(tearingOut({ x: 512, y: 690 }, DOCK, viewport)).toBeGreaterThan(0.8);
+  });
+
+  it("moves a rect part of the way to another", () => {
+    expect(between(rect(0, 0, 100, 50), rect(100, 50, 300, 250), 0.25)).toEqual(
+      rect(25, 12.5, 150, 100),
+    );
   });
 });
