@@ -1,12 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FileSource } from "../lib/fileSource";
+import { entryLeadingTo } from "../lib/cursor";
 import { toAppError } from "../lib/ipc";
 import { ListingLoads } from "../lib/listingLoads";
 import { filterEntries, isDirLike, sortEntries, type SortKey, type SortSpec } from "../lib/sort";
 import type { AppError, DirListing, FileEntry } from "../lib/types";
 
+interface HistoryEntry {
+  path: string;
+  /** Where the cursor was on leaving the folder, to put it back on returning. */
+  cursor: string | null;
+}
+
 interface History {
-  paths: string[];
+  entries: HistoryEntry[];
   index: number;
 }
 
@@ -45,6 +52,8 @@ export interface PaneController {
   clearSelection: () => void;
   moveCursor: (delta: number, extendSelection: boolean) => void;
   moveCursorTo: (index: number, extendSelection: boolean) => void;
+  /** Moves the cursor without changing the selection. */
+  stepCursor: (delta: number) => void;
   selectedEntries: () => FileEntry[];
 }
 
@@ -68,7 +77,7 @@ export function usePane(
   const [listing, setListing] = useState<DirListing | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<AppError | null>(null);
-  const [history, setHistory] = useState<History>({ paths: [], index: -1 });
+  const [history, setHistory] = useState<History>({ entries: [], index: -1 });
   const [selection, setSelection] = useState<ReadonlySet<string>>(new Set());
   const [anchorPath, setAnchorPath] = useState<string | null>(null);
   const [cursorPath, setCursorPath] = useState<string | null>(null);
@@ -77,6 +86,13 @@ export function usePane(
   const [showHidden, setShowHidden] = useState(showHiddenByDefault);
   const loads = useRef(new ListingLoads());
   const listedPath = useRef<string | null>(null);
+  const cursorRef = useRef(cursorPath);
+  useEffect(() => {
+    cursorRef.current = cursorPath;
+  }, [cursorPath]);
+  // Where Back or Forward is taking the pane, so pressing it again before the folder loads
+  // steps on from there.
+  const travelIndex = useRef<number | null>(null);
 
   const visibleEntries = useMemo(
     () =>
@@ -96,36 +112,50 @@ export function usePane(
     async (target: string, mode: NavigationMode, focusPath?: string): Promise<boolean> => {
       const request = loads.current.start(mode === "replace" ? "refresh" : "navigation");
       if (request === null) return false;
+      if (mode === "push") travelIndex.current = null;
       setLoading(true);
       try {
         const next = await source.list(target);
         if (!loads.current.isCurrent(request)) return false;
         const existing = new Set(next.entries.map((entry) => entry.path));
-        const sameDirectory = listedPath.current === next.path;
+        const leftPath = listedPath.current;
+        const leftCursor = cursorRef.current;
+        const sameDirectory = leftPath === next.path;
         listedPath.current = next.path;
+        // Back or Forward puts the cursor where it was in the folder, or else on the way back
+        // into the folder just left.
+        const focus =
+          focusPath && existing.has(focusPath)
+            ? focusPath
+            : mode === "travel" && leftPath
+              ? entryLeadingTo(next.entries, leftPath)
+              : undefined;
         setListing(next);
-        setSelection((current) =>
-          sameDirectory
+        setSelection((current) => {
+          if (focus) return new Set([focus]);
+          return sameDirectory
             ? new Set([...current].filter((path) => existing.has(path)))
-            : new Set(focusPath && existing.has(focusPath) ? [focusPath] : []),
-        );
+            : new Set<string>();
+        });
         setCursorPath((current) => {
-          if (focusPath && existing.has(focusPath)) return focusPath;
+          if (focus) return focus;
           if (sameDirectory && current && existing.has(current)) return current;
           return null;
         });
-        setAnchorPath(focusPath ?? null);
+        setAnchorPath(focus ?? null);
         setError(null);
         setHistory((current) => {
-          if (mode === "travel") return current;
-          if (mode === "replace" && current.index >= 0) {
-            const paths = [...current.paths];
-            paths[current.index] = next.path;
-            return { paths, index: current.index };
+          const entries = [...current.entries];
+          const shown = entries[current.index];
+          if (mode === "replace") {
+            if (shown) entries[current.index] = { ...shown, path: next.path };
+            return { entries, index: current.index };
           }
-          if (current.paths[current.index] === next.path) return current;
-          const paths = [...current.paths.slice(0, current.index + 1), next.path];
-          return { paths, index: paths.length - 1 };
+          if (shown && !sameDirectory) entries[current.index] = { ...shown, cursor: leftCursor };
+          const stays = mode === "travel" || shown?.path === next.path;
+          if (stays) return { entries, index: current.index };
+          entries.splice(current.index + 1, Infinity, { path: next.path, cursor: null });
+          return { entries, index: entries.length - 1 };
         });
         return true;
       } catch (caught) {
@@ -170,10 +200,12 @@ export function usePane(
 
   const travel = useCallback(
     (offset: number) => {
-      const index = history.index + offset;
-      const target = history.paths[index];
+      const index = (travelIndex.current ?? history.index) + offset;
+      const target = history.entries[index];
       if (target === undefined) return;
-      void load(target, "travel").then((loaded) => {
+      travelIndex.current = index;
+      void load(target.path, "travel", target.cursor ?? undefined).then((loaded) => {
+        if (travelIndex.current === index) travelIndex.current = null;
         if (loaded) setHistory((current) => ({ ...current, index }));
       });
     },
@@ -284,6 +316,17 @@ export function usePane(
     [visibleEntries, cursorPath, moveCursorTo],
   );
 
+  const stepCursor = useCallback(
+    (delta: number) => {
+      if (visibleEntries.length === 0) return;
+      const current = visibleEntries.findIndex((entry) => entry.path === cursorPath);
+      const start = current < 0 ? (delta > 0 ? -1 : visibleEntries.length) : current;
+      const index = Math.max(0, Math.min(visibleEntries.length - 1, start + delta));
+      setCursorPath(visibleEntries[index].path);
+    },
+    [visibleEntries, cursorPath],
+  );
+
   const selectedEntries = useCallback(
     () => visibleEntries.filter((entry) => selection.has(entry.path)),
     [visibleEntries, selection],
@@ -301,7 +344,7 @@ export function usePane(
     filter,
     showHidden,
     canGoBack: history.index > 0,
-    canGoForward: history.index < history.paths.length - 1,
+    canGoForward: history.index < history.entries.length - 1,
     canGoUp: Boolean(listing?.parent),
     navigate,
     refresh,
@@ -321,6 +364,7 @@ export function usePane(
     clearSelection,
     moveCursor,
     moveCursorTo,
+    stepCursor,
     selectedEntries,
   };
 }

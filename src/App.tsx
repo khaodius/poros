@@ -24,6 +24,7 @@ import { UpdateDialog } from "./components/UpdateDialog";
 import { WhenDoneCountdown } from "./components/WhenDoneCountdown";
 import { WindowControls } from "./components/WindowControls";
 import { Workspace } from "./components/Workspace";
+import { isSideButton } from "./hooks/useBackForwardButtons";
 import { useDragPreviewOnDesktop } from "./hooks/useDragPreviewOnDesktop";
 import { useTabDragsBetweenWindows } from "./hooks/useTabDragsBetweenWindows";
 import { useWindowMaximized } from "./hooks/useWindowMaximized";
@@ -51,6 +52,7 @@ import { startClipboard } from "./state/clipboardStore";
 import { hitTest, useDragStore, type DragPayload } from "./state/dragStore";
 import { persistLayout, restoreLayout, useLayoutStore } from "./state/layoutStore";
 import { useLogStore } from "./state/logStore";
+import { activePane } from "./state/paneRegistry";
 import { askToSave, unsavedEditorTabs } from "./state/editorActions";
 import { useSavedConnections } from "./state/savedConnectionsStore";
 import { reloadSchedules } from "./state/scheduleStore";
@@ -255,19 +257,50 @@ function useCloseGuard() {
   }, []);
 }
 
+/** Moves to the next tab, or back to the previous one, in the group the user works in. */
+function cycleTab(step: number): void {
+  const { root, activeGroupId, activateTab } = useLayoutStore.getState();
+  const current = findGroup(root, activeGroupId);
+  if (!current || current.tabs.length < 2) return;
+  const index = current.tabs.findIndex((tab) => tab.id === current.activeTabId);
+  activateTab(current.tabs[(index + step + current.tabs.length) % current.tabs.length].id);
+}
+
+/** F5 and Ctrl+R, which the web view takes as reloading the window and every tab in it. */
+function isReloadKey(event: KeyboardEvent): boolean {
+  return (
+    event.key === "F5" || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "r")
+  );
+}
+
 function useShortcuts() {
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
       // Nothing acts behind a dialog, and dialogs a pane opens are not in the ui store.
-      if (useUiStore.getState().dialog || document.querySelector("dialog[open]")) return;
+      const blocked = Boolean(
+        useUiStore.getState().dialog || document.querySelector("dialog[open]"),
+      );
+      const target = event.target as HTMLElement;
       // Ctrl+W, Ctrl+T and the like edit the command line in a shell.
-      if ((event.target as HTMLElement).closest?.(".terminal-host")) return;
+      const inTerminal = Boolean(target.closest?.(".terminal-host"));
+      if (isReloadKey(event)) {
+        // A file list with focus refreshes itself; from anywhere else these refresh the pane
+        // last worked in instead of reloading the window.
+        event.preventDefault();
+        if (!blocked && !inTerminal && !target.closest?.(".cm-editor")) activePane()?.refresh();
+        return;
+      }
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || blocked || inTerminal) return;
       const key = event.key.toLowerCase();
+      if (key === "tab" || key === "pageup" || key === "pagedown") {
+        cycleTab(key === "pageup" || (key === "tab" && event.shiftKey) ? -1 : 1);
+        event.preventDefault();
+        return;
+      }
+      if (event.shiftKey) return;
       // Typing a name or a filter leaves the tabs as they are. The editor's tab closes like
       // any editor's, asking about unsaved changes, and Settings opens from anywhere.
-      const typing =
-        isTextEntryTarget(event.target) && !(event.target as HTMLElement).closest?.(".cm-editor");
+      const typing = isTextEntryTarget(target) && !target.closest?.(".cm-editor");
       if ((key === "t" || key === "w") && typing) return;
       if (key === "t") {
         useLayoutStore.getState().addTab(welcomeTab());
@@ -290,6 +323,22 @@ function useShortcuts() {
     return () => {
       window.removeEventListener("keydown", handleKey);
       window.removeEventListener("contextmenu", suppressNativeMenu);
+    };
+  }, []);
+}
+
+/** The mouse's side buttons go back and forward in file panes, never through the web view's own
+ * page history. */
+function useSideButtonsInPanes() {
+  useEffect(() => {
+    const keepFromWebView = (event: MouseEvent) => {
+      if (isSideButton(event)) event.preventDefault();
+    };
+    window.addEventListener("mousedown", keepFromWebView);
+    window.addEventListener("mouseup", keepFromWebView);
+    return () => {
+      window.removeEventListener("mousedown", keepFromWebView);
+      window.removeEventListener("mouseup", keepFromWebView);
     };
   }, []);
 }
@@ -382,6 +431,7 @@ export function App() {
   useDragPreviewOnDesktop();
   useSystemFileDrops();
   useShortcuts();
+  useSideButtonsInPanes();
   useFontSizeShortcuts();
   useUpdateCheckOnStart(ready);
   const systemTitleBar = useSystemTitleBar();

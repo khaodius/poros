@@ -38,6 +38,15 @@ export function listPanes(): PaneHandle[] {
   return [...panes.values()];
 }
 
+/** The pane on screen the user worked in last. */
+export function activePane(): PaneHandle | null {
+  let best: PaneHandle | null = null;
+  for (const handle of panes.values()) {
+    if (handle.visible && (!best || handle.activatedAt > best.activatedAt)) best = handle;
+  }
+  return best;
+}
+
 /** The pane of a kind the user looked at last, preferring ones on screen. */
 export function lastActivePane(kind: "local" | "remote", sessionId?: string): PaneHandle | null {
   let best: PaneHandle | null = null;

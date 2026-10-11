@@ -27,9 +27,15 @@ const SCROLLBAR_GUTTER = 8;
 const DROP_STRIP_WIDTH = 44;
 const TYPE_AHEAD_RESET_MILLIS = 800;
 
+/** Where a menu opens, in viewport pixels. */
+export interface MenuPosition {
+  x: number;
+  y: number;
+}
+
 export interface FileListActions {
   onActivate: () => void;
-  onContextMenu: (event: MouseEvent, entry: FileEntry | null) => void;
+  onContextMenu: (position: MenuPosition, entry: FileEntry | null) => void;
   onHeaderContextMenu: (event: MouseEvent) => void;
   onDelete: () => void;
   onRename: () => void;
@@ -172,15 +178,21 @@ export function FileList({
     overscan: 16,
   });
 
+  // A folder opens at the top, or with the cursor's row in the middle when it has one, as the
+  // folder just left does after going up or back.
+  const scrolledPath = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (!pane.cursorPath) return;
-    const index = entries.findIndex((entry) => entry.path === pane.cursorPath);
-    if (index >= 0) virtualizer.scrollToIndex(index + rowOffset, { align: "auto" });
-  }, [pane.cursorPath, entries, rowOffset, virtualizer]);
-
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ top: 0 });
-  }, [pane.listing?.path]);
+    const opened = scrolledPath.current !== pane.listing?.path;
+    scrolledPath.current = pane.listing?.path;
+    const index = pane.cursorPath
+      ? entries.findIndex((entry) => entry.path === pane.cursorPath)
+      : -1;
+    if (index >= 0) {
+      virtualizer.scrollToIndex(index + rowOffset, { align: opened ? "center" : "auto" });
+    } else if (opened) {
+      scrollRef.current?.scrollTo({ top: 0 });
+    }
+  }, [pane.listing?.path, pane.cursorPath, entries, rowOffset, virtualizer]);
 
   useEffect(() => {
     virtualizer.measure();
@@ -200,6 +212,11 @@ export function FileList({
       ? "Only hidden items here"
       : "This folder is empty";
   const cursorIndex = entries.findIndex((entry) => entry.path === pane.cursorPath);
+  const cursorEntry = cursorIndex >= 0 ? entries[cursorIndex] : undefined;
+
+  const typingAhead = () =>
+    typeAhead.current.text !== "" &&
+    Date.now() - typeAhead.current.lastKeyAt <= TYPE_AHEAD_RESET_MILLIS;
 
   const jumpToTypedPrefix = (character: string) => {
     const now = Date.now();
@@ -215,14 +232,15 @@ export function FileList({
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const primary = event.ctrlKey || event.metaKey;
     const extend = event.shiftKey;
-    const cursorEntry = cursorIndex >= 0 ? entries[cursorIndex] : undefined;
     const handled = (() => {
       switch (event.key) {
         case "ArrowDown":
-          pane.moveCursor(1, extend);
+          if (primary) pane.stepCursor(1);
+          else pane.moveCursor(1, extend);
           return true;
         case "ArrowUp":
           if (event.altKey) pane.goUp();
+          else if (primary) pane.stepCursor(-1);
           else pane.moveCursor(-1, extend);
           return true;
         case "ArrowLeft":
@@ -234,13 +252,17 @@ export function FileList({
           pane.goForward();
           return true;
         case "PageDown":
+          // Ctrl+PageDown and Ctrl+PageUp switch tabs.
+          if (primary) return false;
           pane.moveCursor(pageSize, extend);
           return true;
         case "PageUp":
+          if (primary) return false;
           pane.moveCursor(-pageSize, extend);
           return true;
         case "Home":
-          pane.moveCursorTo(0, extend);
+          if (event.altKey) pane.goHome();
+          else pane.moveCursorTo(0, extend);
           return true;
         case "End":
           pane.moveCursorTo(entries.length - 1, extend);
@@ -274,6 +296,16 @@ export function FileList({
         case "Escape":
           pane.clearSelection();
           return true;
+        case " ":
+          if (typingAhead()) jumpToTypedPrefix(" ");
+          else if (cursorEntry) pane.toggleSelected(cursorEntry.path);
+          return true;
+        case "Insert":
+          if (cursorEntry) {
+            pane.toggleSelected(cursorEntry.path);
+            pane.stepCursor(1);
+          }
+          return true;
         case "Tab":
           if (primary || event.altKey) return false;
           actions.onSwitchPane(event.currentTarget);
@@ -304,11 +336,15 @@ export function FileList({
         actions.onFocusFilter();
         return true;
       }
+      if (primary && event.key.toLowerCase() === "h") {
+        pane.toggleHidden();
+        return true;
+      }
       if (primary && event.shiftKey && event.key.toLowerCase() === "n") {
         actions.onNewFolder();
         return true;
       }
-      if (!primary && !event.altKey && event.key.length === 1 && event.key !== " ") {
+      if (!primary && !event.altKey && event.key.length === 1) {
         jumpToTypedPrefix(event.key);
         return true;
       }
@@ -344,7 +380,20 @@ export function FileList({
     event.preventDefault();
     event.stopPropagation();
     if (!pane.selection.has(entry.path)) pane.selectOnly(entry.path);
-    actions.onContextMenu(event, entry);
+    actions.onContextMenu({ x: event.clientX, y: event.clientY }, entry);
+  };
+
+  /** The Menu key or Shift+F10: the menu for the cursor's row, or the selection, beside it. */
+  const showKeyboardMenu = () => {
+    const list = scrollRef.current;
+    if (!list) return;
+    const row =
+      list.querySelector(".file-row.is-cursor") ?? list.querySelector(".file-row.is-selected");
+    const bounds = (row ?? list).getBoundingClientRect();
+    const position = { x: bounds.left + 24, y: row ? bounds.bottom : bounds.top + 8 };
+    const target = cursorEntry ?? entries.find((entry) => pane.selection.has(entry.path));
+    if (target && !pane.selection.has(target.path)) pane.selectOnly(target.path);
+    actions.onContextMenu(position, target ?? null);
   };
 
   return (
@@ -401,8 +450,13 @@ export function FileList({
         }}
         onContextMenu={(event) => {
           event.preventDefault();
+          // A right click reports its button; a menu opened from the keyboard reports none.
+          if (event.button !== 2 && !event.ctrlKey) {
+            showKeyboardMenu();
+            return;
+          }
           pane.clearSelection();
-          actions.onContextMenu(event, null);
+          actions.onContextMenu({ x: event.clientX, y: event.clientY }, null);
         }}
       >
         <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
@@ -428,7 +482,7 @@ export function FileList({
                     event.preventDefault();
                     event.stopPropagation();
                     pane.clearSelection();
-                    actions.onContextMenu(event, null);
+                    actions.onContextMenu({ x: event.clientX, y: event.clientY }, null);
                   }}
                 >
                   <span className="file-cell file-name">
