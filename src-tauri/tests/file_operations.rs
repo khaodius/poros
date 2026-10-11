@@ -51,6 +51,7 @@ fn profile(server: &Server) -> ConnectProfile {
         ftp_active: false,
         bypass_proxy: false,
         jump_connection_id: None,
+        rsync_path: None,
         route: Route::default(),
     }
 }

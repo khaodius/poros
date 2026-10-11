@@ -12,6 +12,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use super::conflict::ExistsAction;
+use super::options::JobOptions;
 use super::queue::{Direction, JobKind, JobSpec, JobState, ResumePoint, Unfinished};
 use super::{Login, SessionTarget, Shared};
 use crate::events::LogLevel;
@@ -47,6 +48,8 @@ struct SavedServer {
     bypass_proxy: bool,
     #[serde(default)]
     jump_connection_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rsync_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -87,6 +90,8 @@ struct SavedJob {
     resolution: Option<ExistsAction>,
     #[serde(default)]
     resume: Option<ResumePoint>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    options: Option<JobOptions>,
 }
 
 impl From<&ConnectProfile> for SavedServer {
@@ -113,6 +118,7 @@ impl From<&ConnectProfile> for SavedServer {
             ftp_active: profile.ftp_active,
             bypass_proxy: profile.bypass_proxy,
             jump_connection_id: profile.jump_connection_id.clone(),
+            rsync_path: profile.rsync_path.clone(),
         }
     }
 }
@@ -149,6 +155,7 @@ impl SavedServer {
             ftp_active: self.ftp_active,
             bypass_proxy: self.bypass_proxy,
             jump_connection_id: self.jump_connection_id.clone(),
+            rsync_path: self.rsync_path.clone(),
             route: Route::default(),
         }
     }
@@ -213,6 +220,7 @@ fn snapshot(shared: &Shared) -> Option<(SavedQueue, &Path)> {
             error: job.error,
             resolution: job.resolution,
             resume: job.resume,
+            options: spec.options.as_deref().cloned(),
         });
     }
     saved.jobs = jobs;
@@ -317,6 +325,7 @@ pub(super) fn restore(shared: &Shared, file: &Path) -> usize {
                 target_directory: job.target_directory,
                 size: job.size,
                 ancestors: job.ancestors.into(),
+                options: job.options.map(Arc::new),
             },
             state: if job.failed {
                 JobState::Failed
@@ -359,6 +368,7 @@ mod tests {
             ftp_active: false,
             bypass_proxy: true,
             jump_connection_id: Some("bastion".into()),
+            rsync_path: None,
             route: Route {
                 proxy: Some(Proxy {
                     kind: ProxyKind::Socks5,

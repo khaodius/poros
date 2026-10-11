@@ -1,37 +1,66 @@
 //! Folder synchronization in the manner of rsync: list both sides, decide from size and time
 //! (or contents) what differs, show that as a plan, then carry out the parts the user keeps.
 //! Files go through the transfer queue, so they use its workers and rsync delta transfers.
+//! rsync's options decide what is listed, compared, copied, deleted and kept.
 
+mod chmod;
 mod filter;
 mod hash;
+mod options;
+mod owners;
 mod plan;
+mod run;
 mod tree;
 
 use std::collections::{HashMap, VecDeque};
+use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::{AppError, AppResult};
-use crate::events::{Events, LogLevel};
-use crate::format::format_size;
-use crate::local;
+use crate::events::Events;
 use crate::remote_path;
 use crate::session::SessionManager;
-use crate::transfer::{Direction, FileTransfer, TransferManager};
+use crate::transfer::TransferManager;
+pub use chmod::Chmod;
 use filter::Filter;
+pub use options::{
+    check as check_options, AppendMode, DeleteTiming, FilterFiles, LinkMode, OptionCheck,
+    SyncOptions,
+};
+use owners::{Accounts, Owners};
 pub use plan::{CompareMode, Counts, SyncAction, SyncDirection, SyncItem, SyncReason};
-use plan::{Options, Plan};
-use tree::{Counter, Tree};
+use run::{Run, Work};
+use tree::{Counter, Role, Tree, Walk};
 
 /// Plans kept for running; older ones are dropped.
 const KEPT_PLANS: usize = 4;
+/// Finished runs kept for whoever waits on them.
+const KEPT_REPORTS: usize = 16;
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(200);
-const DEFAULT_TIME_TOLERANCE_SECS: u32 = 2;
-const MAX_TIME_TOLERANCE_SECS: u32 = 24 * 60 * 60;
+/// Larger include, exclude and files-from lists are refused.
+const MAX_LIST_FILE_BYTES: u64 = 16 * 1024 * 1024;
+
+/// Which side of a synchronization something is on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) enum Place {
+    Local,
+    Remote,
+}
+
+impl Place {
+    fn other(self) -> Self {
+        match self {
+            Self::Local => Self::Remote,
+            Self::Remote => Self::Local,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -42,21 +71,11 @@ pub struct SyncRequest {
     pub local_path: String,
     pub remote_path: String,
     pub direction: SyncDirection,
-    pub compare: CompareMode,
+    #[serde(flatten)]
+    pub options: SyncOptions,
+    /// rsync arguments applied over `options`, typed as rsync takes them.
     #[serde(default)]
-    pub delete_extraneous: bool,
-    #[serde(default)]
-    pub skip_newer_on_target: bool,
-    #[serde(default)]
-    pub ignore_existing: bool,
-    #[serde(default = "default_time_tolerance")]
-    pub time_tolerance_secs: u32,
-    #[serde(default)]
-    pub excludes: Vec<String>,
-}
-
-fn default_time_tolerance() -> u32 {
-    DEFAULT_TIME_TOLERANCE_SECS
+    pub arguments: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -69,6 +88,13 @@ pub struct SyncPlanView {
     pub counts: Counts,
     /// Paths that were passed over, a sample for the user to check.
     pub passed_over: Vec<String>,
+    /// What the user should know: notes on the options and on the plan.
+    pub notes: Vec<String>,
+    /// The options as the rsync command line they amount to.
+    pub arguments: String,
+    pub dry_run: bool,
+    /// The folder being synchronized to does not exist yet, and is created.
+    pub creates_target: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -107,27 +133,58 @@ pub struct SyncChoice {
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncRunSummary {
+    pub run_id: String,
+    /// Nothing was changed; the counts are what the run would have done.
+    pub dry_run: bool,
     pub queued_files: u64,
     pub queued_bytes: u64,
     pub deleted: u64,
+    /// Deletions that wait until the queued files are copied.
+    pub deleting_later: u64,
     pub created_folders: u64,
+    pub created_links: u64,
+    /// Files whose time, permissions or owner were set without copying them.
+    pub updated: u64,
+    /// Unchanged files removed from the source by `--remove-source-files`.
+    pub removed_sources: u64,
+    pub failures: Vec<String>,
+}
+
+/// How a run ended, once the queue is done with its files.
+#[derive(Debug, Clone, Default)]
+pub struct SyncReport {
+    pub copied: u64,
+    pub failed: u64,
+    pub bytes: u64,
+    pub deleted: u64,
     pub failures: Vec<String>,
 }
 
 struct StoredPlan {
     id: String,
     session_id: String,
+    direction: SyncDirection,
+    options: SyncOptions,
+    plan_options: plan::Options,
+    /// The options as rsync arguments, for the log.
+    arguments: String,
     local: Tree,
     remote: Tree,
     items: Vec<SyncItem>,
     counts: Counts,
+    notes: Vec<String>,
+    unchanged_files: Vec<String>,
+    owners: Owners,
 }
+
+type Report = watch::Receiver<Option<SyncReport>>;
 
 pub struct SyncManager {
     sessions: Arc<SessionManager>,
     events: Events,
     comparisons: Mutex<HashMap<String, CancellationToken>>,
     plans: Mutex<VecDeque<Arc<StoredPlan>>>,
+    reports: Mutex<VecDeque<(String, Report)>>,
 }
 
 impl SyncManager {
@@ -137,6 +194,7 @@ impl SyncManager {
             events,
             comparisons: Mutex::new(HashMap::new()),
             plans: Mutex::new(VecDeque::new()),
+            reports: Mutex::new(VecDeque::new()),
         }
     }
 
@@ -175,6 +233,10 @@ impl SyncManager {
                 .take(50)
                 .cloned()
                 .collect(),
+            notes: stored.notes.clone(),
+            arguments: stored.arguments.clone(),
+            dry_run: stored.options.dry_run,
+            creates_target: stored.local.missing || stored.remote.missing,
         };
         let mut plans = self.plans.lock().unwrap();
         plans.push_back(stored);
@@ -190,38 +252,63 @@ impl SyncManager {
         progress: &Progress,
         cancel: &CancellationToken,
     ) -> AppResult<StoredPlan> {
-        let filter = Filter::new(&request.excludes)?;
-        let options = Options {
-            direction: request.direction,
-            compare: request.compare,
-            delete_extraneous: request.delete_extraneous
-                && request.direction != SyncDirection::Both,
-            skip_newer_on_target: request.skip_newer_on_target,
-            ignore_existing: request.ignore_existing,
-            time_tolerance_secs: i64::from(
-                request.time_tolerance_secs.min(MAX_TIME_TOLERANCE_SECS),
-            ),
+        let direction = request.direction;
+        let checked = check_options(request.options.clone(), &[&request.arguments], direction);
+        if !checked.errors.is_empty() {
+            return Err(AppError::invalid(checked.errors.join("; ")));
+        }
+        let options = checked.options;
+        let filter = {
+            let options = options.clone();
+            let local_root = request.local_path.clone();
+            tokio::task::spawn_blocking(move || build_filter(&options, &local_root)).await??
         };
+        let plan_options = plan_options(&options, direction);
         let session = self.sessions.get(&request.session_id).await?;
         // A channel of its own, so listing does not hold up the file panes.
         let fs = session.open_channel().await?;
         let compared = async {
+            let (local_role, remote_role) = match direction {
+                SyncDirection::Upload => (Role::Sender, Role::Receiver),
+                SyncDirection::Download => (Role::Receiver, Role::Sender),
+                SyncDirection::Both => (Role::Both, Role::Both),
+            };
             let local_walk = {
                 let root = request.local_path.clone();
-                let filter = filter.clone();
+                let walk = walk_for(&options, filter.clone(), local_role);
                 let counter = progress.local_entries.clone();
                 let cancel = cancel.clone();
                 tokio::task::spawn_blocking(move || {
-                    tree::walk_local(&root, &filter, &counter, &cancel)
+                    tree::walk_local(&root, &walk, &counter, &cancel)
                 })
             };
             let remote_root = fs.resolve(&request.remote_path);
-            let remote_walk =
-                tree::walk_remote(&fs, &remote_root, &filter, &progress.remote_entries, cancel);
-            let (local, remote) = tokio::join!(local_walk, remote_walk);
+            let remote_walk = walk_for(&options, filter.clone(), remote_role);
+            let remote_listing = tree::walk_remote(
+                &fs,
+                &remote_root,
+                &remote_walk,
+                &progress.remote_entries,
+                cancel,
+            );
+            let (local, remote) = tokio::join!(local_walk, remote_listing);
             let (local, remote) = (local??, remote?);
+            if !options.mkpath {
+                if local.missing {
+                    let parent = Path::new(&local.root).parent();
+                    if !parent.is_some_and(Path::is_dir) {
+                        return Err(missing_parent(&local.root));
+                    }
+                }
+                if remote.missing {
+                    let parent = remote_path::parent(&remote.root).unwrap_or_else(|| "/".into());
+                    if !fs.stat(&parent).await?.is_some_and(|stat| stat.is_dir) {
+                        return Err(missing_parent(&remote.root));
+                    }
+                }
+            }
 
-            let to_hash = plan::files_to_hash(&local, &remote, &options);
+            let to_hash = plan::files_to_hash(&local, &remote, &plan_options);
             let same_contents = if to_hash.is_empty() {
                 HashMap::new()
             } else {
@@ -239,19 +326,44 @@ impl SyncManager {
                 )
                 .await?
             };
-            let Plan { items, counts } = plan::plan(&local, &remote, &options, &same_contents);
-            AppResult::Ok((local, remote, items, counts))
+            let plan = plan::plan(&local, &remote, &plan_options, &same_contents);
+            let owners = if Owners::wanted(&options) {
+                let local_accounts = tokio::task::spawn_blocking(Accounts::local).await?;
+                let remote_accounts = Accounts::remote(&fs).await;
+                Owners::new(
+                    &options,
+                    local_accounts,
+                    remote_accounts,
+                    receivers(direction),
+                )
+                .map_err(AppError::invalid)?
+            } else {
+                Owners::default()
+            };
+            AppResult::Ok((local, remote, plan, owners))
         }
         .await;
         fs.close();
-        let (local, remote, items, counts) = compared?;
+        let (local, remote, plan, owners) = compared?;
+        let mut notes = checked.warnings;
+        if local.missing || remote.missing {
+            notes.push("The folder being synchronized to does not exist yet; it is created".into());
+        }
+        notes.extend(plan.notes);
         Ok(StoredPlan {
             id: uuid::Uuid::new_v4().to_string(),
             session_id: request.session_id.clone(),
+            direction,
+            arguments: checked.arguments,
+            options,
+            plan_options,
             local,
             remote,
-            items,
-            counts,
+            items: plan.items,
+            counts: plan.counts,
+            notes,
+            unchanged_files: plan.unchanged_files,
+            owners,
         })
     }
 
@@ -277,6 +389,8 @@ impl SyncManager {
             .retain(|stored| stored.id != plan_id);
     }
 
+    /// Carries out the chosen items up to queueing the files; what follows the transfers runs
+    /// on its own, and [`Self::finished`] waits for it.
     pub async fn run(
         &self,
         transfers: &TransferManager,
@@ -293,9 +407,8 @@ impl SyncManager {
             plans.remove(position).expect("position is in range")
         };
         let session = self.sessions.get(&stored.session_id).await?;
-        let local_root = stored.local.root.as_str();
-        let remote_root = stored.remote.root.as_str();
-        let mut summary = SyncRunSummary::default();
+        let fs = session.sftp()?.clone();
+        let run = Arc::new(Run::new(stored.clone(), fs, self.events.clone()));
         let mut work = Work::default();
         for choice in &request.choices {
             let Some(item) = stored.items.get(choice.id as usize) else {
@@ -307,83 +420,133 @@ impl SyncManager {
             if choice.action != item.action && !settles_conflict {
                 continue;
             }
-            work.add(&stored, item, choice.action, local_root, remote_root);
+            work.add(&run, item, choice.action);
         }
 
-        // Deletions first, so a folder replaced by a file of the same name is gone in time.
-        for path in &work.delete_remote {
-            match session.files().delete(std::slice::from_ref(path)).await {
-                Ok(()) => summary.deleted += 1,
-                Err(error) => summary.failures.push(format!("{path}: {}", error.message)),
+        let (sender, receiver) = watch::channel(None);
+        {
+            let mut reports = self.reports.lock().unwrap();
+            reports.push_back((run.id.clone(), receiver));
+            while reports.len() > KEPT_REPORTS {
+                reports.pop_front();
             }
         }
-        let delete_local = std::mem::take(&mut work.delete_local);
-        let local_failures = tokio::task::spawn_blocking(move || {
-            delete_local
-                .iter()
-                .filter_map(|path| {
-                    local::delete(std::slice::from_ref(path))
-                        .err()
-                        .map(|error| format!("{path}: {}", error.message))
-                })
-                .collect::<Vec<_>>()
+        let session_id = stored.session_id.clone();
+        let outcome = run::start(run, work, |files| {
+            transfers.enqueue_files(&session_id, files)
         })
         .await?;
-        summary.deleted += work.local_deletions - local_failures.len() as u64;
-        summary.failures.extend(local_failures);
-
-        for folder in &work.remote_folders {
-            match session.files().ensure_dir(folder).await {
-                Ok(()) => summary.created_folders += 1,
-                Err(error) => summary
-                    .failures
-                    .push(format!("{folder}: {}", error.message)),
+        match outcome.follow_up {
+            Some(follow_up) => {
+                tokio::spawn(follow_up.finish(transfers.watch(), sender));
+            }
+            None => {
+                let _ = sender.send(Some(SyncReport::default()));
             }
         }
-        let local_folders = std::mem::take(&mut work.local_folders);
-        let folder_failures = tokio::task::spawn_blocking(move || {
-            local_folders
-                .iter()
-                .filter_map(|folder| {
-                    std::fs::create_dir_all(folder)
-                        .err()
-                        .map(|error| format!("{folder}: {error}"))
-                })
-                .collect::<Vec<_>>()
-        })
-        .await?;
-        summary.created_folders += work.local_folder_count - folder_failures.len() as u64;
-        summary.failures.extend(folder_failures);
+        Ok(outcome.summary)
+    }
 
-        summary.queued_files = work.files.len() as u64;
-        summary.queued_bytes = work.files.iter().map(|file| file.size).sum();
-        if !work.files.is_empty() {
-            transfers
-                .enqueue_files(&stored.session_id, work.files)
-                .await?;
-        }
+    /// Waits until a run is over, delayed deletions and folder attributes included. `None`
+    /// once the run is no longer known or failed before queueing anything.
+    pub async fn finished(&self, run_id: &str) -> Option<SyncReport> {
+        let mut receiver = self
+            .reports
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(id, _)| id == run_id)
+            .map(|(_, receiver)| receiver.clone())?;
+        let report = receiver.wait_for(Option::is_some).await.ok()?.clone();
+        report
+    }
+}
 
-        let mut message = format!(
-            "Synchronizing {local_root} with {remote_root}: {} queued ({})",
-            plural(summary.queued_files, "file"),
-            format_size(summary.queued_bytes)
-        );
-        if summary.deleted > 0 {
-            message.push_str(&format!(", {} deleted", plural(summary.deleted, "item")));
-        }
-        if summary.created_folders > 0 {
-            message.push_str(&format!(
-                ", {} created",
-                plural(summary.created_folders, "folder")
-            ));
-        }
-        self.events
-            .log(LogLevel::Info, Some(&stored.session_id), message);
-        for failure in &summary.failures {
-            self.events
-                .log(LogLevel::Error, Some(&stored.session_id), failure.clone());
-        }
-        Ok(summary)
+fn missing_parent(root: &str) -> AppError {
+    AppError::invalid(format!(
+        "The folder above {root} does not exist; --mkpath creates the whole path"
+    ))
+}
+
+/// The sides that receive files.
+fn receivers(direction: SyncDirection) -> &'static [Place] {
+    match direction {
+        SyncDirection::Upload => &[Place::Remote],
+        SyncDirection::Download => &[Place::Local],
+        SyncDirection::Both => &[Place::Local, Place::Remote],
+    }
+}
+
+/// The filter rules, with lists and merge files read relative to the local folder.
+fn build_filter(options: &SyncOptions, local_root: &str) -> AppResult<Filter> {
+    let read = |path: &str| read_list(local_root, path);
+    let mut spec = options.filter_spec(&read)?;
+    // rsync keeps --delete away from a backup folder inside the target.
+    let backup_dir = options.backup_dir.trim();
+    if options.backup
+        && !backup_dir.is_empty()
+        && !backup_dir.starts_with('/')
+        && !Path::new(backup_dir).is_absolute()
+    {
+        spec.rules
+            .push(format!("P /{}/", backup_dir.trim_matches('/')));
+    }
+    Filter::build(&spec, &read)
+}
+
+fn read_list(local_root: &str, path: &str) -> AppResult<String> {
+    let given = Path::new(path.trim());
+    let path = if given.is_absolute() {
+        given.to_path_buf()
+    } else {
+        Path::new(local_root).join(given)
+    };
+    let shown = path.to_string_lossy().into_owned();
+    let metadata =
+        std::fs::metadata(&path).map_err(|error| AppError::from(error).with_path(shown.clone()))?;
+    if metadata.len() > MAX_LIST_FILE_BYTES {
+        return Err(AppError::invalid(format!(
+            "{shown} is larger than {} MB",
+            MAX_LIST_FILE_BYTES / (1024 * 1024)
+        )));
+    }
+    std::fs::read_to_string(&path).map_err(|error| AppError::from(error).with_path(shown))
+}
+
+fn walk_for(options: &SyncOptions, filter: Filter, role: Role) -> Walk {
+    Walk {
+        recursive: options.recursive,
+        dirs: options.dirs,
+        links: options.links,
+        safe_links: options.safe_links,
+        copy_unsafe_links: options.copy_unsafe_links,
+        copy_dirlinks: options.copy_dirlinks,
+        keep_dirlinks: options.keep_dirlinks,
+        owners: options.owner || options.group,
+        // The receiving folder is created when it is missing.
+        allow_missing: role == Role::Receiver,
+        ..Walk::new(filter, role)
+    }
+}
+
+fn plan_options(options: &SyncOptions, direction: SyncDirection) -> plan::Options {
+    plan::Options {
+        delete_extraneous: options.deletes(direction),
+        skip_newer_on_target: options.skip_newer_on_target,
+        ignore_existing: options.ignore_existing,
+        existing_only: options.existing_only,
+        time_tolerance_secs: options.time_tolerance(),
+        min_size: options.min_size,
+        max_size: options.max_size,
+        prune_empty_dirs: options.prune_empty_dirs,
+        max_delete: options.max_delete,
+        force: options.force,
+        ignore_errors: options.ignore_errors,
+        append: options.append != AppendMode::Off,
+        times: options.times,
+        perms: options.perms,
+        chmod: options.chmod_rules(),
+        ..plan::Options::new(direction, options.compare)
     }
 }
 
@@ -392,102 +555,6 @@ fn plural(count: u64, noun: &str) -> String {
         format!("1 {noun}")
     } else {
         format!("{count} {noun}s")
-    }
-}
-
-/// What carrying out the chosen items takes, gathered before anything changes.
-#[derive(Default)]
-struct Work {
-    delete_remote: Vec<String>,
-    delete_local: Vec<String>,
-    local_deletions: u64,
-    remote_folders: Vec<String>,
-    local_folders: Vec<String>,
-    local_folder_count: u64,
-    files: Vec<FileTransfer>,
-}
-
-impl Work {
-    fn add(
-        &mut self,
-        stored: &StoredPlan,
-        item: &SyncItem,
-        action: SyncAction,
-        local_root: &str,
-        remote_root: &str,
-    ) {
-        let local_path = |relative: &str| {
-            hash::local_path(local_root, relative)
-                .to_string_lossy()
-                .into_owned()
-        };
-        let remote_path = |relative: &str| remote_path::join(remote_root, relative);
-        match action {
-            SyncAction::DeleteRemote => self.delete_remote.push(remote_path(&item.path)),
-            SyncAction::DeleteLocal => {
-                self.delete_local.push(local_path(&item.path));
-                self.local_deletions += 1;
-            }
-            SyncAction::Upload | SyncAction::Download => {
-                let upload = action == SyncAction::Upload;
-                let source = if upload {
-                    &stored.local
-                } else {
-                    &stored.remote
-                };
-                let Some(node) = source.nodes.get(&item.path) else {
-                    return;
-                };
-                let mut entries = vec![(&item.path, node)];
-                if node.is_dir {
-                    entries.extend(source.inside(&item.path));
-                }
-                for (relative, node) in entries {
-                    if node.is_dir {
-                        if upload {
-                            self.remote_folders.push(remote_path(relative));
-                        } else {
-                            self.local_folders.push(local_path(relative));
-                            self.local_folder_count += 1;
-                        }
-                        continue;
-                    }
-                    let name = relative.rsplit('/').next().unwrap_or(relative).to_string();
-                    let parent = relative.rsplit_once('/').map_or("", |(parent, _)| parent);
-                    let (source_path, target, target_directory) = if upload {
-                        (
-                            local_path(relative),
-                            remote_path(relative),
-                            if parent.is_empty() {
-                                remote_root.to_string()
-                            } else {
-                                remote_path(parent)
-                            },
-                        )
-                    } else {
-                        let local_parent = if parent.is_empty() {
-                            local_root.to_string()
-                        } else {
-                            local_path(parent)
-                        };
-                        (remote_path(relative), local_path(relative), local_parent)
-                    };
-                    self.files.push(FileTransfer {
-                        direction: if upload {
-                            Direction::Upload
-                        } else {
-                            Direction::Download
-                        },
-                        name,
-                        source: source_path,
-                        target,
-                        target_directory,
-                        size: node.size,
-                    });
-                }
-            }
-            SyncAction::Conflict => {}
-        }
     }
 }
 
@@ -523,5 +590,59 @@ async fn report_progress(
             compared: progress.compared.load(Ordering::Relaxed),
             to_compare,
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn requests_read_old_and_new_fields() {
+        let request: SyncRequest = serde_json::from_value(serde_json::json!({
+            "requestId": "r",
+            "sessionId": "s",
+            "localPath": "/home/me/site",
+            "remotePath": "/var/www",
+            "direction": "upload",
+            "compare": "checksum",
+            "deleteExtraneous": true,
+            "excludes": ["*.tmp"],
+            "maxDelete": 10,
+            "links": "preserve",
+            "arguments": "--chmod=F644"
+        }))
+        .unwrap();
+        assert_eq!(request.options.compare, CompareMode::Checksum);
+        assert!(request.options.delete_extraneous);
+        assert_eq!(request.options.excludes, ["*.tmp"]);
+        assert_eq!(request.options.max_delete, Some(10));
+        assert_eq!(request.options.links, LinkMode::Preserve);
+        assert_eq!(request.options.time_tolerance_secs, 2);
+        assert!(request.options.recursive && request.options.times);
+        assert_eq!(request.arguments, "--chmod=F644");
+    }
+
+    #[test]
+    fn lists_read_relative_to_the_local_folder() {
+        let folder = tempfile::tempdir().unwrap();
+        std::fs::write(folder.path().join("excludes.txt"), "*.log\n").unwrap();
+        let root = folder.path().to_string_lossy().into_owned();
+        assert_eq!(read_list(&root, "excludes.txt").unwrap(), "*.log\n");
+        assert!(read_list(&root, "missing.txt").is_err());
+
+        let options = SyncOptions {
+            exclude_from: vec!["excludes.txt".into()],
+            backup: true,
+            backup_dir: "old".into(),
+            ..SyncOptions::default()
+        };
+        let filter = build_filter(&options, &root).unwrap();
+        let rules = filter::FolderRules::default();
+        let verdict = |path, is_dir, side| filter.verdict(path, is_dir, side, &rules);
+        assert!(!verdict("debug.log", false, filter::Side::Sender).is_included());
+        // The backup folder is kept from deletion, not from copying.
+        assert!(verdict("old", true, filter::Side::Sender).is_included());
+        assert!(!verdict("old", true, filter::Side::Receiver).is_included());
     }
 }

@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use super::conflict::ExistsAction;
+use super::options::JobOptions;
 use super::pieces::Pieces;
 use crate::error::AppError;
 use crate::settings::TransferSettings;
@@ -77,6 +78,8 @@ pub struct JobSpec {
     pub size: u64,
     /// Canonical source folders above this one, to stop at symbolic link loops.
     pub ancestors: Arc<[String]>,
+    /// What a synchronization asks of the file beyond the transfer settings.
+    pub options: Option<Arc<JobOptions>>,
 }
 
 impl JobSpec {
@@ -1316,6 +1319,7 @@ mod tests {
             target_directory: "/remote".into(),
             size,
             ancestors: Arc::from([]),
+            options: None,
         }
     }
 

@@ -413,7 +413,7 @@ pub(super) async fn finalize(job: &JobRef<'_>, connections: &mut Connections) ->
     if spec.direction == Direction::Download {
         let source = files.stat(&spec.source).await?;
         let end = worker::downloaded_end(job, &plan, source)?;
-        return worker::complete_download(job.settings, plan, end, true).await;
+        return worker::complete_download(job.settings, plan, end, true, None).await;
     }
 
     let expected = job.run.end().unwrap_or(0);

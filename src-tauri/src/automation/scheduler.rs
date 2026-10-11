@@ -24,7 +24,7 @@ use crate::session::SessionManager;
 use crate::settings::{ConnectionSettings, SettingsStore};
 use crate::storage;
 use crate::sync::{
-    CompareMode, SyncAction, SyncChoice, SyncDirection, SyncManager, SyncRequest, SyncRunRequest,
+    SyncAction, SyncChoice, SyncDirection, SyncManager, SyncOptions, SyncRequest, SyncRunRequest,
 };
 use crate::transfer::TransferManager;
 
@@ -34,7 +34,6 @@ const SCHEDULER_OWNER: &str = "scheduler";
 const TICK: Duration = Duration::from_secs(30);
 /// A run this late at startup counts as missed rather than just due.
 const MISSED_AFTER_SECS: i64 = 60;
-const TRANSFER_POLL: Duration = Duration::from_secs(1);
 const MAX_NAME_CHARS: usize = 200;
 /// The last output line of a command task is kept as its result, cut to this length.
 const MAX_RESULT_LINE_CHARS: usize = 200;
@@ -75,17 +74,13 @@ pub enum TaskAction {
         local_path: String,
         remote_path: String,
         direction: SyncDirection,
-        compare: CompareMode,
+        /// The rsync options, saved with the task so later changes to the defaults leave it
+        /// as it was set up.
+        #[serde(flatten)]
+        options: Box<SyncOptions>,
+        /// rsync arguments applied over `options`.
         #[serde(default)]
-        delete_extraneous: bool,
-        #[serde(default)]
-        skip_newer_on_target: bool,
-        #[serde(default)]
-        ignore_existing: bool,
-        #[serde(default = "default_time_tolerance")]
-        time_tolerance_secs: u32,
-        #[serde(default)]
-        excludes: Vec<String>,
+        arguments: String,
     },
     /// A command run through the server's shell.
     #[serde(rename_all = "camelCase")]
@@ -95,10 +90,6 @@ pub enum TaskAction {
         #[serde(default)]
         directory: Option<String>,
     },
-}
-
-fn default_time_tolerance() -> u32 {
-    2
 }
 
 impl TaskAction {
@@ -524,12 +515,8 @@ async fn synchronize(
         local_path,
         remote_path,
         direction,
-        compare,
-        delete_extraneous,
-        skip_newer_on_target,
-        ignore_existing,
-        time_tolerance_secs,
-        excludes,
+        options,
+        arguments,
         ..
     } = action
     else {
@@ -543,12 +530,8 @@ async fn synchronize(
             local_path: local_path.trim().to_string(),
             remote_path: remote_path.trim().to_string(),
             direction: *direction,
-            compare: *compare,
-            delete_extraneous: *delete_extraneous,
-            skip_newer_on_target: *skip_newer_on_target,
-            ignore_existing: *ignore_existing,
-            time_tolerance_secs: *time_tolerance_secs,
-            excludes: excludes.clone(),
+            options: options.as_ref().clone(),
+            arguments: arguments.clone(),
         })
         .await?;
     let empty_folder = context.sync.empty_mirrored_folder(&plan.plan_id);
@@ -604,31 +587,43 @@ async fn synchronize(
             },
         )
         .await?;
-    while context.transfers.unfinished_session_jobs(session_id) > 0 {
-        tokio::time::sleep(TRANSFER_POLL).await;
+    if summary.dry_run {
+        return Ok(Outcome {
+            succeeded: settled,
+            message: format!(
+                "Dry run: {} would be copied ({}), {} deleted{notes}",
+                plural(summary.queued_files, "file"),
+                format_size(summary.queued_bytes),
+                plural(summary.deleted, "item")
+            ),
+        });
     }
-    let failed = context.transfers.failed_session_jobs(session_id);
-    let copied = summary.queued_files.saturating_sub(failed as u64);
+    let report = context
+        .sync
+        .finished(&summary.run_id)
+        .await
+        .unwrap_or_default();
+    let failures = summary.failures.len().max(report.failures.len()) as u64;
     let mut message = format!(
         "{} copied ({})",
-        plural(copied, "file"),
-        format_size(summary.queued_bytes)
+        plural(report.copied, "file"),
+        format_size(report.bytes)
     );
-    if summary.deleted > 0 {
-        message.push_str(&format!(", {} deleted", plural(summary.deleted, "item")));
+    if report.deleted > 0 {
+        message.push_str(&format!(", {} deleted", plural(report.deleted, "item")));
     }
-    if failed > 0 {
-        message.push_str(&format!(", {} failed", plural(failed as u64, "file")));
+    if report.failed > 0 {
+        message.push_str(&format!(", {} failed", plural(report.failed, "file")));
     }
-    if !summary.failures.is_empty() {
+    if failures > 0 {
         message.push_str(&format!(
             ", {} could not be changed",
-            plural(summary.failures.len() as u64, "item")
+            plural(failures, "item")
         ));
     }
     message.push_str(&notes);
     Ok(Outcome {
-        succeeded: failed == 0 && summary.failures.is_empty() && settled,
+        succeeded: report.failed == 0 && failures == 0 && settled,
         message,
     })
 }
@@ -911,12 +906,21 @@ mod tests {
         }))
         .unwrap();
         assert!(parsed.enabled && parsed.run_missed);
-        assert!(matches!(
-            parsed.action,
-            TaskAction::Sync {
-                time_tolerance_secs: 2,
-                ..
-            }
-        ));
+        let TaskAction::Sync {
+            options, arguments, ..
+        } = &parsed.action
+        else {
+            panic!("not a sync task");
+        };
+        assert_eq!(options.time_tolerance_secs, 2);
+        assert!(options.recursive && options.times);
+        assert!(arguments.is_empty());
+
+        // Options are saved alongside the older fields.
+        let saved = serde_json::to_value(&parsed.action).unwrap();
+        assert_eq!(saved["compare"], "sizeAndTime");
+        assert_eq!(saved["deleteTiming"], "during");
+        let read_back: TaskAction = serde_json::from_value(saved).unwrap();
+        assert_eq!(read_back, parsed.action);
     }
 }

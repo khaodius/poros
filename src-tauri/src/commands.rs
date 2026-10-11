@@ -30,7 +30,10 @@ use crate::route;
 use crate::session::{SessionInfo, SessionManager};
 use crate::settings::{Settings, SettingsStore};
 use crate::ssh::{AuthMethod, ConnectProfile, HostKeyApproval};
-use crate::sync::{SyncManager, SyncPlanView, SyncRequest, SyncRunRequest, SyncRunSummary};
+use crate::sync::{
+    OptionCheck, SyncDirection, SyncManager, SyncOptions, SyncPlanView, SyncRequest,
+    SyncRunRequest, SyncRunSummary,
+};
 use crate::terminal::{Sink, TerminalEvent, TerminalInfo, TerminalManager};
 use crate::themes::{self, ThemeFile, ThemeStore};
 use crate::transfer::{
@@ -359,6 +362,18 @@ pub async fn sync_compare(
     request: SyncRequest,
 ) -> AppResult<SyncPlanView> {
     sync.compare(request).await
+}
+
+/// rsync options with layers of rsync arguments applied in turn, checked, and shown as the
+/// command line they amount to.
+#[tauri::command]
+pub fn sync_check_options(
+    options: SyncOptions,
+    arguments: Vec<String>,
+    direction: SyncDirection,
+) -> OptionCheck {
+    let layers: Vec<&str> = arguments.iter().map(String::as_str).collect();
+    crate::sync::check_options(options, &layers, direction)
 }
 
 #[tauri::command]

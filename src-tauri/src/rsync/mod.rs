@@ -88,6 +88,10 @@ pub struct Upload<'a> {
     pub permissions: u32,
     pub preserve_timestamps: bool,
     pub preserve_permissions: bool,
+    /// Bytes per block of the old version, instead of a length chosen from its size.
+    pub block_size: Option<u32>,
+    /// Has the server keep the version it replaces.
+    pub backup: Option<Backup>,
 }
 
 pub struct Download<'a> {
@@ -97,6 +101,16 @@ pub struct Download<'a> {
     pub basis: &'a Path,
     /// Where the new version is written; the caller moves it into place.
     pub output: &'a Path,
+    /// Bytes per block of the basis, instead of a length chosen from its size.
+    pub block_size: Option<u32>,
+}
+
+/// Where the server keeps a file it replaces: `folder`, or beside the file, with `suffix`
+/// added to its name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Backup {
+    pub folder: Option<String>,
+    pub suffix: String,
 }
 
 /// The protocol version of rsync on the server, or `None` when it does not run.
@@ -136,6 +150,14 @@ pub async fn upload(
     request: &Upload<'_>,
     pace: &impl Pace,
 ) -> AppResult<DeltaReport> {
+    let command = upload_command(request);
+    let mut process = RemoteProcess::start(channel, &command).await?;
+    let report = send_file(&mut process, request, pace).await?;
+    process.finish().await?;
+    Ok(report)
+}
+
+fn upload_command(request: &Upload<'_>) -> String {
     let mut options = String::from("-I");
     if request.preserve_timestamps {
         options.push('t');
@@ -143,15 +165,20 @@ pub async fn upload(
     if request.preserve_permissions {
         options.push('p');
     }
-    let command = format!(
+    if let Some(size) = request.block_size {
+        options.push_str(&format!(" --block-size={size}"));
+    }
+    if let Some(backup) = &request.backup {
+        options.push_str(&format!(" -b --suffix={}", shell_quote(&backup.suffix)));
+        if let Some(folder) = &backup.folder {
+            options.push_str(&format!(" --backup-dir={}", shell_quote(folder)));
+        }
+    }
+    format!(
         "{} --server {options} . {}",
         request.rsync_path,
         shell_quote(&server_path(request.target))
-    );
-    let mut process = RemoteProcess::start(channel, &command).await?;
-    let report = send_file(&mut process, request, pace).await?;
-    process.finish().await?;
-    Ok(report)
+    )
 }
 
 /// Writes the server's `request.source` to `request.output`, reusing `request.basis`.
@@ -339,12 +366,12 @@ async fn receive_file(
     let stop = StopOnDrop::default();
     let stopped = stop.0.clone();
     let basis = request.basis.to_path_buf();
+    let block_size = request.block_size;
     let signature = tokio::task::spawn_blocking(move || {
         let file = std::fs::File::open(&basis)?;
         let length = file.metadata()?.len();
-        Signature::generate(file, block_length(length), seed, || {
-            !stopped.load(Ordering::Relaxed)
-        })
+        let block = block_size.unwrap_or_else(|| block_length(length));
+        Signature::generate(file, block, seed, || !stopped.load(Ordering::Relaxed))
     })
     .await?
     .map_err(|error| AppError::from(error).with_path(request.basis.to_string_lossy()))?;
@@ -672,5 +699,31 @@ mod tests {
     fn relative_paths_cannot_read_as_options() {
         assert_eq!(server_path("/srv/-x"), "/srv/-x");
         assert_eq!(server_path("-x"), "./-x");
+    }
+
+    #[test]
+    fn upload_commands_carry_block_size_and_backups() {
+        let mut request = Upload {
+            rsync_path: "rsync",
+            source: Path::new("a"),
+            target: "/srv/a",
+            size: 1,
+            modified: 0,
+            permissions: 0o644,
+            preserve_timestamps: true,
+            preserve_permissions: false,
+            block_size: None,
+            backup: None,
+        };
+        assert_eq!(upload_command(&request), "rsync --server -It . '/srv/a'");
+        request.block_size = Some(2048);
+        request.backup = Some(Backup {
+            folder: Some("/srv/old files".into()),
+            suffix: String::new(),
+        });
+        assert_eq!(
+            upload_command(&request),
+            "rsync --server -It --block-size=2048 -b --suffix='' --backup-dir='/srv/old files' . '/srv/a'"
+        );
     }
 }

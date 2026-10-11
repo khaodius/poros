@@ -94,6 +94,9 @@ pub struct ConnectProfile {
     /// A saved connection to tunnel through, as with OpenSSH's ProxyJump.
     #[serde(default)]
     pub jump_connection_id: Option<String>,
+    /// The rsync program on the server, when it is not `rsync` on the server's PATH.
+    #[serde(default)]
+    pub rsync_path: Option<String>,
     /// How to reach the server. The backend works it out from the settings and the saved
     /// connections, so secrets never pass through the frontend.
     #[serde(skip)]
