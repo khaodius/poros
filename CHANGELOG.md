@@ -3,6 +3,24 @@
 Installers for every version are attached to its
 [release](https://github.com/khaodius/poros/releases), with SHA-256 checksums.
 
+## 0.4.0 - 2026-10-11
+
+- **WebDAV**, over HTTP or HTTPS, with Basic or Digest sign-in. Quick connect takes `dav://`,
+  `davs://`, `http://` and `https://` addresses. Certificates the system does not trust get the
+  same approval prompt as FTPS, by fingerprint.
+- **Amazon S3 and S3-compatible services** such as Wasabi, Cloudflare R2, MinIO and Backblaze
+  B2's S3 endpoint. Leave the endpoint empty for Amazon S3 or enter any other, with its region
+  and bucket addressing. Buckets show as folders at the top level, and a key restricted to one
+  bucket opens in it.
+- **Backblaze B2** over its native API, with an application key ID and application key. Large
+  files go up in parts, deleting hides a file so its earlier versions stay, and a key
+  restricted to one bucket opens in it.
+- **Box**, signing in through the browser like Google Drive and OneDrive. Register a Box app
+  under Settings > Cloud accounts; the steps are listed there and in the README.
+- Every new kind of connection browses, uploads and downloads with parallel parts for large
+  files, renames, deletes, creates folders and creates new files without replacing one already
+  there.
+
 ## 0.3.5 - 2026-10-11
 
 - **A dragged pane reaches past the window's edge.** Dragging a tab toward the edge of its
