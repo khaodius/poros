@@ -1199,10 +1199,38 @@ input.has-error {
   pointer-events: none;
 }
 
-/* The page of the preview window. */
-.window-sketch.drag-preview {
+/* The page of the preview window: the lifted pane, drawn from a picture of it, with the window
+   it turns into over it. */
+.drag-preview {
+  position: relative;
   height: 100%;
+  overflow: hidden;
+  background: var(--surface-raised);
+}
+
+.drag-preview::after {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
   border: 1px solid var(--border-strong);
+  pointer-events: none;
+  content: "";
+}
+
+.drag-preview-picture {
+  position: absolute;
+  left: 0;
+  pointer-events: none;
+}
+
+.drag-preview-sketch {
+  position: absolute;
+  inset: 0;
+}
+
+/* Placed anew as the preview moves, so it keeps still on screen. */
+.drag-preview > .dock-drop {
+  transition: none;
 }
 
 .dock > .dock-floating-window {

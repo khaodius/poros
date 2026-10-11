@@ -4,7 +4,7 @@
 use std::sync::Mutex;
 use std::time::Duration;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tauri::{
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition, WebviewUrl,
     WebviewWindow, WebviewWindowBuilder,
@@ -14,6 +14,8 @@ use tauri::{
 pub const DRAG_PREVIEW_WINDOW: &str = "drag-preview";
 /// Mirrored in `src/lib/ipc.ts`. Tells the preview window what to show.
 pub const DRAG_PREVIEW_EVENT: &str = "poros://drag-preview";
+/// Mirrored in `src/lib/ipc.ts`. Gives the preview window the picture of the dragged pane.
+pub const DRAG_PREVIEW_PICTURE_EVENT: &str = "poros://drag-preview-picture";
 /// How long the preview waits for the window a tab dropped on the desktop opens in, in case it
 /// never says it has drawn.
 const HAND_OFF_LIMIT: Duration = Duration::from_secs(3);
@@ -93,8 +95,9 @@ pub struct PreviewPlacement {
     pub height: f64,
 }
 
-/// The preview of a tab dragged onto the desktop. Its window opens on the first such drag and
-/// is hidden, not closed, between drags so it shows at once the next time.
+/// The preview of a dragged tab, drawn where the window it is dragged in cannot draw: past its
+/// edge and out on the desktop. Its window opens on the first tab drag and is hidden, not
+/// closed, between drags so it shows at once the next time.
 #[derive(Default)]
 pub struct DragPreview(Mutex<PreviewState>);
 
@@ -102,8 +105,12 @@ pub struct DragPreview(Mutex<PreviewState>);
 struct PreviewState {
     /// What the preview shows while a drag wants it; none while it is hidden.
     content: Option<serde_json::Value>,
+    /// The latest drag's picture of its pane, which the page draws the pane from.
+    picture: Option<serde_json::Value>,
     /// The preview page has loaded and listens for content.
     ready: bool,
+    /// The window is showing; it is shown once per time it is wanted.
+    visible: bool,
     /// The window a tab dropped on the desktop is opening in. The preview stays in its place
     /// until it has drawn, so nothing flickers in between.
     successor: Option<String>,
@@ -122,6 +129,7 @@ impl DragPreview {
         let Some(window) = app.get_webview_window(DRAG_PREVIEW_WINDOW) else {
             state.content = Some(placement.content);
             state.ready = false;
+            state.visible = false;
             open_preview(app, corner, size)?;
             return Ok(());
         };
@@ -135,8 +143,23 @@ impl DragPreview {
         Ok(())
     }
 
+    /// Keeps the picture of the dragged pane and passes it to the page.
+    pub fn picture(&self, app: &AppHandle, picture: serde_json::Value) -> tauri::Result<()> {
+        if !can_place_windows() {
+            return Ok(());
+        }
+        let mut state = self.0.lock().unwrap();
+        if state.ready {
+            if let Some(window) = app.get_webview_window(DRAG_PREVIEW_WINDOW) {
+                window.emit_to(DRAG_PREVIEW_WINDOW, DRAG_PREVIEW_PICTURE_EVENT, &picture)?;
+            }
+        }
+        state.picture = Some(picture);
+        Ok(())
+    }
+
     /// Opens the preview hidden and empty, so its page has loaded by the time a drag first
-    /// leaves the window.
+    /// needs it.
     pub fn prepare(&self, app: &AppHandle) -> tauri::Result<()> {
         if !can_place_windows() {
             return Ok(());
@@ -146,6 +169,7 @@ impl DragPreview {
             return Ok(());
         }
         state.ready = false;
+        state.visible = false;
         open_preview(
             app,
             PhysicalPosition::new(0, 0),
@@ -180,18 +204,22 @@ impl DragPreview {
     }
 
     /// Marks the preview page ready and returns what it should show, if anything.
-    pub fn ready(&self) -> Option<serde_json::Value> {
+    pub fn ready(&self) -> PreviewStart {
         let mut state = self.0.lock().unwrap();
         state.ready = true;
-        state.content.clone()
+        PreviewStart {
+            content: state.content.clone(),
+            picture: state.picture.clone(),
+        }
     }
 
     /// Shows the preview once its page has drawn the content, unless the drag left meanwhile.
     pub fn reveal(&self, window: &WebviewWindow) -> tauri::Result<()> {
-        let state = self.0.lock().unwrap();
-        if state.content.is_none() {
+        let mut state = self.0.lock().unwrap();
+        if state.content.is_none() || state.visible {
             return Ok(());
         }
+        state.visible = true;
         show_without_focus(window)
     }
 
@@ -201,8 +229,16 @@ impl DragPreview {
     }
 }
 
+/// What the preview page shows when it has loaded.
+#[derive(Serialize)]
+pub struct PreviewStart {
+    content: Option<serde_json::Value>,
+    picture: Option<serde_json::Value>,
+}
+
 fn hide_preview(app: &AppHandle, state: &mut PreviewState) -> tauri::Result<()> {
     state.successor = None;
+    state.visible = false;
     if state.content.take().is_none() {
         return Ok(());
     }
@@ -213,7 +249,8 @@ fn hide_preview(app: &AppHandle, state: &mut PreviewState) -> tauri::Result<()> 
 }
 
 /// Opens the preview window hidden. It never takes focus, which would end the drag, and stays
-/// above the window the tab is dragged from.
+/// above the window the tab is dragged from. It is resizable only so that it can be sized as it
+/// follows the pane: some systems ignore new sizes for windows that are not.
 fn open_preview(
     app: &AppHandle,
     corner: PhysicalPosition<i32>,
@@ -227,7 +264,6 @@ fn open_preview(
     )
     .title("Poros")
     .decorations(false)
-    .resizable(false)
     .skip_taskbar(true)
     .always_on_top(true)
     .focused(false)

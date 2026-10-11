@@ -650,10 +650,25 @@ export type TerminalEvent = { type: "output"; data: string } | { type: "exit"; m
 /** How the system draws a window's corners, where it draws them. */
 export type WindowCorners = "square" | "small" | "round";
 
-/** What the preview of a tab dragged out onto the desktop shows. */
+/** What the preview of a dragged tab shows. */
 export interface PreviewContent {
   label: string;
   kind: "local" | "remote" | "welcome" | "editor" | "terminal";
+  /** How far the pane has turned into the window it opens as, from 0 to 1. */
+  toward: number;
+  /** The drag whose picture of the pane to show. */
+  drag: number;
+  /** The marker of where the pane will land, where it falls on the pane. */
+  drop: PreviewDrop | null;
+}
+
+/** A drop marker in the drag preview, placed in its logical pixels. */
+export interface PreviewDrop {
+  side: "left" | "right" | "top" | "bottom" | "center";
+  left: number;
+  top: number;
+  width: number;
+  height: number;
 }
 
 /** Where the drag preview sits on screen and what it shows. */
