@@ -1,5 +1,5 @@
-//! The date formats FTP servers and the cloud APIs use, converted to and from seconds since
-//! the Unix epoch. Always UTC.
+//! The date formats FTP servers, HTTP and the cloud APIs use, converted to and from seconds
+//! since the Unix epoch. Always UTC.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -116,6 +116,63 @@ pub fn format_rfc3339(seconds: i64) -> String {
     )
 }
 
+/// An HTTP date: `Sun, 06 Nov 1994 08:49:37 GMT`, the obsolete `Sunday, 06-Nov-94 08:49:37 GMT`
+/// and `Sun Nov  6 08:49:37 1994`, or RFC 3339, which some WebDAV servers send instead.
+pub fn parse_http_date(text: &str) -> Option<i64> {
+    let text = text.trim();
+    if let Some(seconds) = parse_rfc3339(text) {
+        return Some(seconds);
+    }
+    let fields: Vec<&str> = text
+        .split([' ', ','])
+        .filter(|field| !field.is_empty())
+        .collect();
+    let (day, month, year, time) = match fields.as_slice() {
+        [_, day, month, year, time, "GMT" | "UTC" | "+0000"] => (*day, *month, *year, *time),
+        [_, date, time, "GMT" | "UTC"] => {
+            let mut parts = date.split('-');
+            let (day, month, year) = (parts.next()?, parts.next()?, parts.next()?);
+            (day, month, year, *time)
+        }
+        [_, month, day, time, year] => (*day, *month, *year, *time),
+        _ => return None,
+    };
+    let year = match i64::from(number(year)?) {
+        // RFC 850 years: 70 to 99 are the 1900s.
+        short @ 0..=69 if year.len() == 2 => 2000 + short,
+        short @ 70..=99 if year.len() == 2 => 1900 + short,
+        full => full,
+    };
+    let mut clock = time.split(':');
+    unix_seconds(
+        year,
+        month_number(month)?,
+        number(day)?,
+        number(clock.next()?)?,
+        number(clock.next()?)?,
+        number(clock.next()?)?,
+    )
+}
+
+/// The `If-Modified-Since` style date, which `parse_http_date` reads back.
+pub fn format_http_date(seconds: i64) -> String {
+    const DAYS: [&str; 7] = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"];
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let days = seconds.div_euclid(SECONDS_PER_DAY);
+    let (year, month, day) = civil_from_days(days);
+    let time_of_day = seconds.rem_euclid(SECONDS_PER_DAY);
+    format!(
+        "{}, {day:02} {} {year:04} {:02}:{:02}:{:02} GMT",
+        DAYS[days.rem_euclid(7) as usize],
+        MONTHS[month as usize - 1],
+        time_of_day / 3600,
+        time_of_day % 3600 / 60,
+        time_of_day % 60
+    )
+}
+
 /// `YYYYMMDDHHMMSS`, with optional fractional seconds, as in `MDTM` replies and MLSD facts.
 pub fn parse_ftp_time(text: &str) -> Option<i64> {
     let digits = text.trim().split('.').next()?;
@@ -207,6 +264,24 @@ mod tests {
         assert_eq!(parse_ftp_time("20240229235959.250"), Some(1_709_251_199));
         assert_eq!(parse_ftp_time("2024022923595"), None);
         assert_eq!(format_ftp_time(1_709_251_199), "20240229235959");
+    }
+
+    #[test]
+    fn parses_http_dates() {
+        let expected = Some(784_111_777);
+        assert_eq!(parse_http_date("Sun, 06 Nov 1994 08:49:37 GMT"), expected);
+        assert_eq!(parse_http_date("Sunday, 06-Nov-94 08:49:37 GMT"), expected);
+        assert_eq!(parse_http_date("Sun Nov  6 08:49:37 1994"), expected);
+        assert_eq!(parse_http_date("1994-11-06T08:49:37Z"), expected);
+        assert_eq!(
+            format_http_date(784_111_777),
+            "Sun, 06 Nov 1994 08:49:37 GMT"
+        );
+        assert_eq!(
+            parse_http_date(&format_http_date(1_709_251_199)),
+            Some(1_709_251_199)
+        );
+        assert_eq!(parse_http_date("yesterday"), None);
     }
 
     #[test]

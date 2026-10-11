@@ -51,6 +51,16 @@ describe("parseHostInput", () => {
     ["ftp://files.example.com/pub", { host: "files.example.com", path: "/pub", protocol: "ftp" }],
     ["ftpes://example.com", { host: "example.com", protocol: "ftps" }],
     ["FTPS://example.com:990", { host: "example.com", port: 990, protocol: "ftpsImplicit" }],
+    [
+      "davs://ada@cloud.example.com/remote.php/dav/files/ada",
+      {
+        host: "cloud.example.com",
+        username: "ada",
+        path: "/remote.php/dav/files/ada",
+        protocol: "webDavs",
+      },
+    ],
+    ["http://nas.local:5005", { host: "nas.local", port: 5005, protocol: "webDav" }],
     ["user%40corp@example.com", { host: "example.com", username: "user@corp" }],
     ["broken%zz@example.com", { host: "example.com", username: "broken%zz" }],
     ["[2001:db8::1]:2200", { host: "2001:db8::1", port: 2200 }],

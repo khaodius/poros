@@ -17,6 +17,7 @@ use serde::Deserialize;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpSocket, TcpStream};
 
+use crate::cloud::s3::S3Options;
 use crate::error::{AppError, AppResult, ErrorKind, HostKeyInfo};
 use crate::events::{Events, LogLevel};
 use crate::protocol::Protocol;
@@ -42,7 +43,7 @@ pub enum AuthMethod {
         passphrase: Option<String>,
     },
     Agent,
-    /// A Google or Microsoft account signed in through the browser. The frontend names a
+    /// A Google, Microsoft or Box account signed in through the browser. The frontend names a
     /// fresh sign-in by `grant_id`; the refresh token itself stays in the backend.
     #[serde(rename = "oauth", rename_all = "camelCase")]
     OAuth {
@@ -97,6 +98,8 @@ pub struct ConnectProfile {
     /// The rsync program on the server, when it is not `rsync` on the server's PATH.
     #[serde(default)]
     pub rsync_path: Option<String>,
+    #[serde(default)]
+    pub s3: S3Options,
     /// How to reach the server. The backend works it out from the settings and the saved
     /// connections, so secrets never pass through the frontend.
     #[serde(skip)]
@@ -143,14 +146,23 @@ impl ConnectProfile {
     }
 
     pub fn label(&self) -> String {
-        if self.protocol.is_cloud() {
+        if self.protocol.service_host().is_some() {
             return format!("{} ({})", self.protocol.display_name(), self.username);
         }
         let scheme = match self.protocol {
             Protocol::Sftp => "",
             Protocol::Ftp => "ftp://",
+            Protocol::WebDav => "dav://",
+            Protocol::WebDavs => "davs://",
+            Protocol::S3 => {
+                // The access key ID says nothing to a reader.
+                return format!("S3 ({})", crate::cloud::s3::endpoint_label(self));
+            }
             _ => "ftps://",
         };
+        if self.protocol.is_webdav() && self.username.trim().is_empty() {
+            return format!("{scheme}{}", self.host);
+        }
         if self.port == self.protocol.default_port() {
             format!("{scheme}{}@{}", self.login_name(), self.host)
         } else {
@@ -159,11 +171,18 @@ impl ConnectProfile {
     }
 
     pub fn validate(&self) -> AppResult<()> {
-        if self.protocol.is_cloud() {
-            return Ok(());
-        }
-        if self.host.trim().is_empty() {
-            return Err(AppError::invalid("Host is required"));
+        match self.protocol {
+            Protocol::BackblazeB2 if self.username.trim().is_empty() => {
+                return Err(AppError::invalid("Application key ID is required"))
+            }
+            Protocol::S3 if self.username.trim().is_empty() => {
+                return Err(AppError::invalid("Access key ID is required"))
+            }
+            // S3 falls back to Amazon's endpoint.
+            Protocol::S3 => {}
+            protocol if protocol.service_host().is_some() => return Ok(()),
+            _ if self.host.trim().is_empty() => return Err(AppError::invalid("Host is required")),
+            _ => {}
         }
         if self.protocol == Protocol::Sftp && self.username.trim().is_empty() {
             return Err(AppError::invalid("Username is required"));

@@ -132,7 +132,7 @@ jobs:
 
       - run: npm ci
 
-      # The Google and Microsoft apps cloud storage signs in with by default. Without them,
+      # The Google, Microsoft and Box apps cloud storage signs in with by default. Without them,
       # users add their own app registrations in Settings.
       # A key pasted into the secret with a line break fails to decode, so whitespace is
       # removed from the key (base64 has none) and line breaks from the password.
@@ -144,6 +144,8 @@ jobs:
           POROS_GOOGLE_CLIENT_ID: ${{ secrets.POROS_GOOGLE_CLIENT_ID }}
           POROS_GOOGLE_CLIENT_SECRET: ${{ secrets.POROS_GOOGLE_CLIENT_SECRET }}
           POROS_MICROSOFT_CLIENT_ID: ${{ secrets.POROS_MICROSOFT_CLIENT_ID }}
+          POROS_BOX_CLIENT_ID: ${{ secrets.POROS_BOX_CLIENT_ID }}
+          POROS_BOX_CLIENT_SECRET: ${{ secrets.POROS_BOX_CLIENT_SECRET }}
         run: |
           TAURI_SIGNING_PRIVATE_KEY="$(printf '%s' "$TAURI_SIGNING_PRIVATE_KEY" | tr -d '[:space:]')"
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$(printf '%s' "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" | tr -d '\r\n')"

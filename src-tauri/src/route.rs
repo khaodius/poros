@@ -158,6 +158,7 @@ fn profile_from_saved(saved: &SavedConnection, auth: AuthMethod) -> ConnectProfi
         bypass_proxy: saved.bypass_proxy,
         jump_connection_id: saved.jump_connection_id.clone(),
         rsync_path: saved.rsync_path.clone(),
+        s3: saved.s3.clone(),
         route: Route::default(),
     }
 }

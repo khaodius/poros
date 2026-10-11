@@ -28,16 +28,36 @@ export interface DirListing {
   entries: FileEntry[];
 }
 
-export type Protocol = "sftp" | "ftp" | "ftps" | "ftpsImplicit" | "googleDrive" | "oneDrive";
+export type Protocol =
+  | "sftp"
+  | "ftp"
+  | "ftps"
+  | "ftpsImplicit"
+  | "webDav"
+  | "webDavs"
+  | "s3"
+  | "backblazeB2"
+  | "googleDrive"
+  | "oneDrive"
+  | "box";
 
-export type CloudProvider = "google" | "microsoft";
+export type CloudProvider = "google" | "microsoft" | "box";
+
+/** Where the bucket goes in an S3 address. */
+export type S3Addressing = "automatic" | "path" | "virtualHosted";
+
+export interface S3Options {
+  /** Empty takes it from the endpoint, or else `us-east-1`. */
+  region: string;
+  addressing: S3Addressing;
+}
 
 export type AuthMethod =
   | { type: "password"; password: string }
   | { type: "publicKey"; keyPath: string; passphrase?: string | null }
   | { type: "agent" }
   /**
-   * A Google or Microsoft account. `grantId` names a sign-in just made in the browser; without
+   * A Google, Microsoft or Box account. `grantId` names a sign-in just made in the browser; without
    * it, a saved connection's account comes from the system keychain.
    */
   | { type: "oauth"; grantId?: string | null };
@@ -64,6 +84,7 @@ export interface ConnectProfile {
   bypassProxy?: boolean;
   /** A saved connection to reach this server through, like OpenSSH's ProxyJump. */
   jumpConnectionId?: string | null;
+  s3?: S3Options;
 }
 
 export interface HostKeyInfo {
@@ -71,7 +92,7 @@ export interface HostKeyInfo {
   port: number;
   algorithm: string;
   fingerprint: string;
-  /** Why the system did not trust an FTPS server's TLS certificate; absent for SSH host keys. */
+  /** Why the system did not trust a server's TLS certificate; absent for SSH host keys. */
   certificateProblem?: string;
 }
 
@@ -354,6 +375,7 @@ export interface SavedConnection {
   bypassProxy?: boolean;
   /** Another saved connection this one is reached through. */
   jumpConnectionId?: string | null;
+  s3?: S3Options;
 }
 
 export interface CloudProviderStatus {

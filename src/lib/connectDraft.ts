@@ -1,9 +1,19 @@
-import { defaultPort, isCloud, isFtp, protocolInfo } from "./protocols";
+import {
+  defaultPort,
+  hasFixedHost,
+  isFtp,
+  isWebDav,
+  protocolInfo,
+  signsInWithBrowser,
+  usesAccessKeys,
+} from "./protocols";
 import type {
   AuthMethod,
   AuthType,
   ConnectProfile,
   Protocol,
+  S3Addressing,
+  S3Options,
   SavedConnection,
   SignedIn,
 } from "./types";
@@ -17,7 +27,7 @@ export interface ConnectDraft {
   name: string;
   host: string;
   port: string;
-  /** For cloud storage, the account's email address or name. */
+  /** The account's email address or name for browser sign-in, the key ID for S3 and B2. */
   username: string;
   authChoice: AuthChoice;
   password: string;
@@ -36,6 +46,9 @@ export interface ConnectDraft {
   /** A saved connection to go through first; empty connects straight to the server. */
   jumpConnectionId: string;
   bypassProxy: boolean;
+  /** S3 only: empty takes the region from the endpoint. */
+  s3Region: string;
+  s3Addressing: S3Addressing;
 }
 
 export const EMPTY_DRAFT: ConnectDraft = {
@@ -57,13 +70,21 @@ export const EMPTY_DRAFT: ConnectDraft = {
   signedIn: null,
   jumpConnectionId: "",
   bypassProxy: false,
+  s3Region: "",
+  s3Addressing: "automatic",
 };
 
 /** The ways a protocol can sign in, the first being its default. */
 export function authChoicesFor(protocol: Protocol): AuthChoice[] {
-  if (isCloud(protocol)) return ["oauth"];
-  if (isFtp(protocol)) return ["password"];
-  return ["password", "publicKey", "agent"];
+  if (signsInWithBrowser(protocol)) return ["oauth"];
+  if (protocol === "sftp") return ["password", "publicKey", "agent"];
+  return ["password"];
+}
+
+/** What kind of account a protocol signs in to; a username means nothing to another kind. */
+function accountKind(protocol: Protocol): string {
+  if (signsInWithBrowser(protocol) || usesAccessKeys(protocol)) return protocol;
+  return "server";
 }
 
 /**
@@ -77,13 +98,15 @@ export function withProtocol(draft: ConnectDraft, protocol: Protocol): ConnectDr
       : draft.port;
   const choices = authChoicesFor(protocol);
   const authChoice = choices.includes(draft.authChoice) ? draft.authChoice : choices[0];
-  const changedService = isCloud(protocol) || isCloud(draft.protocol);
+  const changedService = accountKind(protocol) !== accountKind(draft.protocol);
+  // An S3 endpoint is not a server to log in to, nor the other way around.
+  const changedHost = hasFixedHost(protocol) || (protocol === "s3") !== (draft.protocol === "s3");
   return {
     ...draft,
     protocol,
     port,
     authChoice,
-    host: isCloud(protocol) ? "" : draft.host,
+    host: changedHost ? "" : draft.host,
     username: changedService ? "" : draft.username,
     // A stored password is no use as a key passphrase, nor the other way around, and the
     // keychain keeps it for one port.
@@ -118,10 +141,14 @@ export function withField<K extends keyof ConnectDraft>(
 
 /** Whether a draft has everything a connection attempt needs. */
 export function canConnect(draft: ConnectDraft): boolean {
-  if (isCloud(draft.protocol)) return draft.signedIn !== null || draft.hasSavedSecret;
+  if (signsInWithBrowser(draft.protocol)) return draft.signedIn !== null || draft.hasSavedSecret;
+  // S3 without an endpoint is Amazon's.
+  if (usesAccessKeys(draft.protocol)) return draft.username.trim() !== "";
   if (draft.host.trim() === "") return false;
-  // FTP servers take `anonymous` when no username is given.
-  if (!isFtp(draft.protocol) && draft.username.trim() === "") return false;
+  // FTP servers take `anonymous` when no username is given, and WebDAV may need no sign-in.
+  if (!isFtp(draft.protocol) && !isWebDav(draft.protocol) && draft.username.trim() === "") {
+    return false;
+  }
   return draft.authChoice !== "publicKey" || draft.keyPath.trim() !== "";
 }
 
@@ -142,17 +169,27 @@ function authFromDraft(draft: ConnectDraft): AuthMethod {
   }
 }
 
+function s3FromDraft(draft: ConnectDraft): S3Options {
+  return { region: draft.s3Region.trim(), addressing: draft.s3Addressing };
+}
+
+function portFromDraft(draft: ConnectDraft): number {
+  return hasFixedHost(draft.protocol)
+    ? defaultPort(draft.protocol)
+    : Number(draft.port) || defaultPort(draft.protocol);
+}
+
 export function profileFromDraft(draft: ConnectDraft): ConnectProfile {
-  const cloud = isCloud(draft.protocol);
   const profile: ConnectProfile = {
     protocol: draft.protocol,
-    host: cloud ? "" : draft.host.trim(),
-    port: cloud ? defaultPort(draft.protocol) : Number(draft.port) || defaultPort(draft.protocol),
+    host: hasFixedHost(draft.protocol) ? "" : draft.host.trim(),
+    port: portFromDraft(draft),
     username: (draft.signedIn?.account ?? draft.username).trim(),
     auth: authFromDraft(draft),
     initialPath: draft.initialPath.trim() || null,
   };
   if (isFtp(draft.protocol)) profile.ftpActive = draft.ftpActive;
+  if (draft.protocol === "s3") profile.s3 = s3FromDraft(draft);
   if (draft.savedId) profile.savedConnectionId = draft.savedId;
   // The proxy and jump hosts carry SSH connections only.
   if (draft.protocol === "sftp") {
@@ -168,7 +205,7 @@ export function draftFromSaved(connection: SavedConnection): ConnectDraft {
     savedId: connection.id,
     protocol: connection.protocol,
     name: connection.name,
-    host: isCloud(connection.protocol) ? "" : connection.host,
+    host: hasFixedHost(connection.protocol) ? "" : connection.host,
     port: String(connection.port),
     username: connection.username,
     authChoice: connection.authType,
@@ -179,35 +216,41 @@ export function draftFromSaved(connection: SavedConnection): ConnectDraft {
     ftpActive: connection.ftpActive ?? false,
     jumpConnectionId: connection.jumpConnectionId ?? "",
     bypassProxy: connection.bypassProxy ?? false,
+    s3Region: connection.s3?.region ?? "",
+    s3Addressing: connection.s3?.addressing ?? "automatic",
   };
 }
 
 /** A name for a connection that has none: the server, or the cloud account. */
 function fallbackName(protocol: Protocol, host: string, username: string): string {
-  return isCloud(protocol) ? `${protocolInfo(protocol).label} (${username})` : host;
+  if (hasFixedHost(protocol)) return `${protocolInfo(protocol).label} (${username})`;
+  if (protocol === "s3") return host || "Amazon S3";
+  return host;
 }
 
 /** The connection to store for a draft; secrets travel separately. */
 export function savedFromDraft(draft: ConnectDraft): SavedConnection {
   const host = draft.host.trim();
   const username = (draft.signedIn?.account ?? draft.username).trim();
-  const cloud = isCloud(draft.protocol);
-  return {
+  const connection: SavedConnection = {
     id: draft.savedId ?? "",
     protocol: draft.protocol,
     name: draft.name.trim() || fallbackName(draft.protocol, host, username),
     host,
-    port: cloud ? defaultPort(draft.protocol) : Number(draft.port) || defaultPort(draft.protocol),
+    port: portFromDraft(draft),
     username,
     authType: draft.authChoice,
     keyPath: draft.authChoice === "publicKey" ? draft.keyPath.trim() : null,
     remotePath: draft.initialPath.trim() || null,
-    // A cloud connection cannot open without its stored sign-in.
-    saveSecret: cloud || (draft.authChoice !== "agent" && draft.saveSecret),
+    // A browser sign-in cannot be used again unless it is stored.
+    saveSecret:
+      signsInWithBrowser(draft.protocol) || (draft.authChoice !== "agent" && draft.saveSecret),
     ftpActive: isFtp(draft.protocol) && draft.ftpActive,
     bypassProxy: draft.protocol === "sftp" && draft.bypassProxy,
     jumpConnectionId: (draft.protocol === "sftp" && draft.jumpConnectionId) || null,
   };
+  if (draft.protocol === "s3") connection.s3 = s3FromDraft(draft);
+  return connection;
 }
 
 /** The password or passphrase typed into a draft, if any. */
@@ -218,7 +261,6 @@ export function draftSecret(draft: ConnectDraft): string {
 }
 
 export function savedFromProfile(profile: ConnectProfile, name: string, saveSecret: boolean) {
-  const cloud = isCloud(profile.protocol);
   const connection: SavedConnection = {
     id: "",
     protocol: profile.protocol,
@@ -229,11 +271,13 @@ export function savedFromProfile(profile: ConnectProfile, name: string, saveSecr
     authType: profile.auth.type,
     keyPath: profile.auth.type === "publicKey" ? profile.auth.keyPath : null,
     remotePath: profile.initialPath ?? null,
-    saveSecret: cloud || (profile.auth.type !== "agent" && saveSecret),
+    saveSecret:
+      signsInWithBrowser(profile.protocol) || (profile.auth.type !== "agent" && saveSecret),
     ftpActive: profile.ftpActive ?? false,
     bypassProxy: profile.bypassProxy ?? false,
     jumpConnectionId: profile.jumpConnectionId ?? null,
   };
+  if (profile.s3) connection.s3 = profile.s3;
   return connection;
 }
 
@@ -254,23 +298,25 @@ export function findSameAccount(
   profile: Pick<ConnectProfile, "protocol" | "host" | "port" | "username">,
 ): SavedConnection | undefined {
   const host = profile.host.toLowerCase();
-  const cloud = isCloud(profile.protocol);
+  const fixedHost = hasFixedHost(profile.protocol);
   return connections.find(
     (connection) =>
       connection.protocol === profile.protocol &&
       connection.username === profile.username &&
-      (cloud || (connection.host.toLowerCase() === host && connection.port === profile.port)),
+      (fixedHost || (connection.host.toLowerCase() === host && connection.port === profile.port)),
   );
 }
 
 /** How a saved connection is described under its name. */
 export function connectionDetail(connection: SavedConnection): string {
   const info = protocolInfo(connection.protocol);
-  if (isCloud(connection.protocol)) return `${info.label}, ${connection.username}`;
+  if (hasFixedHost(connection.protocol)) return `${info.label}, ${connection.username}`;
   const address =
     connection.port === info.defaultPort
       ? connection.host
       : `${connection.host}:${connection.port}`;
+  // An access key ID says nothing to a reader.
+  if (connection.protocol === "s3") return `${info.shortLabel}, ${address}`;
   const account = connection.username || (isFtp(connection.protocol) ? "anonymous" : "");
   const target = account ? `${account}@${address}` : address;
   return connection.protocol === "sftp" ? target : `${info.shortLabel}, ${target}`;

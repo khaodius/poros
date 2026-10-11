@@ -1,6 +1,7 @@
 //! What every kind of server connection offers the file panes and the transfer queue. SFTP,
-//! FTP and FTPS, Google Drive and OneDrive each implement `RemoteFileSystem`; SFTP keeps its
-//! own pipelined transfer path and SSH extras (rsync, commands) on top.
+//! FTP and FTPS, WebDAV, S3, Backblaze B2, Google Drive, OneDrive and Box each implement
+//! `RemoteFileSystem`; SFTP keeps its own pipelined transfer path and SSH extras (rsync,
+//! commands) on top.
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -24,8 +25,17 @@ pub enum Protocol {
     Ftps,
     /// FTP inside TLS from the first byte, usually on port 990 (implicit FTPS).
     FtpsImplicit,
+    /// WebDAV over plain HTTP.
+    WebDav,
+    /// WebDAV over HTTPS.
+    WebDavs,
+    /// Amazon S3 or any service with an S3-compatible API.
+    S3,
+    /// Backblaze B2 over its native API.
+    BackblazeB2,
     GoogleDrive,
     OneDrive,
+    Box,
 }
 
 impl Protocol {
@@ -34,7 +44,13 @@ impl Protocol {
             Protocol::Sftp => 22,
             Protocol::Ftp | Protocol::Ftps => 21,
             Protocol::FtpsImplicit => 990,
-            Protocol::GoogleDrive | Protocol::OneDrive => 443,
+            Protocol::WebDav => 80,
+            Protocol::WebDavs
+            | Protocol::S3
+            | Protocol::BackblazeB2
+            | Protocol::GoogleDrive
+            | Protocol::OneDrive
+            | Protocol::Box => 443,
         }
     }
 
@@ -45,17 +61,48 @@ impl Protocol {
         )
     }
 
-    pub fn is_cloud(self) -> bool {
-        matches!(self, Protocol::GoogleDrive | Protocol::OneDrive)
+    pub fn is_webdav(self) -> bool {
+        matches!(self, Protocol::WebDav | Protocol::WebDavs)
     }
 
-    /// The host a cloud service's connections are listed under.
+    /// Requests go over HTTP, any number at once on the session's own client, so transfers
+    /// need no connections of their own.
+    pub fn is_http(self) -> bool {
+        !matches!(
+            self,
+            Protocol::Sftp | Protocol::Ftp | Protocol::Ftps | Protocol::FtpsImplicit
+        )
+    }
+
+    /// The account signs in through the browser instead of with a password.
+    pub fn signs_in_with_oauth(self) -> bool {
+        matches!(
+            self,
+            Protocol::GoogleDrive | Protocol::OneDrive | Protocol::Box
+        )
+    }
+
+    /// The host a service with one fixed address lists its connections under.
     pub fn service_host(self) -> Option<&'static str> {
         match self {
             Protocol::GoogleDrive => Some("drive.google.com"),
             Protocol::OneDrive => Some("onedrive.live.com"),
+            Protocol::Box => Some("app.box.com"),
+            Protocol::BackblazeB2 => Some("api.backblazeb2.com"),
             _ => None,
         }
+    }
+
+    /// An upload carries the file's modification time, so none is set after it.
+    pub fn uploads_carry_time(self) -> bool {
+        matches!(
+            self,
+            Protocol::S3
+                | Protocol::BackblazeB2
+                | Protocol::GoogleDrive
+                | Protocol::OneDrive
+                | Protocol::Box
+        )
     }
 
     pub fn display_name(self) -> &'static str {
@@ -63,8 +110,12 @@ impl Protocol {
             Protocol::Sftp => "SFTP",
             Protocol::Ftp => "FTP",
             Protocol::Ftps | Protocol::FtpsImplicit => "FTPS",
+            Protocol::WebDav | Protocol::WebDavs => "WebDAV",
+            Protocol::S3 => "S3",
+            Protocol::BackblazeB2 => "Backblaze B2",
             Protocol::GoogleDrive => "Google Drive",
             Protocol::OneDrive => "OneDrive",
+            Protocol::Box => "Box",
         }
     }
 }
@@ -309,7 +360,13 @@ mod tests {
         assert_eq!(Protocol::Sftp.default_port(), 22);
         assert_eq!(Protocol::Ftps.default_port(), 21);
         assert_eq!(Protocol::FtpsImplicit.default_port(), 990);
-        assert!(Protocol::OneDrive.is_cloud());
+        assert_eq!(Protocol::WebDav.default_port(), 80);
+        assert_eq!(Protocol::WebDavs.default_port(), 443);
+        assert!(Protocol::OneDrive.signs_in_with_oauth());
+        assert!(Protocol::Box.signs_in_with_oauth());
+        assert!(!Protocol::S3.signs_in_with_oauth());
         assert!(Protocol::FtpsImplicit.is_ftp());
+        assert!(Protocol::WebDavs.is_http() && Protocol::BackblazeB2.is_http());
+        assert!(!Protocol::Sftp.is_http() && !Protocol::Ftps.is_http());
     }
 }

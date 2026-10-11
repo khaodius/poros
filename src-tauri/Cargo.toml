@@ -1,6 +1,6 @@
 [package]
 name = "poros"
-version = "0.3.5"
+version = "0.4.0"
 description = "SFTP and rsync client"
 authors = ["khaodius"]
 license = "Apache-2.0"
@@ -66,6 +66,8 @@ tauri-plugin-notification = "2.5"
 # A second launch brings the running window forward instead of starting another copy, which
 # would run every scheduled task twice and overwrite the saved schedules.
 tauri-plugin-single-instance = "2.5"
+# WebDAV listings and S3 answers. Elements are matched by local name, whatever their prefix.
+quick-xml = { version = "0.42", features = ["serialize", "overlapped-lists"] }
 
 [target.'cfg(windows)'.dependencies]
 # Rounded window corners on Windows 11, and showing the drag preview without taking focus.

@@ -11,6 +11,7 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::cloud::s3::S3Options;
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::protocol::Protocol;
 use crate::ssh::{AuthMethod, ConnectProfile};
@@ -26,7 +27,7 @@ pub enum AuthType {
     Password,
     PublicKey,
     Agent,
-    /// A Google or Microsoft account signed in through the browser.
+    /// A Google, Microsoft or Box account signed in through the browser.
     #[serde(rename = "oauth")]
     OAuth,
 }
@@ -68,6 +69,8 @@ pub struct SavedConnection {
     /// rsync options this site's folder synchronizations start from, over the defaults.
     #[serde(default)]
     pub sync_arguments: Option<String>,
+    #[serde(default)]
+    pub s3: S3Options,
 }
 
 /// What a stored secret may be used for: the server, account and sign-in method it was saved
@@ -222,6 +225,14 @@ impl ConnectionStore {
             connection.port = connection.protocol.default_port();
             connection.key_path = None;
         }
+        if connection.protocol == Protocol::S3 {
+            if connection.host.is_empty() {
+                connection.host = crate::cloud::s3::AWS_ENDPOINT.to_string();
+            }
+            connection.s3.region = connection.s3.region.trim().to_string();
+        } else {
+            connection.s3 = S3Options::default();
+        }
         if connection.host.is_empty() {
             return Err(AppError::invalid("Host is required"));
         }
@@ -234,7 +245,11 @@ impl ConnectionStore {
             AuthType::OAuth => connection.save_secret = true,
             AuthType::Password | AuthType::PublicKey => {}
         }
-        if connection.protocol.is_cloud() != (connection.auth_type == AuthType::OAuth) {
+        let oauth = connection.auth_type == AuthType::OAuth;
+        let password_only = connection.protocol.is_http() && !oauth;
+        if connection.protocol.signs_in_with_oauth() != oauth
+            || (password_only && connection.auth_type != AuthType::Password)
+        {
             return Err(AppError::invalid(format!(
                 "{} connections cannot use this sign-in method",
                 connection.protocol.display_name()
@@ -439,6 +454,7 @@ pub(crate) mod tests {
             jump_connection_id: None,
             rsync_path: None,
             sync_arguments: None,
+            s3: S3Options::default(),
         }
     }
 

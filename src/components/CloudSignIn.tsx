@@ -61,7 +61,7 @@ export function CloudSignIn({ protocol, account, onSignedIn, onError }: CloudSig
       <div className="cloud-account">
         <p className="field-hint">
           Signing in to {info.label} needs your own {providerName} app registration. Add its client
-          ID under Settings, Cloud accounts.
+          ID{provider === "box" ? " and client secret" : ""} under Settings, Cloud accounts.
         </p>
         <button
           type="button"
