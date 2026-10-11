@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   type CSSProperties,
@@ -12,6 +13,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown, ArrowUp, CornerLeftUp } from "lucide-react";
 import { useFitCount } from "../hooks/useFitCount";
 import type { PaneController } from "../hooks/usePane";
+import { useSelectionBox, type RowRange } from "../hooks/useSelectionBox";
 import { formatDate, formatPermissions, formatSize } from "../lib/format";
 import { COLUMN_LABELS, DETAIL_COLUMNS, availableColumns, type DetailColumn } from "../lib/columns";
 import type { DateFormat } from "../lib/settings";
@@ -137,6 +139,7 @@ export function FileList({
 }: FileListProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const typeAhead = useRef({ text: "", lastKeyAt: 0 });
   const entries = pane.visibleEntries;
   const showParentRow = pane.canGoUp && pane.filter === "";
@@ -197,6 +200,18 @@ export function FileList({
   useEffect(() => {
     virtualizer.measure();
   }, [rowHeight, virtualizer]);
+
+  const selectionBox = useSelectionBox(scrollRef, contentRef, {
+    rowHeight,
+    rowCount: entries.length + rowOffset,
+    rowsInset: DROP_STRIP_WIDTH,
+  });
+  // Read as a box changes, so the rows it selects are those on show even if the folder reloads
+  // while it is drawn.
+  const shownRows = useRef({ entries, rowOffset });
+  useLayoutEffect(() => {
+    shownRows.current = { entries, rowOffset };
+  });
 
   useEffect(() => {
     scrollRef.current?.focus({ preventScroll: true });
@@ -361,13 +376,55 @@ export function FileList({
     else actions.onFileActivate(entry);
   };
 
-  // Pressing an unselected row selects it so a drag carries it; pressing a selected row keeps
-  // the selection until release, so several rows can be dragged.
+  // A box drawn from empty space, or from a row away from its name, selects the rows it
+  // touches; with Ctrl or Shift held it adds them to the selection.
+  const startBox = (event: ReactPointerEvent<HTMLElement>) => {
+    const before = pane.selection;
+    const kept = event.ctrlKey || event.metaKey || event.shiftKey ? [...before] : [];
+    const pathsIn = (rows: RowRange | null) => {
+      if (!rows) return [];
+      const { entries: shown, rowOffset: offset } = shownRows.current;
+      const first = Math.max(rows.first - offset, 0);
+      return shown.slice(first, rows.last - offset + 1).map((entry) => entry.path);
+    };
+    selectionBox.begin(event, {
+      onRows: (rows) => pane.selectPaths(new Set([...kept, ...pathsIn(rows)])),
+      onFinish: (rows, downward) => {
+        const paths = pathsIn(rows);
+        if (paths.length === 0) return;
+        const [top, bottom] = [paths[0], paths[paths.length - 1]];
+        pane.selectPaths(
+          new Set([...kept, ...paths]),
+          downward ? top : bottom,
+          downward ? bottom : top,
+        );
+      },
+      onCancel: () => pane.selectPaths(before),
+    });
+  };
+
+  // Pressing an unselected row's name selects it so a drag carries it; pressing a selected row
+  // keeps the selection until release, so several rows can be dragged. Pressing an unselected
+  // row away from its name draws a box instead, and selects the row on release if it does not.
   const handleRowPointerDown = (event: ReactPointerEvent<HTMLElement>, entry: FileEntry) => {
     if (event.button !== 0) return;
+    const selected = pane.selection.has(entry.path);
+    const onName = (event.target as Element).closest(".file-name-text, .file-icon");
+    if (!selected && !onName && event.pointerType !== "touch") {
+      startBox(event);
+      return;
+    }
     const modified = event.ctrlKey || event.metaKey || event.shiftKey;
-    if (!modified && !pane.selection.has(entry.path)) pane.selectOnly(entry.path);
+    if (!modified && !selected) pane.selectOnly(entry.path);
     if (!modified) actions.onRowPointerDown(event, entry);
+  };
+
+  const handleBodyPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    // Rows, the parent row aside, decide for themselves; the scrollbar is right of the content.
+    const list = event.currentTarget;
+    if ((event.target as Element).closest(".file-row:not(.file-row-parent)")) return;
+    if (event.clientX >= list.getBoundingClientRect().left + list.clientWidth) return;
+    startBox(event);
   };
 
   const handleRowClick = (event: MouseEvent, entry: FileEntry) => {
@@ -444,6 +501,7 @@ export function FileList({
         aria-multiselectable
         onFocus={actions.onActivate}
         onMouseDown={actions.onActivate}
+        onPointerDown={handleBodyPointerDown}
         onKeyDown={handleKeyDown}
         onClick={(event) => {
           if (!(event.target as Element).closest(".file-row")) pane.clearSelection();
@@ -459,7 +517,7 @@ export function FileList({
           actions.onContextMenu({ x: event.clientX, y: event.clientY }, null);
         }}
       >
-        <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+        <div ref={contentRef} style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
           {virtualizer.getVirtualItems().map((item) => {
             const style = {
               transform: `translateY(${item.start}px)`,
@@ -539,6 +597,18 @@ export function FileList({
               </div>
             );
           })}
+          {selectionBox.box && (
+            <div
+              className="selection-box"
+              style={{
+                left: selectionBox.box.left,
+                top: selectionBox.box.top,
+                width: selectionBox.box.width,
+                height: selectionBox.box.height,
+              }}
+              aria-hidden
+            />
+          )}
         </div>
         {entries.length === 0 && <p className="file-list-empty">{emptyMessage}</p>}
       </div>

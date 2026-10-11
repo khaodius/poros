@@ -54,6 +54,8 @@ export interface PaneController {
   moveCursorTo: (index: number, extendSelection: boolean) => void;
   /** Moves the cursor without changing the selection. */
   stepCursor: (delta: number) => void;
+  /** Selects exactly `paths`, and moves the anchor and cursor where given. */
+  selectPaths: (paths: ReadonlySet<string>, anchor?: string, cursor?: string) => void;
   selectedEntries: () => FileEntry[];
 }
 
@@ -327,6 +329,15 @@ export function usePane(
     [visibleEntries, cursorPath],
   );
 
+  const selectPaths = useCallback(
+    (paths: ReadonlySet<string>, anchor?: string, cursor?: string) => {
+      setSelection(paths);
+      if (anchor !== undefined) setAnchorPath(anchor);
+      if (cursor !== undefined) setCursorPath(cursor);
+    },
+    [],
+  );
+
   const selectedEntries = useCallback(
     () => visibleEntries.filter((entry) => selection.has(entry.path)),
     [visibleEntries, selection],
@@ -365,6 +376,7 @@ export function usePane(
     moveCursor,
     moveCursorTo,
     stepCursor,
+    selectPaths,
     selectedEntries,
   };
 }
