@@ -1,6 +1,7 @@
 import { useRef, useState, type FormEvent } from "react";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { FolderOpen, Plus } from "lucide-react";
+import { useOptionCheck } from "../hooks/useOptionCheck";
 import {
   EMPTY_DRAFT,
   authChoicesFor,
@@ -24,6 +25,7 @@ import { CloudSignIn } from "./CloudSignIn";
 import { ConnectionIcon } from "./ConnectionIcon";
 import { useSettingsStore } from "../state/settingsStore";
 import { Dialog } from "./Dialog";
+import { OptionCheckView, RsyncArgumentsField } from "./RsyncOptionsEditor";
 
 const AUTH_LABELS: Record<AuthChoice, string> = {
   password: "Password",
@@ -401,6 +403,16 @@ export function ConnectDialog({
             </label>
           )}
 
+          {sftp && (
+            <SiteRsyncFields
+              key={draft.savedId ?? ""}
+              rsyncPath={draft.rsyncPath}
+              syncArguments={draft.syncArguments}
+              onRsyncPath={(value) => update("rsyncPath", value)}
+              onSyncArguments={(value) => update("syncArguments", value)}
+            />
+          )}
+
           <div className="checks">
             <label className="check">
               <input
@@ -477,5 +489,61 @@ export function ConnectDialog({
         </form>
       </div>
     </Dialog>
+  );
+}
+
+interface SiteRsyncFieldsProps {
+  rsyncPath: string;
+  syncArguments: string;
+  onRsyncPath: (value: string) => void;
+  onSyncArguments: (value: string) => void;
+}
+
+/** This server's rsync program, and the rsync arguments its synchronizations start from. */
+function SiteRsyncFields({
+  rsyncPath,
+  syncArguments,
+  onRsyncPath,
+  onSyncArguments,
+}: SiteRsyncFieldsProps) {
+  const defaults = useSettingsStore((state) => state.settings.sync);
+  const transferRsync = useSettingsStore((state) => state.settings.transfers.rsyncPath);
+  const [open, setOpen] = useState(() => rsyncPath.trim() !== "" || syncArguments.trim() !== "");
+  const check = useOptionCheck(
+    defaults.options,
+    [defaults.arguments, syncArguments],
+    defaults.direction,
+  );
+  return (
+    <details
+      className="connect-rsync"
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary>rsync and synchronization</summary>
+      <label className="field">
+        <span>rsync on the server</span>
+        <input
+          className="mono"
+          value={rsyncPath}
+          placeholder={transferRsync}
+          spellCheck={false}
+          autoCapitalize="off"
+          onChange={(event) => onRsyncPath(event.target.value)}
+        />
+        <small className="field-hint">
+          The command that starts rsync here, such as sudo rsync or /usr/local/bin/rsync. Blank uses
+          the one in the transfer settings.
+        </small>
+      </label>
+      <RsyncArgumentsField
+        value={syncArguments}
+        label="rsync arguments for folder synchronizations"
+        hint="Synchronizations with this server start from the defaults in Settings with these applied over them."
+        placeholder="--delete --chmod=D755,F644 --exclude=.git/"
+        onChange={onSyncArguments}
+      />
+      {syncArguments.trim() !== "" && <OptionCheckView check={check} />}
+    </details>
   );
 }

@@ -95,12 +95,8 @@ impl JobOptions {
                 *setting = value;
             }
         }
-        if let Some(path) = self
-            .rsync_path
-            .as_ref()
-            .filter(|path| !path.trim().is_empty())
-        {
-            settings.rsync_path = path.clone();
+        if let Some(path) = self.rsync_path.as_deref().and_then(super::one_line) {
+            settings.rsync_path = path;
         }
         // A backup is the file a temporary one replaces, so it needs one.
         if self.backup.is_some() {

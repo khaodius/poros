@@ -6,7 +6,6 @@ import {
   describePlanned,
   describeReason,
   describeRun,
-  excludePatterns,
   initialChoices,
   isWithin,
   matchesFilter,
@@ -23,6 +22,7 @@ function item(id: number, overrides: Partial<SyncItem> = {}): SyncItem {
     reason: "new",
     files: 1,
     bytes: 100,
+    itemized: "",
     ...overrides,
   };
 }
@@ -31,8 +31,8 @@ const conflict = item(3, {
   action: "conflict",
   reason: "bothChanged",
   bytes: 0,
-  local: { isDir: false, size: 40, modified: 10 },
-  remote: { isDir: false, size: 70, modified: 10 },
+  local: { isDir: false, size: 40, modified: 10, isLink: false },
+  remote: { isDir: false, size: 70, modified: 10, isLink: false },
 });
 const mismatch = item(4, { action: "conflict", reason: "typeDiffers", bytes: 0 });
 const items = [
@@ -99,34 +99,80 @@ describe("sync descriptions", () => {
         item(0, {
           action: "conflict",
           reason: "typeDiffers",
-          local: { isDir: true, size: 0, modified: null },
+          local: { isDir: true, size: 0, modified: null, isLink: false },
+          remote: { isDir: false, size: 0, modified: null, isLink: false },
         }),
       ),
     ).toBe("Folder here, file on the server");
+    expect(
+      describeReason(
+        item(0, {
+          reason: "typeDiffers",
+          local: { isDir: false, size: 4, modified: null, isLink: true },
+          remote: { isDir: true, size: 0, modified: null, isLink: false },
+        }),
+      ),
+    ).toBe("Link here, folder on the server");
+    expect(describeReason(item(0, { reason: "append" }))).toBe(
+      "Shorter on the target; only the rest is sent",
+    );
   });
 
   it("lists what was left alone", () => {
-    const counts = { unchanged: 12, kept: 0, extraOnTarget: 2, excluded: 3, passedOver: 0 };
+    const counts = {
+      unchanged: 12,
+      kept: 0,
+      extraOnTarget: 2,
+      excluded: 3,
+      passedOver: 0,
+      protected: 0,
+      notCreated: 0,
+      sizeLimited: 0,
+      heldBack: 0,
+      pruned: 0,
+    };
     expect(describeCounts(counts, "upload")).toBe(
       "12 unchanged, 2 only on the server, not deleted, 3 excluded",
     );
     expect(describeCounts({ ...counts, unchanged: 0, excluded: 0 }, "download")).toBe(
       "2 only in the local folder, not deleted",
     );
+    expect(
+      describeCounts(
+        {
+          ...counts,
+          unchanged: 0,
+          extraOnTarget: 0,
+          excluded: 0,
+          protected: 1,
+          heldBack: 4,
+          pruned: 1,
+        },
+        "upload",
+      ),
+    ).toBe(
+      "1 protected from deletion, 4 deletions held back by the limit, 1 empty folder left out",
+    );
   });
 
   it("summarizes a run", () => {
+    const run = {
+      runId: "run",
+      dryRun: false,
+      queuedFiles: 1,
+      queuedBytes: 2048,
+      deleted: 0,
+      deletingLater: 0,
+      createdFolders: 0,
+      createdLinks: 0,
+      updated: 0,
+      removedSources: 0,
+      failures: [],
+    };
+    expect(describeRun(run)).toBe("Queued 1 file (2.0 KB).");
     expect(
       describeRun({
-        queuedFiles: 1,
-        queuedBytes: 2048,
-        deleted: 0,
-        createdFolders: 0,
-        failures: [],
-      }),
-    ).toBe("Queued 1 file (2.0 KB).");
-    expect(
-      describeRun({
+        ...run,
         queuedFiles: 0,
         queuedBytes: 0,
         deleted: 3,
@@ -136,17 +182,12 @@ describe("sync descriptions", () => {
     ).toBe(
       "Queued 0 files (0 B), deleted 3 items, created 1 folder. 2 changes failed; the log has the details.",
     );
-  });
-});
-
-describe("excludePatterns", () => {
-  it("keeps one pattern per non-blank line", () => {
-    expect(excludePatterns("*.tmp\r\n\n  \nnode_modules/\n# note")).toEqual([
-      "*.tmp",
-      "node_modules/",
-      "# note",
-    ]);
-    expect(excludePatterns("")).toEqual([]);
+    expect(describeRun({ ...run, deletingLater: 2, createdLinks: 1 })).toBe(
+      "Queued 1 file (2.0 KB), 2 items to delete once copying is done, created 1 link.",
+    );
+    expect(describeRun({ ...run, dryRun: true, deleted: 2 })).toBe(
+      "Dry run: would copy 1 file (2.0 KB), delete 2 items. Nothing was changed; the log has the details.",
+    );
   });
 });
 

@@ -68,15 +68,52 @@ describe("sanitizeSettings", () => {
 
   it("checks the synchronization defaults", () => {
     const sync = sanitizeSettings({
-      sync: { direction: "sideways", compare: "checksum", timeToleranceSecs: -5, excludes: 3 },
+      sync: {
+        direction: "sideways",
+        options: { compare: "checksum", timeToleranceSecs: -5, excludes: 3, maxDelete: 10 },
+        arguments: 7,
+      },
     }).sync;
     expect(sync.direction).toBe("upload");
-    expect(sync.compare).toBe("checksum");
-    expect(sync.timeToleranceSecs).toBe(0);
-    expect(sync.excludes).toBe("");
-    expect(sanitizeSettings({ sync: { timeToleranceSecs: 1e9 } }).sync.timeToleranceSecs).toBe(
-      86400,
-    );
+    expect(sync.options.compare).toBe("checksum");
+    expect(sync.options.timeToleranceSecs).toBe(0);
+    expect(sync.options.excludes).toEqual([]);
+    expect(sync.options.maxDelete).toBe(10);
+    expect(sync.options.recursive).toBe(true);
+    expect(sync.arguments).toBe("");
+    const clamped = sanitizeSettings({ sync: { options: { timeToleranceSecs: 1e9 } } });
+    expect(clamped.sync.options.timeToleranceSecs).toBe(86400);
+  });
+
+  it("reads synchronization defaults saved before the full rsync options", () => {
+    const sync = sanitizeSettings({
+      sync: {
+        direction: "download",
+        compare: "sizeOnly",
+        deleteExtraneous: true,
+        timeToleranceSecs: 3,
+        excludes: "*.tmp\n\nnode_modules/\n",
+      },
+    }).sync;
+    expect(sync.direction).toBe("download");
+    expect(sync.options.compare).toBe("sizeOnly");
+    expect(sync.options.deleteExtraneous).toBe(true);
+    expect(sync.options.timeToleranceSecs).toBe(3);
+    expect(sync.options.excludes).toEqual(["*.tmp", "node_modules/"]);
+    expect(sync.options.times).toBe(true);
+    expect(sync.options.perms).toBe(false);
+    expect(sync.arguments).toBe("");
+    const kept = sanitizeSettings({
+      transfers: { preserveTimestamps: false, preservePermissions: true },
+      sync: { compare: "sizeOnly" },
+    }).sync.options;
+    expect(kept.times).toBe(false);
+    expect(kept.perms).toBe(true);
+    const saved = sanitizeSettings({
+      transfers: { preservePermissions: true },
+      sync: { options: { perms: false } },
+    }).sync.options;
+    expect(saved.perms).toBe(false);
   });
 
   it("checks for updates at start-up unless turned off", () => {

@@ -3,6 +3,23 @@
 Installers for every version are attached to its
 [release](https://github.com/khaodius/poros/releases), with SHA-256 checksums.
 
+## 0.4.1 - 2026-10-11
+
+- **rsync's options for folder synchronization**, grouped as rsync's manual groups them: which
+  files are copied, transfer behaviour, deletion, filter rules, times, permissions and
+  ownership, symbolic links, bandwidth and compression, backups, and dry runs with reporting.
+  Each option shows the flag it stands for, and a raw arguments box takes anything typed as on
+  rsync's command line, such as `-av --delete --exclude=.git/`. The command line the options
+  amount to is shown as you change them, with any mistakes.
+- **Defaults, sites and single runs**: Settings > Sync holds the defaults, a saved SFTP
+  connection can add rsync arguments of its own and its own rsync command, and Synchronize
+  folders and scheduled tasks can change any option for one synchronization.
+- **The preview shows more**: rsync's itemized change codes, notes on the options, deletions
+  held back by `--max-delete`, protected and size-limited files, and a dry run that changes
+  nothing and writes what would happen to the log.
+- Synchronizations now keep times and permissions as their own `-t` and `-p` options say,
+  starting from the transfer settings' choices.
+
 ## 0.3.5 - 2026-10-11
 
 - **A dragged pane reaches past the window's edge.** Dragging a tab toward the edge of its

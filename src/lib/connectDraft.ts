@@ -36,6 +36,10 @@ export interface ConnectDraft {
   /** A saved connection to go through first; empty connects straight to the server. */
   jumpConnectionId: string;
   bypassProxy: boolean;
+  /** The rsync program on an SSH server; blank uses the transfer settings'. */
+  rsyncPath: string;
+  /** rsync arguments synchronizations with this server start from. */
+  syncArguments: string;
 }
 
 export const EMPTY_DRAFT: ConnectDraft = {
@@ -57,6 +61,8 @@ export const EMPTY_DRAFT: ConnectDraft = {
   signedIn: null,
   jumpConnectionId: "",
   bypassProxy: false,
+  rsyncPath: "",
+  syncArguments: "",
 };
 
 /** The ways a protocol can sign in, the first being its default. */
@@ -158,6 +164,8 @@ export function profileFromDraft(draft: ConnectDraft): ConnectProfile {
   if (draft.protocol === "sftp") {
     if (draft.jumpConnectionId) profile.jumpConnectionId = draft.jumpConnectionId;
     if (draft.bypassProxy) profile.bypassProxy = true;
+    const rsyncPath = firstLine(draft.rsyncPath);
+    if (rsyncPath) profile.rsyncPath = rsyncPath;
   }
   return profile;
 }
@@ -179,7 +187,14 @@ export function draftFromSaved(connection: SavedConnection): ConnectDraft {
     ftpActive: connection.ftpActive ?? false,
     jumpConnectionId: connection.jumpConnectionId ?? "",
     bypassProxy: connection.bypassProxy ?? false,
+    rsyncPath: connection.rsyncPath ?? "",
+    syncArguments: connection.syncArguments ?? "",
   };
+}
+
+/** A command kept to its first line, trimmed. */
+function firstLine(text: string): string {
+  return (text.split(/\r?\n/)[0] ?? "").trim();
 }
 
 /** A name for a connection that has none: the server, or the cloud account. */
@@ -207,6 +222,9 @@ export function savedFromDraft(draft: ConnectDraft): SavedConnection {
     ftpActive: isFtp(draft.protocol) && draft.ftpActive,
     bypassProxy: draft.protocol === "sftp" && draft.bypassProxy,
     jumpConnectionId: (draft.protocol === "sftp" && draft.jumpConnectionId) || null,
+    // rsync runs over SSH, so only SFTP connections use these.
+    rsyncPath: (draft.protocol === "sftp" && firstLine(draft.rsyncPath)) || null,
+    syncArguments: (draft.protocol === "sftp" && draft.syncArguments.trim()) || null,
   };
 }
 

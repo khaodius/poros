@@ -12,6 +12,7 @@ import {
   splitInterval,
   suggestedName,
   syncAction,
+  taskOptions,
   timeInputValue,
   weekdayOf,
 } from "./schedule";
@@ -98,24 +99,29 @@ describe("convertTrigger", () => {
 });
 
 describe("tasks", () => {
-  it("builds a sync action from the dialog's options", () => {
+  it("builds a sync action from the dialog's options and reads them back", () => {
+    const options = {
+      ...DEFAULT_SETTINGS.sync.options,
+      deleteExtraneous: true,
+      excludes: [".git/"],
+    };
     const action = syncAction({
       connectionId: "web",
       localPath: "/home/me/site",
       remotePath: "/var/www",
-      options: {
-        ...DEFAULT_SETTINGS.sync,
-        direction: "both",
-        deleteExtraneous: true,
-        excludes: "*.tmp\n\n.git/",
-      },
+      direction: "upload",
+      options,
+      arguments: "--delete-after",
     });
     expect(action).toMatchObject({
       type: "sync",
-      direction: "both",
-      deleteExtraneous: false,
-      excludes: ["*.tmp", ".git/"],
+      direction: "upload",
+      deleteExtraneous: true,
+      excludes: [".git/"],
+      arguments: "--delete-after",
     });
+    if (action.type !== "sync") throw new Error("not a sync action");
+    expect(taskOptions(action)).toEqual(options);
   });
 
   it("suggests a name from what the task does", () => {
@@ -123,7 +129,7 @@ describe("tasks", () => {
       connectionId: "web",
       localPath: "C:\\Users\\me\\site\\",
       remotePath: "/var/www",
-      options: DEFAULT_SETTINGS.sync,
+      ...DEFAULT_SETTINGS.sync,
     });
     expect(suggestedName(upload)).toBe("Upload site");
     expect(suggestedName({ ...upload, direction: "download" } as typeof upload)).toBe(

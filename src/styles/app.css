@@ -3935,29 +3935,159 @@ textarea::placeholder {
   flex: 0 0 220px;
 }
 
-.sync-compare {
-  align-items: flex-end;
+/* rsync options */
+
+.rsync-options {
+  display: flex;
+  flex-direction: column;
+  margin-top: 4px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
 }
 
-.sync-compare .stepper {
-  align-self: flex-start;
-  height: 28px;
+.rsync-group + .rsync-group {
+  border-top: 1px solid var(--border);
 }
 
-.sync-compare .stepper button {
-  width: 26px;
+.rsync-group > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  font-size: var(--font-size-small);
+  font-weight: 500;
+  background: var(--surface-raised);
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
-.sync-warning {
+.rsync-group > summary:hover {
+  background: var(--surface-hover);
+}
+
+.rsync-group-count {
+  margin-left: auto;
+  color: var(--accent);
+  font-weight: 400;
+}
+
+.rsync-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px 20px;
+  padding: 10px 12px 12px;
+}
+
+.rsync-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.rsync-field.is-disabled {
+  opacity: 0.5;
+}
+
+.rsync-field .check {
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.rsync-field-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+}
+
+.rsync-flag {
+  color: var(--text-faint);
+  font-size: var(--font-size-tiny);
+}
+
+.rsync-field textarea {
+  resize: vertical;
+}
+
+.rsync-number {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rsync-number input {
+  width: 130px;
+}
+
+.rsync-unit {
+  color: var(--text-faint);
+  font-size: var(--font-size-small);
+}
+
+.rsync-check {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rsync-command {
+  display: block;
+  padding: 6px 10px;
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+}
+
+.rsync-note,
+.sync-note {
   display: flex;
   align-items: flex-start;
   gap: 8px;
   font-size: var(--font-size-small);
 }
 
-.sync-warning > svg {
+.rsync-note > svg,
+.sync-note > svg {
   flex: none;
   margin-top: 2px;
+}
+
+.rsync-note.is-error {
+  color: var(--danger);
+}
+
+.sync-note {
+  color: var(--text-muted);
+}
+
+.sync-dry-run {
+  color: var(--accent);
+}
+
+.sync-itemized {
+  margin-right: 8px;
+  color: var(--text-faint);
+  font-size: var(--font-size-tiny);
+}
+
+.connect-rsync > summary {
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+  cursor: pointer;
+}
+
+.connect-rsync > .field,
+.connect-rsync > .rsync-check {
+  margin-top: 10px;
 }
 
 .sync-comparing {
@@ -4034,7 +4164,7 @@ textarea::placeholder {
 .sync-header,
 .sync-row {
   display: grid;
-  grid-template-columns: 30px 170px minmax(0, 1fr) 80px minmax(120px, 210px);
+  grid-template-columns: 30px 170px minmax(0, 1fr) 80px minmax(150px, 280px);
   gap: 8px;
   align-items: center;
   padding-right: 10px;

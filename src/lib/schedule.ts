@@ -2,9 +2,9 @@
 // src-tauri/src/automation. Weekdays count from Monday as 0, as in the backend.
 
 import { formatDate, pluralize } from "./format";
+import { sanitizeSyncOptions } from "./rsyncOptions";
 import type { SyncSettings } from "./settings";
-import { excludePatterns } from "./sync";
-import type { ScheduledTask, TaskAction, Trigger } from "./types";
+import type { ScheduledTask, SyncOptions, TaskAction, Trigger } from "./types";
 
 export const WEEKDAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const EVERY_DAY = [0, 1, 2, 3, 4, 5, 6];
@@ -133,28 +133,33 @@ export interface SyncTaskSource {
   connectionId: string;
   localPath: string;
   remotePath: string;
-  options: SyncSettings;
+  direction: SyncSettings["direction"];
+  options: SyncSettings["options"];
+  arguments: string;
 }
 
 export function syncAction({
   connectionId,
   localPath,
   remotePath,
+  direction,
   options,
+  arguments: args,
 }: SyncTaskSource): TaskAction {
   return {
+    ...options,
     type: "sync",
     connectionId,
     localPath,
     remotePath,
-    direction: options.direction,
-    compare: options.compare,
-    deleteExtraneous: options.direction !== "both" && options.deleteExtraneous,
-    skipNewerOnTarget: options.direction !== "both" && options.skipNewerOnTarget,
-    ignoreExisting: options.ignoreExisting,
-    timeToleranceSecs: options.timeToleranceSecs,
-    excludes: excludePatterns(options.excludes),
+    direction,
+    arguments: args,
   };
+}
+
+/** The rsync options of a synchronization task, without what else it holds. */
+export function taskOptions(action: Extract<TaskAction, { type: "sync" }>): SyncOptions {
+  return sanitizeSyncOptions(action);
 }
 
 /** A new task: every night at two, run again at the next start if Poros was closed. */

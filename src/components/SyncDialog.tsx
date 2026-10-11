@@ -1,29 +1,35 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
-import { CalendarClock, CircleAlert, FolderOpen, LoaderCircle } from "lucide-react";
+import { CalendarClock, FolderOpen, LoaderCircle } from "lucide-react";
+import { useOptionCheck } from "../hooks/useOptionCheck";
 import { localSource } from "../lib/fileSource";
 import { pluralize } from "../lib/format";
 import { onSyncProgress, sync, toAppError } from "../lib/ipc";
+import { commandPreview, withOption } from "../lib/rsyncOptions";
 import { newTask, syncAction } from "../lib/schedule";
-import { TIME_TOLERANCE_LIMITS, type SyncSettings } from "../lib/settings";
 import {
-  COMPARE_OPTIONS,
   DIRECTION_OPTIONS,
   chosenItems,
   describeRun,
-  excludePatterns,
   initialChoices,
   isWithin,
   type Choices,
 } from "../lib/sync";
-import type { SyncPlanView, SyncProgress } from "../lib/types";
+import type {
+  OptionCheck,
+  SyncDirection,
+  SyncOptions,
+  SyncPlanView,
+  SyncProgress,
+} from "../lib/types";
 import { lastActivePane, listPanes } from "../state/paneRegistry";
+import { useSavedConnections } from "../state/savedConnectionsStore";
 import { useSessionStore, type SessionEntry } from "../state/sessionStore";
 import { saveSettingsSection, useSettingsStore } from "../state/settingsStore";
 import { useToastStore } from "../state/toastStore";
 import { useUiStore } from "../state/uiStore";
 import { Dialog } from "./Dialog";
-import { Stepper } from "./Stepper";
+import { OptionCheckView, RsyncArgumentsField, RsyncOptionsEditor } from "./RsyncOptionsEditor";
 import { SyncPlanList } from "./SyncPlanList";
 
 interface Folders {
@@ -85,23 +91,46 @@ function refreshPanes(plan: SyncPlanView, sessionId: string): void {
 }
 
 export function SyncDialog({ onClose, ...given }: SyncDialogProps) {
-  const defaults = useSettingsStore((state) => state.settings.sync);
-  const preserveTimestamps = useSettingsStore(
-    (state) => state.settings.transfers.preserveTimestamps,
-  );
+  /** The defaults as the dialog opened; changes made here stay with this synchronization. */
+  const [defaults] = useState(() => useSettingsStore.getState().settings.sync);
   const sessionEntries = useSessionStore((state) => state.sessions);
+  const savedConnections = useSavedConnections((state) => state.connections);
   const sessions = useMemo(
     () => Object.values(sessionEntries).filter(canSynchronize),
     [sessionEntries],
   );
   const [folders, setFolders] = useState(() => startingFolders(given));
-  const [options, setOptions] = useState<SyncSettings>(defaults);
+  const [direction, setDirection] = useState<SyncDirection>(defaults.direction);
+  const [options, setOptions] = useState<SyncOptions>(defaults.options);
+  /** rsync arguments typed for this synchronization alone. */
+  const [args, setArgs] = useState("");
   const [stage, setStage] = useState<Stage>({ step: "setup" });
   const [progress, setProgress] = useState<SyncProgress | null>(null);
   const [choices, setChoices] = useState<Choices>(new Map());
   const [error, setError] = useState<string | null>(null);
   /** The comparison or plan the backend holds for this dialog, to let go of on close. */
   const held = useRef<{ requestId?: string; planId?: string }>({});
+
+  const session = sessions.find((entry) => entry.info.id === folders.sessionId);
+  const savedConnectionId = session?.info.savedConnectionId;
+  const site = savedConnections.find((connection) => connection.id === savedConnectionId);
+  const siteArguments = site?.syncArguments ?? "";
+  const check = useOptionCheck(options, [args], direction);
+
+  // The options start from the defaults with the site's own arguments applied, and start over
+  // when another site is chosen.
+  useEffect(() => {
+    let current = true;
+    sync
+      .checkOptions(defaults.options, [defaults.arguments, siteArguments], defaults.direction)
+      .then((result) => {
+        if (current) setOptions(result.options);
+      })
+      .catch(() => undefined);
+    return () => {
+      current = false;
+    };
+  }, [defaults, siteArguments]);
 
   useEffect(() => {
     if (stage.step !== "comparing") return;
@@ -122,12 +151,11 @@ export function SyncDialog({ onClose, ...given }: SyncDialogProps) {
     };
   }, []);
 
-  const setOption = <K extends keyof SyncSettings>(key: K, value: SyncSettings[K]) =>
-    setOptions((current) => {
-      const next = { ...current, [key]: value };
-      if (next.direction === "both" && next.compare === "always") next.compare = "sizeAndTime";
-      return next;
-    });
+  const chooseDirection = (next: SyncDirection) => {
+    setDirection(next);
+    // Both ways, every file is compared by time to find the newer one.
+    setOptions((current) => withOption(current, "compare", current.compare, next));
+  };
 
   const chooseSession = (sessionId: string) =>
     setFolders((current) => ({ ...current, sessionId, remotePath: remoteFolderOf(sessionId) }));
@@ -152,20 +180,16 @@ export function SyncDialog({ onClose, ...given }: SyncDialogProps) {
     setError(null);
     setProgress(null);
     setStage({ step: "comparing", requestId });
-    void saveSettingsSection("sync", options);
+    void saveSettingsSection("sync", { direction });
     try {
       const plan = await sync.compare({
+        ...options,
         requestId,
         sessionId,
         localPath: folders.localPath.trim(),
         remotePath: folders.remotePath.trim(),
-        direction: options.direction,
-        compare: options.compare,
-        deleteExtraneous: options.deleteExtraneous,
-        skipNewerOnTarget: options.skipNewerOnTarget,
-        ignoreExisting: options.ignoreExisting,
-        timeToleranceSecs: options.timeToleranceSecs,
-        excludes: excludePatterns(options.excludes),
+        direction,
+        arguments: args,
       });
       if (held.current.requestId !== requestId) {
         void sync.discard(plan.planId);
@@ -207,7 +231,7 @@ export function SyncDialog({ onClose, ...given }: SyncDialogProps) {
         choices: chosenItems(plan.items, choices),
       });
       held.current = {};
-      refreshPanes(plan, sessionId);
+      if (!summary.dryRun) refreshPanes(plan, sessionId);
       useToastStore
         .getState()
         .show(summary.failures.length > 0 ? "error" : "info", describeRun(summary));
@@ -219,17 +243,14 @@ export function SyncDialog({ onClose, ...given }: SyncDialogProps) {
     }
   };
 
-  const canCompare =
-    folders.localPath.trim() !== "" &&
-    folders.remotePath.trim() !== "" &&
-    sessions.some((entry) => entry.info.id === folders.sessionId);
-  const savedConnectionId = sessions.find((entry) => entry.info.id === folders.sessionId)?.info
-    .savedConnectionId;
+  const filledIn =
+    folders.localPath.trim() !== "" && folders.remotePath.trim() !== "" && session !== undefined;
+  const canCompare = filledIn && (check?.errors.length ?? 0) === 0;
 
   /** Moves on to a scheduled task that runs this synchronization through the saved connection. */
   const schedule = () => {
     if (!savedConnectionId) return;
-    void saveSettingsSection("sync", options);
+    void saveSettingsSection("sync", { direction });
     useUiStore.getState().open({
       kind: "schedules",
       draft: newTask(
@@ -237,26 +258,40 @@ export function SyncDialog({ onClose, ...given }: SyncDialogProps) {
           connectionId: savedConnectionId,
           localPath: folders.localPath.trim(),
           remotePath: folders.remotePath.trim(),
+          direction,
           options,
+          arguments: args,
         }),
       ),
     });
   };
+
+  const remote = session ? `${session.info.host}:${folders.remotePath.trim()}` : "";
 
   return (
     <Dialog title="Synchronize folders" onClose={onClose} width={860}>
       {stage.step === "setup" && (
         <SetupForm
           folders={folders}
+          direction={direction}
           options={options}
+          args={args}
+          siteName={siteArguments.trim() ? site?.name : undefined}
+          check={check}
+          command={
+            check
+              ? commandPreview(check.arguments, direction, folders.localPath.trim(), remote)
+              : undefined
+          }
           sessions={sessions.map((entry) => ({ id: entry.info.id, label: entry.info.label }))}
-          preserveTimestamps={preserveTimestamps}
           error={error}
           canCompare={canCompare}
           onFolders={(change) => setFolders((current) => ({ ...current, ...change }))}
           onSession={chooseSession}
           onBrowse={() => void browseLocal()}
-          onOption={setOption}
+          onDirection={chooseDirection}
+          onOptions={setOptions}
+          onArgs={setArgs}
           onSubmit={(event) => void compare(event)}
           onSchedule={canCompare && savedConnectionId ? schedule : undefined}
           onCancel={onClose}
@@ -266,7 +301,7 @@ export function SyncDialog({ onClose, ...given }: SyncDialogProps) {
       {(stage.step === "preview" || stage.step === "running") && (
         <SyncPlanList
           plan={stage.plan}
-          direction={options.direction}
+          direction={direction}
           choices={choices}
           running={stage.step === "running"}
           error={error}
@@ -282,15 +317,22 @@ export function SyncDialog({ onClose, ...given }: SyncDialogProps) {
 
 interface SetupFormProps {
   folders: Folders;
-  options: SyncSettings;
+  direction: SyncDirection;
+  options: SyncOptions;
+  args: string;
+  /** The saved connection whose own rsync arguments the options start from, if it has any. */
+  siteName?: string;
+  check: OptionCheck | null;
+  command?: string;
   sessions: { id: string; label: string }[];
-  preserveTimestamps: boolean;
   error: string | null;
   canCompare: boolean;
   onFolders: (change: Partial<Folders>) => void;
   onSession: (sessionId: string) => void;
   onBrowse: () => void;
-  onOption: <K extends keyof SyncSettings>(key: K, value: SyncSettings[K]) => void;
+  onDirection: (direction: SyncDirection) => void;
+  onOptions: (options: SyncOptions) => void;
+  onArgs: (args: string) => void;
   onSubmit: (event: FormEvent) => void;
   /** Absent while the folders are incomplete or the server's connection is not saved. */
   onSchedule?: () => void;
@@ -299,24 +341,26 @@ interface SetupFormProps {
 
 function SetupForm({
   folders,
+  direction,
   options,
+  args,
+  siteName,
+  check,
+  command,
   sessions,
-  preserveTimestamps,
   error,
   canCompare,
   onFolders,
   onSession,
   onBrowse,
-  onOption,
+  onDirection,
+  onOptions,
+  onArgs,
   onSubmit,
   onSchedule,
   onCancel,
 }: SetupFormProps) {
-  const both = options.direction === "both";
-  const target = options.direction === "download" ? "in the local folder" : "on the server";
-  const source = options.direction === "download" ? "on the server" : "in the local folder";
-  const usesTimes = options.compare === "sizeAndTime" || both || options.skipNewerOnTarget;
-  const direction = DIRECTION_OPTIONS.find((option) => option.value === options.direction);
+  const chosen = DIRECTION_OPTIONS.find((option) => option.value === direction);
 
   return (
     <form className="form sync-form" onSubmit={onSubmit}>
@@ -370,95 +414,34 @@ function SetupForm({
               key={option.value}
               type="button"
               role="radio"
-              aria-checked={options.direction === option.value}
-              className={options.direction === option.value ? "is-selected" : ""}
-              onClick={() => onOption("direction", option.value)}
+              aria-checked={direction === option.value}
+              className={direction === option.value ? "is-selected" : ""}
+              onClick={() => onDirection(option.value)}
             >
               {option.label}
             </button>
           ))}
         </div>
-        {direction && <small className="field-hint">{direction.hint}</small>}
+        {chosen && <small className="field-hint">{chosen.hint}</small>}
       </div>
 
-      <div className="form-row sync-compare">
-        <label className="field grow">
-          <span>Compare files by</span>
-          <select
-            value={options.compare}
-            onChange={(event) => onOption("compare", event.target.value as SyncSettings["compare"])}
-          >
-            {COMPARE_OPTIONS.map((option) => (
-              <option
-                key={option.value}
-                value={option.value}
-                disabled={both && option.value === "always"}
-              >
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className={`field ${usesTimes ? "" : "is-disabled"}`}>
-          <span>Times this close count as equal</span>
-          <Stepper
-            value={options.timeToleranceSecs}
-            min={TIME_TOLERANCE_LIMITS.min}
-            max={TIME_TOLERANCE_LIMITS.max}
-            label="Times this close count as equal"
-            unit="s"
-            disabled={!usesTimes}
-            onChange={(seconds) => onOption("timeToleranceSecs", seconds)}
-          />
-        </div>
-      </div>
-
-      <div className="checks">
-        <Check
-          label={`Delete files ${target} that are not ${source}`}
-          checked={!both && options.deleteExtraneous}
-          disabled={both}
-          onChange={(checked) => onOption("deleteExtraneous", checked)}
-        />
-        <Check
-          label={`Skip files that are newer ${target}`}
-          checked={!both && options.skipNewerOnTarget}
-          disabled={both}
-          onChange={(checked) => onOption("skipNewerOnTarget", checked)}
-        />
-        <Check
-          label={
-            both
-              ? "Only copy files the other side does not have"
-              : `Skip files that already exist ${target}`
-          }
-          checked={options.ignoreExisting}
-          onChange={(checked) => onOption("ignoreExisting", checked)}
-        />
-      </div>
-
-      <label className="field">
-        <span>Exclude</span>
-        <textarea
-          value={options.excludes}
-          rows={3}
-          spellCheck={false}
-          placeholder={"*.tmp\nnode_modules/\n/build"}
-          onChange={(event) => onOption("excludes", event.target.value)}
-        />
+      <div className="field">
+        <span>rsync options</span>
         <small className="field-hint">
-          One pattern per line, as in rsync: * and ? match within a name, ** across folders, a
-          trailing / matches only folders and a leading / anchors to the top folder.
+          {siteName
+            ? `Starting from the defaults in Settings, with the rsync arguments saved for ${siteName}. Changes here apply to this synchronization only.`
+            : "Starting from the defaults in Settings. Changes here apply to this synchronization only."}
         </small>
-      </label>
+        <RsyncOptionsEditor
+          options={options}
+          direction={direction}
+          onChange={onOptions}
+          initiallyOpen={[]}
+        />
+      </div>
+      <RsyncArgumentsField value={args} onChange={onArgs} />
+      <OptionCheckView check={check} command={command} />
 
-      {!preserveTimestamps && options.compare === "sizeAndTime" && (
-        <p className="warning-text sync-warning">
-          <CircleAlert size={14} />
-          Keep modification times is off in the transfer settings, so copied files get new times and
-          will look changed the next time you compare.
-        </p>
-      )}
       {error && <p className="form-error">{error}</p>}
 
       <div className="dialog-actions">
@@ -479,31 +462,10 @@ function SetupForm({
           Cancel
         </button>
         <button type="submit" className="button button-primary" disabled={!canCompare}>
-          Compare
+          {options.dryRun ? "Compare (dry run)" : "Compare"}
         </button>
       </div>
     </form>
-  );
-}
-
-interface CheckProps {
-  label: string;
-  checked: boolean;
-  disabled?: boolean;
-  onChange: (checked: boolean) => void;
-}
-
-function Check({ label, checked, disabled, onChange }: CheckProps) {
-  return (
-    <label className={`check ${disabled ? "is-disabled" : ""}`}>
-      <input
-        type="checkbox"
-        checked={checked}
-        disabled={disabled}
-        onChange={(event) => onChange(event.target.checked)}
-      />
-      {label}
-    </label>
   );
 }
 

@@ -15,6 +15,8 @@ import {
   ArrowRight,
   ArrowUp,
   CircleAlert,
+  FlaskConical,
+  Info,
   Trash2,
 } from "lucide-react";
 import { formatDate, formatSize, pluralize } from "../lib/format";
@@ -109,6 +111,9 @@ export function SyncPlanList({
   const counts = describeCounts(plan.counts, direction);
   const DirectionIcon =
     direction === "upload" ? ArrowRight : direction === "download" ? ArrowLeft : ArrowLeftRight;
+  // Creating the target folder or removing unchanged sources is a change of its own.
+  const hasWork = plan.items.length > 0 || plan.createsTarget || plan.removesUnchanged > 0;
+  const runLabel = plan.dryRun ? "Dry run" : "Synchronize";
 
   return (
     <div className="sync-preview">
@@ -121,9 +126,37 @@ export function SyncPlanList({
           {plan.remoteRoot}
         </span>
       </p>
+      {plan.arguments && (
+        <code
+          className="rsync-command sync-arguments selectable"
+          title="The options as rsync arguments"
+        >
+          rsync {plan.arguments}
+        </code>
+      )}
+      {plan.dryRun && (
+        <p className="sync-note sync-dry-run">
+          <FlaskConical size={14} />
+          Dry run: running this changes nothing and writes what would happen to the log.
+        </p>
+      )}
+      {plan.notes.map((note) => (
+        <p key={note} className="sync-note">
+          <Info size={14} />
+          {note}
+        </p>
+      ))}
+      {plan.removesUnchanged > 0 && (
+        <p className="sync-note">
+          <Info size={14} />
+          {pluralize(plan.removesUnchanged, "unchanged source file")} will be removed as well.
+        </p>
+      )}
       {plan.items.length === 0 ? (
         <div className="sync-list sync-empty">
-          <p className="sync-empty-title">Everything is in sync.</p>
+          <p className="sync-empty-title">
+            {hasWork ? "No files to copy." : "Everything is in sync."}
+          </p>
           {counts && <p>{counts}.</p>}
         </div>
       ) : (
@@ -209,16 +242,16 @@ export function SyncPlanList({
         </button>
         <span className="sync-planned">{plan.items.length > 0 ? describePlanned(totals) : ""}</span>
         <button type="button" className="button" onClick={onCancel}>
-          {plan.items.length === 0 ? "Close" : "Cancel"}
+          {hasWork ? "Cancel" : "Close"}
         </button>
-        {plan.items.length > 0 && (
+        {hasWork && (
           <button
             type="button"
-            className={`button ${deleting ? "button-danger" : "button-primary"}`}
-            disabled={nothingChosen || running}
+            className={`button ${deleting && !plan.dryRun ? "button-danger" : "button-primary"}`}
+            disabled={(plan.items.length > 0 && nothingChosen) || running}
             onClick={onRun}
           >
-            {running ? "Starting..." : "Synchronize"}
+            {running ? "Starting..." : runLabel}
           </button>
         )}
       </div>
@@ -228,8 +261,13 @@ export function SyncPlanList({
 
 function sideDetail(label: string, facts: SyncFacts | undefined, dateFormat: DateFormat): string {
   if (!facts) return `${label}: missing`;
-  if (facts.isDir) return `${label}: folder`;
-  return `${label}: ${formatSize(facts.size)}, ${formatDate(facts.modified, dateFormat)}`;
+  const permissions =
+    facts.permissions === undefined
+      ? ""
+      : `, ${(facts.permissions & 0o7777).toString(8).padStart(4, "0")}`;
+  if (facts.isDir) return `${label}: folder${permissions}`;
+  const kind = facts.isLink ? "link, " : "";
+  return `${label}: ${kind}${formatSize(facts.size)}, ${formatDate(facts.modified, dateFormat)}${permissions}`;
 }
 
 const ACTION_ICONS: Partial<Record<SyncAction, typeof ArrowUp>> = {
@@ -269,7 +307,7 @@ const PlanRow = memo(function PlanRow({
         : undefined
     : item.bytes;
   const detail = [
-    item.path,
+    item.itemized ? `${item.itemized} ${item.path}` : item.path,
     sideDetail("Local", item.local, dateFormat),
     sideDetail("Server", item.remote, dateFormat),
   ].join("\n");
@@ -319,7 +357,10 @@ const PlanRow = memo(function PlanRow({
         )}
       </span>
       <span className="align-end">{size === undefined ? "" : formatSize(size)}</span>
-      <span className="sync-reason">{describeReason(item)}</span>
+      <span className="sync-reason">
+        {item.itemized && <code className="sync-itemized">{item.itemized}</code>}
+        {describeReason(item)}
+      </span>
     </div>
   );
 });

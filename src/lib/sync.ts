@@ -4,11 +4,11 @@
 import type { PathStyle } from "./fileSource";
 import { formatSize, pluralize } from "./format";
 import type {
-  CompareMode,
   SyncAction,
   SyncChoice,
   SyncCounts,
   SyncDirection,
+  SyncFacts,
   SyncItem,
   SyncRunSummary,
 } from "./types";
@@ -125,13 +125,6 @@ export const DIRECTION_OPTIONS: { value: SyncDirection; label: string; hint: str
   },
 ];
 
-export const COMPARE_OPTIONS: { value: CompareMode; label: string }[] = [
-  { value: "sizeAndTime", label: "Size and modification time" },
-  { value: "sizeOnly", label: "Size only" },
-  { value: "checksum", label: "Contents (reads files of equal size)" },
-  { value: "always", label: "Copy every file" },
-];
-
 export const ACTION_LABELS: Record<SyncAction, string> = {
   upload: "Upload",
   download: "Download",
@@ -154,13 +147,23 @@ export function describeReason(item: SyncItem): string {
       return item.action === "upload" ? "Newer in the local folder" : "Newer on the server";
     case "extraneous":
       return item.action === "deleteRemote" ? "Not in the local folder" : "Not on the server";
-    case "typeDiffers":
-      return item.local?.isDir
-        ? "Folder here, file on the server"
-        : "File here, folder on the server";
+    case "typeDiffers": {
+      const here = kindOf(item.local);
+      return `${here.charAt(0).toUpperCase()}${here.slice(1)} here, ${kindOf(item.remote)} on the server`;
+    }
     case "bothChanged":
       return "Differs, with the same time on both sides";
+    case "append":
+      return "Shorter on the target; only the rest is sent";
+    case "attributes":
+      return "Same contents; only the time or permissions are set";
   }
+}
+
+function kindOf(facts: SyncFacts | undefined): string {
+  if (!facts) return "nothing";
+  if (facts.isDir) return "folder";
+  return facts.isLink ? "link" : "file";
 }
 
 /** What was left alone, for the line under the list. */
@@ -172,29 +175,49 @@ export function describeCounts(counts: SyncCounts, direction: SyncDirection): st
     const where = direction === "download" ? "only in the local folder" : "only on the server";
     parts.push(`${counts.extraOnTarget} ${where}, not deleted`);
   }
+  if (counts.protected > 0) parts.push(`${counts.protected} protected from deletion`);
+  if (counts.heldBack > 0) {
+    parts.push(`${pluralize(counts.heldBack, "deletion")} held back by the limit`);
+  }
+  if (counts.notCreated > 0) parts.push(`${counts.notCreated} new, not created`);
+  if (counts.sizeLimited > 0) parts.push(`${counts.sizeLimited} outside the size limits`);
+  if (counts.pruned > 0) parts.push(`${pluralize(counts.pruned, "empty folder")} left out`);
   if (counts.excluded > 0) parts.push(`${counts.excluded} excluded`);
   if (counts.passedOver > 0) parts.push(`${counts.passedOver} passed over`);
   return parts.join(", ");
 }
 
 export function describeRun(summary: SyncRunSummary): string {
+  if (summary.dryRun) {
+    const parts = [
+      `would copy ${pluralize(summary.queuedFiles, "file")} (${formatSize(summary.queuedBytes)})`,
+    ];
+    if (summary.deleted > 0) parts.push(`delete ${pluralize(summary.deleted, "item")}`);
+    if (summary.createdFolders > 0) {
+      parts.push(`create ${pluralize(summary.createdFolders, "folder")}`);
+    }
+    return `Dry run: ${parts.join(", ")}. Nothing was changed; the log has the details.`;
+  }
   const parts = [
     `Queued ${pluralize(summary.queuedFiles, "file")} (${formatSize(summary.queuedBytes)})`,
   ];
   if (summary.deleted > 0) parts.push(`deleted ${pluralize(summary.deleted, "item")}`);
+  if (summary.deletingLater > 0) {
+    parts.push(`${pluralize(summary.deletingLater, "item")} to delete once copying is done`);
+  }
   if (summary.createdFolders > 0) {
     parts.push(`created ${pluralize(summary.createdFolders, "folder")}`);
+  }
+  if (summary.createdLinks > 0) parts.push(`created ${pluralize(summary.createdLinks, "link")}`);
+  if (summary.updated > 0) parts.push(`updated ${pluralize(summary.updated, "file")}`);
+  if (summary.removedSources > 0) {
+    parts.push(`removed ${pluralize(summary.removedSources, "unchanged source file")}`);
   }
   let text = parts.join(", ");
   if (summary.failures.length > 0) {
     text += `. ${pluralize(summary.failures.length, "change")} failed; the log has the details`;
   }
   return `${text}.`;
-}
-
-/** Patterns from the exclude box, one per line. */
-export function excludePatterns(text: string): string[] {
-  return text.split(/\r?\n/).filter((line) => line.trim() !== "");
 }
 
 /** Whether `path` is `root` or inside it. */
