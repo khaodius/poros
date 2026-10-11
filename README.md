@@ -191,6 +191,7 @@ The Windows installers are not code-signed yet, so SmartScreen may warn about an
 | Mouse back, forward buttons        | Back, forward in the pane under the pointer   |
 | Space, Insert                      | Select or deselect, and move down with Insert |
 | Ctrl + Up, Ctrl + Down             | Move without selecting                        |
+| Drag beside the names              | Select rows in a box, Ctrl or Shift adds      |
 | Ctrl + H                           | Show hidden files                             |
 | Menu key, Shift + F10              | Menu for the selection                        |
 | F2                                 | Rename                                        |

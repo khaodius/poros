@@ -3,6 +3,14 @@
 Installers for every version are attached to its
 [release](https://github.com/khaodius/poros/releases), with SHA-256 checksums.
 
+## 0.4.5 - 2026-10-11
+
+- **Drag a box to select files.** Pressing beside a file's name, or in the empty space below the
+  rows, and dragging draws a box that selects every row it touches. Near the top or bottom of the
+  list it scrolls, faster the further the pointer goes. Hold Ctrl or Shift to add the rows to the
+  selection, or press Escape to put the selection back. Dragging a file by its name, or any
+  selected row, still moves the files.
+
 ## 0.4.4 - 2026-10-11
 
 - **A dragged pane past the window's edge is one pane again.** On Windows the part drawn over
