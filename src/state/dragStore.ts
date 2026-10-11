@@ -214,7 +214,7 @@ export function hitTest(position: DragPointer, payload: DragPayload): DropTarget
 }
 
 /** Swallows the click that follows a drag, so dropping does not also select a row. */
-function swallowNextClick(): void {
+export function swallowNextClick(): void {
   const swallow = (event: MouseEvent) => {
     event.stopPropagation();
     event.preventDefault();
