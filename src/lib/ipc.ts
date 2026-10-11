@@ -1,5 +1,6 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { Update } from "@tauri-apps/plugin-updater";
 import type { PanePicture } from "./panePicture";
 import type {
   AppError,
@@ -330,7 +331,14 @@ export const updates = {
   },
   /** Starts the new version; on Windows the installer closes Poros and starts it once done. */
   restart: () => call<void>("update_restart"),
+  /** The releases this install can switch to, newest first, older ones included. */
+  versions: () => call<string[]>("update_versions"),
+  /** One release from that list, to download and install like an update. */
+  findRelease: async (version: string) =>
+    new Update(await call<UpdateMetadata>("update_find_release", { version })),
 };
+
+type UpdateMetadata = ConstructorParameters<typeof Update>[0];
 
 export const application = {
   /**

@@ -12,6 +12,10 @@ Installers for every version are attached to its
   Poros. Errors show in the same notice, with Try again.
 - The status bar and Settings > Updates show how far the update has got. Clicking the status bar
   brings back a hidden notice.
+- **Install another version.** Settings > Updates lists the releases from 0.4.5 on, so you can go
+  back to an earlier one, and installs the one you pick the same way as an update, signature check
+  included. An .rpm install lists only newer releases, since rpm does not install an older
+  version over a newer one.
 
 ## 0.4.5 - 2026-10-11
 

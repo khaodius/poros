@@ -16,7 +16,7 @@ export function UpdateDialog({ onClose }: { onClose: () => void }) {
     onClose();
   };
   const install = () => {
-    void startUpdate();
+    void startUpdate(update);
     // Settings too, if the update was found from there: dialogs cover the notice in the corner
     // that shows the download.
     closeDialogs();

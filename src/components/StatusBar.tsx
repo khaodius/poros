@@ -41,10 +41,10 @@ function useOfferedUpdate(): string | null {
   return version !== null && version !== skipped ? version : null;
 }
 
-/** The update the last check found, or how installing it goes; opens the dialog or notice. */
+/** The update the last check found, or how an install goes; opens the dialog or the notice. */
 function UpdateStatus() {
   const offeredUpdate = useOfferedUpdate();
-  const version = useUpdateStore((state) => state.update?.version ?? null);
+  const version = useUpdateStore((state) => state.target?.version ?? null);
   const install = useUpdateStore((state) => state.install);
   const openDialog = useUiStore((state) => state.open);
   if (version !== null && install) {
@@ -72,16 +72,16 @@ function describeInstall(install: InstallStage, version: string): string {
   switch (install.stage) {
     case "downloading": {
       const percent = percentDownloaded(install.received, install.total);
-      return `Updating to ${version}${percent === null ? "" : `, ${percent}%`}`;
+      return `Downloading ${version}${percent === null ? "" : `, ${percent}%`}`;
     }
     case "installing":
       return `Installing ${version}`;
     case "ready":
-      return "Restart to update";
+      return `Restart to use ${version}`;
     case "restarting":
       return "Restarting";
     case "failed":
-      return "Update failed";
+      return `Could not install ${version}`;
   }
 }
 

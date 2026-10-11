@@ -3679,6 +3679,7 @@ dependencies = [
  "russh-sftp",
  "rustls",
  "rustls-platform-verifier",
+ "semver",
  "serde",
  "serde_json",
  "sha1 0.10.7",

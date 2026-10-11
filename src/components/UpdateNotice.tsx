@@ -12,12 +12,12 @@ import {
 
 /** Shows how installing an update goes, in the window's bottom-right corner, then offers to restart. */
 export function UpdateNotice() {
-  const update = useUpdateStore((state) => state.update);
+  const target = useUpdateStore((state) => state.target);
   const install = useUpdateStore((state) => state.install);
   const open = useUpdateStore((state) => state.noticeOpen);
-  if (!update || !install || !open) return null;
+  if (!target || !install || !open) return null;
 
-  const version = formatVersion(update.version);
+  const version = formatVersion(target.version);
   const failed = install.stage === "failed";
   return (
     <section className={`update-notice ${failed ? "update-notice-failed" : ""}`}>
@@ -44,7 +44,7 @@ export function UpdateNotice() {
           </button>
         )}
       </header>
-      <NoticeBody install={install} />
+      <NoticeBody install={install} onRetry={() => void startUpdate(target)} />
     </section>
   );
 }
@@ -60,11 +60,11 @@ function title(install: InstallStage, version: string): string {
     case "restarting":
       return "Restarting Poros";
     case "failed":
-      return "Could not update Poros";
+      return `Could not install Poros ${version}`;
   }
 }
 
-function NoticeBody({ install }: { install: InstallStage }) {
+function NoticeBody({ install, onRetry }: { install: InstallStage; onRetry: () => void }) {
   switch (install.stage) {
     case "downloading": {
       const percent = percentDownloaded(install.received, install.total);
@@ -97,11 +97,7 @@ function NoticeBody({ install }: { install: InstallStage }) {
             <button type="button" className="button" onClick={hideUpdateNotice}>
               Dismiss
             </button>
-            <button
-              type="button"
-              className="button button-primary"
-              onClick={() => void startUpdate()}
-            >
+            <button type="button" className="button button-primary" onClick={onRetry}>
               Try again
             </button>
           </div>
@@ -115,7 +111,7 @@ function ReadyBody() {
   return (
     <>
       <p className="update-notice-message">
-        Restart Poros to finish updating, or the update takes effect the next time you open it.
+        Restart Poros to switch to it now, or it takes effect the next time you open Poros.
       </p>
       {warnings.map((warning) => (
         <p key={warning} className="update-notice-message warning-text">

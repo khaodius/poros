@@ -2997,6 +2997,15 @@ option {
   min-width: 220px;
 }
 
+.version-picker {
+  display: flex;
+  gap: 8px;
+}
+
+.setting-control .version-picker select {
+  min-width: 120px;
+}
+
 .setting-control > input {
   width: 220px;
 }

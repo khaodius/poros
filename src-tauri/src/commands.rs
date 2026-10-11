@@ -39,7 +39,7 @@ use crate::themes::{self, ThemeFile, ThemeStore};
 use crate::transfer::{
     EnqueueRequest, ExistsAction, JobId, JobState, TransferList, TransferManager,
 };
-use crate::update::{self, PendingUpdate, UpdateProgress};
+use crate::update::{self, PendingUpdate, ReleaseMetadata, UpdateProgress};
 
 #[tauri::command]
 pub async fn local_home() -> AppResult<String> {
@@ -896,6 +896,16 @@ pub async fn update_download(
     progress: Channel<UpdateProgress>,
 ) -> AppResult<()> {
     update::download(&webview, update_id, progress, &pending).await
+}
+
+#[tauri::command]
+pub async fn update_versions(app: AppHandle) -> AppResult<Vec<String>> {
+    update::installable_versions(&app).await
+}
+
+#[tauri::command]
+pub async fn update_find_release(webview: Webview, version: String) -> AppResult<ReleaseMetadata> {
+    update::find_release(&webview, &version).await
 }
 
 #[tauri::command]

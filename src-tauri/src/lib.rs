@@ -270,6 +270,8 @@ pub fn run() {
             commands::drag_preview_ready,
             commands::drag_preview_reveal,
             commands::update_download,
+            commands::update_versions,
+            commands::update_find_release,
             commands::update_restart,
             commands::log_startup,
         ])

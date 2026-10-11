@@ -20,6 +20,8 @@ export type InstallStage =
 interface UpdateState {
   /** A newer release found by the last check. */
   update: Update | null;
+  /** The release being installed: the update, or another one picked in Settings. */
+  target: Update | null;
   checking: boolean;
   /** When the last check finished, in epoch milliseconds. */
   checkedAt: number | null;
@@ -32,6 +34,7 @@ interface UpdateState {
 
 export const useUpdateStore = create<UpdateState>(() => ({
   update: null,
+  target: null,
   checking: false,
   checkedAt: null,
   checkError: null,
@@ -72,8 +75,9 @@ export async function checkForUpdates(trigger: "start" | "manual"): Promise<void
   useUpdateStore.setState({ checking: true, checkError: null });
   try {
     const found = await check();
-    await state.update?.close().catch(() => undefined);
-    useUpdateStore.setState({ update: found, checkedAt: Date.now(), install: null });
+    const { update, target } = useUpdateStore.getState();
+    for (const release of new Set([update, target])) await release?.close().catch(() => undefined);
+    useUpdateStore.setState({ update: found, target: null, checkedAt: Date.now(), install: null });
     if (!found) return;
     const ui = useUiStore.getState();
     if (trigger === "manual") {
@@ -95,13 +99,16 @@ function isSkipped(update: Update): boolean {
 }
 
 /**
- * Downloads the update, checks its signature against the key built into this version and
+ * Downloads the release, checks its signature against the key built into this version and
  * installs it, while the notice in the corner shows how far it has got. Poros keeps running the
  * version it started with until the user restarts it from there.
  */
-export async function startUpdate(): Promise<void> {
-  const { update, install } = useUpdateStore.getState();
-  if (!update || isInstalling(install)) return;
+export async function startUpdate(release: Update): Promise<void> {
+  const { update, target, install } = useUpdateStore.getState();
+  if (isInstalling(install)) return;
+  if (target && target !== release && target !== update) {
+    await target.close().catch(() => undefined);
+  }
   const show = (progress: UpdateProgress) => {
     const current = useUpdateStore.getState().install?.stage;
     // The last progress can arrive after the download has already finished or failed.
@@ -110,15 +117,24 @@ export async function startUpdate(): Promise<void> {
     }
   };
   useUpdateStore.setState({
+    target: release,
     install: { stage: "downloading", received: 0, total: null },
     noticeOpen: true,
   });
   try {
-    await updates.download(update.rid, show);
+    await updates.download(release.rid, show);
     useUpdateStore.setState({ install: { stage: "ready" }, noticeOpen: true });
   } catch (caught) {
     useUpdateStore.setState({ install: failure(caught), noticeOpen: true });
   }
+}
+
+/** The earliest release Settings offers to go back to, as `OLDEST_INSTALLABLE` in update.rs. */
+export const OLDEST_INSTALLABLE = "0.4.5";
+
+/** Finds a release picked in Settings, older or newer, and installs it the way an update does. */
+export async function installVersion(version: string): Promise<void> {
+  void startUpdate(await updates.findRelease(version));
 }
 
 /** What restarting now would interrupt, as sentences for the user. */

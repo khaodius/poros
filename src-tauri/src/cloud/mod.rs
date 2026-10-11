@@ -29,6 +29,7 @@ use crate::protocol::{Protocol, ReadStream, RemoteFileSystem};
 use crate::remote_path;
 use crate::ssh::{AuthMethod, ConnectProfile, HostKeyApproval};
 use crate::tls::{ServerTls, TrustedCertificates};
+pub use api::{http_client, transport_error};
 pub use oauth::{missing_client, Authorization, OAuthClient, OAuthVault, ProviderStatus, SignedIn};
 
 /// How long a folder's id is trusted without asking the service again. Short, because the
