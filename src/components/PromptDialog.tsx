@@ -5,6 +5,8 @@ interface PromptDialogProps {
   title: string;
   label: string;
   initialValue?: string;
+  /** Faint example text shown while the box is empty. */
+  placeholder?: string;
   /** Characters preselected from the start, e.g. a file name without its extension. */
   selectLength?: number;
   confirmLabel: string;
@@ -16,6 +18,7 @@ export function PromptDialog({
   title,
   label,
   initialValue = "",
+  placeholder,
   selectLength,
   confirmLabel,
   onSubmit,
@@ -57,6 +60,7 @@ export function PromptDialog({
             ref={inputRef}
             data-autofocus
             value={value}
+            placeholder={placeholder}
             spellCheck={false}
             onChange={(event) => setValue(event.target.value)}
           />

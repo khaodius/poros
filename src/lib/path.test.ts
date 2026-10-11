@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { baseName, breadcrumbs, isWithin, parseHostInput, samePath, stemLength } from "./path";
+import {
+  EXAMPLE_EXTENSIONS,
+  baseName,
+  breadcrumbs,
+  exampleFileName,
+  isWithin,
+  parseHostInput,
+  samePath,
+  stemLength,
+} from "./path";
 
 describe("breadcrumbs", () => {
   it("splits POSIX paths from the root", () => {
@@ -97,5 +106,24 @@ describe("comparing paths", () => {
     expect(isWithin("/srv/www-old", "/srv/www", "posix")).toBe(false);
     expect(isWithin("/home", "/", "posix")).toBe(true);
     expect(isWithin("D:\\Data\\x", "d:\\data", "windows")).toBe(true);
+  });
+});
+
+describe("exampleFileName", () => {
+  it("suggests each extension across the random range", () => {
+    const count = EXAMPLE_EXTENSIONS.length;
+    const names = EXAMPLE_EXTENSIONS.map((_, index) => exampleFileName(() => index / count));
+    expect(names).toEqual([
+      "example.lua",
+      "example.cpp",
+      "example.css",
+      "example.js",
+      "example.cs",
+      "example.txt",
+      "example.json",
+      "example.md",
+      "example.cfg",
+    ]);
+    expect(exampleFileName(() => 0.999999)).toBe("example.cfg");
   });
 });

@@ -58,6 +58,14 @@ export function stemLength(name: string, isDir: boolean): number {
   return extensionDot > 0 ? extensionDot : name.length;
 }
 
+/** Lua, C++, CSS, JavaScript, C#, plain text, JSON, Markdown and config files. */
+export const EXAMPLE_EXTENSIONS = ["lua", "cpp", "css", "js", "cs", "txt", "json", "md", "cfg"];
+
+/** A sample name for the New file box, with an extension picked at random. */
+export function exampleFileName(random: () => number = Math.random): string {
+  return `example.${EXAMPLE_EXTENSIONS[Math.floor(random() * EXAMPLE_EXTENSIONS.length)]}`;
+}
+
 /** The last part of a path: `/srv/www` -> `www`, `C:\` -> `C:`. */
 export function baseName(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path;

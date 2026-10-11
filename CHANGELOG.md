@@ -3,6 +3,11 @@
 Installers for every version are attached to its
 [release](https://github.com/khaodius/poros/releases), with SHA-256 checksums.
 
+## 0.4.2 - 2026-10-11
+
+- **New file** shows an example name in faint text, such as `example.lua`, `example.cpp` or
+  `example.json`, with a different kind of file each time it opens. It disappears as you type.
+
 ## 0.4.1 - 2026-10-11
 
 - **rsync's options for folder synchronization**, grouped as rsync's manual groups them: which
