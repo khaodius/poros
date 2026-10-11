@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import { useShallow } from "zustand/react/shallow";
 import {
   ArrowDownToLine,
   ArrowUpToLine,
@@ -37,7 +38,16 @@ export function BottomPanel() {
   const [selection, setSelection] = useState<Set<number>>(new Set());
   const counts = useTransferStore((state) => state.snapshot.stats.counts);
   const queuePaused = useTransferStore((state) => state.snapshot.stats.queuePaused);
-  const selectedIds = [...selection];
+  // Only the rows on show: a job selected in the queue that has finished since is not.
+  const selectedIds = useTransferStore(
+    useShallow((state) =>
+      tab === "log"
+        ? []
+        : jobsIn(state.snapshot, VIEW_STATES[tab])
+            .filter((job) => selection.has(job.id))
+            .map((job) => job.id),
+    ),
+  );
 
   const switchTab = (next: PanelTab) => {
     setTab(next);
