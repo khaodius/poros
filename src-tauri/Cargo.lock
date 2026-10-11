@@ -3671,6 +3671,7 @@ dependencies = [
  "md-5",
  "md4",
  "percent-encoding",
+ "quick-xml",
  "reqwest",
  "ring",
  "russh",
@@ -3839,6 +3840,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "41b1177fdf999d2321d3fb46ff47159d9c1fb9ad66a4879f8c50a0b504615e9b"
 dependencies = [
  "memchr",
+ "serde",
 ]
 
 [[package]]

@@ -1,6 +1,6 @@
-//! Uploads to Google Drive and OneDrive. A small file goes up in one request when it is
-//! finished; a larger one opens an upload session and is sent in fixed-size chunks as they
-//! fill, so memory use stays flat whatever the file size.
+//! Uploads to the HTTP services. A small file goes up in one request when it is finished; a
+//! larger one opens an upload session (a multipart or large-file upload) and is sent in
+//! fixed-size chunks as they fill, so memory use stays flat whatever the file size.
 
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
@@ -13,10 +13,30 @@ pub const SINGLE_REQUEST_LIMIT: usize = 4 * 1024 * 1024;
 /// A multiple of both services' chunk granularity: 256 KiB for Google, 320 KiB for Microsoft.
 pub const CHUNK_SIZE: usize = 10 * 1024 * 1024;
 
+/// The chunk size for a file of `size` bytes on a service that takes at most `max_chunks`
+/// chunks per file: `CHUNK_SIZE`, or as many whole mebibytes as it takes to stay under the cap.
+pub fn chunk_size_within(size: u64, max_chunks: u64) -> usize {
+    const MEBIBYTE: u64 = 1024 * 1024;
+    let needed = size.div_ceil(max_chunks).div_ceil(MEBIBYTE) * MEBIBYTE;
+    usize::try_from(needed)
+        .unwrap_or(usize::MAX)
+        .max(CHUNK_SIZE)
+}
+
 /// One service's side of an upload.
 #[async_trait]
 pub trait UploadTarget: Send {
-    /// Sends a whole file that fit within `SINGLE_REQUEST_LIMIT`.
+    /// Files up to this size go in one request.
+    fn single_request_limit(&self) -> usize {
+        SINGLE_REQUEST_LIMIT
+    }
+
+    /// The size of every chunk but the last, read once the session is open.
+    fn chunk_size(&self) -> usize {
+        CHUNK_SIZE
+    }
+
+    /// Sends a whole file that fit within `single_request_limit`.
     async fn upload_whole(&mut self, data: Bytes) -> AppResult<()>;
 
     /// Opens an upload session for a larger file.
@@ -38,7 +58,7 @@ impl<T: UploadTarget> ChunkedUpload<T> {
     pub fn new(target: T, size: u64) -> Self {
         let capacity = usize::try_from(size)
             .unwrap_or(usize::MAX)
-            .min(SINGLE_REQUEST_LIMIT + 1);
+            .min(target.single_request_limit() + 1);
         Self {
             target,
             buffer: BytesMut::with_capacity(capacity),
@@ -50,15 +70,16 @@ impl<T: UploadTarget> ChunkedUpload<T> {
 
     async fn flush_full_chunks(&mut self) -> AppResult<()> {
         if !self.session_open {
-            if self.buffer.len() <= SINGLE_REQUEST_LIMIT {
+            if self.buffer.len() <= self.target.single_request_limit() {
                 return Ok(());
             }
             self.target.start_session().await?;
             self.session_open = true;
         }
+        let chunk_size = self.target.chunk_size();
         // At least one byte stays behind, so the final chunk is never empty.
-        while self.buffer.len() > CHUNK_SIZE {
-            let chunk = self.buffer.split_to(CHUNK_SIZE).freeze();
+        while self.buffer.len() > chunk_size {
+            let chunk = self.buffer.split_to(chunk_size).freeze();
             let length = chunk.len() as u64;
             self.target.send_chunk(self.sent, chunk, false).await?;
             self.sent += length;
@@ -181,6 +202,16 @@ mod tests {
                 Call::Chunk(CHUNK_SIZE as u64, 5, true),
             ]
         );
+    }
+
+    #[test]
+    fn chunks_grow_only_to_stay_under_the_cap() {
+        assert_eq!(chunk_size_within(0, 10_000), CHUNK_SIZE);
+        assert_eq!(chunk_size_within(50 << 30, 10_000), CHUNK_SIZE);
+        let huge = 5u64 << 40;
+        let chunk = chunk_size_within(huge, 10_000) as u64;
+        assert!(huge.div_ceil(chunk) <= 10_000);
+        assert_eq!(chunk % (1024 * 1024), 0);
     }
 
     #[test]

@@ -15,6 +15,7 @@ use super::conflict::ExistsAction;
 use super::options::JobOptions;
 use super::queue::{Direction, JobKind, JobSpec, JobState, ResumePoint, Unfinished};
 use super::{Login, SessionTarget, Shared};
+use crate::cloud::s3::S3Options;
 use crate::events::LogLevel;
 use crate::protocol::Protocol;
 use crate::ssh::{AuthMethod, ConnectProfile, Route};
@@ -50,6 +51,8 @@ struct SavedServer {
     jump_connection_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     rsync_path: Option<String>,
+    #[serde(default)]
+    s3: S3Options,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -119,6 +122,7 @@ impl From<&ConnectProfile> for SavedServer {
             bypass_proxy: profile.bypass_proxy,
             jump_connection_id: profile.jump_connection_id.clone(),
             rsync_path: profile.rsync_path.clone(),
+            s3: profile.s3.clone(),
         }
     }
 }
@@ -156,6 +160,7 @@ impl SavedServer {
             bypass_proxy: self.bypass_proxy,
             jump_connection_id: self.jump_connection_id.clone(),
             rsync_path: self.rsync_path.clone(),
+            s3: self.s3.clone(),
             route: Route::default(),
         }
     }
@@ -369,6 +374,7 @@ mod tests {
             bypass_proxy: true,
             jump_connection_id: Some("bastion".into()),
             rsync_path: None,
+            s3: S3Options::default(),
             route: Route {
                 proxy: Some(Proxy {
                     kind: ProxyKind::Socks5,

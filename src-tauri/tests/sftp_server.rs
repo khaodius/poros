@@ -69,6 +69,7 @@ fn profile(server: &Server, auth: AuthMethod) -> ConnectProfile {
         bypass_proxy: false,
         jump_connection_id: None,
         rsync_path: None,
+        s3: Default::default(),
         route: Route::default(),
     }
 }
@@ -1716,6 +1717,7 @@ async fn scheduled_tasks_connect_on_their_own() {
                 jump_connection_id: None,
                 rsync_path: None,
                 sync_arguments: None,
+                s3: Default::default(),
             },
             None,
         )

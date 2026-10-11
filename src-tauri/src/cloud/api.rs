@@ -1,5 +1,5 @@
-//! HTTP plumbing shared by the Google Drive and OneDrive clients: one pooled HTTPS client,
-//! access tokens renewed before they expire, and retries while the service is busy.
+//! HTTP plumbing shared by the storage clients: pooled HTTPS clients, access tokens renewed
+//! before they expire, and retries while the service is busy.
 
 use std::convert::Infallible;
 use std::sync::{Arc, Mutex as SyncMutex};
@@ -18,7 +18,7 @@ use super::TokenRotation;
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::stall::Activity;
 
-const ATTEMPTS: u32 = 5;
+pub const ATTEMPTS: u32 = 5;
 const FIRST_BACKOFF: Duration = Duration::from_millis(500);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 /// An access token is renewed this long before it expires, so none lapses mid-request.
@@ -30,8 +30,22 @@ pub const STALL_TIMEOUT: Duration = Duration::from_secs(60);
 /// which is how a slow upload shows that it is still moving.
 const BODY_PIECE: usize = 64 * 1024;
 
+const ALPN: [&[u8]; 2] = [b"h2", b"http/1.1"];
+
+/// A client that trusts the certificates the system trusts.
 pub fn http_client() -> AppResult<Client> {
-    let tls = crate::tls::platform_config(&[b"h2", b"http/1.1"])?;
+    client_with_tls(crate::tls::platform_config(&ALPN)?)
+}
+
+/// A client for a server the user names, which may present a certificate the user approved
+/// rather than one the system trusts.
+pub fn approving_client(tls: &crate::tls::ServerTls) -> AppResult<Client> {
+    let mut config = (*tls.config).clone();
+    config.alpn_protocols = ALPN.iter().map(|protocol| protocol.to_vec()).collect();
+    client_with_tls(config)
+}
+
+fn client_with_tls(tls: rustls::ClientConfig) -> AppResult<Client> {
     Client::builder()
         .tls_backend_preconfigured(tls)
         // No read timeout: reqwest's runs from the start of a request to its answer, which a
@@ -134,6 +148,76 @@ fn body_in_pieces(content: Bytes, activity: Activity) -> Body {
         Ok::<_, Infallible>(content.slice(start..(start + BODY_PIECE).min(length)))
     });
     Body::wrap_stream(futures::stream::iter(pieces))
+}
+
+/// Builds a request afresh for each attempt, signed for the moment it is sent.
+pub type BuildAttempt<'build> = &'build (dyn Fn() -> AppResult<Request> + Send + Sync);
+
+/// Sends a request built anew for each attempt, retrying dropped connections, throttling and
+/// server errors with backoff the way `Api::send` does. Any other answer comes back as it is,
+/// for the caller to read, and so does the last one when every attempt was refused.
+pub async fn send_retrying(http: &Client, build: BuildAttempt<'_>) -> AppResult<Response> {
+    retrying(http, build, false).await
+}
+
+/// Like `send_retrying`, for a `POST` that only reads, which is as safe to send again as a
+/// `GET`.
+pub async fn send_retrying_idempotent(
+    http: &Client,
+    build: BuildAttempt<'_>,
+) -> AppResult<Response> {
+    retrying(http, build, true).await
+}
+
+async fn retrying(http: &Client, build: BuildAttempt<'_>, idempotent: bool) -> AppResult<Response> {
+    let mut attempt = 0;
+    loop {
+        attempt += 1;
+        let request = build()?;
+        let repeatable = idempotent || request.method() != Method::POST;
+        let response = match send_request(http, request, STALL_TIMEOUT).await {
+            Ok(response) => response,
+            Err(failure) => {
+                if attempt < ATTEMPTS && (repeatable || failure.is_connect()) {
+                    tokio::time::sleep(backoff(attempt)).await;
+                    continue;
+                }
+                return Err(failure.into());
+            }
+        };
+        if attempt < ATTEMPTS && is_transient(response.status(), repeatable) {
+            let wait = retry_after(&response).unwrap_or_else(|| backoff(attempt));
+            drop(response);
+            tokio::time::sleep(wait.min(MAX_BACKOFF)).await;
+            continue;
+        }
+        return Ok(response);
+    }
+}
+
+/// Throttling, or a server error on a request that is safe to send again. A `POST` the server
+/// may have carried out is retried only when it said it was too busy to take it.
+fn is_transient(status: StatusCode, repeatable: bool) -> bool {
+    matches!(
+        status,
+        StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE
+    ) || (repeatable
+        && matches!(
+            status,
+            StatusCode::INTERNAL_SERVER_ERROR
+                | StatusCode::BAD_GATEWAY
+                | StatusCode::GATEWAY_TIMEOUT
+                | StatusCode::REQUEST_TIMEOUT
+        ))
+}
+
+/// A whole response body, however it failed or succeeded.
+pub async fn body_bytes(mut response: Response) -> AppResult<Vec<u8>> {
+    let mut body = Vec::new();
+    while let Some(chunk) = next_chunk(&mut response).await? {
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
 }
 
 /// The next piece of a response body, failing once none arrives within `STALL_TIMEOUT`.
@@ -240,19 +324,34 @@ impl Api {
     /// and dropped connections are retried with backoff, though a `POST` that may have gone
     /// through is retried only when the service said it was too busy to take it.
     pub async fn send(&self, build: BuildRequest<'_>) -> AppResult<Response> {
-        self.execute(build, true).await
+        self.execute(build, true, &[]).await
     }
 
     /// For upload addresses that carry their own authorization and reject a second one.
     pub async fn send_unauthorized(&self, build: BuildRequest<'_>) -> AppResult<Response> {
-        self.execute(build, false).await
+        self.execute(build, false, &[]).await
+    }
+
+    /// Like `send`, but an answer with one of `expected` statuses comes back for the caller to
+    /// read instead of failing, such as a conflict that names the item in the way.
+    pub async fn send_expecting(
+        &self,
+        build: BuildRequest<'_>,
+        expected: &[StatusCode],
+    ) -> AppResult<Response> {
+        self.execute(build, true, expected).await
     }
 
     pub async fn json<T: DeserializeOwned>(&self, build: BuildRequest<'_>) -> AppResult<T> {
         decode(self.send(build).await?).await
     }
 
-    async fn execute(&self, build: BuildRequest<'_>, authorize: bool) -> AppResult<Response> {
+    async fn execute(
+        &self,
+        build: BuildRequest<'_>,
+        authorize: bool,
+        expected: &[StatusCode],
+    ) -> AppResult<Response> {
         let mut attempt = 0;
         let mut renewed = false;
         loop {
@@ -279,7 +378,10 @@ impl Api {
             };
             let status = response.status();
             // Google answers 308 to an upload chunk that leaves the file incomplete.
-            if status.is_success() || status == StatusCode::PERMANENT_REDIRECT {
+            if status.is_success()
+                || status == StatusCode::PERMANENT_REDIRECT
+                || expected.contains(&status)
+            {
                 return Ok(response);
             }
             if status == StatusCode::UNAUTHORIZED && !renewed {
@@ -309,11 +411,8 @@ impl Api {
     }
 }
 
-pub async fn decode<T: DeserializeOwned>(mut response: Response) -> AppResult<T> {
-    let mut body = Vec::new();
-    while let Some(chunk) = next_chunk(&mut response).await? {
-        body.extend_from_slice(&chunk);
-    }
+pub async fn decode<T: DeserializeOwned>(response: Response) -> AppResult<T> {
+    let body = body_bytes(response).await?;
     serde_json::from_slice(&body).map_err(|error| {
         AppError::new(
             ErrorKind::Cloud,
@@ -324,7 +423,7 @@ pub async fn decode<T: DeserializeOwned>(mut response: Response) -> AppResult<T>
 
 /// Doubles from half a second, with up to a quarter second of jitter so parallel workers do
 /// not retry in step.
-fn backoff(attempt: u32) -> Duration {
+pub fn backoff(attempt: u32) -> Duration {
     let mut jitter = [0u8; 1];
     let _ = SystemRandom::new().fill(&mut jitter);
     let doubled = FIRST_BACKOFF.saturating_mul(1 << attempt.saturating_sub(1).min(6));
@@ -343,11 +442,16 @@ fn retry_after(response: &Response) -> Option<Duration> {
     Some(Duration::from_secs(seconds))
 }
 
-/// The `error` object both Google and Microsoft send with a failed request.
+/// The `error` object both Google and Microsoft send with a failed request, or the top-level
+/// `code` and `message` Box sends.
 #[derive(Debug, Default, Deserialize)]
 struct ErrorBody {
     #[serde(default)]
     error: ErrorDetail,
+    #[serde(default)]
+    code: serde_json::Value,
+    #[serde(default)]
+    message: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -383,6 +487,7 @@ impl ServiceError {
             .iter()
             .map(|reason| reason.reason.as_str())
             .chain(detail.code.as_str())
+            .chain(body.code.as_str())
             .collect();
         let has_reason = |names: &[&str]| reasons.iter().any(|reason| names.contains(reason));
         let throttled = status == StatusCode::TOO_MANY_REQUESTS
@@ -390,16 +495,18 @@ impl ServiceError {
                 "rateLimitExceeded",
                 "userRateLimitExceeded",
                 "activityLimitReached",
+                "rate_limit_exceeded",
             ]);
         let out_of_space = status == StatusCode::INSUFFICIENT_STORAGE
             || has_reason(&[
                 "storageQuotaExceeded",
                 "quotaLimitReached",
                 "insufficientStorage",
+                "storage_limit_exceeded",
             ]);
-        let message = match detail.message.trim() {
-            "" => format!("The service answered {status}"),
-            message => message.to_string(),
+        let message = match (detail.message.trim(), body.message.trim()) {
+            ("", "") => format!("The service answered {status}"),
+            ("", message) | (message, _) => message.to_string(),
         };
         let kind = if out_of_space {
             ErrorKind::PermissionDenied
@@ -556,5 +663,20 @@ mod tests {
             serde_json::from_str(r#"{"error":{"code":"itemNotFound","message":"Item not found"}}"#)
                 .unwrap();
         assert_eq!(microsoft.error.code.as_str(), Some("itemNotFound"));
+        let from_box: ErrorBody = serde_json::from_str(
+            r#"{"type":"error","status":409,"code":"item_name_in_use","message":"Item with the same name already exists"}"#,
+        )
+        .unwrap();
+        assert_eq!(from_box.code.as_str(), Some("item_name_in_use"));
+        assert_eq!(from_box.message, "Item with the same name already exists");
+    }
+
+    #[test]
+    fn retries_only_what_is_safe_to_send_again() {
+        assert!(is_transient(StatusCode::SERVICE_UNAVAILABLE, false));
+        assert!(is_transient(StatusCode::TOO_MANY_REQUESTS, false));
+        assert!(is_transient(StatusCode::BAD_GATEWAY, true));
+        assert!(!is_transient(StatusCode::BAD_GATEWAY, false));
+        assert!(!is_transient(StatusCode::NOT_FOUND, true));
     }
 }

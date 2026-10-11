@@ -177,8 +177,8 @@ async fn open_connection(
         .await?;
     let login = target.login();
     let protocol = login.profile.protocol;
-    if protocol.is_cloud() {
-        // Cloud APIs take any number of requests over the browsing session's HTTP client.
+    if protocol.is_http() {
+        // HTTP services take any number of requests over the browsing session's client.
         return match login.browsing_files {
             Some(files) => Ok(WorkerConnection::files(files, false)),
             None if target.is_restored() => Err(connect_first(target)),

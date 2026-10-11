@@ -125,6 +125,14 @@ pub fn run() {
             app.manage(settings);
             app.manage(connections);
             app.manage(OAuthVault::default());
+            let handle = app.handle().clone();
+            app.state::<Arc<SessionManager>>().set_grant_sink(Arc::new(
+                move |grant_id: &str, refresh_token: &str| {
+                    handle
+                        .state::<OAuthVault>()
+                        .replace(grant_id, refresh_token);
+                },
+            ));
             app.manage(ThemeStore::new(config_dir.join("themes")));
             app.manage(PendingWindows::default());
             app.manage(DragPreview::default());
