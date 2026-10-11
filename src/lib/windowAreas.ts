@@ -134,6 +134,13 @@ export function landingCorner(pointer: ScreenPoint, grab: { x: number; y: number
   return heldWindowCorner(workAreas, pointer, grab, window.devicePixelRatio || 1);
 }
 
+/** A point in this window on the screen, in physical pixels, once the window is measured. */
+export function onScreen(point: { x: number; y: number }): ScreenPoint | null {
+  if (!thisWindow) return null;
+  const { left, top, scale } = thisWindow;
+  return { x: Math.round(left + point.x * scale), y: Math.round(top + point.y * scale) };
+}
+
 /**
  * Where a window held at `grab` by the pointer at a point in this window would open, in this
  * window's coordinates.

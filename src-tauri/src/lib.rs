@@ -253,6 +253,7 @@ pub fn run() {
             commands::drag_preview_place,
             commands::drag_preview_available,
             commands::drag_preview_prepare,
+            commands::drag_preview_picture,
             commands::drag_preview_hide,
             commands::drag_preview_taken_over,
             commands::drag_preview_ready,

@@ -3,6 +3,13 @@
 Installers for every version are attached to its
 [release](https://github.com/khaodius/poros/releases), with SHA-256 checksums.
 
+## 0.3.5 - 2026-10-11
+
+- **A dragged pane reaches past the window's edge.** Dragging a tab toward the edge of its
+  window, the lifted pane carries on over the desktop beside it instead of being cut off at the
+  edge, showing its own content, and the marker of where it will land shows over it on both
+  sides of the edge.
+
 ## 0.3.4 - 2026-10-11
 
 - **New file** next to New folder, in each pane's toolbar and right-click menu, or with

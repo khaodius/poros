@@ -1,17 +1,7 @@
 import { useMemo, useRef, useState, type CSSProperties, type PointerEvent } from "react";
-import { Columns2, Layers, Rows2, SquareArrowOutUpRight } from "lucide-react";
+import { SquareArrowOutUpRight } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
-import {
-  DOCK_GAP,
-  TAB_BAR_HEIGHT,
-  between,
-  floatingRect,
-  resolveExtent,
-  smoothstep,
-  tearingOut,
-  type Point,
-  type Rect,
-} from "../lib/docking";
+import { DOCK_GAP, TAB_BAR_HEIGHT, dropPlacement, resolveExtent } from "../lib/docking";
 import {
   addExtents,
   allGroups,
@@ -19,7 +9,6 @@ import {
   layoutPlacements,
   resizeShares,
   setSizes,
-  type DropSide,
   type Extent,
   type GroupNode,
   type LayoutNode,
@@ -28,9 +17,10 @@ import {
   type SplitNode,
 } from "../lib/layout";
 import { MAIN_WINDOW } from "../lib/ipc";
-import { isLifted, useDragStore, type DropTarget, type TabDrag } from "../state/dragStore";
+import { isLifted, useDragStore, type DropTarget } from "../state/dragStore";
 import { useLayoutStore } from "../state/layoutStore";
-import { tornOutFrame } from "../state/tabActions";
+import { liftedLayers, liftedPane } from "../state/liftedPane";
+import { DropMarker } from "./DropMarker";
 import { TabBar } from "./TabBar";
 import { TabContent } from "./TabContent";
 import { TAB_ICONS } from "./tabIcons";
@@ -73,49 +63,6 @@ function resizerPlacement(
   return split.direction === "row"
     ? { ...area, left: addExtents(before.left, before.width), width: gap }
     : { ...area, top: addExtents(before.top, before.height), height: gap };
-}
-
-/** The part of a group a pane dropped on `side` of it takes: all of it when merging. */
-function dropPlacement(placement: Placement, side: DropSide): Placement {
-  if (side === "center") return placement;
-  const halve = ({ share, pixels }: Extent) => ({
-    share: share / 2,
-    pixels: (pixels - DOCK_GAP) / 2,
-  });
-  const row = side === "left" || side === "right";
-  const length = halve(row ? placement.width : placement.height);
-  const shift = addExtents(length, { share: 0, pixels: DOCK_GAP });
-  if (side === "left") return { ...placement, width: length };
-  if (side === "right") {
-    return { ...placement, left: addExtents(placement.left, shift), width: length };
-  }
-  if (side === "top") return { ...placement, height: length };
-  return { ...placement, top: addExtents(placement.top, shift), height: length };
-}
-
-/**
- * Where the lifted pane floats in the dock, `toward` of the way to the window it would open
- * as. Where no preview can follow it off the window, it is held inside the dock instead while
- * a drop would leave, so it can say where the tab will go.
- */
-function floatingIn(payload: TabDrag, pointer: Point, toward: number, held: boolean): Rect {
-  const { dock } = payload;
-  const rect = floatingRect(payload, { x: pointer.x - dock.left, y: pointer.y - dock.top });
-  if (held) {
-    const clamp = (value: number, room: number) => Math.min(Math.max(0, value), Math.max(0, room));
-    return {
-      ...rect,
-      left: clamp(rect.left, dock.width - rect.width),
-      top: clamp(rect.top, dock.height - rect.height),
-    };
-  }
-  if (toward <= 0) return rect;
-  const opened = tornOutFrame(pointer);
-  return between(
-    rect,
-    { ...opened, left: opened.left - dock.left, top: opened.top - dock.top },
-    toward,
-  );
 }
 
 interface Resizing {
@@ -165,21 +112,16 @@ export function DockArea() {
   // Where the system cannot place a preview, the pane stays at the edge of the dock saying
   // where the tab will go.
   const away = leaving && desktopPreview;
-  const toward =
-    drag && liftedTabId && desktopPreview
-      ? tearingOut(drag.pointer, drag.payload.dock, {
-          width: window.innerWidth,
-          height: window.innerHeight,
-        })
-      : 0;
-  const floating =
+  const lifted =
     drag && liftedTabId
-      ? floatingIn(drag.payload, drag.pointer, toward, leaving && !desktopPreview)
+      ? liftedPane(drag.payload, drag.pointer, drag.target, desktopPreview)
       : null;
+  const floating = lifted?.rect ?? null;
+  const toward = lifted?.toward ?? 0;
   const liftedTab = tabs.find((tab) => tab.id === liftedTabId);
-  // The pane's own content gives way to the drawing of the window in the first half of the way.
-  const sketchOpacity = smoothstep(toward * 2);
-  const contentOpacity = toward > 0 ? 1 - sketchOpacity : undefined;
+  const layers = liftedLayers(toward);
+  const sketchOpacity = layers.sketch;
+  const contentOpacity = toward > 0 ? layers.content : undefined;
 
   // Dragging a handle previews the sizes in this component only and commits on release.
   const startResize = (split: SplitNode, index: number, event: PointerEvent<HTMLDivElement>) => {
@@ -396,26 +338,6 @@ function FloatingFrame({ tab, label, leavingTo, titleOpacity, style }: FloatingF
           </span>
         )}
       </div>
-    </div>
-  );
-}
-
-const DROP_LABELS: Record<DropSide, string> = {
-  center: "Merge as tab",
-  left: "Split left",
-  right: "Split right",
-  top: "Split up",
-  bottom: "Split down",
-};
-
-function DropMarker({ side, style }: { side: DropSide; style: CSSProperties }) {
-  const Icon = side === "center" ? Layers : side === "left" || side === "right" ? Columns2 : Rows2;
-  return (
-    <div className={`dock-drop is-${side === "center" ? "merge" : "split"}`} style={style}>
-      <span className="dock-drop-badge">
-        <Icon size={15} />
-        {DROP_LABELS[side]}
-      </span>
     </div>
   );
 }

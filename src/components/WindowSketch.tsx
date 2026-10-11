@@ -9,7 +9,7 @@ import { TAB_ICONS } from "./tabIcons";
 const LINES = [58, 44, 72, 38, 64, 50, 80, 34, 60, 46, 70, 40, 54, 66, 42, 76, 36, 62, 48, 68];
 
 interface WindowSketchProps {
-  content: PreviewContent;
+  content: Pick<PreviewContent, "label" | "kind">;
   className?: string;
   style?: CSSProperties;
 }

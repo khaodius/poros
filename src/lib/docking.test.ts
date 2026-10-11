@@ -1,15 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
+  DOCK_GAP,
   between,
   changesLayout,
+  dropPlacement,
   dropSide,
   floatingFrame,
   groupNearest,
   groupRects,
+  placementRect,
   tearingOut,
   type Rect,
 } from "./docking";
-import { group, type LayoutNode } from "./layout";
+import { group, layoutPlacements, type DropSide, type LayoutNode } from "./layout";
 
 const rect = (left: number, top: number, width: number, height: number): Rect => ({
   left,
@@ -47,6 +50,16 @@ describe("docking geometry", () => {
     expect(groupNearest(groups, { x: 503, y: 300 })?.groupId).toBe("left");
     expect(groupNearest(groups, { x: 506, y: 300 })?.groupId).toBe("right");
     expect(groupNearest([], { x: 0, y: 0 })).toBeNull();
+  });
+
+  it("marks the half of a group a split takes, and all of it for a merge", () => {
+    const right = layoutPlacements(sideBySide(), DOCK_GAP).get("right")!;
+    const marker = (side: DropSide) => placementRect(dropPlacement(right, side), DOCK);
+    expect(marker("center")).toEqual(rect(508, 40, 500, 600));
+    expect(marker("left")).toEqual(rect(508, 40, 246, 600));
+    expect(marker("right")).toEqual(rect(762, 40, 246, 600));
+    expect(marker("top")).toEqual(rect(508, 40, 500, 296));
+    expect(marker("bottom")).toEqual(rect(508, 344, 500, 296));
   });
 
   it("merges in the middle of a group and splits toward its edges", () => {

@@ -819,6 +819,15 @@ pub async fn drag_preview_prepare(
 }
 
 #[tauri::command]
+pub async fn drag_preview_picture(
+    app: AppHandle,
+    preview: State<'_, DragPreview>,
+    picture: serde_json::Value,
+) -> AppResult<()> {
+    preview.picture(&app, picture).map_err(window_error)
+}
+
+#[tauri::command]
 pub async fn drag_preview_hide(app: AppHandle, preview: State<'_, DragPreview>) -> AppResult<()> {
     preview.hide(&app).map_err(window_error)
 }
@@ -837,7 +846,7 @@ pub async fn drag_preview_taken_over(
 #[tauri::command]
 pub async fn drag_preview_ready(
     preview: State<'_, DragPreview>,
-) -> AppResult<Option<serde_json::Value>> {
+) -> AppResult<desktop::PreviewStart> {
     Ok(preview.ready())
 }
 

@@ -2,6 +2,7 @@
 // over, and whether it merges into that group or splits it.
 
 import {
+  addExtents,
   allGroups,
   dockTab,
   groupOfTab,
@@ -52,6 +53,24 @@ export function placementRect(placement: Placement, dock: Rect): Rect {
     width: resolveExtent(placement.width, dock.width),
     height: resolveExtent(placement.height, dock.height),
   };
+}
+
+/** The part of a group a pane dropped on `side` of it takes: all of it when merging. */
+export function dropPlacement(placement: Placement, side: DropSide): Placement {
+  if (side === "center") return placement;
+  const halve = ({ share, pixels }: Extent) => ({
+    share: share / 2,
+    pixels: (pixels - DOCK_GAP) / 2,
+  });
+  const row = side === "left" || side === "right";
+  const length = halve(row ? placement.width : placement.height);
+  const shift = addExtents(length, { share: 0, pixels: DOCK_GAP });
+  if (side === "left") return { ...placement, width: length };
+  if (side === "right") {
+    return { ...placement, left: addExtents(placement.left, shift), width: length };
+  }
+  if (side === "top") return { ...placement, height: length };
+  return { ...placement, top: addExtents(placement.top, shift), height: length };
 }
 
 export interface GroupRect {

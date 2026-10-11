@@ -1,5 +1,6 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { PanePicture } from "./panePicture";
 import type {
   AppError,
   CloudProvider,
@@ -70,6 +71,8 @@ export const RETURN_TAB_EVENT = "poros://return-tab";
 export const TAB_DRAG_EVENT = "poros://tab-drag";
 /** Mirrored in src-tauri/src/desktop.rs. Tells the drag preview what to show. */
 export const DRAG_PREVIEW_EVENT = "poros://drag-preview";
+/** Mirrored in src-tauri/src/desktop.rs. Gives the drag preview the picture of the pane. */
+export const DRAG_PREVIEW_PICTURE_EVENT = "poros://drag-preview-picture";
 
 /** The label of the window Poros starts with; windows torn out of it get others. */
 export const MAIN_WINDOW = "main";
@@ -291,14 +294,17 @@ export const dragPreview = {
   available: () => call<boolean>("drag_preview_available"),
   /** Opens the preview hidden, so it shows at once when first placed. */
   prepare: () => call<void>("drag_preview_prepare"),
+  /** Gives the preview the picture of the dragged pane to draw. */
+  picture: (picture: PanePicture) => call<void>("drag_preview_picture", { picture }),
   hide: () => call<void>("drag_preview_hide"),
   /**
    * Called by a new window once it has drawn: if a tab dropped on the desktop opened in it, the
    * preview that stood in its place leaves.
    */
   takenOver: () => call<void>("drag_preview_taken_over"),
-  /** Called by the preview once it listens for content; returns what to show, if anything. */
-  ready: () => call<PreviewContent | null>("drag_preview_ready"),
+  /** Called by the preview once it listens; returns what to show, if anything. */
+  ready: () =>
+    call<{ content: PreviewContent | null; picture: PanePicture | null }>("drag_preview_ready"),
   /** Shows the preview once it has drawn its content. */
   reveal: () => call<void>("drag_preview_reveal"),
 };
