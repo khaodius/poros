@@ -98,6 +98,7 @@ export const local = {
   list: (path: string) => call<DirListing>("local_list", { path }),
   stat: (paths: string[]) => call<FileEntry[]>("local_stat", { paths }),
   mkdir: (parent: string, name: string) => call<string>("local_mkdir", { parent, name }),
+  makeFile: (parent: string, name: string) => call<string>("local_make_file", { parent, name }),
   rename: (path: string, newName: string) => call<string>("local_rename", { path, newName }),
   remove: (paths: string[]) => call<void>("local_delete", { paths }),
 };
@@ -112,6 +113,8 @@ export const remote = {
   list: (sessionId: string, path: string) => call<DirListing>("remote_list", { sessionId, path }),
   mkdir: (sessionId: string, parent: string, name: string) =>
     call<string>("remote_mkdir", { sessionId, parent, name }),
+  makeFile: (sessionId: string, parent: string, name: string) =>
+    call<string>("remote_make_file", { sessionId, parent, name }),
   rename: (sessionId: string, path: string, newName: string) =>
     call<string>("remote_rename", { sessionId, path, newName }),
   remove: (sessionId: string, paths: string[]) => call<void>("remote_delete", { sessionId, paths }),

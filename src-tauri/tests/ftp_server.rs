@@ -563,6 +563,20 @@ async fn manages_files_and_folders() {
         write_remote(files, &remote_path::join(&deeper, "inner.bin"), b"inner").await;
         write_remote(files, &remote_path::join(&sub, "empty.bin"), b"").await;
 
+        let created = files.clone().make_file(&deeper, "new.txt").await.unwrap();
+        assert_eq!(created, remote_path::join(&deeper, "new.txt"));
+        assert_eq!(files.stat(&created).await.unwrap().unwrap().size, 0);
+        let inner_file = remote_path::join(&deeper, "inner.bin");
+        let taken = files
+            .clone()
+            .make_file(&deeper, "inner.bin")
+            .await
+            .unwrap_err();
+        assert_eq!(taken.kind, ErrorKind::AlreadyExists);
+        assert_eq!(read_remote(files, &inner_file).await, b"inner");
+        let folder_taken = files.clone().make_file(root, "sub").await.unwrap_err();
+        assert_eq!(folder_taken.kind, ErrorKind::AlreadyExists);
+
         let listing = files.list_dir(root).await.unwrap();
         assert_eq!(listing.path, *root);
         assert_eq!(listing.parent.as_deref(), Some(session.home.as_str()));

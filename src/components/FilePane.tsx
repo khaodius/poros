@@ -23,6 +23,7 @@ import {
   EyeOff,
   FileDiff,
   FilePen,
+  FilePlus,
   FolderInput,
   FolderOpen,
   FolderPlus,
@@ -85,6 +86,7 @@ import { serverCommandsMenu } from "./commandMenu";
 
 type PaneDialog =
   | { type: "newFolder" }
+  | { type: "newFile" }
   | { type: "rename"; entry: FileEntry }
   | { type: "delete"; entries: FileEntry[] }
   | { type: "placeTo"; mode: PlaceMode; entries: FileEntry[] }
@@ -266,6 +268,7 @@ export function FilePane({
   );
 
   const openNewFolder = () => pane.listing && setDialog({ type: "newFolder" });
+  const openNewFile = () => pane.listing && setDialog({ type: "newFile" });
   const openRename = () =>
     selected.length === 1 && setDialog({ type: "rename", entry: selected[0] });
   const openDelete = () => selected.length > 0 && setDialog({ type: "delete", entries: selected });
@@ -550,6 +553,12 @@ export function FilePane({
         shortcut: "F7",
         onSelect: openNewFolder,
       },
+      {
+        label: "New file",
+        icon: <FilePlus size={14} />,
+        shortcut: "Shift+F4",
+        onSelect: openNewFile,
+      },
       ...(entry ? [] : [sortMenu()]),
       syncMenuItem(entry),
       // Commands run over SSH.
@@ -657,6 +666,9 @@ export function FilePane({
           <ToolbarButton label="New folder (F7)" onClick={openNewFolder} disabled={!pane.listing}>
             <FolderPlus size={15} />
           </ToolbarButton>
+          <ToolbarButton label="New file (Shift+F4)" onClick={openNewFile} disabled={!pane.listing}>
+            <FilePlus size={15} />
+          </ToolbarButton>
           <ToolbarButton
             label={pane.showHidden ? "Hide hidden files" : "Show hidden files"}
             onClick={pane.toggleHidden}
@@ -720,6 +732,7 @@ export function FilePane({
           onRename={openRename}
           onEdit={edit}
           onNewFolder={openNewFolder}
+          onNewFile={openNewFile}
           onEditPath={() => setPathEditRequest((count) => count + 1)}
           onFocusFilter={() => filterRef.current?.focus()}
           onSwitchPane={(from) => focusNextPane(from)}
@@ -774,6 +787,20 @@ export function FilePane({
           onSubmit={async (name) => {
             const created = await source.mkdir(pane.listing!.path, name);
             writeLog("info", `Created ${where} folder ${created}`);
+            await pane.refresh(created);
+          }}
+        />
+      )}
+
+      {dialog?.type === "newFile" && pane.listing && (
+        <PromptDialog
+          title="New file"
+          label={`Create in ${pane.listing.path}`}
+          confirmLabel="Create"
+          onClose={() => setDialog(null)}
+          onSubmit={async (name) => {
+            const created = await source.makeFile(pane.listing!.path, name);
+            writeLog("info", `Created ${where} file ${created}`);
             await pane.refresh(created);
           }}
         />

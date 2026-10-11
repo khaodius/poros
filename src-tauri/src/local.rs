@@ -50,6 +50,16 @@ pub fn make_dir(parent: &str, name: &str) -> AppResult<String> {
     Ok(display_path(&target))
 }
 
+pub fn make_file(parent: &str, name: &str) -> AppResult<String> {
+    let target = child_path(parent, name)?;
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&target)
+        .map_err(|error| AppError::from(error).with_path(display_path(&target)))?;
+    Ok(display_path(&target))
+}
+
 pub fn rename(path: &str, new_name: &str) -> AppResult<String> {
     let source = PathBuf::from(path);
     let parent = source
@@ -275,6 +285,21 @@ mod tests {
         assert!(!Path::new(&made).exists());
         delete(std::slice::from_ref(&renamed)).unwrap();
         assert!(!Path::new(&renamed).exists());
+    }
+
+    #[test]
+    fn make_file_creates_an_empty_file_and_never_overwrites() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let root = temp_dir.path().to_str().unwrap();
+        let made = make_file(root, "notes.txt").unwrap();
+        assert_eq!(fs::read(&made).unwrap(), b"");
+        fs::write(&made, b"kept").unwrap();
+        let error = make_file(root, "notes.txt").unwrap_err();
+        assert_eq!(error.kind, crate::error::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(&made).unwrap(), b"kept");
+        make_dir(root, "folder").unwrap();
+        assert!(make_file(root, "folder").is_err());
+        assert!(make_file(root, "../escaped").is_err());
     }
 
     #[test]

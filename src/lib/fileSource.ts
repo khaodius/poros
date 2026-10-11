@@ -16,6 +16,8 @@ export interface FileSource {
   roots?(): Promise<string[]>;
   list(path: string): Promise<DirListing>;
   mkdir(parent: string, name: string): Promise<string>;
+  /** Creates an empty file; fails if the name is taken. */
+  makeFile(parent: string, name: string): Promise<string>;
   rename(path: string, newName: string): Promise<string>;
   remove(paths: string[]): Promise<void>;
 }
@@ -32,6 +34,7 @@ export const localSource: FileSource = {
   roots: isWindows ? () => local.roots() : undefined,
   list: (path) => local.list(path),
   mkdir: (parent, name) => local.mkdir(parent, name),
+  makeFile: (parent, name) => local.makeFile(parent, name),
   rename: (path, newName) => local.rename(path, newName),
   remove: (paths) => local.remove(paths),
 };
@@ -52,6 +55,7 @@ export function remoteSource(session: SessionInfo): FileSource {
     home: async () => session.home,
     list: (path) => remote.list(id, path),
     mkdir: (parent, name) => remote.mkdir(id, parent, name),
+    makeFile: (parent, name) => remote.makeFile(id, parent, name),
     rename: (path, newName) => remote.rename(id, path, newName),
     remove: (paths) => remote.remove(id, paths),
   };

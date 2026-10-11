@@ -136,6 +136,26 @@ pub trait RemoteFileSystem: Send + Sync {
 
     async fn make_dir(&self, parent: &str, name: &str) -> AppResult<String>;
 
+    /// Creates an empty file, refusing a name already taken. Protocols that can create a file
+    /// only if it is absent in one request override this to close the gap between the check and
+    /// the write.
+    async fn make_file(self: Arc<Self>, parent: &str, name: &str) -> AppResult<String> {
+        validate_name(name)?;
+        let path = remote_path::join(&self.resolve(parent), name);
+        if self.stat(&path).await?.is_some() {
+            return Err(already_exists(&path));
+        }
+        let request = WriteRequest {
+            path: path.clone(),
+            offset: 0,
+            size: 0,
+            modified: None,
+            permissions: None,
+        };
+        self.open_write(request).await?.finish().await?;
+        Ok(path)
+    }
+
     async fn rename(&self, path: &str, new_name: &str) -> AppResult<String>;
 
     /// Folders are removed with everything in them.

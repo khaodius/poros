@@ -234,6 +234,25 @@ impl RemoteFs {
         Ok(path)
     }
 
+    pub async fn make_file(&self, parent: &str, name: &str) -> AppResult<String> {
+        validate_name(name)?;
+        let path = remote_path::join(&self.resolve(parent), name);
+        self.ensure_absent(&path, name).await?;
+        // Exclusive, so a file created since the check is never truncated.
+        let handle = self
+            .raw
+            .open(
+                path.clone(),
+                OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::EXCLUDE,
+                FileAttributes::empty(),
+            )
+            .await
+            .map_err(|error| AppError::from(error).with_path(path.clone()))?
+            .handle;
+        self.close_handle(handle).await?;
+        Ok(path)
+    }
+
     pub async fn rename(&self, path: &str, new_name: &str) -> AppResult<String> {
         validate_name(new_name)?;
         let path = self.resolve(path);
@@ -610,6 +629,10 @@ impl RemoteFileSystem for RemoteFs {
 
     async fn make_dir(&self, parent: &str, name: &str) -> AppResult<String> {
         RemoteFs::make_dir(self, parent, name).await
+    }
+
+    async fn make_file(self: Arc<Self>, parent: &str, name: &str) -> AppResult<String> {
+        RemoteFs::make_file(&self, parent, name).await
     }
 
     async fn rename(&self, path: &str, new_name: &str) -> AppResult<String> {
