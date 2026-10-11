@@ -2997,6 +2997,15 @@ option {
   min-width: 220px;
 }
 
+.version-picker {
+  display: flex;
+  gap: 8px;
+}
+
+.setting-control .version-picker select {
+  min-width: 120px;
+}
+
 .setting-control > input {
   width: 220px;
 }
@@ -3478,15 +3487,19 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 
 /* Toasts */
 
+.toasts,
+.toast-list {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
 .toasts {
   position: fixed;
   right: 16px;
   bottom: 36px;
   z-index: 200;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 8px;
   pointer-events: none;
 }
 
@@ -4897,22 +4910,106 @@ textarea::placeholder {
   font-family: var(--font-mono);
 }
 
-.update-progress {
+.update-notice {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 340px;
+  max-width: calc(100vw - 32px);
+  padding: 10px 6px 12px 12px;
+  background: var(--surface-overlay);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-popover);
+  pointer-events: auto;
+  animation: toast-in 160ms ease-out;
+}
+
+.update-notice-failed {
+  border-left-color: var(--danger);
+}
+
+.update-notice-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.update-notice-header > svg {
+  flex: none;
+  color: var(--accent);
+}
+
+.update-notice-failed .update-notice-header > svg {
+  color: var(--danger);
+}
+
+.update-notice-title {
+  flex: 1;
+  margin: 0;
+  font-size: inherit;
+  font-weight: 600;
+}
+
+.update-notice-header .icon-button {
+  width: 22px;
+  height: 22px;
+}
+
+.update-notice-progress,
+.update-notice-message,
+.update-notice-actions {
+  margin: 0 6px 0 26px;
+}
+
+.update-notice-progress {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin-top: 14px;
+}
+
+.update-notice-progress .progress-track {
+  flex: none;
+}
+
+.update-notice-text {
+  display: flex;
+  justify-content: space-between;
   color: var(--text-muted);
   font-size: var(--font-size-small);
   font-variant-numeric: tabular-nums;
 }
 
-.update-progress .progress-track {
-  flex: none;
+.update-notice-message {
+  color: var(--text-muted);
+  word-break: break-word;
 }
 
-.update-error {
-  margin-top: 14px;
+.update-notice-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.progress-track.is-indeterminate .progress-fill {
+  width: 35%;
+  animation: progress-sweep 1.2s ease-in-out infinite;
+}
+
+@keyframes progress-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(290%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress-track.is-indeterminate .progress-fill {
+    width: 100%;
+    animation: none;
+  }
 }
 
 .dialog-action-start {

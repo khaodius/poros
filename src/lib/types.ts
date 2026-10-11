@@ -137,7 +137,8 @@ export type ErrorKind =
   | "unsupported"
   | "integrity"
   | "cancelled"
-  | "keychain";
+  | "keychain"
+  | "update";
 
 export interface AppError {
   kind: ErrorKind;
@@ -840,3 +841,10 @@ export interface PreviewPlacement {
   width: number;
   height: number;
 }
+
+/**
+ * How far downloading and installing an update has got. `total` is null when the server does not
+ * say how large the download is.
+ */
+export type UpdateProgress =
+  { stage: "downloading"; received: number; total: number | null } | { stage: "installing" };

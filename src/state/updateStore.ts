@@ -1,39 +1,47 @@
-import { check, type DownloadEvent, type Update } from "@tauri-apps/plugin-updater";
+import { check, type Update } from "@tauri-apps/plugin-updater";
 import { create } from "zustand";
-import { application, toAppError, transfers } from "../lib/ipc";
+import { pluralize } from "../lib/format";
+import { toAppError, updates } from "../lib/ipc";
+import type { UpdateProgress } from "../lib/types";
+import { useUnsavedStore } from "./editorRegistry";
 import { useLogStore } from "./logStore";
 import { saveSettingsSection, useSettingsStore } from "./settingsStore";
+import { useTransferStore } from "./transferStore";
 import { useUiStore } from "./uiStore";
 
-export interface InstallProgress {
-  received: number;
-  /** Null until the server says how large the download is, or when it never does. */
-  total: number | null;
-  installing: boolean;
-}
+/** Where installing the update stands, once the user chose to install it. */
+export type InstallStage =
+  | UpdateProgress
+  /** Installed, or on Windows downloaded and verified, until Poros starts again. */
+  | { stage: "ready" }
+  | { stage: "restarting" }
+  | { stage: "failed"; message: string };
 
 interface UpdateState {
   /** A newer release found by the last check. */
   update: Update | null;
+  /** The release being installed: the update, or another one picked in Settings. */
+  target: Update | null;
   checking: boolean;
   /** When the last check finished, in epoch milliseconds. */
   checkedAt: number | null;
   /** Why the last check failed, as a sentence for the user. */
   checkError: string | null;
-  progress: InstallProgress | null;
-  installError: string | null;
+  install: InstallStage | null;
+  /** Whether the notice in the corner shows how installing goes. */
+  noticeOpen: boolean;
 }
 
 export const useUpdateStore = create<UpdateState>(() => ({
   update: null,
+  target: null,
   checking: false,
   checkedAt: null,
   checkError: null,
-  progress: null,
-  installError: null,
+  install: null,
+  noticeOpen: false,
 }));
 
-const PROGRESS_INTERVAL_MILLIS = 100;
 /**
  * What the updater reports when the release server answers without a latest.json, as for a
  * release published before in-app updates existed.
@@ -46,18 +54,30 @@ export function describeCheckError(message: string): string {
     : `Could not check for updates: ${message}`;
 }
 
+/** How much of the download is done, from 0 to 100, or null while its size is unknown. */
+export function percentDownloaded(received: number, total: number | null): number | null {
+  if (!total) return null;
+  return Math.min(100, Math.floor((received / total) * 100));
+}
+
+/** Whether an install is under way or done, so there is nothing to check for or start. */
+export function isInstalling(install: InstallStage | null): boolean {
+  return install !== null && install.stage !== "failed";
+}
+
 /**
  * Asks the release server for a newer version. A check at start-up only offers a version the
  * user has not skipped, and only when no other dialog is open; the status bar still shows it.
  */
 export async function checkForUpdates(trigger: "start" | "manual"): Promise<void> {
   const state = useUpdateStore.getState();
-  if (state.checking || state.progress) return;
+  if (state.checking || isInstalling(state.install)) return;
   useUpdateStore.setState({ checking: true, checkError: null });
   try {
     const found = await check();
-    await state.update?.close().catch(() => undefined);
-    useUpdateStore.setState({ update: found, checkedAt: Date.now() });
+    const { update, target } = useUpdateStore.getState();
+    for (const release of new Set([update, target])) await release?.close().catch(() => undefined);
+    useUpdateStore.setState({ update: found, target: null, checkedAt: Date.now(), install: null });
     if (!found) return;
     const ui = useUiStore.getState();
     if (trigger === "manual") {
@@ -79,47 +99,93 @@ function isSkipped(update: Update): boolean {
 }
 
 /**
- * Downloads the update, checks its signature against the key built into this version, installs
- * it and starts the new version. On Windows the installer closes Poros and starts it again.
+ * Downloads the release, checks its signature against the key built into this version and
+ * installs it, while the notice in the corner shows how far it has got. Poros keeps running the
+ * version it started with until the user restarts it from there.
  */
-export async function installUpdate(): Promise<void> {
-  const { update, progress } = useUpdateStore.getState();
-  if (!update || progress) return;
-  const current: InstallProgress = { received: 0, total: null, installing: false };
-  let shownAt = 0;
-  const show = (force: boolean) => {
-    const now = performance.now();
-    if (!force && now - shownAt < PROGRESS_INTERVAL_MILLIS) return;
-    shownAt = now;
-    useUpdateStore.setState({ progress: { ...current } });
-  };
-  const onEvent = (event: DownloadEvent) => {
-    switch (event.event) {
-      case "Started":
-        current.total = event.data.contentLength ?? null;
-        show(true);
-        break;
-      case "Progress":
-        current.received += event.data.chunkLength;
-        show(false);
-        break;
-      case "Finished":
-        current.installing = true;
-        show(true);
-        break;
+export async function startUpdate(release: Update): Promise<void> {
+  const { update, target, install } = useUpdateStore.getState();
+  if (isInstalling(install)) return;
+  if (target && target !== release && target !== update) {
+    await target.close().catch(() => undefined);
+  }
+  const show = (progress: UpdateProgress) => {
+    const current = useUpdateStore.getState().install?.stage;
+    // The last progress can arrive after the download has already finished or failed.
+    if (current === "downloading" || current === "installing") {
+      useUpdateStore.setState({ install: progress });
     }
   };
-
-  useUpdateStore.setState({ progress: { ...current }, installError: null });
+  useUpdateStore.setState({
+    target: release,
+    install: { stage: "downloading", received: 0, total: null },
+    noticeOpen: true,
+  });
   try {
-    await update.download(onEvent);
-    // The Windows installer closes Poros without the normal exit, so the queue is saved first.
-    await transfers.saveQueue();
-    await update.install();
-    await application.restart();
+    await updates.download(release.rid, show);
+    useUpdateStore.setState({ install: { stage: "ready" }, noticeOpen: true });
   } catch (caught) {
-    useUpdateStore.setState({ progress: null, installError: toAppError(caught).message });
+    useUpdateStore.setState({ install: failure(caught), noticeOpen: true });
   }
+}
+
+/** The earliest release Settings offers to go back to, as `OLDEST_INSTALLABLE` in update.rs. */
+export const OLDEST_INSTALLABLE = "0.4.5";
+
+/** Finds a release picked in Settings, older or newer, and installs it the way an update does. */
+export async function installVersion(version: string): Promise<void> {
+  void startUpdate(await updates.findRelease(version));
+}
+
+/** What restarting now would interrupt, as sentences for the user. */
+export function useRestartWarnings(): string[] {
+  const pendingTransfers = useTransferStore(
+    ({ snapshot }) => snapshot.stats.counts.queued + snapshot.stats.counts.running,
+  );
+  const keepQueue = useSettingsStore((state) => state.settings.transfers.keepQueue);
+  const unsavedFiles = useUnsavedStore((state) => Object.keys(state.tabs).length);
+  const warnings: string[] = [];
+  if (pendingTransfers > 0) {
+    warnings.push(
+      `${pluralize(pendingTransfers, "transfer")} in the queue will stop when Poros restarts` +
+        (keepQueue ? " and come back paused." : "."),
+    );
+  }
+  if (unsavedFiles > 0) {
+    warnings.push(
+      `Unsaved changes in ${pluralize(unsavedFiles, "file")} will be lost when Poros restarts.`,
+    );
+  }
+  return warnings;
+}
+
+export async function restartToUpdate(): Promise<void> {
+  if (useUpdateStore.getState().install?.stage !== "ready") return;
+  useUpdateStore.setState({ install: { stage: "restarting" } });
+  try {
+    await updates.restart();
+  } catch (caught) {
+    useUpdateStore.setState({ install: failure(caught), noticeOpen: true });
+  }
+}
+
+function failure(caught: unknown): InstallStage {
+  const { message } = toAppError(caught);
+  // The updater's own messages start in lower case.
+  return { stage: "failed", message: message.charAt(0).toUpperCase() + message.slice(1) };
+}
+
+export function showUpdateNotice(): void {
+  useUpdateStore.setState({ noticeOpen: true });
+}
+
+/** Hides the notice; the status bar brings it back. A failure it showed is done with. */
+export function hideUpdateNotice(): void {
+  const { install } = useUpdateStore.getState();
+  useUpdateStore.setState({
+    noticeOpen: false,
+    install: install?.stage === "failed" ? null : install,
+  });
 }
 
 export async function skipUpdate(): Promise<void> {

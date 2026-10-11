@@ -3,6 +3,20 @@
 Installers for every version are attached to its
 [release](https://github.com/khaodius/poros/releases), with SHA-256 checksums.
 
+## 0.4.6 - 2026-10-11
+
+- **Updates download in the background.** Choosing Update, whether Poros offered it at start-up
+  or you found it in Settings, closes the dialog, and a notice in the bottom-right corner shows
+  the download while you keep working. Once the update is ready, the notice offers Restart now
+  or Later. Later leaves it for the next time you open Poros; on Windows it installs as you close
+  Poros. Errors show in the same notice, with Try again.
+- The status bar and Settings > Updates show how far the update has got. Clicking the status bar
+  brings back a hidden notice.
+- **Install another version.** Settings > Updates lists the releases from 0.4.5 on, so you can go
+  back to an earlier one, and installs the one you pick the same way as an update, signature check
+  included. An .rpm install lists only newer releases, since rpm does not install an older
+  version over a newer one.
+
 ## 0.4.5 - 2026-10-11
 
 - **Drag a box to select files.** Pressing beside a file's name, or in the empty space below the

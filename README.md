@@ -61,8 +61,9 @@
 - **Saved connections**, with passwords and cloud sign-ins stored only on request and only in the
   system keychain.
 - **Themes** as shareable JSON files, ten built in, with every color editable in settings.
-- **Signed updates**: Poros checks for a new release at start-up and installs it only after
-  verifying its signature. Settings > Updates turns the check off.
+- **Signed updates**: Poros checks for a new release at start-up, downloads it in the background
+  and installs it only after verifying its signature, then lets you choose when to restart.
+  Settings > Updates turns the check off, and can install an earlier release the same way.
 
 ## Folder synchronization
 

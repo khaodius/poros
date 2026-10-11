@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { COLUMN_LABELS, DETAIL_COLUMNS } from "../lib/columns";
 import { formatDate, formatTime, formatVersion } from "../lib/format";
-import { settingsStore, toAppError } from "../lib/ipc";
+import { settingsStore, toAppError, updates } from "../lib/ipc";
 import {
   DATE_FORMATS,
   LOG_LINE_LIMITS,
@@ -29,7 +29,17 @@ import type { ExistsAction } from "../lib/types";
 import { saveSettingsSection, useSettingsStore } from "../state/settingsStore";
 import { useToastStore } from "../state/toastStore";
 import { useUiStore, type SettingsSection } from "../state/uiStore";
-import { checkForUpdates, useUpdateStore } from "../state/updateStore";
+import {
+  checkForUpdates,
+  installVersion,
+  isInstalling,
+  OLDEST_INSTALLABLE,
+  percentDownloaded,
+  restartToUpdate,
+  useRestartWarnings,
+  useUpdateStore,
+  type InstallStage,
+} from "../state/updateStore";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { AutomationSettingsPage } from "./AutomationSettings";
 import { CloudSettingsPage } from "./CloudSettings";
@@ -618,18 +628,26 @@ function LogSettingsPage({ settings }: { settings: Settings }) {
 function UpdateSettingsPage({ settings }: { settings: Settings }) {
   const openDialog = useUiStore((state) => state.open);
   const update = useUpdateStore((state) => state.update);
+  const target = useUpdateStore((state) => state.target);
   const checking = useUpdateStore((state) => state.checking);
   const checkedAt = useUpdateStore((state) => state.checkedAt);
   const checkError = useUpdateStore((state) => state.checkError);
+  const install = useUpdateStore((state) => state.install);
+  const restartWarnings = useRestartWarnings();
 
   const status = checking
     ? "Checking for updates"
-    : (checkError ??
-      (update
-        ? `${formatVersion(update.version)} is available`
-        : checkedAt !== null
-          ? `Up to date, checked at ${formatTime(checkedAt)}`
-          : "The version you are running"));
+    : target && install
+      ? [
+          describeInstall(install, formatVersion(target.version)),
+          ...(install.stage === "ready" ? restartWarnings : []),
+        ].join(" ")
+      : (checkError ??
+        (update
+          ? `${formatVersion(update.version)} is available`
+          : checkedAt !== null
+            ? `Up to date, checked at ${formatTime(checkedAt)}`
+            : "The version you are running"));
 
   return (
     <SettingGroup title="Updates">
@@ -640,7 +658,15 @@ function UpdateSettingsPage({ settings }: { settings: Settings }) {
         onChange={(checkOnStart) => void saveSettingsSection("updates", { checkOnStart })}
       />
       <SettingRow label={`Poros ${formatVersion(__APP_VERSION__)}`} hint={status}>
-        {update && !checking ? (
+        {install?.stage === "ready" ? (
+          <button type="button" className="button" onClick={() => void restartToUpdate()}>
+            Restart now
+          </button>
+        ) : isInstalling(install) ? (
+          <button type="button" className="button" disabled>
+            Updating...
+          </button>
+        ) : update && !checking ? (
           <button
             type="button"
             className="button"
@@ -661,6 +687,109 @@ function UpdateSettingsPage({ settings }: { settings: Settings }) {
           </button>
         )}
       </SettingRow>
+      <OtherVersionSetting />
     </SettingGroup>
   );
+}
+
+type VersionList =
+  | { status: "unlisted" }
+  | { status: "listing" }
+  | { status: "listed"; versions: string[] }
+  | { status: "failed"; message: string };
+
+/** Lists the releases only when asked, since that asks GitHub, then installs the one picked. */
+function OtherVersionSetting() {
+  const install = useUpdateStore((state) => state.install);
+  const closeDialogs = useUiStore((state) => state.close);
+  const [list, setList] = useState<VersionList>({ status: "unlisted" });
+  const [picked, setPicked] = useState("");
+  const [finding, setFinding] = useState(false);
+  const [findError, setFindError] = useState<string | null>(null);
+
+  const listVersions = async () => {
+    setList({ status: "listing" });
+    try {
+      const versions = await updates.versions();
+      setList({ status: "listed", versions });
+      setPicked(versions[0] ?? "");
+    } catch (caught) {
+      setList({ status: "failed", message: toAppError(caught).message });
+    }
+  };
+  const installPicked = async () => {
+    setFinding(true);
+    setFindError(null);
+    try {
+      await installVersion(picked);
+      // The notice in the corner shows the download, and dialogs cover it.
+      closeDialogs();
+    } catch (caught) {
+      setFindError(`${formatVersion(picked)} is not available: ${toAppError(caught).message}`);
+      setFinding(false);
+    }
+  };
+
+  const hint =
+    list.status === "failed"
+      ? `Could not list the releases: ${list.message}`
+      : list.status === "listed" && list.versions.length === 0
+        ? `No other release from ${formatVersion(OLDEST_INSTALLABLE)} on to install.`
+        : (findError ?? `Switch to another release from ${formatVersion(OLDEST_INSTALLABLE)} on.`);
+
+  return (
+    <SettingRow label="Install another version" hint={hint}>
+      {list.status === "listed" ? (
+        list.versions.length > 0 && (
+          <div className="version-picker">
+            <select
+              value={picked}
+              aria-label="Version"
+              onChange={(event) => setPicked(event.target.value)}
+            >
+              {list.versions.map((version) => (
+                <option key={version} value={version}>
+                  {formatVersion(version)}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="button"
+              disabled={finding || isInstalling(install)}
+              onClick={() => void installPicked()}
+            >
+              Install
+            </button>
+          </div>
+        )
+      ) : (
+        <button
+          type="button"
+          className="button"
+          disabled={list.status === "listing"}
+          onClick={() => void listVersions()}
+        >
+          {list.status === "listing" ? "Listing..." : "Show versions"}
+        </button>
+      )}
+    </SettingRow>
+  );
+}
+
+function describeInstall(install: InstallStage, version: string): string {
+  switch (install.stage) {
+    case "downloading": {
+      const percent = percentDownloaded(install.received, install.total);
+      return `Downloading ${version}${percent === null ? "" : `, ${percent}%`}`;
+    }
+    case "installing":
+      return `Installing ${version}`;
+    case "ready":
+      return `${version} is ready. Restart Poros to switch to it.`;
+    case "restarting":
+      return `Restarting into ${version}`;
+    case "failed":
+      return `Could not install ${version}: ${install.message}`;
+  }
 }

@@ -30,6 +30,7 @@ pub mod themes;
 pub mod timestamp;
 pub mod tls;
 pub mod transfer;
+pub mod update;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -52,6 +53,7 @@ use sync::SyncManager;
 use terminal::TerminalManager;
 use themes::ThemeStore;
 use transfer::TransferManager;
+use update::PendingUpdate;
 
 const MAIN_WINDOW: &str = "main";
 /// Windows open hidden and their page shows them once its first frame is ready, so they never
@@ -135,6 +137,7 @@ pub fn run() {
             ));
             app.manage(ThemeStore::new(config_dir.join("themes")));
             app.manage(PendingWindows::default());
+            app.manage(PendingUpdate::default());
             app.manage(DragPreview::new(desktop::can_see_through_windows()));
             // Last, since tasks take everything above from the app's state.
             let scheduler = Scheduler::load(config_dir.join("schedules.json"), events.clone());
@@ -214,7 +217,6 @@ pub fn run() {
             commands::transfer_resolve,
             commands::transfer_session_jobs,
             commands::transfer_pause_session,
-            commands::transfer_save_queue,
             commands::sync_compare,
             commands::sync_check_options,
             commands::sync_cancel,
@@ -267,14 +269,22 @@ pub fn run() {
             commands::drag_preview_taken_over,
             commands::drag_preview_ready,
             commands::drag_preview_reveal,
-            commands::app_restart,
+            commands::update_download,
+            commands::update_versions,
+            commands::update_find_release,
+            commands::update_restart,
             commands::log_startup,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Poros");
 
-    app.run(|handle, event| {
-        if let RunEvent::Exit = event {
+    app.run(|handle, event| match event {
+        // Windows ending Poros as it shuts down skips this and goes straight to the exit, where
+        // an installer started then would race the shutdown.
+        RunEvent::ExitRequested { code, .. } if code != Some(tauri::RESTART_EXIT_CODE) => {
+            handle.state::<PendingUpdate>().note_quit();
+        }
+        RunEvent::Exit => {
             handle.state::<TransferManager>().save_queue();
             let sessions = handle.state::<Arc<SessionManager>>();
             let terminals = handle.state::<TerminalManager>();
@@ -282,6 +292,8 @@ pub fn run() {
                 terminals.close_all().await;
                 sessions.disconnect_all().await;
             });
+            handle.state::<PendingUpdate>().install_on_exit();
         }
+        _ => {}
     });
 }

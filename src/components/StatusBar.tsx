@@ -7,7 +7,12 @@ import { useSessionStore } from "../state/sessionStore";
 import { useSettingsStore } from "../state/settingsStore";
 import { useTransferStore } from "../state/transferStore";
 import { useUiStore } from "../state/uiStore";
-import { useUpdateStore } from "../state/updateStore";
+import {
+  percentDownloaded,
+  showUpdateNotice,
+  useUpdateStore,
+  type InstallStage,
+} from "../state/updateStore";
 
 const APP_VERSION = formatVersion(__APP_VERSION__);
 
@@ -36,13 +41,55 @@ function useOfferedUpdate(): string | null {
   return version !== null && version !== skipped ? version : null;
 }
 
+/** The update the last check found, or how an install goes; opens the dialog or the notice. */
+function UpdateStatus() {
+  const offeredUpdate = useOfferedUpdate();
+  const version = useUpdateStore((state) => state.target?.version ?? null);
+  const install = useUpdateStore((state) => state.install);
+  const openDialog = useUiStore((state) => state.open);
+  if (version !== null && install) {
+    return (
+      <button type="button" className="status-item status-update" onClick={showUpdateNotice}>
+        <CircleArrowUp size={12} />
+        {describeInstall(install, formatVersion(version))}
+      </button>
+    );
+  }
+  if (!offeredUpdate) return null;
+  return (
+    <button
+      type="button"
+      className="status-item status-update"
+      onClick={() => openDialog({ kind: "update" })}
+    >
+      <CircleArrowUp size={12} />
+      Update to {formatVersion(offeredUpdate)}
+    </button>
+  );
+}
+
+function describeInstall(install: InstallStage, version: string): string {
+  switch (install.stage) {
+    case "downloading": {
+      const percent = percentDownloaded(install.received, install.total);
+      return `Downloading ${version}${percent === null ? "" : `, ${percent}%`}`;
+    }
+    case "installing":
+      return `Installing ${version}`;
+    case "ready":
+      return `Restart to use ${version}`;
+    case "restarting":
+      return "Restarting";
+    case "failed":
+      return `Could not install ${version}`;
+  }
+}
+
 export function StatusBar() {
   const session = useActiveSessionText();
   const stats = useTransferStore((state) => state.snapshot.stats);
   const pending = stats.counts.queued + stats.counts.running;
   const remaining = secondsRemaining(stats);
-  const offeredUpdate = useOfferedUpdate();
-  const openDialog = useUiStore((state) => state.open);
 
   return (
     <footer className="statusbar">
@@ -67,16 +114,7 @@ export function StatusBar() {
           <ArrowDown size={12} className={stats.downloadSpeed > 0 ? "is-moving" : ""} />
           {formatSpeed(stats.downloadSpeed)}
         </span>
-        {offeredUpdate && (
-          <button
-            type="button"
-            className="status-item status-update"
-            onClick={() => openDialog({ kind: "update" })}
-          >
-            <CircleArrowUp size={12} />
-            Update to {formatVersion(offeredUpdate)}
-          </button>
-        )}
+        <UpdateStatus />
         <span className="status-item status-version">Poros {APP_VERSION}</span>
       </span>
     </footer>

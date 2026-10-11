@@ -28,6 +28,8 @@ pub enum ErrorKind {
     Integrity,
     Cancelled,
     Keychain,
+    /// Downloading, verifying or installing an update failed.
+    Update,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
