@@ -16,7 +16,9 @@ use std::time::Duration;
 use async_trait::async_trait;
 use bytes::Bytes;
 use percent_encoding::percent_decode_str;
-use reqwest::header::{HeaderName, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, RANGE};
+use reqwest::header::{
+    HeaderName, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, IF_NONE_MATCH, RANGE,
+};
 use reqwest::{Body, Client, Method, Response, StatusCode, Url};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -402,6 +404,33 @@ impl RemoteFileSystem for WebDavFs {
             Created::Made => Ok(path),
             Created::Exists => Err(protocol::already_exists(&path)),
             Created::ParentMissing => Err(super::not_found(&parent)),
+        }
+    }
+
+    /// Writes the empty file with `If-None-Match: *`, which servers refuse when something
+    /// already has the name, so a file that appeared since the check is never truncated.
+    async fn make_file(self: Arc<Self>, parent: &str, name: &str) -> AppResult<String> {
+        protocol::validate_name(name)?;
+        let parent = protocol::normalize(&self.resolve(parent));
+        let path = remote_path::join(&parent, name);
+        // Servers that ignore the condition still get the check.
+        if self.item(&path).await?.is_some() {
+            return Err(protocol::already_exists(&path));
+        }
+        let mut request = DavRequest::new(Method::PUT, self.url(&path, false))
+            .header(IF_NONE_MATCH, "*")
+            .header(CONTENT_TYPE, "application/octet-stream")
+            .header(CONTENT_LENGTH, "0");
+        request.body = Some(Bytes::new());
+        let response = self.send(&request).await?;
+        match response.status() {
+            status if status.is_success() => Ok(path),
+            // A folder of that name refuses a PUT.
+            StatusCode::PRECONDITION_FAILED | StatusCode::METHOD_NOT_ALLOWED => {
+                Err(protocol::already_exists(&path))
+            }
+            StatusCode::CONFLICT => Err(super::not_found(&parent)),
+            _ => Err(failure(response, &path).await),
         }
     }
 

@@ -267,6 +267,23 @@ async fn manages_files_and_folders() {
             "{label}"
         );
 
+        let created = files.clone().make_file(&folder, "new.txt").await.unwrap();
+        assert_eq!(created, remote_path::join(&folder, "new.txt"));
+        assert_eq!(files.stat(&created).await.unwrap().unwrap().size, 0);
+        let taken = files
+            .clone()
+            .make_file(&folder, "small & odd+name.txt")
+            .await
+            .unwrap_err();
+        assert_eq!(taken.kind, ErrorKind::AlreadyExists, "{label}");
+        assert_eq!(read_remote(&files, &small, 0..u64::MAX).await, contents);
+        let folder_taken = files
+            .clone()
+            .make_file(&root, "a folder ✓")
+            .await
+            .unwrap_err();
+        assert_eq!(folder_taken.kind, ErrorKind::AlreadyExists, "{label}");
+
         // Large enough for S3 to take it in parts.
         let large = remote_path::join(&root, "large.bin");
         let large_contents = pattern(23 * MEBIBYTE + 17, 2);

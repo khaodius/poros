@@ -912,6 +912,42 @@ impl RemoteFileSystem for S3Fs {
         Ok(path)
     }
 
+    /// Writes the empty object with `If-None-Match: *`, which Amazon and most compatible
+    /// services refuse when the key is taken, so an object that appeared since the check is
+    /// never replaced. A service without conditional writes gets a plain write after the check.
+    async fn make_file(self: Arc<Self>, parent: &str, name: &str) -> AppResult<String> {
+        protocol::validate_name(name)?;
+        let parent = protocol::normalize(&self.resolve(parent));
+        let path = remote_path::join(&parent, name);
+        let (Some(bucket), key) = split(&path) else {
+            return Err(AppError::invalid("Files go inside a bucket"));
+        };
+        if key.is_empty() {
+            return Err(AppError::invalid("Files go inside a bucket"));
+        }
+        if self.stat_parts(Some(&bucket), &key).await?.is_some() {
+            return Err(protocol::already_exists(&path));
+        }
+        let request = S3Request::new(Method::PUT, Some(&bucket), &key)
+            .header("content-type", "application/octet-stream");
+        let conditional = S3Request::new(Method::PUT, Some(&bucket), &key)
+            .header("content-type", "application/octet-stream")
+            .header("if-none-match", "*");
+        let response = self.send(&conditional).await?;
+        match response.status() {
+            status if status.is_success() => Ok(path),
+            StatusCode::PRECONDITION_FAILED | StatusCode::CONFLICT => {
+                Err(protocol::already_exists(&path))
+            }
+            StatusCode::NOT_IMPLEMENTED | StatusCode::BAD_REQUEST => {
+                drop(response);
+                self.send_for_body(&request, &path).await?;
+                Ok(path)
+            }
+            _ => Err(failure(response, &path).await),
+        }
+    }
+
     /// S3 has no rename: objects are copied to the new name, then deleted.
     async fn rename(&self, path: &str, new_name: &str) -> AppResult<String> {
         protocol::validate_name(new_name)?;

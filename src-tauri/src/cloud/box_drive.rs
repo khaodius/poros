@@ -454,6 +454,36 @@ impl RemoteFileSystem for BoxFs {
         Ok(path)
     }
 
+    /// Box refuses a new file whose name is taken, so a file that appeared since the folder
+    /// was listed is never overwritten.
+    async fn make_file(self: Arc<Self>, parent: &str, name: &str) -> AppResult<String> {
+        protocol::validate_name(name)?;
+        let parent = protocol::normalize(&self.resolve(parent));
+        let path = remote_path::join(&parent, name);
+        let parent_id = self
+            .folder_id(&parent)
+            .await?
+            .ok_or_else(|| super::not_found(&parent))?;
+        if self.child(&parent_id, &parent, name).await?.is_some() {
+            return Err(protocol::already_exists(&path));
+        }
+        let mut upload = BoxUpload {
+            files: self,
+            parent_id,
+            name: name.to_string(),
+            path: path.clone(),
+            existing_id: None,
+            replace: false,
+            size: 0,
+            modified: None,
+            session: None,
+            parts: Vec::new(),
+            whole: Sha1::new(),
+        };
+        upload.upload_whole(Bytes::new()).await?;
+        Ok(path)
+    }
+
     async fn rename(&self, path: &str, new_name: &str) -> AppResult<String> {
         protocol::validate_name(new_name)?;
         let path = protocol::normalize(&self.resolve(path));
@@ -620,7 +650,9 @@ impl RemoteFileSystem for BoxFs {
             files: self,
             parent_id,
             name,
+            path,
             existing_id: existing.map(|item| item.id),
+            replace: true,
             size: request.size,
             modified: request.modified,
             session: None,
@@ -637,7 +669,11 @@ struct BoxUpload {
     files: Arc<BoxFs>,
     parent_id: String,
     name: String,
+    path: String,
     existing_id: Option<String>,
+    /// A file that appears at the path meanwhile gets a new version, rather than the upload
+    /// failing because the name is taken.
+    replace: bool,
     size: u64,
     modified: Option<i64>,
     /// The chunked upload in progress, aborted if the upload does not finish.
@@ -745,16 +781,16 @@ impl UploadTarget for BoxUpload {
                     &[StatusCode::CONFLICT],
                 )
                 .await?;
-            if response.status() == StatusCode::CONFLICT && self.existing_id.is_none() {
-                // A file of that name appeared since the folder was listed.
-                if let Some(file) = conflicting_item(response).await?.filter(BoxItem::is_file) {
-                    self.existing_id = Some(file.id);
-                    continue;
-                }
-                return Err(already_taken(&self.name));
-            }
             if response.status() == StatusCode::CONFLICT {
-                return Err(already_taken(&self.name));
+                // Something of that name appeared since the folder was listed.
+                let conflict = conflicting_item(response).await?;
+                match conflict.filter(|item| item.is_file() && self.replace) {
+                    Some(file) if self.existing_id.is_none() => {
+                        self.existing_id = Some(file.id);
+                        continue;
+                    }
+                    _ => return Err(protocol::already_exists(&self.path)),
+                }
             }
             return self.finished(response).await;
         }
@@ -782,12 +818,13 @@ impl UploadTarget for BoxUpload {
                 .send_expecting(&|http| http.post(&url).json(&body), &[StatusCode::CONFLICT])
                 .await?;
             if response.status() == StatusCode::CONFLICT {
-                match conflicting_item(response).await?.filter(BoxItem::is_file) {
+                let conflict = conflicting_item(response).await?;
+                match conflict.filter(|item| item.is_file() && self.replace) {
                     Some(file) if self.existing_id.is_none() => {
                         self.existing_id = Some(file.id);
                         continue;
                     }
-                    _ => return Err(already_taken(&self.name)),
+                    _ => return Err(protocol::already_exists(&self.path)),
                 }
             }
             let session: UploadSession = api::decode(response).await?;
@@ -856,13 +893,6 @@ impl UploadTarget for BoxUpload {
             "Box did not finish putting the upload together",
         ))
     }
-}
-
-fn already_taken(name: &str) -> AppError {
-    AppError::new(
-        ErrorKind::AlreadyExists,
-        format!("{name} already exists in Box as something other than a file"),
-    )
 }
 
 #[cfg(test)]
