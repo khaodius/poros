@@ -3,6 +3,29 @@
 Installers for every version are attached to its
 [release](https://github.com/khaodius/poros/releases), with SHA-256 checksums.
 
+## 0.4.3 - 2026-10-11
+
+- **Thinner scrollbars** that lie on the border of the pane or panel they scroll. Each end of the
+  thumb curves into that border, so it reads as part of it. The thumb widens under the pointer,
+  and the terminal's scrollbar matches.
+- **The mouse's back and forward buttons** go back and forward in the pane under the pointer.
+- **Back and Forward remember the cursor**: returning to a folder puts the cursor where it was, or
+  on the folder you came out of, and scrolls it into view, as going up now does too. Pressing Back
+  several times quickly steps back that many folders.
+- **Keyboard**: Space selects or deselects the cursor's row, Insert does and moves down, Ctrl+Up
+  and Ctrl+Down move without selecting, Alt+Home goes to the home folder, Ctrl+H shows hidden
+  files, the Menu key or Shift+F10 opens the menu for the selection, and Ctrl+Tab or
+  Ctrl+PageDown and Ctrl+PageUp switch tabs. Leaving the path bar or the filter with Enter or
+  Escape gives the keyboard back to the file list.
+- A new, renamed or pasted item is selected, and after a delete the cursor moves to the next row.
+- F5 and Ctrl+R refresh the active pane from anywhere outside the terminal and the editor,
+  instead of reloading the window.
+- The tab bar scrolls with the wheel when its tabs do not fit, and double-clicking its empty part
+  opens a tab.
+- Notices stay while the pointer is on them, and a repeated notice no longer stacks.
+- Fixed: the queue's toolbar could remove a transfer that had finished while it was selected, and
+  the terminal showed a black strip below its last row.
+
 ## 0.4.2 - 2026-10-11
 
 - **New file** shows an example name in faint text, such as `example.lua`, `example.cpp` or

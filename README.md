@@ -180,25 +180,32 @@ The Windows installers are not code-signed yet, so SmartScreen may warn about an
 
 ## Keyboard shortcuts
 
-| Keys                               | Action                             |
-| ---------------------------------- | ---------------------------------- |
-| Ctrl + L                           | Type a path                        |
-| Ctrl + F                           | Filter                             |
-| Tab                                | Switch pane                        |
-| Backspace, Alt + Up                | Parent folder                      |
-| Alt + Left, Alt + Right            | Back, forward                      |
-| F2                                 | Rename                             |
-| Ctrl + X, Ctrl + C, Ctrl + V       | Cut, copy, paste                   |
-| Alt + Enter                        | Properties                         |
-| F4                                 | Edit                               |
-| Ctrl + S                           | Save in the editor                 |
-| Ctrl + Shift + C, Ctrl + Shift + V | Copy, paste in the terminal        |
-| Alt + Down, Alt + Up               | Next, previous change in a compare |
-| F7, Ctrl + Shift + N               | New folder                         |
-| Shift + F4                         | New file                           |
-| F5, Ctrl + R                       | Refresh                            |
-| Ctrl + T, Ctrl + W                 | New tab, close tab                 |
-| Ctrl + ,                           | Settings                           |
+| Keys                               | Action                                        |
+| ---------------------------------- | --------------------------------------------- |
+| Ctrl + L                           | Type a path                                   |
+| Ctrl + F                           | Filter                                        |
+| Tab                                | Switch pane                                   |
+| Backspace, Alt + Up                | Parent folder                                 |
+| Alt + Home                         | Home folder                                   |
+| Alt + Left, Alt + Right            | Back, forward                                 |
+| Mouse back, forward buttons        | Back, forward in the pane under the pointer   |
+| Space, Insert                      | Select or deselect, and move down with Insert |
+| Ctrl + Up, Ctrl + Down             | Move without selecting                        |
+| Ctrl + H                           | Show hidden files                             |
+| Menu key, Shift + F10              | Menu for the selection                        |
+| F2                                 | Rename                                        |
+| Ctrl + X, Ctrl + C, Ctrl + V       | Cut, copy, paste                              |
+| Alt + Enter                        | Properties                                    |
+| F4                                 | Edit                                          |
+| Ctrl + S                           | Save in the editor                            |
+| Ctrl + Shift + C, Ctrl + Shift + V | Copy, paste in the terminal                   |
+| Alt + Down, Alt + Up               | Next, previous change in a compare            |
+| F7, Ctrl + Shift + N               | New folder                                    |
+| Shift + F4                         | New file                                      |
+| F5, Ctrl + R                       | Refresh                                       |
+| Ctrl + T, Ctrl + W                 | New tab, close tab                            |
+| Ctrl + Tab, Ctrl + Shift + Tab     | Next, previous tab                            |
+| Ctrl + ,                           | Settings                                      |
 
 ## Build from source
 
