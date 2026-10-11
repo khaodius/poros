@@ -45,7 +45,7 @@ import { COLUMN_LABELS, availableColumns, type DetailColumn } from "../lib/colum
 import { sameFilesystem, toLocation, worksInPlace } from "../lib/fileOrigin";
 import type { FileSource } from "../lib/fileSource";
 import { formatSize, pluralize } from "../lib/format";
-import { stemLength } from "../lib/path";
+import { exampleFileName, stemLength } from "../lib/path";
 import { groupOfTab } from "../lib/layout";
 import { isDirLike, type SortKey, type SortSpec } from "../lib/sort";
 import type { FileEntry, PlaceMode } from "../lib/types";
@@ -86,7 +86,7 @@ import { serverCommandsMenu } from "./commandMenu";
 
 type PaneDialog =
   | { type: "newFolder" }
-  | { type: "newFile" }
+  | { type: "newFile"; example: string }
   | { type: "rename"; entry: FileEntry }
   | { type: "delete"; entries: FileEntry[] }
   | { type: "placeTo"; mode: PlaceMode; entries: FileEntry[] }
@@ -268,7 +268,8 @@ export function FilePane({
   );
 
   const openNewFolder = () => pane.listing && setDialog({ type: "newFolder" });
-  const openNewFile = () => pane.listing && setDialog({ type: "newFile" });
+  const openNewFile = () =>
+    pane.listing && setDialog({ type: "newFile", example: exampleFileName() });
   const openRename = () =>
     selected.length === 1 && setDialog({ type: "rename", entry: selected[0] });
   const openDelete = () => selected.length > 0 && setDialog({ type: "delete", entries: selected });
@@ -796,6 +797,7 @@ export function FilePane({
         <PromptDialog
           title="New file"
           label={`Create in ${pane.listing.path}`}
+          placeholder={dialog.example}
           confirmLabel="Create"
           onClose={() => setDialog(null)}
           onSubmit={async (name) => {
