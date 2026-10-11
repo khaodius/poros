@@ -5,6 +5,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::io::SeekFrom;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use futures::stream::{FuturesOrdered, FuturesUnordered, StreamExt};
 use tokio::fs::File;
@@ -19,6 +20,8 @@ pub struct CopyContext<'a> {
     pub fs: &'a RemoteFs,
     pub run: &'a JobRun,
     pub limiter: &'a RateLimiter,
+    /// A limit the job shares with the rest of its synchronization.
+    pub job_limiter: Option<Arc<RateLimiter>>,
     /// Bytes moved in this direction by every worker, for the overall speed.
     pub total: &'a AtomicU64,
     pub request_size: u32,
@@ -35,8 +38,16 @@ impl CopyContext<'_> {
         tokio::select! {
             biased;
             _ = self.run.cancel.cancelled() => Err(AppError::cancelled()),
-            _ = self.limiter.acquire(bytes) => Ok(()),
+            _ = acquire(self.limiter, self.job_limiter.as_deref(), bytes) => Ok(()),
         }
+    }
+}
+
+/// Waits on the queue's limit and then on the job's own.
+pub async fn acquire(limiter: &RateLimiter, job_limiter: Option<&RateLimiter>, bytes: u64) {
+    limiter.acquire(bytes).await;
+    if let Some(job_limiter) = job_limiter {
+        job_limiter.acquire(bytes).await;
     }
 }
 

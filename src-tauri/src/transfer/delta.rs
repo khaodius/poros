@@ -4,12 +4,16 @@
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
 use super::conflict::FileFacts;
+use super::copy;
 use super::limiter::RateLimiter;
 use super::queue::{JobRun, RunOutcome};
-use super::worker::{local_permissions, set_local_permissions, JobContext};
+use super::worker::{
+    self, keep_local_backup, local_permissions, set_local_permissions, JobContext,
+};
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::events::LogLevel;
 use crate::format::format_size;
@@ -45,6 +49,7 @@ pub(super) async fn try_upload(
         return Ok(None);
     };
     let permissions = local_permissions(metadata);
+    let options = spec.options.as_deref();
     let request = rsync::Upload {
         rsync_path: &rsync_path,
         source: Path::new(&spec.source),
@@ -54,6 +59,13 @@ pub(super) async fn try_upload(
         permissions: permissions.unwrap_or(DEFAULT_PERMISSIONS),
         preserve_timestamps: context.settings.preserve_timestamps && source.modified.is_some(),
         preserve_permissions: context.settings.preserve_permissions && permissions.is_some(),
+        block_size: options.and_then(|options| options.block_size),
+        backup: options
+            .and_then(|options| options.backup.as_ref())
+            .map(|backup| rsync::Backup {
+                folder: backup.folder.clone(),
+                suffix: backup.suffix.clone(),
+            }),
     };
     let pace = RunPace::new(context);
     let sent = attempt(context, async {
@@ -61,7 +73,11 @@ pub(super) async fn try_upload(
         rsync::upload(channel, &request, &pace).await
     })
     .await?;
-    Ok(sent.map(|report| finished(context, report)))
+    let Some(report) = sent else {
+        return Ok(None);
+    };
+    worker::finish_file(context).await;
+    Ok(Some(finished(context, report)))
 }
 
 pub(super) async fn try_download(
@@ -78,24 +94,33 @@ pub(super) async fn try_download(
         return Ok(None);
     };
     let partial = partial_path(&target);
+    let options = spec.options.as_deref();
     let request = rsync::Download {
         rsync_path: &rsync_path,
         source: &spec.source,
         basis: &target,
         output: &partial,
+        block_size: options.and_then(|options| options.block_size),
     };
+    let backup = options
+        .and_then(|options| options.backup.as_ref())
+        .map(|backup| backup.local_path(&spec.target));
     let pace = RunPace::new(context);
     let received = attempt(context, async {
         let channel = context.command_channel().await?;
         let (report, file) = rsync::download(channel, &request, &pace).await?;
-        put_in_place(context.settings, &partial, &target, file).await?;
+        put_in_place(context.settings, &partial, &target, file, backup).await?;
         Ok(report)
     })
     .await;
     if !matches!(received, Ok(Some(_))) {
         let _ = tokio::fs::remove_file(&partial).await;
     }
-    Ok(received?.map(|report| finished(context, report)))
+    let Some(report) = received? else {
+        return Ok(None);
+    };
+    worker::finish_file(context).await;
+    Ok(Some(finished(context, report)))
 }
 
 fn wanted(settings: &TransferSettings, source_size: u64, target_size: u64) -> bool {
@@ -224,6 +249,7 @@ async fn put_in_place(
     partial: &Path,
     target: &Path,
     file: RemoteFile,
+    backup: Option<PathBuf>,
 ) -> AppResult<()> {
     let preserve_timestamps = settings.preserve_timestamps;
     let preserve_permissions = settings.preserve_permissions;
@@ -244,6 +270,9 @@ async fn put_in_place(
         };
         set_local_permissions(&output, permissions)?;
         drop(output);
+        if let Some(backup) = &backup {
+            keep_local_backup(&target, backup)?;
+        }
         std::fs::rename(&partial, &target)
     })
     .await?
@@ -254,6 +283,7 @@ async fn put_in_place(
 struct RunPace<'a> {
     run: &'a JobRun,
     limiter: &'a RateLimiter,
+    job_limiter: Option<Arc<RateLimiter>>,
     total: &'a AtomicU64,
 }
 
@@ -263,6 +293,7 @@ impl<'a> RunPace<'a> {
         Self {
             run: context.run,
             limiter: context.shared.limiter_for(direction),
+            job_limiter: context.shared.job_limiter(context.spec),
             total: context.shared.total_for(direction),
         }
     }
@@ -281,7 +312,7 @@ impl rsync::Pace for RunPace<'_> {
         tokio::select! {
             biased;
             _ = self.run.cancel.cancelled() => Err(AppError::cancelled()),
-            _ = self.limiter.acquire(literal_bytes) => Ok(()),
+            _ = copy::acquire(self.limiter, self.job_limiter.as_deref(), literal_bytes) => Ok(()),
         }
     }
 }

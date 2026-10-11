@@ -62,6 +62,12 @@ pub struct SavedConnection {
     /// Another saved connection to tunnel through.
     #[serde(default)]
     pub jump_connection_id: Option<String>,
+    /// The rsync program on the server, when it is not `rsync` on the server's PATH.
+    #[serde(default)]
+    pub rsync_path: Option<String>,
+    /// rsync options this site's folder synchronizations start from, over the defaults.
+    #[serde(default)]
+    pub sync_arguments: Option<String>,
 }
 
 /// What a stored secret may be used for: the server, account and sign-in method it was saved
@@ -431,6 +437,8 @@ pub(crate) mod tests {
             ftp_active: false,
             bypass_proxy: false,
             jump_connection_id: None,
+            rsync_path: None,
+            sync_arguments: None,
         }
     }
 

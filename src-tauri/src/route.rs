@@ -157,6 +157,7 @@ fn profile_from_saved(saved: &SavedConnection, auth: AuthMethod) -> ConnectProfi
         ftp_active: saved.ftp_active,
         bypass_proxy: saved.bypass_proxy,
         jump_connection_id: saved.jump_connection_id.clone(),
+        rsync_path: saved.rsync_path.clone(),
         route: Route::default(),
     }
 }

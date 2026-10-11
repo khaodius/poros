@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant, UNIX_EPOCH};
@@ -12,6 +12,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use super::conflict::{decide, numbered_name, Decision, ExistsAction, FileFacts};
 use super::copy::{self, CopyContext};
 use super::delta;
+use super::options::{finished_mode, JobOptions};
 use super::pieces::Pieces;
 use super::queue::{
     Abandoned, Claim, ConflictInfo, Direction, JobId, JobKind, JobRun, JobSpec, JobState, Plan,
@@ -45,6 +46,8 @@ const PARTIAL_SUFFIX: &str = ".poros-part";
 const MAX_NAME_BYTES: usize = 255;
 /// Bytes compared on both sides before an interrupted file continues.
 const RESUME_CHECK_BYTES: u64 = 64 * 1024;
+/// Marks the key of a worker's compressed connection to a server.
+const COMPRESSED_KEY: &str = "#compressed";
 
 pub(super) struct WorkerConnection {
     pub files: Arc<dyn RemoteFileSystem>,
@@ -123,7 +126,8 @@ impl Connections {
         if !self.open.contains_key(key) {
             let target = shared.target(session_id)?;
             target.adopt_live_session(&shared.sessions).await;
-            let connection = open_connection(shared, &target, self.worker_index).await?;
+            let compress = key.ends_with(COMPRESSED_KEY);
+            let connection = open_connection(shared, &target, self.worker_index, compress).await?;
             self.open.insert(key.to_string(), connection);
         }
         Ok(&self.open[key])
@@ -148,10 +152,25 @@ impl Connections {
     }
 }
 
+/// The key of the connection a job's file moves over: a compressed one of its own when the
+/// job asks for compression.
+pub(super) fn connection_key(spec: &JobSpec) -> String {
+    if spec
+        .options
+        .as_ref()
+        .is_some_and(|options| options.compress)
+    {
+        format!("{}{COMPRESSED_KEY}", spec.session_id)
+    } else {
+        spec.session_id.clone()
+    }
+}
+
 async fn open_connection(
     shared: &Shared,
     target: &SessionTarget,
     worker_index: usize,
+    compress: bool,
 ) -> AppResult<WorkerConnection> {
     target
         .resolve_restored_route(shared.route_resolver.get())
@@ -171,14 +190,15 @@ async fn open_connection(
         shared.settings().separate_connections && !target.channels_only.load(Ordering::Relaxed);
     // Without a browsing connection to share, a connection of its own is the only way.
     if separate || browsing.is_none() {
-        let refusal = match connect_directly(shared, target, &login, worker_index + 1).await {
-            Ok(connection) => return Ok(connection),
-            Err(error) if error.kind == ErrorKind::HostKeyChanged => return Err(error),
-            Err(error) if target.is_restored() && needs_login(&error) => {
-                return Err(connect_first(target))
-            }
-            Err(error) => error,
-        };
+        let refusal =
+            match connect_directly(shared, target, &login, worker_index + 1, compress).await {
+                Ok(connection) => return Ok(connection),
+                Err(error) if error.kind == ErrorKind::HostKeyChanged => return Err(error),
+                Err(error) if target.is_restored() && needs_login(&error) => {
+                    return Err(connect_first(target))
+                }
+                Err(error) => error,
+            };
         // With nothing else connected, the server is out of reach rather than refusing more.
         if browsing.is_none() {
             return Err(refusal);
@@ -206,18 +226,25 @@ async fn connect_directly(
     target: &SessionTarget,
     login: &Login,
     number: usize,
+    compress: bool,
 ) -> AppResult<WorkerConnection> {
     let approval = (!login.host_key_fingerprint.is_empty()).then(|| HostKeyApproval {
         fingerprint: login.host_key_fingerprint.clone(),
         remember: false,
     });
-    let connection_id = format!("{}#{number}", target.session_id);
+    let mut profile = login.profile.clone();
+    profile.compression |= compress;
+    let connection_id = if compress {
+        format!("{}#{number}z", target.session_id)
+    } else {
+        format!("{}#{number}", target.session_id)
+    };
     // Workers log one line each, not every handshake step.
     let quiet = Events::default();
     let connection = if login.profile.protocol.is_ftp() {
         let (files, _) = FtpFs::connect(
             &connection_id,
-            &login.profile,
+            &profile,
             &shared.sessions.certificates,
             approval,
             &quiet,
@@ -227,7 +254,7 @@ async fn connect_directly(
     } else {
         let connection = ssh::connect(
             &connection_id,
-            &login.profile,
+            &profile,
             &shared.sessions.known_hosts,
             approval,
             &quiet,
@@ -244,7 +271,14 @@ async fn connect_directly(
     shared.events.log(
         LogLevel::Info,
         Some(&target.session_id),
-        format!("Transfer connection {number} to {} opened", target.label),
+        if compress {
+            format!(
+                "Compressed transfer connection {number} to {} opened",
+                target.label
+            )
+        } else {
+            format!("Transfer connection {number} to {} opened", target.label)
+        },
     );
     Ok(connection)
 }
@@ -395,6 +429,7 @@ impl JobContext<'_> {
             fs: self.fs,
             run: self.run,
             limiter: self.shared.limiter_for(direction),
+            job_limiter: self.shared.job_limiter(self.spec),
             total: self.shared.total_for(direction),
             request_size: self.settings.request_size(),
             requests_in_flight: self.settings.requests_in_flight as usize,
@@ -443,7 +478,6 @@ impl JobContext<'_> {
 }
 
 async fn execute(shared: &Shared, connections: &mut Connections, claim: Claim) {
-    let settings = shared.settings();
     let Claim {
         id,
         role,
@@ -452,6 +486,7 @@ async fn execute(shared: &Shared, connections: &mut Connections, claim: Claim) {
         resolution,
         resume,
     } = claim;
+    let settings = shared.job_settings(&spec);
     let job = JobRef {
         shared,
         id,
@@ -504,7 +539,7 @@ async fn execute(shared: &Shared, connections: &mut Connections, claim: Claim) {
         }
         Release::Settle => {
             if !run.restart.load(Ordering::Relaxed) {
-                trim_partial(connections.existing(&spec.session_id), &run, &spec).await;
+                trim_partial(connections.existing(&connection_key(&spec)), &run, &spec).await;
             }
             run.unfinalized(outcome)
         }
@@ -535,7 +570,7 @@ async fn execute(shared: &Shared, connections: &mut Connections, claim: Claim) {
 }
 
 async fn drop_job_connections(connections: &mut Connections, spec: &JobSpec) {
-    connections.drop_connection(&spec.session_id).await;
+    connections.drop_connection(&connection_key(spec)).await;
     if let Some(source_key) = streamed::source_key(spec) {
         connections.drop_connection(&source_key).await;
     }
@@ -551,7 +586,7 @@ async fn run_sftp(
 ) -> AppResult<RunOutcome> {
     let spec = job.spec;
     let connection = connections
-        .get(job.shared, &spec.session_id, &spec.session_id)
+        .get(job.shared, &spec.session_id, &connection_key(spec))
         .await?;
     let context = sftp_context(job, connection)?;
     match (spec.kind, role, spec.direction) {
@@ -567,13 +602,15 @@ async fn run_sftp(
 async fn finalize_sftp(job: &JobRef<'_>, connections: &mut Connections) -> AppResult<()> {
     let spec = job.spec;
     let connection = connections
-        .get(job.shared, &spec.session_id, &spec.session_id)
+        .get(job.shared, &spec.session_id, &connection_key(spec))
         .await?;
     let context = sftp_context(job, connection)?;
     match spec.direction {
-        Direction::Download => finalize_download(&context).await,
-        Direction::Upload | Direction::Relay => finalize_upload(&context).await,
+        Direction::Download => finalize_download(&context).await?,
+        Direction::Upload | Direction::Relay => finalize_upload(&context).await?,
     }
+    finish_file(&context).await;
+    Ok(())
 }
 
 fn sftp_context<'a>(
@@ -778,6 +815,7 @@ pub(super) async fn expand_folder(
             target_directory: spec.target.clone(),
             size: if is_dir { 0 } else { entry.size },
             ancestors: ancestors.clone(),
+            options: spec.options.clone(),
             name: entry.name,
         });
     }
@@ -1191,7 +1229,12 @@ async fn finalize_download(context: &JobContext<'_>) -> AppResult<()> {
     } else {
         true
     };
-    complete_download(settings, plan, end, truncate).await
+    let backup = spec
+        .options
+        .as_ref()
+        .and_then(|options| options.backup.as_ref())
+        .map(|backup| backup.local_path(&spec.target));
+    complete_download(settings, plan, end, truncate, backup).await
 }
 
 /// Where the downloaded file ends, once the source is known not to have changed meanwhile.
@@ -1220,6 +1263,7 @@ pub(super) async fn complete_download(
     plan: Plan,
     end: u64,
     truncate: bool,
+    backup: Option<PathBuf>,
 ) -> AppResult<()> {
     let modified = settings
         .preserve_timestamps
@@ -1252,7 +1296,12 @@ pub(super) async fn complete_download(
         }
         drop(file);
         match &plan.rename_to {
-            Some(replaced) => std::fs::rename(&plan.target, replaced),
+            Some(replaced) => {
+                if let Some(backup) = &backup {
+                    keep_local_backup(Path::new(replaced), backup)?;
+                }
+                std::fs::rename(&plan.target, replaced)
+            }
             None => Ok(()),
         }
     };
@@ -1308,6 +1357,14 @@ async fn finalize_upload(context: &JobContext<'_>) -> AppResult<()> {
     } else {
         plan.rename_to.as_ref().and(plan.replaced_permissions)
     };
+    if let (Some(replaced), Some(backup)) = (
+        &plan.rename_to,
+        spec.options
+            .as_ref()
+            .and_then(|options| options.backup.as_ref()),
+    ) {
+        keep_remote_backup(fs, replaced, &backup.remote_path(replaced)).await?;
+    }
     let attributes = fs.set_attributes(&plan.target, modified, permissions);
     // Sent together: servers apply them in order, so this costs one round trip.
     let (attributes, replaced) = match &plan.rename_to {
@@ -1326,6 +1383,176 @@ async fn finalize_upload(context: &JobContext<'_>) -> AppResult<()> {
         );
     }
     replaced
+}
+
+/// Moves the local file a copy replaces to its backup path, creating folders on the way.
+pub(crate) fn keep_local_backup(replaced: &Path, backup: &Path) -> std::io::Result<()> {
+    match std::fs::symlink_metadata(replaced) {
+        Ok(metadata) if !metadata.is_dir() => {}
+        _ => return Ok(()),
+    }
+    if let Some(folder) = backup.parent() {
+        std::fs::create_dir_all(folder)?;
+    }
+    std::fs::rename(replaced, backup)
+}
+
+/// Moves the file on the server a copy replaces to its backup path.
+pub(crate) async fn keep_remote_backup(
+    fs: &RemoteFs,
+    replaced: &str,
+    backup: &str,
+) -> AppResult<()> {
+    match fs.lstat_entry(replaced).await? {
+        Some(stat) if stat.kind != EntryKind::Dir => {}
+        _ => return Ok(()),
+    }
+    if let Some(folder) = remote_path::parent(backup) {
+        ensure_remote_folders(fs, &folder).await?;
+    }
+    fs.replace(replaced, backup).await
+}
+
+/// Creates `path` on the server along with the folders above it that are missing.
+pub(crate) async fn ensure_remote_folders(fs: &RemoteFs, path: &str) -> AppResult<()> {
+    let mut missing = Vec::new();
+    let mut current = path.to_string();
+    loop {
+        if fs.stat(&current).await?.is_some() {
+            break;
+        }
+        missing.push(current.clone());
+        match remote_path::parent(&current) {
+            Some(parent) if parent != current => current = parent,
+            _ => break,
+        }
+    }
+    for folder in missing.iter().rev() {
+        fs.ensure_dir(folder).await?;
+    }
+    Ok(())
+}
+
+/// What a synchronization asks for once a file is in place: its permissions, owner and
+/// group, and removing the source. The file itself is complete, so problems here are logged
+/// rather than failing it.
+pub(super) async fn finish_file(context: &JobContext<'_>) {
+    let spec = context.spec;
+    let Some(options) = spec.options.as_deref().filter(|options| options.finishes()) else {
+        return;
+    };
+    let finished = match spec.direction {
+        Direction::Download => finish_local_file(context, options).await,
+        Direction::Upload | Direction::Relay => finish_remote_file(context, options).await,
+    };
+    if let Err(error) = finished {
+        context.shared.events.log(
+            LogLevel::Warn,
+            Some(&spec.session_id),
+            format!("{}: {}", spec.name, error.message),
+        );
+    }
+}
+
+async fn finish_remote_file(context: &JobContext<'_>, options: &JobOptions) -> AppResult<()> {
+    let (fs, spec) = (context.fs, context.spec);
+    if options.executability || !options.chmod.is_empty() {
+        if let Some(current) = fs
+            .stat(&spec.target)
+            .await?
+            .and_then(|stat| stat.permissions)
+        {
+            let source = tokio::fs::metadata(&spec.source)
+                .await
+                .ok()
+                .and_then(|metadata| local_permissions(&metadata));
+            let mode = finished_mode(
+                current,
+                source,
+                options,
+                context.settings.preserve_permissions,
+            );
+            if mode != current & 0o7777 {
+                fs.set_permissions(&spec.target, mode).await?;
+            }
+        }
+    }
+    if options.owner.is_some() || options.group.is_some() {
+        let current = fs.lstat_entry(&spec.target).await?;
+        let uid = options.owner.or(current.and_then(|stat| stat.uid));
+        let gid = options.group.or(current.and_then(|stat| stat.gid));
+        if let (Some(uid), Some(gid)) = (uid, gid) {
+            let unchanged =
+                current.is_some_and(|stat| stat.uid == Some(uid) && stat.gid == Some(gid));
+            if !unchanged {
+                fs.set_owner(&spec.target, uid, gid).await?;
+            }
+        }
+    }
+    if options.remove_source {
+        tokio::fs::remove_file(&spec.source)
+            .await
+            .map_err(|error| AppError::from(error).with_path(spec.source.clone()))?;
+    }
+    Ok(())
+}
+
+async fn finish_local_file(context: &JobContext<'_>, options: &JobOptions) -> AppResult<()> {
+    let spec = context.spec;
+    let changes_mode = options.executability || !options.chmod.is_empty();
+    if changes_mode || options.owner.is_some() || options.group.is_some() {
+        let source = if options.executability {
+            context
+                .fs
+                .stat(&spec.source)
+                .await?
+                .and_then(|stat| stat.permissions)
+        } else {
+            None
+        };
+        let target = spec.target.clone();
+        let options = options.clone();
+        let copied = context.settings.preserve_permissions;
+        tokio::task::spawn_blocking(move || finish_local(&target, source, &options, copied))
+            .await?
+            .map_err(|error| AppError::from(error).with_path(spec.target.clone()))?;
+    }
+    if options.remove_source {
+        context.fs.remove_file(&spec.source).await?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn finish_local(
+    target: &str,
+    source: Option<u32>,
+    options: &JobOptions,
+    permissions_copied: bool,
+) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    if options.executability || !options.chmod.is_empty() {
+        let current = std::fs::metadata(target)?.permissions().mode() & 0o7777;
+        let mode = finished_mode(current, source, options, permissions_copied);
+        if mode != current {
+            std::fs::set_permissions(target, std::fs::Permissions::from_mode(mode))?;
+        }
+    }
+    if options.owner.is_some() || options.group.is_some() {
+        std::os::unix::fs::chown(target, options.owner, options.group)?;
+    }
+    Ok(())
+}
+
+/// Windows files have no Unix permissions or owners to set.
+#[cfg(not(unix))]
+fn finish_local(
+    _target: &str,
+    _source: Option<u32>,
+    _options: &JobOptions,
+    _permissions_copied: bool,
+) -> std::io::Result<()> {
+    Ok(())
 }
 
 /// Cuts an interrupted target back to its complete prefix, so a later resume by size is safe

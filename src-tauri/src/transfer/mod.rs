@@ -7,6 +7,7 @@ mod conflict;
 mod copy;
 mod delta;
 mod limiter;
+mod options;
 mod persist;
 mod pieces;
 mod queue;
@@ -24,10 +25,12 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
 pub use conflict::ExistsAction;
+pub use options::{Backup, JobOptions};
 use queue::Totals;
 pub use queue::{
     ChangedDirectory, Direction, JobId, JobKind, JobSnapshot, JobState, QueueCounts, Side,
 };
+pub(crate) use worker::{ensure_remote_folders, keep_local_backup, keep_remote_backup};
 
 use crate::checksum::Algorithm;
 use crate::error::{AppError, AppResult};
@@ -80,6 +83,9 @@ pub struct FileTransfer {
     pub target: String,
     pub target_directory: String,
     pub size: u64,
+    /// What happens to a file already at the target.
+    pub resolution: ExistsAction,
+    pub options: Option<Arc<JobOptions>>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
@@ -265,6 +271,8 @@ pub(crate) struct Shared {
     events: Events,
     upload_limiter: RateLimiter,
     download_limiter: RateLimiter,
+    /// Limits shared by the jobs of one synchronization, by its limit group.
+    job_limiters: Mutex<HashMap<String, Weak<RateLimiter>>>,
     uploaded: AtomicU64,
     downloaded: AtomicU64,
     live_workers: Mutex<BTreeSet<usize>>,
@@ -308,6 +316,94 @@ impl Shared {
             Direction::Download | Direction::Relay => &self.download_limiter,
         }
     }
+
+    /// The limit a job shares with the other jobs of its synchronization, if it has one.
+    fn job_limiter(&self, spec: &JobSpec) -> Option<Arc<RateLimiter>> {
+        let options = spec
+            .options
+            .as_deref()
+            .filter(|options| options.rate_limit > 0)?;
+        let mut limiters = self.job_limiters.lock().unwrap();
+        if let Some(limiter) = limiters.get(&options.limit_group).and_then(Weak::upgrade) {
+            return Some(limiter);
+        }
+        limiters.retain(|_, limiter| limiter.strong_count() > 0);
+        let limiter = Arc::new(RateLimiter::new());
+        limiter.set_rate(options.rate_limit);
+        limiters.insert(options.limit_group.clone(), Arc::downgrade(&limiter));
+        Some(limiter)
+    }
+
+    /// The settings a job runs with: the transfer settings, the rsync command of its server's
+    /// site, and what a synchronization asked of it.
+    fn job_settings(&self, spec: &JobSpec) -> TransferSettings {
+        let mut settings = self.settings();
+        let site_rsync = self
+            .target(&spec.session_id)
+            .ok()
+            .and_then(|target| target.login().profile.rsync_path)
+            .filter(|path| !path.trim().is_empty());
+        if let Some(path) = site_rsync {
+            settings.rsync_path = path;
+        }
+        if let Some(options) = &spec.options {
+            options.apply(&mut settings);
+        }
+        settings
+    }
+}
+
+/// How the jobs a caller queued ended.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct JobsOutcome {
+    pub done: u64,
+    pub failed: u64,
+    pub skipped: u64,
+    /// Removed from the queue before they finished.
+    pub removed: u64,
+    pub bytes: u64,
+}
+
+/// Follows queued jobs. Unlike the manager, dropping it leaves the queue running.
+#[derive(Clone)]
+pub struct TransferWatch {
+    shared: Arc<Shared>,
+}
+
+impl TransferWatch {
+    /// Waits until none of `ids` is queued, running, paused or waiting on a conflict.
+    pub async fn wait(&self, ids: &[JobId]) -> JobsOutcome {
+        loop {
+            let (outcome, pending) = {
+                let queue = self.shared.queue.lock().unwrap();
+                let mut outcome = JobsOutcome::default();
+                let mut pending = false;
+                for id in ids {
+                    match queue.job(*id) {
+                        Some(job) => match job.state {
+                            JobState::Done => {
+                                outcome.done += 1;
+                                outcome.bytes += job.spec.size;
+                            }
+                            JobState::Failed => outcome.failed += 1,
+                            JobState::Skipped => outcome.skipped += 1,
+                            JobState::Queued
+                            | JobState::Running
+                            | JobState::Paused
+                            | JobState::Conflict => pending = true,
+                        },
+                        // Done jobs leave the queue when completed ones are not kept.
+                        None => outcome.removed += 1,
+                    }
+                }
+                (outcome, pending)
+            };
+            if !pending || self.shared.stopping.load(Ordering::Relaxed) {
+                return outcome;
+            }
+            tokio::time::sleep(TICK * 2).await;
+        }
+    }
 }
 
 pub struct TransferManager {
@@ -326,6 +422,7 @@ impl TransferManager {
             events,
             upload_limiter: RateLimiter::new(),
             download_limiter: RateLimiter::new(),
+            job_limiters: Mutex::new(HashMap::new()),
             uploaded: AtomicU64::new(0),
             downloaded: AtomicU64::new(0),
             live_workers: Mutex::new(BTreeSet::new()),
@@ -398,42 +495,60 @@ impl TransferManager {
                 target_directory: request.target_directory.clone(),
                 size: if item.is_dir { 0 } else { item.size },
                 ancestors: Arc::from([]),
+                options: None,
             });
         }
         if let Some(source_session) = &source_session {
             self.register(source_session);
         }
         self.register(&session);
-        self.add_jobs(specs, None);
+        self.add_jobs(specs);
         Ok(request.items.len())
     }
 
-    /// Queues single files that replace whatever is at their targets.
+    /// Queues single files, each knowing what to do with a file already at its target.
     pub async fn enqueue_files(
         &self,
         session_id: &str,
         files: Vec<FileTransfer>,
-    ) -> AppResult<usize> {
+    ) -> AppResult<Vec<JobId>> {
         let session = self.shared.sessions.get(session_id).await?;
-        let count = files.len();
-        let specs = files
-            .into_iter()
-            .map(|file| JobSpec {
-                session_id: session_id.to_string(),
-                source_session_id: None,
-                direction: file.direction,
-                kind: JobKind::File,
-                name: file.name,
-                source: file.source,
-                target: file.target,
-                target_directory: file.target_directory,
-                size: file.size,
-                ancestors: Arc::from([]),
-            })
-            .collect();
         self.register(&session);
-        self.add_jobs(specs, Some(ExistsAction::Overwrite));
-        Ok(count)
+        let auto_start = self.shared.settings().auto_start;
+        let ids = {
+            let mut queue = self.shared.queue.lock().unwrap();
+            if !auto_start && queue.counts().is_idle() {
+                queue.paused = true;
+            }
+            files
+                .into_iter()
+                .map(|file| {
+                    let spec = JobSpec {
+                        session_id: session_id.to_string(),
+                        source_session_id: None,
+                        direction: file.direction,
+                        kind: JobKind::File,
+                        name: file.name,
+                        source: file.source,
+                        target: file.target,
+                        target_directory: file.target_directory,
+                        size: file.size,
+                        ancestors: Arc::from([]),
+                        options: file.options,
+                    };
+                    queue.add_resolved(spec, file.resolution)
+                })
+                .collect()
+        };
+        self.shared.work.notify_waiters();
+        Ok(ids)
+    }
+
+    /// A handle that follows jobs without keeping the queue's workers.
+    pub fn watch(&self) -> TransferWatch {
+        TransferWatch {
+            shared: self.shared.clone(),
+        }
     }
 
     /// Keeps what workers need to reach the session's server.
@@ -446,7 +561,7 @@ impl TransferManager {
             .or_insert_with(|| Arc::new(SessionTarget::for_session(session)));
     }
 
-    fn add_jobs(&self, specs: Vec<JobSpec>, resolution: Option<ExistsAction>) {
+    fn add_jobs(&self, specs: Vec<JobSpec>) {
         let auto_start = self.shared.settings().auto_start;
         {
             let mut queue = self.shared.queue.lock().unwrap();
@@ -454,10 +569,7 @@ impl TransferManager {
                 queue.paused = true;
             }
             for spec in specs {
-                match resolution {
-                    Some(resolution) => queue.add_resolved(spec, resolution),
-                    None => queue.add(spec),
-                };
+                queue.add(spec);
             }
         }
         self.shared.work.notify_waiters();
@@ -836,6 +948,7 @@ mod tests {
                 ftp_active: false,
                 bypass_proxy: false,
                 jump_connection_id: None,
+                rsync_path: None,
                 route: Route::default(),
             },
             host_key_fingerprint: String::new(),

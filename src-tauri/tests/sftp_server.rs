@@ -21,8 +21,8 @@ use poros_lib::settings::{ConnectionSettings, TransferSettings};
 use poros_lib::ssh::proxy::{Proxy, ProxyKind};
 use poros_lib::ssh::{AuthMethod, ConnectProfile, HostKeyApproval, Route};
 use poros_lib::sync::{
-    CompareMode, SyncAction, SyncChoice, SyncDirection, SyncManager, SyncPlanView, SyncReason,
-    SyncRequest, SyncRunRequest,
+    CompareMode, SyncAction, SyncChoice, SyncDirection, SyncManager, SyncOptions, SyncPlanView,
+    SyncReason, SyncRequest, SyncRunRequest,
 };
 use poros_lib::transfer::{
     Direction, EnqueueRequest, ExistsAction, JobSnapshot, JobState, TransferItem, TransferList,
@@ -68,6 +68,7 @@ fn profile(server: &Server, auth: AuthMethod) -> ConnectProfile {
         ftp_active: false,
         bypass_proxy: false,
         jump_connection_id: None,
+        rsync_path: None,
         route: Route::default(),
     }
 }
@@ -948,12 +949,13 @@ fn sync_request(
         local_path: local.to_string_lossy().into_owned(),
         remote_path: remote.to_string(),
         direction,
-        compare,
-        delete_extraneous: true,
-        skip_newer_on_target: false,
-        ignore_existing: false,
-        time_tolerance_secs: 2,
-        excludes: vec!["*.log".into()],
+        options: SyncOptions {
+            compare,
+            delete_extraneous: true,
+            excludes: vec!["*.log".into()],
+            ..SyncOptions::default()
+        },
+        arguments: String::new(),
     }
 }
 
@@ -985,6 +987,8 @@ async fn run_everything(sync: &SyncManager, transfers: &TransferManager, plan: &
         .unwrap();
     assert!(summary.failures.is_empty(), "{:?}", summary.failures);
     assert_all_done(&wait_until_settled(transfers).await.0);
+    let report = sync.finished(&summary.run_id).await.unwrap();
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1087,7 +1091,10 @@ async fn sync_mirrors_folders_both_ways() {
     assert!(sync.compare(upload.clone()).await.unwrap().items.is_empty());
     let plan = sync
         .compare(SyncRequest {
-            compare: CompareMode::Checksum,
+            options: SyncOptions {
+                compare: CompareMode::Checksum,
+                ..upload.options.clone()
+            },
             ..upload
         })
         .await
@@ -1096,6 +1103,221 @@ async fn sync_mirrors_folders_both_ways() {
         planned(&plan),
         [("nested/b.txt".into(), Upload, ContentDiffers)]
     );
+    drop(transfers);
+    fixture.close().await;
+}
+
+/// Links, permissions, --chmod, a missing target folder, filters typed as arguments, dry runs,
+/// backups, delayed deletions and --remove-source-files, against a real server.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sync_carries_out_rsync_options() {
+    use std::os::unix::fs::PermissionsExt;
+    let Some(server) = server() else { return };
+    let fixture = TransferFixture::new(&server, "sync-options").await;
+    let local = fixture.local.path().join("site");
+    std::fs::create_dir_all(local.join("docs")).unwrap();
+    std::fs::write(local.join("a.txt"), b"first version").unwrap();
+    let big = pattern(2 * MEBIBYTE, 21);
+    std::fs::write(local.join("big.bin"), &big).unwrap();
+    std::fs::write(local.join("docs/readme.md"), b"read me").unwrap();
+    std::fs::write(local.join("skip.tmp"), b"temporary").unwrap();
+    std::fs::write(local.join("run.sh"), b"#!/bin/sh\n").unwrap();
+    let mode = |mode| std::fs::Permissions::from_mode(mode);
+    std::fs::set_permissions(local.join("run.sh"), mode(0o755)).unwrap();
+    std::fs::set_permissions(local.join("a.txt"), mode(0o644)).unwrap();
+    std::os::unix::fs::symlink("a.txt", local.join("latest")).unwrap();
+    let folder_time = std::time::UNIX_EPOCH + Duration::from_secs(1_600_000_000);
+    std::fs::File::open(local.join("docs"))
+        .unwrap()
+        .set_modified(folder_time)
+        .unwrap();
+
+    let sync = SyncManager::new(fixture.manager.clone(), Events::default());
+    let transfers = fixture.transfers(transfer_settings());
+    let fs = fixture
+        .manager
+        .get(&fixture.session.id)
+        .await
+        .unwrap()
+        .sftp()
+        .unwrap()
+        .clone();
+    let target = remote_path_join(&fixture.remote, "opts");
+    let remote = |name: &str| remote_path_join(&target, name);
+    let upload = SyncRequest {
+        options: SyncOptions {
+            links: poros_lib::sync::LinkMode::Preserve,
+            perms: true,
+            chmod: "Fo-r".into(),
+            ..SyncOptions::default()
+        },
+        arguments: "--exclude=*.tmp".into(),
+        ..sync_request(
+            &fixture,
+            &local,
+            &target,
+            SyncDirection::Upload,
+            CompareMode::SizeAndTime,
+        )
+    };
+    let plan = sync.compare(upload.clone()).await.unwrap();
+    assert!(plan.creates_target);
+    assert!(
+        plan.arguments.contains("--chmod=Fo-r"),
+        "{}",
+        plan.arguments
+    );
+    run_everything(&sync, &transfers, &plan).await;
+    transfers.clear(&[JobState::Done]);
+    let permissions = |stat: Option<poros_lib::sftp::RemoteStat>| {
+        stat.and_then(|stat| stat.permissions)
+            .map(|mode| mode & 0o7777)
+    };
+    assert_eq!(
+        permissions(fs.stat(&remote("a.txt")).await.unwrap()),
+        Some(0o640)
+    );
+    assert_eq!(
+        permissions(fs.stat(&remote("run.sh")).await.unwrap()),
+        Some(0o751)
+    );
+    assert_eq!(fs.read_link(&remote("latest")).await.unwrap(), "a.txt");
+    assert!(fs.stat(&remote("skip.tmp")).await.unwrap().is_none());
+    assert_eq!(
+        fs.stat(&remote("docs")).await.unwrap().unwrap().modified,
+        Some(1_600_000_000)
+    );
+    let plan = sync.compare(upload.clone()).await.unwrap();
+    assert!(
+        plan.items.is_empty(),
+        "{:?}",
+        plan.items
+            .iter()
+            .map(|item| (&item.path, &item.itemized, item.local, item.remote))
+            .collect::<Vec<_>>()
+    );
+
+    // Changes kept as backups in a folder of the target, a file deleted once copying is
+    // done, after a dry run that changes nothing.
+    std::fs::write(local.join("a.txt"), b"second version").unwrap();
+    let mut changed = big.clone();
+    changed[1000..2000].fill(3);
+    std::fs::write(local.join("big.bin"), &changed).unwrap();
+    // The same size, so a different time is what marks it changed.
+    std::fs::File::options()
+        .write(true)
+        .open(local.join("big.bin"))
+        .unwrap()
+        .set_modified(std::time::UNIX_EPOCH + Duration::from_secs(1_700_000_000))
+        .unwrap();
+    std::fs::remove_file(local.join("docs/readme.md")).unwrap();
+    let backed_up = SyncRequest {
+        arguments: "--exclude=*.tmp --delete-after --backup --backup-dir=old".into(),
+        ..upload.clone()
+    };
+    let dry = SyncRequest {
+        arguments: format!("{} -n", backed_up.arguments),
+        ..backed_up.clone()
+    };
+    let plan = sync.compare(dry).await.unwrap();
+    assert!(plan.dry_run);
+    let summary = sync
+        .run(
+            &transfers,
+            SyncRunRequest {
+                plan_id: plan.plan_id.clone(),
+                choices: plan
+                    .items
+                    .iter()
+                    .map(|item| SyncChoice {
+                        id: item.id,
+                        action: item.action,
+                    })
+                    .collect(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(summary.dry_run);
+    assert_eq!((summary.queued_files, summary.deleted), (2, 1));
+    assert_eq!(
+        fixture.remote_bytes(&remote("a.txt")).await,
+        b"first version"
+    );
+
+    let plan = sync.compare(backed_up.clone()).await.unwrap();
+    use SyncAction::{DeleteRemote, Upload};
+    use SyncReason::{Changed, Extraneous};
+    assert_eq!(
+        planned(&plan),
+        [
+            ("a.txt".into(), Upload, Changed),
+            ("big.bin".into(), Upload, Changed),
+            ("docs/readme.md".into(), DeleteRemote, Extraneous),
+        ]
+    );
+    run_everything(&sync, &transfers, &plan).await;
+    // The server kept the backup itself during the rsync delta transfer.
+    let list = transfers.list();
+    let big_job = list.jobs.iter().find(|job| job.name == "big.bin").unwrap();
+    assert!(big_job.delta_bytes.is_some(), "{big_job:?}");
+    transfers.clear(&[JobState::Done]);
+    assert_eq!(
+        fixture.remote_bytes(&remote("a.txt")).await,
+        b"second version"
+    );
+    assert_eq!(fixture.remote_bytes(&remote("big.bin")).await, changed);
+    assert_eq!(
+        fixture.remote_bytes(&remote("old/a.txt")).await,
+        b"first version"
+    );
+    assert_eq!(fixture.remote_bytes(&remote("old/big.bin")).await, big);
+    assert_eq!(
+        fixture.remote_bytes(&remote("old/docs/readme.md")).await,
+        b"read me"
+    );
+    assert!(fs.stat(&remote("docs/readme.md")).await.unwrap().is_none());
+    // The backup folder is protected from deletion.
+    let plan = sync.compare(backed_up).await.unwrap();
+    assert!(plan.items.is_empty(), "{:?}", planned(&plan));
+    assert_eq!(plan.counts.protected, 1);
+
+    // Moving files back: each one leaves the server once it is copied.
+    let pulled = fixture.local.path().join("pulled");
+    let download = SyncRequest {
+        options: SyncOptions {
+            links: poros_lib::sync::LinkMode::Preserve,
+            remove_source_files: true,
+            ..SyncOptions::default()
+        },
+        arguments: String::new(),
+        ..sync_request(
+            &fixture,
+            &pulled,
+            &target,
+            SyncDirection::Download,
+            CompareMode::SizeAndTime,
+        )
+    };
+    let plan = sync.compare(download).await.unwrap();
+    assert!(plan.creates_target);
+    run_everything(&sync, &transfers, &plan).await;
+    assert_eq!(
+        std::fs::read(pulled.join("a.txt")).unwrap(),
+        b"second version"
+    );
+    assert_eq!(
+        std::fs::read(pulled.join("old/a.txt")).unwrap(),
+        b"first version"
+    );
+    assert_eq!(
+        std::fs::read_link(pulled.join("latest")).unwrap(),
+        Path::new("a.txt")
+    );
+    assert!(fs.stat(&remote("a.txt")).await.unwrap().is_none());
+    assert!(fs.stat(&remote("old/big.bin")).await.unwrap().is_none());
+    assert!(fs.stat(&remote("docs")).await.unwrap().is_some());
     drop(transfers);
     fixture.close().await;
 }
@@ -1492,6 +1714,8 @@ async fn scheduled_tasks_connect_on_their_own() {
                 ftp_active: false,
                 bypass_proxy: false,
                 jump_connection_id: None,
+                rsync_path: None,
+                sync_arguments: None,
             },
             None,
         )
@@ -1515,12 +1739,8 @@ async fn scheduled_tasks_connect_on_their_own() {
         local_path: local.to_string_lossy().into_owned(),
         remote_path: workspace.remote.clone(),
         direction: SyncDirection::Upload,
-        compare: CompareMode::SizeAndTime,
-        delete_extraneous: false,
-        skip_newer_on_target: false,
-        ignore_existing: false,
-        time_tolerance_secs: 2,
-        excludes: Vec::new(),
+        options: Box::default(),
+        arguments: String::new(),
     };
     let first = scheduler::perform(&upload, &context).await.unwrap();
     assert!(first.succeeded, "{}", first.message);
