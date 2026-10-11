@@ -3,6 +3,17 @@
 Installers for every version are attached to its
 [release](https://github.com/khaodius/poros/releases), with SHA-256 checksums.
 
+## 0.4.4 - 2026-10-11
+
+- **A dragged pane past the window's edge is one pane again.** On Windows the part drawn over
+  the desktop sat several pixels off the pane, so its edges, title and drop marker showed
+  twice. It now lands exactly on the pane, and is drawn the same way, rounded corners, edge and
+  shadow included, so nothing changes where the window's edge cuts across it. A tab dropped on
+  the desktop also opens exactly where its preview was.
+- **Taking a screenshot while dragging** no longer leaves the drag running after it, with
+  everything slow until Escape. When another program takes the mouse, such as Windows' screen
+  snipping, the drag ends as with Escape. The same goes for resizing panes and the queue.
+
 ## 0.4.3 - 2026-10-11
 
 - **Thinner scrollbars** that lie on the border of the pane or panel they scroll. Each end of the

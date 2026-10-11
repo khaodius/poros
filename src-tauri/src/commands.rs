@@ -789,7 +789,10 @@ pub async fn window_open(
         None => builder.center(),
     };
     let opened = builder.build().and_then(|window| match corner {
-        Some(corner) => desktop::place(&window, corner, LogicalSize::new(width, height)),
+        Some(corner) => {
+            let inset = desktop::content_inset(&window)?;
+            desktop::place(&window, corner, inset, LogicalSize::new(width, height))
+        }
         None => Ok(()),
     });
     if let Err(error) = opened {
@@ -821,8 +824,8 @@ pub async fn drag_preview_place(
 }
 
 #[tauri::command]
-pub fn drag_preview_available() -> bool {
-    desktop::can_place_windows()
+pub fn drag_preview_available(preview: State<'_, DragPreview>) -> desktop::PreviewSupport {
+    preview.support()
 }
 
 #[tauri::command]

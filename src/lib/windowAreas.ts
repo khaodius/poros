@@ -102,6 +102,16 @@ export async function measureWindows(): Promise<void> {
   }
 }
 
+function workAreaAt(areas: WorkArea[], { x, y }: ScreenPoint): WorkArea | undefined {
+  return areas.find(
+    (entry) =>
+      x >= entry.left &&
+      x < entry.left + entry.width &&
+      y >= entry.top &&
+      y < entry.top + entry.height,
+  );
+}
+
 /**
  * Where a window held by the pointer at `grab` (logical pixels from its top left corner) has its
  * top left corner, in physical pixels: it follows the pointer, except that its top bar never
@@ -113,13 +123,7 @@ export function heldWindowCorner(
   grab: { x: number; y: number },
   fallbackScale: number,
 ): ScreenPoint {
-  const area = areas.find(
-    (entry) =>
-      pointer.x >= entry.left &&
-      pointer.x < entry.left + entry.width &&
-      pointer.y >= entry.top &&
-      pointer.y < entry.top + entry.height,
-  );
+  const area = workAreaAt(areas, pointer);
   const scale = area?.scale ?? fallbackScale;
   const corner = {
     x: Math.round(pointer.x - grab.x * scale),
@@ -132,6 +136,11 @@ export function heldWindowCorner(
 /** Where a window held by the pointer at `grab` opens, in physical pixels. */
 export function landingCorner(pointer: ScreenPoint, grab: { x: number; y: number }): ScreenPoint {
   return heldWindowCorner(workAreas, pointer, grab, window.devicePixelRatio || 1);
+}
+
+/** How much the screen holding a point, in physical pixels, scales logical pixels. */
+export function scaleAt(point: ScreenPoint): number {
+  return workAreaAt(workAreas, point)?.scale ?? thisWindow?.scale ?? (window.devicePixelRatio || 1);
 }
 
 /** A point in this window on the screen, in physical pixels, once the window is measured. */

@@ -91,6 +91,7 @@ export function DockArea() {
   // Also set while a tab from another window is over this one.
   const target = useDragStore((state) => state.target);
   const desktopPreview = useDragStore((state) => state.desktopPreview);
+  const drawnOnDesktop = useDragStore((state) => state.drawnOnDesktop);
   const liftedTabId = drag && isLifted(drag.payload, drag.target) ? drag.payload.tabId : null;
   const dropTarget = target?.kind === "dock" ? target : null;
 
@@ -142,6 +143,11 @@ export function DockArea() {
     let frame = 0;
 
     const move = (moveEvent: globalThis.PointerEvent) => {
+      // Released where this window could not see it: the resize ends where it is.
+      if (!(moveEvent.buttons & 1)) {
+        stop();
+        return;
+      }
       const position = row ? moveEvent.clientX : moveEvent.clientY;
       sizes = resizeShares(split.sizes, index, (position - origin) / free);
       if (frame) return;
@@ -155,15 +161,23 @@ export function DockArea() {
       handle.removeEventListener("pointermove", move);
       handle.removeEventListener("pointerup", stop);
       handle.removeEventListener("pointercancel", stop);
+      window.removeEventListener("blur", stop);
       commitSizes(split.id, sizes);
       setResizing(null);
     };
     handle.addEventListener("pointermove", move);
     handle.addEventListener("pointerup", stop);
     handle.addEventListener("pointercancel", stop);
+    // Another program took the pointer, such as a screenshot tool, and gets the release.
+    window.addEventListener("blur", stop);
   };
 
-  const className = ["dock", resizing && "is-resizing", away && "is-tab-away"]
+  const className = [
+    "dock",
+    resizing && "is-resizing",
+    away && "is-tab-away",
+    drawnOnDesktop && "is-drawn-on-desktop",
+  ]
     .filter(Boolean)
     .join(" ");
   return (
@@ -247,6 +261,7 @@ export function DockArea() {
           style={{ ...floating, opacity: away ? undefined : sketchOpacity }}
         />
       )}
+      {floating && drag && <div className="dock-floating-shadow" style={floating} />}
       {dropTarget && placements.has(dropTarget.groupId) && (
         <DropMarker
           side={dropTarget.side}

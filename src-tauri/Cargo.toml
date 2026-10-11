@@ -1,6 +1,6 @@
 [package]
 name = "poros"
-version = "0.4.3"
+version = "0.4.4"
 description = "SFTP and rsync client"
 authors = ["khaodius"]
 license = "Apache-2.0"
@@ -72,6 +72,10 @@ quick-xml = { version = "0.42", features = ["serialize", "overlapped-lists"] }
 [target.'cfg(windows)'.dependencies]
 # Rounded window corners on Windows 11, and showing the drag preview without taking focus.
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_UI_WindowsAndMessaging"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Whether a compositing window manager runs, so the drag preview can be see-through.
+gtk = "0.18"
 
 [dev-dependencies]
 tempfile = "3"

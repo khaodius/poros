@@ -32,6 +32,11 @@ export function Workspace() {
     let frame = 0;
 
     const move = (moveEvent: PointerEvent) => {
+      // Released where this window could not see it: the resize ends where it is.
+      if (!(moveEvent.buttons & 1)) {
+        stop();
+        return;
+      }
       next = clampPanelShare((bounds.bottom - moveEvent.clientY) / Math.max(1, bounds.height));
       if (frame) return;
       frame = requestAnimationFrame(() => {
@@ -44,11 +49,14 @@ export function Workspace() {
       handle.removeEventListener("pointermove", move);
       handle.removeEventListener("pointerup", stop);
       handle.removeEventListener("pointercancel", stop);
+      window.removeEventListener("blur", stop);
       commit(next);
     };
     handle.addEventListener("pointermove", move);
     handle.addEventListener("pointerup", stop);
     handle.addEventListener("pointercancel", stop);
+    // Another program took the pointer, such as a screenshot tool, and gets the release.
+    window.addEventListener("blur", stop);
   };
 
   return (

@@ -4,7 +4,6 @@ import { TAB_BAR_HEIGHT } from "../lib/docking";
 import { DRAG_PREVIEW_EVENT, DRAG_PREVIEW_PICTURE_EVENT, dragPreview } from "../lib/ipc";
 import { drawPanePicture, type PanePicture } from "../lib/panePicture";
 import type { PreviewContent } from "../lib/types";
-import { matchWindowCorners } from "../lib/windowCorners";
 import { matchWindowBackground } from "../lib/windowReveal";
 import { liftedLayers } from "../state/liftedPane";
 import { applyRememberedTheme } from "../state/themeStore";
@@ -23,8 +22,10 @@ function applyPictureTheme(picture: PanePicture): void {
 /**
  * The page of the drag preview window, which draws a dragged tab where the window it is dragged
  * in cannot: the lifted pane as it reaches past that window's edge, turning into the window it
- * will open in, and that window once the pointer is off Poros. Its window shows once it has
- * drawn, in the app's current look.
+ * will open in, and that window once the pointer is off Poros. It draws the pane as the dock
+ * does, so the window the tab is dragged in can leave the tab to it without a visible change.
+ * Where the preview is see-through, the pane has room around it for its shadow, and the window
+ * behind shows everywhere else. Its window shows once it has drawn, in the app's current look.
  */
 export function DragPreview() {
   const [content, setContent] = useState<PreviewContent | null>(null);
@@ -51,49 +52,63 @@ export function DragPreview() {
   useLayoutEffect(() => {
     if (drawn) applyPictureTheme(drawn);
     else applyRememberedTheme();
-    matchWindowCorners();
     const target = pictureRef.current;
     if (drawn && target) drawPanePicture(target, drawn);
   }, [drawn]);
 
+  const seeThrough = (content?.room ?? 0) > 0;
+  useLayoutEffect(() => {
+    document.documentElement.classList.toggle("is-see-through", seeThrough);
+  }, [seeThrough]);
+
   useEffect(() => {
     if (!content) return;
-    void matchWindowBackground()
+    // Opaque, the window first takes the page's background, so it never shows another color.
+    void (seeThrough ? Promise.resolve() : matchWindowBackground())
       .then(() => dragPreview.reveal())
       .catch(() => undefined);
-  }, [content]);
+  }, [content, seeThrough]);
 
   if (!content) return null;
   const TabIcon = TAB_ICONS[content.kind];
   // Without a picture of the pane, the drawing of its window stands in for it.
   const layers = drawn ? liftedLayers(content.toward) : { content: 0, sketch: 1 };
-  const { drop } = content;
+  const { room, drop } = content;
+  const pane = { left: room, top: room, width: content.width, height: content.height };
   return (
-    <div className="drag-preview">
-      <div className="dock-floating-title" style={{ opacity: layers.content }}>
-        <TabIcon size={14} className={`tab-icon tab-icon-${content.kind}`} />
-        <span className="tab-label">{content.label}</span>
+    <div className={`drag-preview ${seeThrough ? "" : "is-opaque"}`}>
+      <div className="dock-floating" style={pane}>
+        <div className="dock-floating-title" style={{ opacity: layers.content }}>
+          <TabIcon size={14} className={`tab-icon tab-icon-${content.kind}`} />
+          <span className="tab-label">{content.label}</span>
+        </div>
       </div>
       <div
         ref={pictureRef}
-        className="tab-panel drag-preview-picture"
+        className="tab-panel is-floating"
         style={{
-          top: TAB_BAR_HEIGHT - 1,
+          left: room,
+          top: room + TAB_BAR_HEIGHT - 1,
           width: drawn?.width,
           height: drawn?.height,
           opacity: layers.content,
         }}
       />
-      <WindowSketch
-        content={content}
-        className="drag-preview-sketch"
-        style={{ opacity: layers.sketch }}
-      />
-      {drop && (
-        <DropMarker
-          side={drop.side}
-          style={{ left: drop.left, top: drop.top, width: drop.width, height: drop.height }}
+      {layers.sketch > 0 && (
+        <WindowSketch
+          content={content}
+          className="dock-floating-window"
+          style={{ ...pane, opacity: layers.sketch }}
         />
+      )}
+      {seeThrough && <div className="dock-floating-shadow" style={pane} />}
+      {drop && (
+        <div className="drag-preview-marker" style={pane}>
+          <DropMarker
+            side={drop.side}
+            style={{ left: drop.left, top: drop.top, width: drop.width, height: drop.height }}
+          />
+        </div>
       )}
     </div>
   );

@@ -803,6 +803,22 @@ export interface PreviewContent {
   drag: number;
   /** The marker of where the pane will land, where it falls on the pane. */
   drop: PreviewDrop | null;
+  /** The pane's size, in logical pixels. */
+  width: number;
+  height: number;
+  /**
+   * The room around the pane, in logical pixels, where a see-through preview draws its shadow;
+   * none where the preview cannot be see-through.
+   */
+  room: number;
+}
+
+/** What the drag preview can do on this system. */
+export interface PreviewSupport {
+  /** It can follow the pointer. */
+  available: boolean;
+  /** It can be see-through, and so draw the pane as it looks in its window, shadow and all. */
+  seeThrough: boolean;
 }
 
 /** A drop marker in the drag preview, placed in its logical pixels. */
