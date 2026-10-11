@@ -29,7 +29,15 @@ import type { ExistsAction } from "../lib/types";
 import { saveSettingsSection, useSettingsStore } from "../state/settingsStore";
 import { useToastStore } from "../state/toastStore";
 import { useUiStore, type SettingsSection } from "../state/uiStore";
-import { checkForUpdates, useUpdateStore } from "../state/updateStore";
+import {
+  checkForUpdates,
+  isInstalling,
+  percentDownloaded,
+  restartToUpdate,
+  useRestartWarnings,
+  useUpdateStore,
+  type InstallStage,
+} from "../state/updateStore";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { AutomationSettingsPage } from "./AutomationSettings";
 import { CloudSettingsPage } from "./CloudSettings";
@@ -621,15 +629,22 @@ function UpdateSettingsPage({ settings }: { settings: Settings }) {
   const checking = useUpdateStore((state) => state.checking);
   const checkedAt = useUpdateStore((state) => state.checkedAt);
   const checkError = useUpdateStore((state) => state.checkError);
+  const install = useUpdateStore((state) => state.install);
+  const restartWarnings = useRestartWarnings();
 
   const status = checking
     ? "Checking for updates"
-    : (checkError ??
-      (update
-        ? `${formatVersion(update.version)} is available`
-        : checkedAt !== null
-          ? `Up to date, checked at ${formatTime(checkedAt)}`
-          : "The version you are running"));
+    : update && install
+      ? [
+          describeInstall(install, formatVersion(update.version)),
+          ...(install.stage === "ready" ? restartWarnings : []),
+        ].join(" ")
+      : (checkError ??
+        (update
+          ? `${formatVersion(update.version)} is available`
+          : checkedAt !== null
+            ? `Up to date, checked at ${formatTime(checkedAt)}`
+            : "The version you are running"));
 
   return (
     <SettingGroup title="Updates">
@@ -640,7 +655,15 @@ function UpdateSettingsPage({ settings }: { settings: Settings }) {
         onChange={(checkOnStart) => void saveSettingsSection("updates", { checkOnStart })}
       />
       <SettingRow label={`Poros ${formatVersion(__APP_VERSION__)}`} hint={status}>
-        {update && !checking ? (
+        {install?.stage === "ready" ? (
+          <button type="button" className="button" onClick={() => void restartToUpdate()}>
+            Restart now
+          </button>
+        ) : isInstalling(install) ? (
+          <button type="button" className="button" disabled>
+            Updating...
+          </button>
+        ) : update && !checking ? (
           <button
             type="button"
             className="button"
@@ -663,4 +686,21 @@ function UpdateSettingsPage({ settings }: { settings: Settings }) {
       </SettingRow>
     </SettingGroup>
   );
+}
+
+function describeInstall(install: InstallStage, version: string): string {
+  switch (install.stage) {
+    case "downloading": {
+      const percent = percentDownloaded(install.received, install.total);
+      return `Downloading ${version}${percent === null ? "" : `, ${percent}%`}`;
+    }
+    case "installing":
+      return `Installing ${version}`;
+    case "ready":
+      return `${version} is ready. Restart Poros to finish updating.`;
+    case "restarting":
+      return `Restarting into ${version}`;
+    case "failed":
+      return `Could not update: ${install.message}`;
+  }
 }

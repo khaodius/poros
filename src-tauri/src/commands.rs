@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex};
 
 use tauri::ipc::Channel;
 use tauri::{
-    AppHandle, LogicalSize, Manager, PhysicalPosition, State, WebviewUrl, WebviewWindow,
-    WebviewWindowBuilder,
+    AppHandle, LogicalSize, Manager, PhysicalPosition, ResourceId, State, Webview, WebviewUrl,
+    WebviewWindow, WebviewWindowBuilder,
 };
 
 use crate::automation::remote_command::{CommandRequest, CommandResult, CommandRunner};
@@ -39,6 +39,7 @@ use crate::themes::{self, ThemeFile, ThemeStore};
 use crate::transfer::{
     EnqueueRequest, ExistsAction, JobId, JobState, TransferList, TransferManager,
 };
+use crate::update::{self, PendingUpdate, UpdateProgress};
 
 #[tauri::command]
 pub async fn local_home() -> AppResult<String> {
@@ -367,13 +368,6 @@ pub fn transfer_session_jobs(transfers: State<'_, TransferManager>, session_id: 
 #[tauri::command]
 pub fn transfer_pause_session(transfers: State<'_, TransferManager>, session_id: String) -> usize {
     transfers.pause_session(&session_id)
-}
-
-/// Writes the unfinished transfers to disk now. Used before an installer closes the app without
-/// the normal exit.
-#[tauri::command]
-pub fn transfer_save_queue(transfers: State<'_, TransferManager>) {
-    transfers.save_queue();
 }
 
 #[tauri::command]
@@ -894,11 +888,23 @@ pub fn log_startup(events: State<'_, Events>) -> Vec<LogRecord> {
     events.take_startup_log()
 }
 
-/// Starts the app again after an update replaced it. Goes through the normal exit, so open
-/// sessions are closed first.
 #[tauri::command]
-pub fn app_restart(app: AppHandle) {
-    app.request_restart();
+pub async fn update_download(
+    webview: Webview,
+    pending: State<'_, PendingUpdate>,
+    update_id: ResourceId,
+    progress: Channel<UpdateProgress>,
+) -> AppResult<()> {
+    update::download(&webview, update_id, progress, &pending).await
+}
+
+#[tauri::command]
+pub fn update_restart(
+    app: AppHandle,
+    pending: State<'_, PendingUpdate>,
+    transfers: State<'_, TransferManager>,
+) -> AppResult<()> {
+    update::restart(&app, &pending, &transfers)
 }
 
 fn now_millis() -> u64 {

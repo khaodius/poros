@@ -57,6 +57,7 @@ import type {
   ThemeFile,
   TransferList,
   TransferUpdate,
+  UpdateProgress,
   WindowCorners,
 } from "./types";
 
@@ -158,7 +159,6 @@ export const transfers = {
     call<void>("transfer_resolve", { id, action, applyToAll }),
   sessionJobs: (sessionId: string) => call<number>("transfer_session_jobs", { sessionId }),
   pauseSession: (sessionId: string) => call<number>("transfer_pause_session", { sessionId }),
-  saveQueue: () => call<void>("transfer_save_queue"),
 };
 
 export const sync = {
@@ -318,9 +318,21 @@ export const dragPreview = {
   reveal: () => call<void>("drag_preview_reveal"),
 };
 
+export const updates = {
+  /**
+   * Downloads the update `check()` found and verifies its signature. It then installs, or on
+   * Windows waits to install as Poros restarts or quits.
+   */
+  download: (updateId: number, onProgress: (progress: UpdateProgress) => void) => {
+    const progress = new Channel<UpdateProgress>();
+    progress.onmessage = onProgress;
+    return call<void>("update_download", { updateId, progress });
+  },
+  /** Starts the new version; on Windows the installer closes Poros and starts it once done. */
+  restart: () => call<void>("update_restart"),
+};
+
 export const application = {
-  /** Starts Poros again, once an update has replaced it. */
-  restart: () => call<void>("app_restart"),
   /**
    * What the backend logged before the main window listened, such as a settings file it could
    * not read. Taken once; later lines arrive as log events.
