@@ -34,8 +34,9 @@
 - **Built-in editor** for text files up to 16 MiB, local or on any server, with syntax highlighting
   and find and replace. Each save uploads the file and warns first if it changed on the server.
 - **SSH terminal** in a tab for any SFTP connection.
-- **Folder sync** one way or both ways, by size and time, size alone or contents, with rsync-style
-  excludes and a preview of every change before it runs.
+- **Folder sync** one way or both ways with rsync's options, set as defaults, per site and per
+  run, or typed as rsync arguments, with a preview of every change and the command line the
+  options amount to. See [Folder synchronization](#folder-synchronization).
 - **rsync delta transfers** over Poros's own SSH connection, with nothing to install locally.
 - **Safe writes**: files are written under a temporary name and renamed into place once complete,
   every file's size is checked with the server, and an optional setting compares checksums with
@@ -62,6 +63,39 @@
 - **Themes** as shareable JSON files, ten built in, with every color editable in settings.
 - **Signed updates**: Poros checks for a new release at start-up and installs it only after
   verifying its signature. Settings > Updates turns the check off.
+
+## Folder synchronization
+
+Synchronize folders, on the toolbar or in either pane's right-click menu, compares a local folder
+with a folder on an SFTP server and shows every change before it runs. Its options are rsync's, grouped as rsync's manual
+groups them, each with the flag it stands for:
+
+- **Which files are copied**: compare by size and time, `--size-only`, `-c` or `-I`;
+  `--modify-window`, `-u`, `--ignore-existing`, `--existing`, `--min-size`, `--max-size`.
+- **Transfer behaviour**: `-r`, `-d`, `--mkpath`, `-m`, `-W`, `--inplace`, `--append`,
+  `--append-verify`, `-B`, `--remove-source-files`, `--fsync`, `--rsync-path`.
+- **Deletion**: `--delete` with `--delete-before`, `-during`, `-delay` or `-after`,
+  `--delete-excluded`, `--max-delete`, `--force`, `--ignore-errors`.
+- **Filter rules**: `--exclude`, `--include`, `--filter` with merge and per-folder rule files,
+  `--exclude-from`, `--include-from`, `--files-from`, `-0`, `-F`, `-C`. Protect rules (`P`)
+  keep files from deletion.
+- **Times, permissions and ownership**: `-t`, `-O`, `-p`, `-E`, `--chmod`, `-o`, `-g`,
+  `--chown`, `--numeric-ids`. Owners and groups are matched by name between the two sides.
+- **Symbolic links**: `-L`, `-l`, `--safe-links`, `--copy-unsafe-links`, `-k`, `-K`.
+- **Bandwidth and compression**: `--bwlimit`, shared by every file of a run, and `-z`.
+- **Backups**: `-b`, `--backup-dir`, `--suffix`, for files replaced or deleted.
+- **Dry run and reporting**: `-n`, `-i`, `-v`, `--stats`, `--log-file`.
+
+Each run starts from the defaults in Settings > Sync, then the rsync arguments saved with the
+site (in the connection's settings, which also take the rsync command for that server), then
+whatever is changed in the dialog. Every layer takes arguments typed as on rsync's command line,
+such as `-av --delete --exclude=.git/`; combined short flags, `--no-` forms and the archive
+flag `-a` work as they do in rsync. A scheduled synchronization keeps the options it was saved
+with.
+
+Arguments that make no sense over Poros's own SSH connection are noted and passed over, such as
+`-e`, `--partial-dir`, `--sparse`, `-H`, `-A` and `-X`. A few are refused with the reason:
+`-R`, `--compare-dest`, `--copy-dest`, `--link-dest`, batch files and time limits.
 
 ## Performance
 

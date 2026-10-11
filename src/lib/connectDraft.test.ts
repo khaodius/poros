@@ -27,6 +27,8 @@ const saved: SavedConnection = {
   ftpActive: false,
   bypassProxy: true,
   jumpConnectionId: "bastion",
+  rsyncPath: "sudo rsync",
+  syncArguments: "--delete --exclude=.git/",
 };
 
 describe("profileFromDraft", () => {
@@ -82,6 +84,17 @@ describe("saved connections", () => {
     expect(profile.bypassProxy).toBe(true);
     const direct = savedFromDraft({ ...draftFromSaved(saved), jumpConnectionId: "" });
     expect(direct.jumpConnectionId).toBeNull();
+  });
+
+  it("keeps the site's rsync command to one line and its arguments to SFTP", () => {
+    const draft = { ...draftFromSaved(saved), rsyncPath: "  /opt/rsync \nrm -rf ~" };
+    expect(profileFromDraft(draft).rsyncPath).toBe("/opt/rsync");
+    expect(savedFromDraft(draft).rsyncPath).toBe("/opt/rsync");
+    expect(profileFromDraft({ ...draft, rsyncPath: " " }).rsyncPath).toBeUndefined();
+    const ftp = withProtocol(draftFromSaved(saved), "ftp");
+    expect(profileFromDraft(ftp).rsyncPath).toBeUndefined();
+    expect(savedFromDraft(ftp).rsyncPath).toBeNull();
+    expect(savedFromDraft(ftp).syncArguments).toBeNull();
   });
 
   it("keeps the proxy and jump host to SFTP connections", () => {

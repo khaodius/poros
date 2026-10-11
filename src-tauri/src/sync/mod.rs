@@ -95,6 +95,8 @@ pub struct SyncPlanView {
     pub dry_run: bool,
     /// The folder being synchronized to does not exist yet, and is created.
     pub creates_target: bool,
+    /// Unchanged source files that `--remove-source-files` removes.
+    pub removes_unchanged: usize,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -237,6 +239,11 @@ impl SyncManager {
             arguments: stored.arguments.clone(),
             dry_run: stored.options.dry_run,
             creates_target: stored.local.missing || stored.remote.missing,
+            removes_unchanged: if stored.options.remove_source_files {
+                stored.unchanged_files.len()
+            } else {
+                0
+            },
         };
         let mut plans = self.plans.lock().unwrap();
         plans.push_back(stored);

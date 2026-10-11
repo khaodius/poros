@@ -84,6 +84,8 @@ export interface ConnectProfile {
   bypassProxy?: boolean;
   /** A saved connection to reach this server through, like OpenSSH's ProxyJump. */
   jumpConnectionId?: string | null;
+  /** The rsync program on the server, when it is not `rsync` on its PATH. */
+  rsyncPath?: string | null;
   s3?: S3Options;
 }
 
@@ -269,21 +271,107 @@ export type SyncReason =
   | "newer"
   | "extraneous"
   | "typeDiffers"
-  | "bothChanged";
+  | "bothChanged"
+  | "append"
+  | "attributes";
 
-export interface SyncRequest {
+export type DeleteTiming = "before" | "during" | "delay" | "after";
+export type LinkMode = "follow" | "preserve" | "skip";
+export type AppendMode = "off" | "append" | "verify";
+export type FilterFiles = "off" | "read" | "readAndExclude";
+
+/** rsync's options as a synchronization carries them out; see src-tauri/src/sync/options.rs. */
+export interface SyncOptions {
+  compare: CompareMode;
+  /** `--modify-window`. */
+  timeToleranceSecs: number;
+  /** `-u`. */
+  skipNewerOnTarget: boolean;
+  ignoreExisting: boolean;
+  /** `--delete`. */
+  deleteExtraneous: boolean;
+  excludes: string[];
+
+  existingOnly: boolean;
+  /** Bytes. */
+  minSize: number | null;
+  maxSize: number | null;
+
+  recursive: boolean;
+  dirs: boolean;
+  mkpath: boolean;
+  pruneEmptyDirs: boolean;
+  wholeFile: boolean;
+  inplace: boolean;
+  append: AppendMode;
+  blockSize: number | null;
+  removeSourceFiles: boolean;
+  fsync: boolean;
+  rsyncPath: string;
+
+  deleteTiming: DeleteTiming;
+  deleteExcluded: boolean;
+  maxDelete: number | null;
+  force: boolean;
+  ignoreErrors: boolean;
+
+  filterRules: string[];
+  includes: string[];
+  includeFrom: string[];
+  excludeFrom: string[];
+  filesFrom: string;
+  from0: boolean;
+  filterFiles: FilterFiles;
+  cvsExclude: boolean;
+
+  times: boolean;
+  omitDirTimes: boolean;
+  perms: boolean;
+  executability: boolean;
+  chmod: string;
+  owner: boolean;
+  group: boolean;
+  chown: string;
+  numericIds: boolean;
+
+  links: LinkMode;
+  safeLinks: boolean;
+  copyUnsafeLinks: boolean;
+  copyDirlinks: boolean;
+  keepDirlinks: boolean;
+
+  /** KiB per second; zero is unlimited. */
+  bwlimitKib: number;
+  compress: boolean;
+
+  backup: boolean;
+  backupDir: string;
+  backupSuffix: string;
+
+  dryRun: boolean;
+  itemize: boolean;
+  verbose: boolean;
+  stats: boolean;
+  logFile: string;
+}
+
+/** Options with rsync arguments applied, checked, and shown as the command line. */
+export interface OptionCheck {
+  options: SyncOptions;
+  arguments: string;
+  warnings: string[];
+  errors: string[];
+}
+
+export interface SyncRequest extends SyncOptions {
   /** Names the comparison for progress events and cancelling. */
   requestId: string;
   sessionId: string;
   localPath: string;
   remotePath: string;
   direction: SyncDirection;
-  compare: CompareMode;
-  deleteExtraneous: boolean;
-  skipNewerOnTarget: boolean;
-  ignoreExisting: boolean;
-  timeToleranceSecs: number;
-  excludes: string[];
+  /** rsync arguments applied over the options. */
+  arguments: string;
 }
 
 export interface SyncFacts {
@@ -291,6 +379,8 @@ export interface SyncFacts {
   size: number;
   /** Seconds since the Unix epoch. */
   modified: number | null;
+  permissions?: number;
+  isLink: boolean;
 }
 
 export interface SyncItem {
@@ -305,6 +395,8 @@ export interface SyncItem {
   bytes: number;
   local?: SyncFacts;
   remote?: SyncFacts;
+  /** The change as rsync's --itemize-changes shows it, such as `<f.st......`. */
+  itemized: string;
 }
 
 export interface SyncCounts {
@@ -315,6 +407,16 @@ export interface SyncCounts {
   extraOnTarget: number;
   excluded: number;
   passedOver: number;
+  /** Only on the target, and kept by a protect rule. */
+  protected: number;
+  /** New, and not created because only existing files are updated. */
+  notCreated: number;
+  /** Outside the minimum or maximum size. */
+  sizeLimited: number;
+  /** Deletions past the --max-delete limit. */
+  heldBack: number;
+  /** Folders left out because no file would end up in them. */
+  pruned: number;
 }
 
 export interface SyncPlanView {
@@ -325,6 +427,15 @@ export interface SyncPlanView {
   counts: SyncCounts;
   /** A sample of the paths that were passed over. */
   passedOver: string[];
+  /** Notes on the options and the plan. */
+  notes: string[];
+  /** The options as the rsync command line they amount to. */
+  arguments: string;
+  dryRun: boolean;
+  /** The folder synchronized to does not exist yet and is created. */
+  createsTarget: boolean;
+  /** Unchanged source files that are removed, with --remove-source-files. */
+  removesUnchanged: number;
 }
 
 export interface SyncProgress {
@@ -347,10 +458,20 @@ export interface SyncRunRequest {
 }
 
 export interface SyncRunSummary {
+  runId: string;
+  /** Nothing was changed; the counts are what would have happened. */
+  dryRun: boolean;
   queuedFiles: number;
   queuedBytes: number;
   deleted: number;
+  /** Deletions that wait until the queued files are copied. */
+  deletingLater: number;
   createdFolders: number;
+  createdLinks: number;
+  /** Files whose time, permissions or owner were set without copying. */
+  updated: number;
+  /** Unchanged files removed from the source. */
+  removedSources: number;
   failures: string[];
 }
 
@@ -375,6 +496,10 @@ export interface SavedConnection {
   bypassProxy?: boolean;
   /** Another saved connection this one is reached through. */
   jumpConnectionId?: string | null;
+  /** The rsync program on the server, when it is not `rsync` on its PATH. */
+  rsyncPath?: string | null;
+  /** rsync arguments this site's synchronizations start from, over the defaults. */
+  syncArguments?: string | null;
   s3?: S3Options;
 }
 
@@ -454,19 +579,15 @@ export type Trigger =
   | { type: "daily"; minuteOfDay: number; weekdays: number[] };
 
 export type TaskAction =
-  | {
+  | ({
       type: "sync";
       connectionId: string;
       localPath: string;
       remotePath: string;
       direction: SyncDirection;
-      compare: CompareMode;
-      deleteExtraneous: boolean;
-      skipNewerOnTarget: boolean;
-      ignoreExisting: boolean;
-      timeToleranceSecs: number;
-      excludes: string[];
-    }
+      /** rsync arguments applied over the options. */
+      arguments: string;
+    } & SyncOptions)
   | { type: "command"; connectionId: string; command: string; directory?: string | null };
 
 export interface LastRun {

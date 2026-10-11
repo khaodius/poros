@@ -26,6 +26,7 @@ import type {
   MoveCopyRequest,
   OperationProgress,
   OperationSummary,
+  OptionCheck,
   OutputChunk,
   PermissionRequest,
   PermissionSummary,
@@ -41,6 +42,8 @@ import type {
   SessionInfo,
   SignedIn,
   StoreName,
+  SyncDirection,
+  SyncOptions,
   SyncPlanView,
   SyncProgress,
   SyncRequest,
@@ -161,6 +164,9 @@ export const sync = {
   /** Forgets a comparison that will not be run. */
   discard: (planId: string) => call<void>("sync_discard", { planId }),
   run: (request: SyncRunRequest) => call<SyncRunSummary>("sync_run", { request }),
+  /** Applies each layer of rsync arguments over `options` in turn and checks the result. */
+  checkOptions: (options: SyncOptions, layers: string[], direction: SyncDirection) =>
+    call<OptionCheck>("sync_check_options", { options, arguments: layers, direction }),
 };
 
 export const settingsStore = {

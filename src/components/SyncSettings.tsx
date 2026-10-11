@@ -1,7 +1,10 @@
-import { useState } from "react";
-import { TIME_TOLERANCE_LIMITS, type Settings, type SyncSettings } from "../lib/settings";
-import { COMPARE_OPTIONS, DIRECTION_OPTIONS } from "../lib/sync";
-import { saveSettingsSection } from "../state/settingsStore";
+import { useEffect, useRef } from "react";
+import { useOptionCheck } from "../hooks/useOptionCheck";
+import { commandPreview, withOption } from "../lib/rsyncOptions";
+import type { Settings, SyncSettings } from "../lib/settings";
+import { DIRECTION_OPTIONS } from "../lib/sync";
+import { previewSettingsSection, saveSettingsSection } from "../state/settingsStore";
+import { OptionCheckView, RsyncArgumentsField, RsyncOptionsEditor } from "./RsyncOptionsEditor";
 import {
   NumberSetting,
   SelectSetting,
@@ -10,6 +13,8 @@ import {
   TextSetting,
 } from "./settingsFields";
 
+/** Typing pauses this long before the defaults are saved. */
+const SAVE_DELAY_MS = 500;
 const MAX_DELTA_THRESHOLD_KIB = 1024 * 1024;
 
 export function SyncSettingsPage({ settings }: { settings: Settings }) {
@@ -17,8 +22,26 @@ export function SyncSettingsPage({ settings }: { settings: Settings }) {
   const defaults = settings.sync;
   const setTransfers = (change: Partial<Settings["transfers"]>) =>
     void saveSettingsSection("transfers", change);
-  const setDefaults = (change: Partial<SyncSettings>) => void saveSettingsSection("sync", change);
-  const both = defaults.direction === "both";
+  const saveTimer = useRef<number | undefined>(undefined);
+  // Shown at once and saved once typing pauses, so each key press is not a write to disk.
+  const setDefaults = (change: Partial<SyncSettings>) => {
+    previewSettingsSection("sync", change);
+    window.clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(
+      () => void saveSettingsSection("sync", {}),
+      SAVE_DELAY_MS,
+    );
+  };
+  useEffect(
+    () => () => {
+      if (saveTimer.current !== undefined) {
+        window.clearTimeout(saveTimer.current);
+        void saveSettingsSection("sync", {});
+      }
+    },
+    [],
+  );
+  const check = useOptionCheck(defaults.options, [defaults.arguments], defaults.direction);
 
   return (
     <>
@@ -55,79 +78,35 @@ export function SyncSettingsPage({ settings }: { settings: Settings }) {
 
       <SettingGroup title="Folder synchronization">
         <p className="setting-note">
-          Synchronize folders starts with these, and remembers the options you compare with.
+          Each synchronization starts with these options. A saved site&apos;s own rsync arguments
+          apply on top, and Synchronize folders can change any of them for one run.
         </p>
         <SelectSetting
           label="Direction"
           value={defaults.direction}
           options={DIRECTION_OPTIONS}
           onChange={(direction) =>
-            setDefaults(
-              direction === "both" && defaults.compare === "always"
-                ? { direction, compare: "sizeAndTime" }
-                : { direction },
-            )
+            setDefaults({
+              direction,
+              options: withOption(defaults.options, "compare", defaults.options.compare, direction),
+            })
           }
         />
-        <SelectSetting
-          label="Compare files by"
-          value={defaults.compare}
-          options={COMPARE_OPTIONS.filter((option) => !both || option.value !== "always")}
-          onChange={(compare) => setDefaults({ compare })}
+        <RsyncOptionsEditor
+          options={defaults.options}
+          direction={defaults.direction}
+          onChange={(options) => setDefaults({ options })}
         />
-        <NumberSetting
-          label="Times this close count as equal"
-          hint="Some file systems, such as FAT, keep times to 2 seconds."
-          value={defaults.timeToleranceSecs}
-          min={TIME_TOLERANCE_LIMITS.min}
-          max={TIME_TOLERANCE_LIMITS.max}
-          unit="s"
-          onChange={(timeToleranceSecs) => setDefaults({ timeToleranceSecs })}
+        <RsyncArgumentsField
+          value={defaults.arguments}
+          hint="Typed as on rsync's command line; they apply over the options above for every synchronization."
+          onChange={(value) => setDefaults({ arguments: value })}
         />
-        <SwitchSetting
-          label="Delete files the source does not have"
-          hint="Not available both ways."
-          checked={defaults.deleteExtraneous}
-          disabled={both}
-          onChange={(deleteExtraneous) => setDefaults({ deleteExtraneous })}
-        />
-        <SwitchSetting
-          label="Skip files that are newer on the target"
-          checked={defaults.skipNewerOnTarget}
-          disabled={both}
-          onChange={(skipNewerOnTarget) => setDefaults({ skipNewerOnTarget })}
-        />
-        <SwitchSetting
-          label="Skip files that already exist on the target"
-          checked={defaults.ignoreExisting}
-          onChange={(ignoreExisting) => setDefaults({ ignoreExisting })}
-        />
-        <ExcludeSetting
-          value={defaults.excludes}
-          onCommit={(excludes) => setDefaults({ excludes })}
+        <OptionCheckView
+          check={check}
+          command={check ? commandPreview(check.arguments, defaults.direction, "", "") : undefined}
         />
       </SettingGroup>
     </>
-  );
-}
-
-function ExcludeSetting({ value, onCommit }: { value: string; onCommit: (value: string) => void }) {
-  const [typed, setTyped] = useState<string | null>(null);
-  return (
-    <label className="field setting-textarea">
-      <span>Exclude</span>
-      <textarea
-        value={typed ?? value}
-        rows={4}
-        spellCheck={false}
-        placeholder={"*.tmp\nnode_modules/\n/build"}
-        onChange={(event) => setTyped(event.target.value)}
-        onBlur={() => {
-          if (typed !== null && typed !== value) onCommit(typed);
-          setTyped(null);
-        }}
-      />
-      <small className="field-hint">One rsync pattern per line.</small>
-    </label>
   );
 }

@@ -342,7 +342,7 @@ impl Shared {
             .target(&spec.session_id)
             .ok()
             .and_then(|target| target.login().profile.rsync_path)
-            .filter(|path| !path.trim().is_empty());
+            .and_then(|path| one_line(&path));
         if let Some(path) = site_rsync {
             settings.rsync_path = path;
         }
@@ -873,6 +873,12 @@ pub(super) async fn discard_with_browsing_session(shared: &Shared, partial: &Aba
     let _ = files.delete(std::slice::from_ref(&partial.path)).await;
 }
 
+/// The first line of an rsync command, trimmed; `None` when that is blank.
+fn one_line(command: &str) -> Option<String> {
+    let line = command.lines().next().unwrap_or("").trim();
+    (!line.is_empty()).then(|| line.to_string())
+}
+
 /// `None` when the batch settled no file.
 fn summarize(
     batch: &Batch,
@@ -990,6 +996,16 @@ mod tests {
         }
         assert_eq!(calls.load(Ordering::Relaxed), 1);
         assert!(target.login().profile.route.proxy.is_some());
+    }
+
+    #[test]
+    fn a_site_rsync_command_is_one_trimmed_line() {
+        assert_eq!(
+            one_line("  sudo rsync \nrm -rf ~"),
+            Some("sudo rsync".into())
+        );
+        assert_eq!(one_line(" \n rsync"), None);
+        assert_eq!(one_line(""), None);
     }
 
     #[test]

@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import {
   CalendarClock,
@@ -8,6 +8,7 @@ import {
   LoaderCircle,
   Plus,
 } from "lucide-react";
+import { useOptionCheck } from "../hooks/useOptionCheck";
 import { formatDate } from "../lib/format";
 import { toAppError } from "../lib/ipc";
 import { protocolInfo } from "../lib/protocols";
@@ -27,16 +28,18 @@ import {
   splitInterval,
   suggestedName,
   syncAction,
+  taskOptions,
   timeInputValue,
   type IntervalUnit,
 } from "../lib/schedule";
-import { TIME_TOLERANCE_LIMITS } from "../lib/settings";
-import { COMPARE_OPTIONS, DIRECTION_OPTIONS, excludePatterns } from "../lib/sync";
+import { commandPreview, withOption } from "../lib/rsyncOptions";
+import { DIRECTION_OPTIONS } from "../lib/sync";
 import type { SavedConnection, ScheduledTask, TaskAction, TaskView, Trigger } from "../lib/types";
 import { useSavedConnections } from "../state/savedConnectionsStore";
 import { useScheduleStore } from "../state/scheduleStore";
 import { useSettingsStore } from "../state/settingsStore";
 import { Dialog } from "./Dialog";
+import { OptionCheckView, RsyncArgumentsField, RsyncOptionsEditor } from "./RsyncOptionsEditor";
 import { Stepper } from "./Stepper";
 
 type SyncTaskAction = Extract<TaskAction, { type: "sync" }>;
@@ -55,14 +58,33 @@ function taskConnections(connections: SavedConnection[]): SavedConnection[] {
     .sort((first, second) => first.name.localeCompare(second.name));
 }
 
-function blankTask(): ScheduledTask {
-  const connectionId = taskConnections(useSavedConnections.getState().connections)[0]?.id ?? "";
-  const options = useSettingsStore.getState().settings.sync;
-  return newTask(syncAction({ connectionId, localPath: "", remotePath: "", options }));
+/** The rsync arguments a new synchronization starts with: the defaults', then the site's own. */
+function startingArguments(connectionId: string): string {
+  const site = useSavedConnections
+    .getState()
+    .connections.find((connection) => connection.id === connectionId);
+  return [useSettingsStore.getState().settings.sync.arguments, site?.syncArguments ?? ""]
+    .map((text) => text.trim())
+    .filter(Boolean)
+    .join(" ");
 }
 
-function excludesOf(task: ScheduledTask): string {
-  return task.action.type === "sync" ? task.action.excludes.join("\n") : "";
+/** A synchronization with the defaults from Settings. */
+function newSyncAction(connectionId: string): TaskAction {
+  const defaults = useSettingsStore.getState().settings.sync;
+  return syncAction({
+    connectionId,
+    localPath: "",
+    remotePath: "",
+    direction: defaults.direction,
+    options: defaults.options,
+    arguments: startingArguments(connectionId),
+  });
+}
+
+function blankTask(): ScheduledTask {
+  const connectionId = taskConnections(useSavedConnections.getState().connections)[0]?.id ?? "";
+  return newTask(newSyncAction(connectionId));
 }
 
 interface SchedulerDialogProps {
@@ -75,8 +97,6 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
   const tasks = useScheduleStore((state) => state.tasks);
   const connections = useSavedConnections((state) => state.connections);
   const [draft, setDraft] = useState<ScheduledTask>(() => initialDraft ?? blankTask());
-  /** Kept as typed, since blank lines vanish once split into patterns. */
-  const [excludes, setExcludes] = useState(() => excludesOf(draft));
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<"saving" | "running" | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -98,7 +118,6 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
 
   const select = (task: ScheduledTask) => {
     setDraft(editableTask(task));
-    setExcludes(excludesOf(task));
     setError(null);
     setConfirmingDelete(false);
   };
@@ -125,14 +144,26 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
       action:
         type === "command"
           ? { type, connectionId, command: "", directory: null }
-          : syncAction({
-              connectionId,
-              localPath: "",
-              remotePath: "",
-              options: useSettingsStore.getState().settings.sync,
-            }),
+          : newSyncAction(connectionId),
     });
   };
+
+  const chooseConnection = (connectionId: string) =>
+    setDraft((current) => {
+      const action = current.action;
+      // A new synchronization takes the site's own rsync arguments until they are edited.
+      if (
+        !current.id &&
+        action.type === "sync" &&
+        action.arguments === startingArguments(action.connectionId)
+      ) {
+        return {
+          ...current,
+          action: { ...action, connectionId, arguments: startingArguments(connectionId) },
+        };
+      }
+      return { ...current, action: { ...action, connectionId } };
+    });
 
   const taskToSave = (): ScheduledTask => {
     const action: TaskAction =
@@ -141,7 +172,6 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
             ...draft.action,
             localPath: draft.action.localPath.trim(),
             remotePath: draft.action.remotePath.trim(),
-            excludes: excludePatterns(excludes),
           }
         : {
             ...draft.action,
@@ -298,9 +328,7 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
               <span>Saved connection</span>
               <select
                 value={draft.action.connectionId}
-                onChange={(event) =>
-                  update({ action: { ...draft.action, connectionId: event.target.value } })
-                }
+                onChange={(event) => chooseConnection(event.target.value)}
               >
                 <option value="">
                   {candidates.length === 0 ? "No saved SFTP connections" : "Choose a connection"}
@@ -333,12 +361,7 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
           )}
 
           {draft.action.type === "sync" ? (
-            <SyncFields
-              action={draft.action}
-              excludes={excludes}
-              onChange={updateSync}
-              onExcludes={setExcludes}
-            />
+            <SyncFields action={draft.action} host={connection?.host} onChange={updateSync} />
           ) : (
             <CommandFields action={draft.action} onChange={updateCommand} />
           )}
@@ -427,15 +450,16 @@ function TaskStatus({ task }: { task: TaskView }) {
 
 interface SyncFieldsProps {
   action: SyncTaskAction;
-  excludes: string;
+  /** The saved connection's server, for the command line shown. */
+  host?: string;
   onChange: (change: Partial<SyncTaskAction>) => void;
-  onExcludes: (excludes: string) => void;
 }
 
-function SyncFields({ action, excludes, onChange, onExcludes }: SyncFieldsProps) {
-  const both = action.direction === "both";
-  const target = action.direction === "download" ? "in the local folder" : "on the server";
+function SyncFields({ action, host, onChange }: SyncFieldsProps) {
+  const options = useMemo(() => taskOptions(action), [action]);
+  const check = useOptionCheck(options, [action.arguments], action.direction);
   const direction = DIRECTION_OPTIONS.find((option) => option.value === action.direction);
+  const remote = host ? `${host}:${action.remotePath.trim()}` : action.remotePath.trim();
 
   const browse = async () => {
     const selected = await openFileDialog({
@@ -486,11 +510,10 @@ function SyncFields({ action, excludes, onChange, onExcludes }: SyncFieldsProps)
               aria-checked={action.direction === option.value}
               className={action.direction === option.value ? "is-selected" : ""}
               onClick={() =>
-                onChange(
-                  option.value === "both" && action.compare === "always"
-                    ? { direction: option.value, compare: "sizeAndTime" }
-                    : { direction: option.value },
-                )
+                onChange({
+                  ...withOption(options, "compare", options.compare, option.value),
+                  direction: option.value,
+                })
               }
             >
               {option.label}
@@ -504,80 +527,28 @@ function SyncFields({ action, excludes, onChange, onExcludes }: SyncFieldsProps)
         )}
       </div>
 
-      <div className="form-row sync-compare">
-        <label className="field grow">
-          <span>Compare files by</span>
-          <select
-            value={action.compare}
-            onChange={(event) =>
-              onChange({ compare: event.target.value as SyncTaskAction["compare"] })
-            }
-          >
-            {COMPARE_OPTIONS.map((option) => (
-              <option
-                key={option.value}
-                value={option.value}
-                disabled={both && option.value === "always"}
-              >
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="field">
-          <span>Times this close count as equal</span>
-          <Stepper
-            value={action.timeToleranceSecs}
-            min={TIME_TOLERANCE_LIMITS.min}
-            max={TIME_TOLERANCE_LIMITS.max}
-            label="Times this close count as equal"
-            unit="s"
-            onChange={(timeToleranceSecs) => onChange({ timeToleranceSecs })}
-          />
-        </div>
-      </div>
-
-      <div className="checks">
-        <label className={`check ${both ? "is-disabled" : ""}`}>
-          <input
-            type="checkbox"
-            checked={!both && action.deleteExtraneous}
-            disabled={both}
-            onChange={(event) => onChange({ deleteExtraneous: event.target.checked })}
-          />
-          Delete files {target} that the other side does not have
-        </label>
-        <label className={`check ${both ? "is-disabled" : ""}`}>
-          <input
-            type="checkbox"
-            checked={!both && action.skipNewerOnTarget}
-            disabled={both}
-            onChange={(event) => onChange({ skipNewerOnTarget: event.target.checked })}
-          />
-          Skip files that are newer {target}
-        </label>
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={action.ignoreExisting}
-            onChange={(event) => onChange({ ignoreExisting: event.target.checked })}
-          />
-          {both
-            ? "Only copy files the other side does not have"
-            : `Skip files that already exist ${target}`}
-        </label>
-      </div>
-
-      <label className="field">
-        <span>Exclude</span>
-        <textarea
-          value={excludes}
-          rows={2}
-          spellCheck={false}
-          placeholder={"*.tmp\nnode_modules/"}
-          onChange={(event) => onExcludes(event.target.value)}
+      <div className="field">
+        <span>rsync options</span>
+        <RsyncOptionsEditor
+          options={options}
+          direction={action.direction}
+          onChange={(next) => onChange(next)}
+          initiallyOpen={[]}
         />
-      </label>
+      </div>
+      <RsyncArgumentsField
+        value={action.arguments}
+        hint="Typed as on rsync's command line; they apply over the options above each time the task runs."
+        onChange={(value) => onChange({ arguments: value })}
+      />
+      <OptionCheckView
+        check={check}
+        command={
+          check
+            ? commandPreview(check.arguments, action.direction, action.localPath.trim(), remote)
+            : undefined
+        }
+      />
     </>
   );
 }

@@ -3,8 +3,9 @@
 // stored as given, so they are checked here.
 
 import { DETAIL_COLUMNS, type DetailColumn } from "./columns";
+import { DEFAULT_SYNC_OPTIONS, legacySyncOptions, sanitizeSyncOptions } from "./rsyncOptions";
 import { SORT_KEYS, type SortSpec } from "./sort";
-import type { CompareMode, ExistsAction, LogLevel, PowerAction, SyncDirection } from "./types";
+import type { ExistsAction, LogLevel, PowerAction, SyncDirection, SyncOptions } from "./types";
 
 export const MAX_WORKERS = 16;
 export const MAX_RECONNECT_MINUTES = 24 * 60;
@@ -135,16 +136,12 @@ export interface LogSettings {
   levels: Record<LogLevel, boolean>;
 }
 
-/** What a new folder synchronization starts with: the options used last. */
+/** What a new folder synchronization starts with, before a site's own rsync arguments. */
 export interface SyncSettings {
   direction: SyncDirection;
-  compare: CompareMode;
-  deleteExtraneous: boolean;
-  skipNewerOnTarget: boolean;
-  ignoreExisting: boolean;
-  timeToleranceSecs: number;
-  /** rsync-style patterns, one per line. */
-  excludes: string;
+  options: SyncOptions;
+  /** rsync arguments applied over the options, typed as rsync takes them. */
+  arguments: string;
 }
 
 export interface UpdateSettings {
@@ -208,9 +205,7 @@ export const RADIUS_LIMITS = { min: 0, max: 16 };
 export const ROW_HEIGHT_LIMITS = { min: 18, max: 36 };
 const COMPACT_ROW_HEIGHT = 21;
 export const LOG_LINE_LIMITS = { min: 200, max: 50000 };
-export const TIME_TOLERANCE_LIMITS = { min: 0, max: 24 * 60 * 60 };
 export const SYNC_DIRECTIONS: SyncDirection[] = ["upload", "download", "both"];
-export const COMPARE_MODES: CompareMode[] = ["sizeAndTime", "sizeOnly", "checksum", "always"];
 
 export const DEFAULT_SETTINGS: Settings = {
   transfers: {
@@ -296,12 +291,8 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   sync: {
     direction: "upload",
-    compare: "sizeAndTime",
-    deleteExtraneous: false,
-    skipNewerOnTarget: false,
-    ignoreExisting: false,
-    timeToleranceSecs: 2,
-    excludes: "",
+    options: DEFAULT_SYNC_OPTIONS,
+    arguments: "",
   },
   updates: {
     checkOnStart: true,
@@ -347,14 +338,15 @@ function clamp(value: number, min: number, max: number): number {
 
 export function sanitizeSettings(stored: unknown): Settings {
   const source = asSection(stored);
+  const transfers = mergeSection(DEFAULT_SETTINGS.transfers, source.transfers);
   const settings: Settings = {
-    transfers: mergeSection(DEFAULT_SETTINGS.transfers, source.transfers),
+    transfers,
     connection: mergeSection(DEFAULT_SETTINGS.connection, source.connection),
     cloud: mergeSection(DEFAULT_SETTINGS.cloud, source.cloud),
     interface: mergeSection(DEFAULT_SETTINGS.interface, source.interface),
     appearance: mergeSection(DEFAULT_SETTINGS.appearance, source.appearance),
     log: mergeSection(DEFAULT_SETTINGS.log, source.log),
-    sync: mergeSection(DEFAULT_SETTINGS.sync, source.sync),
+    sync: sanitizeSync(source.sync, transfers),
     updates: mergeSection(DEFAULT_SETTINGS.updates, source.updates),
     automation: mergeSection(DEFAULT_SETTINGS.automation, source.automation),
   };
@@ -386,14 +378,6 @@ export function sanitizeSettings(stored: unknown): Settings {
   appearance.rowHeight = clamp(appearance.rowHeight, ROW_HEIGHT_LIMITS.min, ROW_HEIGHT_LIMITS.max);
   settings.log.maxLines = clamp(settings.log.maxLines, LOG_LINE_LIMITS.min, LOG_LINE_LIMITS.max);
 
-  const sync = settings.sync;
-  if (!SYNC_DIRECTIONS.includes(sync.direction)) sync.direction = DEFAULT_SETTINGS.sync.direction;
-  if (!COMPARE_MODES.includes(sync.compare)) sync.compare = DEFAULT_SETTINGS.sync.compare;
-  sync.timeToleranceSecs = clamp(
-    sync.timeToleranceSecs,
-    TIME_TOLERANCE_LIMITS.min,
-    TIME_TOLERANCE_LIMITS.max,
-  );
   settings.updates.skippedVersion = settings.updates.skippedVersion.trim();
 
   const proxy = settings.connection.proxy;
@@ -408,6 +392,28 @@ export function sanitizeSettings(stored: unknown): Settings {
   }
   automation.commands = sanitizeCommands(automation.commands);
   return settings;
+}
+
+/**
+ * The synchronization defaults, read from the options saved before rsync's full set too. Those
+ * synchronizations kept times and permissions as the transfer settings said, so the new -t and
+ * -p start from them.
+ */
+function sanitizeSync(stored: unknown, transfers: TransferSettings): SyncSettings {
+  const source = asSection(stored);
+  const direction = source.direction as SyncDirection;
+  return {
+    direction: SYNC_DIRECTIONS.includes(direction) ? direction : DEFAULT_SETTINGS.sync.direction,
+    options:
+      "options" in source
+        ? sanitizeSyncOptions(source.options)
+        : {
+            ...legacySyncOptions(source),
+            times: transfers.preserveTimestamps,
+            perms: transfers.preservePermissions,
+          },
+    arguments: typeof source.arguments === "string" ? source.arguments : "",
+  };
 }
 
 /** Keeps each command that has one to run, with a unique id. */
