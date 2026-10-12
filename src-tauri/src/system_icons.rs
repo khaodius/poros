@@ -153,14 +153,15 @@ mod platform {
         }
         let (width, height) = (bitmap.bmWidth, bitmap.bmHeight);
         let color = bitmap_bgra(info.hbmColor, width, height)?;
-        let has_alpha = color.chunks_exact(4).any(|pixel| pixel[3] != 0);
+        let (color_pixels, _) = color.as_chunks::<4>();
+        let has_alpha = color_pixels.iter().any(|pixel| pixel[3] != 0);
         let mask = if has_alpha {
             None
         } else {
             bitmap_bgra(info.hbmMask, width, height)
         };
         let mut rgba = Vec::with_capacity(color.len());
-        for (index, pixel) in color.chunks_exact(4).enumerate() {
+        for (index, pixel) in color_pixels.iter().enumerate() {
             let alpha = if has_alpha {
                 pixel[3]
             } else if mask.as_ref().is_some_and(|mask| mask[index * 4] != 0) {
