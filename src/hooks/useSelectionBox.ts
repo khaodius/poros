@@ -3,13 +3,13 @@ import {
   useEffect,
   useLayoutEffect,
   useRef,
-  useState,
   type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from "react";
+import { flushSync } from "react-dom";
 import type { Point, Rect } from "../lib/docking";
 import { boxBetween, edgeScrollSpeed, rowsInBox } from "../lib/selectionBox";
-import { swallowNextClick } from "../state/dragStore";
+import { holdsOtherButton, swallowNextClick, swallowNextContextMenu } from "../state/dragStore";
 
 /** How far the pointer moves before a press draws a box rather than clicking. */
 const BOX_THRESHOLD = 5;
@@ -24,7 +24,7 @@ export interface BoxGesture {
   onRows: (rows: RowRange | null) => void;
   /** On release, with whether the box was drawn downward from where it started. */
   onFinish: (rows: RowRange | null, downward: boolean) => void;
-  /** Escape before release. */
+  /** Escape, or another mouse button, before release. */
   onCancel: () => void;
 }
 
@@ -38,14 +38,22 @@ export interface BoxLayout {
 /**
  * Draws a box from a press in a scrolling list of rows of one height to wherever the pointer
  * goes, scrolling the list while the pointer is near or past its top or bottom edge.
- * `contentRef` holds the rows and moves as the list scrolls; the box is in its coordinates.
+ * `contentRef` holds the rows and moves as the list scrolls; the box is in its coordinates, in
+ * the element `boxRef` is given to.
+ *
+ * The box is drawn straight onto that element as the pointer moves, rather than through a
+ * render, so it keeps up with the pointer, and the rows it touches are rendered before the
+ * same frame is drawn.
  */
 export function useSelectionBox(
   scrollRef: RefObject<HTMLElement | null>,
   contentRef: RefObject<HTMLElement | null>,
   layout: BoxLayout,
-): { box: Rect | null; begin: (event: ReactPointerEvent, gesture: BoxGesture) => void } {
-  const [box, setBox] = useState<Rect | null>(null);
+): {
+  boxRef: RefObject<HTMLDivElement | null>;
+  begin: (event: ReactPointerEvent, gesture: BoxGesture) => void;
+} {
+  const boxRef = useRef<HTMLDivElement>(null);
   const layoutRef = useRef(layout);
   useLayoutEffect(() => {
     layoutRef.current = layout;
@@ -78,21 +86,36 @@ export function useSelectionBox(
       // Scrolling moves whole pixels, so slow speeds build up over several frames.
       let unscrolled = 0;
 
+      const draw = (box: Rect | null) => {
+        const element = boxRef.current;
+        if (!element) return;
+        if (!box) {
+          delete element.dataset.drawn;
+          return;
+        }
+        element.style.left = `${box.left}px`;
+        element.style.top = `${box.top}px`;
+        element.style.width = `${box.width}px`;
+        element.style.height = `${box.height}px`;
+        element.dataset.drawn = "";
+      };
+
       const update = () => {
         if (cancelled) return;
         const { rowHeight, rowCount, rowsInset } = layoutRef.current;
         const end = toContent(pointer);
+        const width = content.clientWidth;
         const next = boxBetween(start, end, {
-          width: content.clientWidth,
+          width,
           height: Math.max(content.offsetHeight, scroll.clientHeight),
         });
         downward = end.y >= start.y;
-        setBox(next);
-        const touched = rowsInBox(next, rowHeight, rowCount, content.clientWidth - rowsInset);
+        draw(next);
+        const touched = rowsInBox(next, rowHeight, rowCount, width - rowsInset);
         if (!reported || touched?.first !== rows?.first || touched?.last !== rows?.last) {
           reported = true;
           rows = touched;
-          gesture.onRows(rows);
+          flushSync(() => gesture.onRows(rows));
         }
       };
 
@@ -110,7 +133,21 @@ export function useSelectionBox(
       };
 
       const move = (moved: PointerEvent) => {
-        if (moved.pointerId !== pointerId || cancelled) return;
+        if (moved.pointerId !== pointerId) return;
+        // Released where this window could not see it.
+        if (!(moved.buttons & 1)) {
+          finish();
+          return;
+        }
+        if (cancelled) return;
+        // Another button, such as a right click, cancels the box as Escape does.
+        if (holdsOtherButton(moved)) {
+          if (drawing) {
+            cancel();
+            swallowNextContextMenu();
+          }
+          return;
+        }
         pointer = { x: moved.clientX, y: moved.clientY };
         if (!drawing) {
           if (Math.hypot(pointer.x - pressedAt.x, pointer.y - pressedAt.y) < BOX_THRESHOLD) return;
@@ -129,7 +166,7 @@ export function useSelectionBox(
         window.removeEventListener("blur", finish);
         window.removeEventListener("keydown", cancelOnEscape, true);
         stopRef.current = null;
-        setBox(null);
+        draw(null);
       };
       // Released elsewhere, such as to a screenshot tool that took the pointer: the rows
       // selected so far stay selected.
@@ -144,14 +181,17 @@ export function useSelectionBox(
         finish();
       };
       // The release is still to come, and its click is swallowed as after any box.
+      const cancel = () => {
+        cancelled = true;
+        cancelAnimationFrame(frame);
+        draw(null);
+        gesture.onCancel();
+      };
       const cancelOnEscape = (key: KeyboardEvent) => {
         if (key.key !== "Escape" || !drawing || cancelled) return;
         key.preventDefault();
         key.stopPropagation();
-        cancelled = true;
-        cancelAnimationFrame(frame);
-        setBox(null);
-        gesture.onCancel();
+        cancel();
       };
       window.addEventListener("pointermove", move);
       window.addEventListener("pointerup", release);
@@ -163,5 +203,5 @@ export function useSelectionBox(
     [scrollRef, contentRef],
   );
 
-  return { box, begin };
+  return { boxRef, begin };
 }

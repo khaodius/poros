@@ -1671,14 +1671,19 @@ form.path-bar {
   color: var(--text-muted);
 }
 
-/* Dragged across the list to select the rows it touches. */
+/* Dragged across the list to select the rows it touches; placed as the pointer moves. */
 .selection-box {
   position: absolute;
   z-index: 1;
+  display: none;
   border: 1px solid var(--accent);
   border-radius: 2px;
   background: var(--accent-softer);
   pointer-events: none;
+}
+
+.selection-box[data-drawn] {
+  display: block;
 }
 
 .file-cell {
