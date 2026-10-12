@@ -17,7 +17,13 @@ import {
   type SplitNode,
 } from "../lib/layout";
 import { MAIN_WINDOW } from "../lib/ipc";
-import { isLifted, useDragStore, type DropTarget } from "../state/dragStore";
+import {
+  isLifted,
+  joinsTabBar,
+  markedDrop,
+  useDragStore,
+  type DropTarget,
+} from "../state/dragStore";
 import { useLayoutStore } from "../state/layoutStore";
 import { liftedLayers, liftedPane } from "../state/liftedPane";
 import { DropMarker } from "./DropMarker";
@@ -93,7 +99,7 @@ export function DockArea() {
   const desktopPreview = useDragStore((state) => state.desktopPreview);
   const drawnOnDesktop = useDragStore((state) => state.drawnOnDesktop);
   const liftedTabId = drag && isLifted(drag.payload, drag.target) ? drag.payload.tabId : null;
-  const dropTarget = target?.kind === "dock" ? target : null;
+  const dropTarget = markedDrop(drag?.payload ?? null, target);
 
   const layout = useMemo(
     () => (resizing ? setSizes(root, resizing.splitId, resizing.sizes) : root),
@@ -172,16 +178,26 @@ export function DockArea() {
     window.addEventListener("blur", stop);
   };
 
+  // Over another pane's tab bar, the lifted pane shrinks away toward the pointer, into the tab
+  // that opens there.
+  const joiningTabs = !!drag && !!liftedTabId && joinsTabBar(drag.payload, drag.target);
   const className = [
     "dock",
     resizing && "is-resizing",
     away && "is-tab-away",
     drawnOnDesktop && "is-drawn-on-desktop",
+    joiningTabs && "is-joining-tabs",
   ]
     .filter(Boolean)
     .join(" ");
+  const grabStyle = drag
+    ? ({
+        "--grab-x": `${drag.payload.grab.x}px`,
+        "--grab-y": `${drag.payload.grab.y}px`,
+      } as CSSProperties)
+    : undefined;
   return (
-    <div ref={dockRef} className={className}>
+    <div ref={dockRef} className={className} style={grabStyle}>
       {groups.map((entry) =>
         entry.tabs.every((tab) => tab.id === liftedTabId) ? (
           <div

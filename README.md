@@ -60,7 +60,9 @@
   fingerprint.
 - **Saved connections**, with passwords and cloud sign-ins stored only on request and only in the
   system keychain.
-- **Themes** as shareable JSON files, ten built in, with every color editable in settings.
+- **Themes** as shareable JSON files, ten built in, with every color editable in settings. File
+  lists can show the system's own file icons, Windows Explorer's or your Linux icon theme's, and
+  scrolling with the mouse wheel can glide.
 - **Signed updates**: Poros checks for a new release at start-up, downloads it in the background
   and installs it only after verifying its signature, then lets you choose when to restart.
   Settings > Updates turns the check off, and can install an earlier release the same way.
@@ -192,6 +194,7 @@ The Windows installers are not code-signed yet, so SmartScreen may warn about an
 | Mouse back, forward buttons        | Back, forward in the pane under the pointer   |
 | Space, Insert                      | Select or deselect, and move down with Insert |
 | Ctrl + Up, Ctrl + Down             | Move without selecting                        |
+| Ctrl + Shift + click               | Add the rows from the last one clicked        |
 | Drag beside the names              | Select rows in a box, Ctrl or Shift adds      |
 | Esc, right-click while dragging    | Cancel the drag or the box                    |
 | Ctrl + H                           | Show hidden files                             |

@@ -544,7 +544,7 @@ function InterfaceSettingsPage({ settings }: { settings: Settings }) {
         />
         <SettingRow
           label="Columns"
-          hint="Right-click a column heading to show or hide columns and change the sort."
+          hint="Right-click a column heading to show or hide columns and change the sort. Drag the line before a heading to resize its column, or double-click the line to fit it."
         >
           <div className="column-toggles">
             {DETAIL_COLUMNS.map((column) => {

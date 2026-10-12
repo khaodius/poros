@@ -3656,7 +3656,7 @@ dependencies = [
 
 [[package]]
 name = "poros"
-version = "0.4.7"
+version = "0.4.8"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -3672,6 +3672,7 @@ dependencies = [
  "md-5",
  "md4",
  "percent-encoding",
+ "png 0.18.1",
  "quick-xml",
  "reqwest",
  "ring",

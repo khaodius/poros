@@ -16,7 +16,14 @@ import { useFitCount } from "../hooks/useFitCount";
 import type { PaneController } from "../hooks/usePane";
 import { useSelectionBox, type RowRange } from "../hooks/useSelectionBox";
 import { formatDate, formatPermissions, formatSize } from "../lib/format";
-import { COLUMN_LABELS, DETAIL_COLUMNS, availableColumns, type DetailColumn } from "../lib/columns";
+import {
+  COLUMN_LABELS,
+  COLUMN_WIDTH_LIMITS,
+  DETAIL_COLUMNS,
+  availableColumns,
+  type ColumnWidths,
+  type DetailColumn,
+} from "../lib/columns";
 import type { DateFormat } from "../lib/settings";
 import { isDirLike, typeLabel, type SortKey } from "../lib/sort";
 import type { FileEntry } from "../lib/types";
@@ -76,8 +83,15 @@ const NAME_COLUMN: Column = {
 const MODIFIED_WIDTHS: Record<DateFormat, number> = { minutes: 136, seconds: 160, locale: 180 };
 /** The font size the column widths are made for; they grow and shrink with it. */
 const BASE_FONT_SIZE = 13;
+/** The sort arrow beside a heading, and the gap before it. */
+const SORT_ICON_ROOM = 16;
 
-function detailColumn(key: DetailColumn, dateFormat: DateFormat): Column {
+function detailColumn(key: DetailColumn, dateFormat: DateFormat, widths: ColumnWidths): Column {
+  const column = defaultColumn(key, dateFormat);
+  return { ...column, width: widths[key] ?? column.width };
+}
+
+function defaultColumn(key: DetailColumn, dateFormat: DateFormat): Column {
   switch (key) {
     case "size":
       return {
@@ -204,6 +218,9 @@ interface FileListProps extends FileListActions {
   active: boolean;
   rowHeight: number;
   hiddenColumns: readonly DetailColumn[];
+  columnWidths: ColumnWidths;
+  /** While a heading's edge is dragged, then with `done` on release. */
+  onColumnWidthsChange: (widths: ColumnWidths, done: boolean) => void;
   dateFormat: DateFormat;
   striped: boolean;
   fontSize: number;
@@ -219,6 +236,8 @@ export function FileList({
   active,
   rowHeight,
   hiddenColumns,
+  columnWidths,
+  onColumnWidthsChange,
   dateFormat,
   striped,
   fontSize,
@@ -227,6 +246,7 @@ export function FileList({
   ...actions
 }: FileListProps) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const typeAhead = useRef({ text: "", lastKeyAt: 0 });
@@ -240,9 +260,9 @@ export function FileList({
       (key) => !hiddenColumns.includes(key),
     );
     return FIT_PRIORITY.filter((key) => shown.includes(key)).map((key) =>
-      detailColumn(key, dateFormat),
+      detailColumn(key, dateFormat, columnWidths),
     );
-  }, [pane.listing, hiddenColumns, dateFormat]);
+  }, [pane.listing, hiddenColumns, dateFormat, columnWidths]);
   const widthOf = useCallback(
     (column: Column) => Math.round((column.width * fontSize) / BASE_FONT_SIZE),
     [fontSize],
@@ -465,6 +485,101 @@ export function FileList({
     else actions.onFileActivate(entry);
   };
 
+  const toBaseWidth = (shown: number) => Math.round((shown * BASE_FONT_SIZE) / fontSize);
+
+  /**
+   * The narrowest and widest `column` can be, in pixels on screen: at most as much wider as the
+   * name column, which takes the room left, can give.
+   */
+  const widthLimits = (column: Column): [number, number] => {
+    const nameHeading = headerRef.current?.querySelector('[data-column="name"]');
+    const room = nameHeading ? nameHeading.getBoundingClientRect().width - widthOf(NAME_COLUMN) : 0;
+    const scale = fontSize / BASE_FONT_SIZE;
+    return [
+      COLUMN_WIDTH_LIMITS.min * scale,
+      Math.min(widthOf(column) + Math.max(0, room), COLUMN_WIDTH_LIMITS.max * scale),
+    ];
+  };
+
+  const widthsWith = (column: Column, shown: number, [narrowest, widest]: [number, number]) => ({
+    ...columnWidths,
+    [column.key]: toBaseWidth(Math.min(widest, Math.max(narrowest, shown))),
+  });
+
+  // The line left of a heading resizes that column. The name column gives or takes the
+  // difference, so the line follows the pointer.
+  const startColumnResize = (event: ReactPointerEvent<HTMLElement>, column: Column) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const handle = event.currentTarget;
+    handle.setPointerCapture(event.pointerId);
+    const origin = event.clientX;
+    const startWidth = widthOf(column);
+    const limits = widthLimits(column);
+    let widths: ColumnWidths | null = null;
+    let frame = 0;
+
+    const move = (moved: PointerEvent) => {
+      // Released where this window could not see it: the column keeps the width it has.
+      if (!(moved.buttons & 1)) {
+        stop();
+        return;
+      }
+      widths = widthsWith(column, startWidth - (moved.clientX - origin), limits);
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        if (widths) onColumnWidthsChange(widths, false);
+      });
+    };
+    const stop = () => {
+      cancelAnimationFrame(frame);
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", stop);
+      handle.removeEventListener("pointercancel", stop);
+      window.removeEventListener("blur", stop);
+      if (widths) onColumnWidthsChange(widths, true);
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", stop);
+    handle.addEventListener("pointercancel", stop);
+    // Another program took the pointer, such as a screenshot tool, and gets the release.
+    window.addEventListener("blur", stop);
+  };
+
+  /** Widens or narrows `column` to show its heading and every value in it in full. */
+  const fitColumn = (column: Column) => {
+    const heading = headerRef.current?.querySelector(
+      `[data-column="${column.key}"] > .file-list-heading`,
+    );
+    const context = document.createElement("canvas").getContext("2d");
+    if (!heading || !context) return;
+    const fontOf = (style: CSSStyleDeclaration) =>
+      `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+    const paddingOf = (style: CSSStyleDeclaration) =>
+      parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+    const headingStyle = getComputedStyle(heading);
+    // Headings are drawn in capitals, with the sort arrow beside them.
+    const label = column.label.toUpperCase();
+    context.font = fontOf(headingStyle);
+    let widest =
+      context.measureText(label).width +
+      (parseFloat(headingStyle.letterSpacing) || 0) * label.length +
+      paddingOf(headingStyle) +
+      SORT_ICON_ROOM;
+    const cell = rootRef.current?.querySelector(`.file-cell.file-${column.key}`);
+    if (cell) {
+      const cellStyle = getComputedStyle(cell);
+      context.font = fontOf(cellStyle);
+      const padding = paddingOf(cellStyle);
+      for (const entry of entries) {
+        widest = Math.max(widest, context.measureText(column.render(entry)).width + padding);
+      }
+    }
+    onColumnWidthsChange(widthsWith(column, Math.ceil(widest) + 1, widthLimits(column)), true);
+  };
+
   // A box drawn from empty space, or from a row away from its name, selects the rows it
   // touches; with Ctrl or Shift held it adds them to the selection.
   const startBox = (event: ReactPointerEvent<HTMLElement>) => {
@@ -517,7 +632,9 @@ export function FileList({
   };
 
   const handleRowClick = (event: MouseEvent, entry: FileEntry) => {
-    if (event.ctrlKey || event.metaKey) pane.toggleSelected(entry.path);
+    const primary = event.ctrlKey || event.metaKey;
+    if (primary && event.shiftKey) pane.addRangeTo(entry.path);
+    else if (primary) pane.toggleSelected(entry.path);
     else if (event.shiftKey) pane.selectRangeTo(entry.path);
     else pane.selectOnly(entry.path);
   };
@@ -577,6 +694,7 @@ export function FileList({
       style={{ "--drop-strip-width": `${DROP_STRIP_WIDTH}px` } as CSSProperties}
     >
       <div
+        ref={headerRef}
         className="file-list-header"
         style={{ gridTemplateColumns: `${gridTemplateColumns} ${DROP_STRIP_WIDTH}px` }}
         role="row"
@@ -589,17 +707,33 @@ export function FileList({
           const sorted = pane.sort.key === column.key;
           const SortIcon = pane.sort.direction === 1 ? ArrowUp : ArrowDown;
           return (
-            <button
+            <div
               key={column.key}
-              type="button"
+              className="file-list-column"
               role="columnheader"
-              className={`file-list-heading ${column.align === "end" ? "align-end" : ""}`}
               aria-sort={sorted ? (pane.sort.direction === 1 ? "ascending" : "descending") : "none"}
-              onClick={() => pane.setSortKey(column.key)}
+              data-column={column.key}
             >
-              <span>{column.label}</span>
-              {sorted && <SortIcon size={12} />}
-            </button>
+              <button
+                type="button"
+                className={`file-list-heading ${column.align === "end" ? "align-end" : ""}`}
+                onClick={() => pane.setSortKey(column.key)}
+              >
+                <span>{column.label}</span>
+                {sorted && <SortIcon size={12} />}
+              </button>
+              {column !== NAME_COLUMN && (
+                <div
+                  className="column-resizer"
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label={`Resize ${column.label}`}
+                  title="Drag to resize, double-click to fit"
+                  onPointerDown={(event) => startColumnResize(event, column)}
+                  onDoubleClick={() => fitColumn(column)}
+                />
+              )}
+            </div>
           );
         })}
       </div>

@@ -58,10 +58,14 @@ const BASES: { value: ThemeBase; label: string }[] = [
 /** The radius the stylesheet uses when neither the theme nor the settings set one. */
 const DEFAULT_RADIUS = 6;
 const pixels = (value: number) => `${value} px`;
-/** Everything on this page that is not part of the theme. */
+/** The fonts, sizes and shape on this page, which one button puts back. */
 const LOOK_KEYS = (Object.keys(DEFAULT_SETTINGS.appearance) as (keyof Appearance)[]).filter(
-  (key) => key !== "theme",
+  (key) => !["theme", "systemIcons", "smoothScrolling"].includes(key),
 );
+/** How the system's icons are described: whose they are depends on the system. */
+const SYSTEM_ICONS_HINT = navigator.userAgent.includes("Windows")
+  ? "File lists show the icons Windows Explorer uses for each type of file."
+  : "File lists show your desktop's icon theme, as your file manager does.";
 const DEFAULT_LOOK: Partial<Appearance> = Object.fromEntries(
   LOOK_KEYS.map((key) => [key, DEFAULT_SETTINGS.appearance[key]]),
 );
@@ -381,6 +385,21 @@ export function AppearanceSettings() {
             Reset fonts, sizes and shape
           </button>
         </div>
+      </SettingGroup>
+
+      <SettingGroup title="Icons and scrolling">
+        <SwitchSetting
+          label="System file icons"
+          hint={SYSTEM_ICONS_HINT}
+          checked={appearance.systemIcons}
+          onChange={(systemIcons) => setAppearance({ systemIcons })}
+        />
+        <SwitchSetting
+          label="Smooth scrolling"
+          hint="The mouse wheel glides file lists, the log and other panels rather than jumping a step at a time."
+          checked={appearance.smoothScrolling}
+          onChange={(smoothScrolling) => setAppearance({ smoothScrolling })}
+        />
       </SettingGroup>
     </>
   );

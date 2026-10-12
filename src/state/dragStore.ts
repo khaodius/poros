@@ -120,6 +120,26 @@ export function tabDrag(
   };
 }
 
+/**
+ * Where the marker of a tab drop goes: the side of the group the pane docks on, or the whole of
+ * another group whose tab bar the pointer is over, which the tab joins. On its own tab bar a
+ * tab only moves along it, which its tab bar shows.
+ */
+export function markedDrop(
+  payload: DragPayload | null,
+  target: DropTarget | null,
+): { groupId: string; side: DropSide } | null {
+  if (target?.kind === "dock") return target;
+  if (target?.kind !== "tabBar") return null;
+  if (payload?.kind === "tab" && !joinsTabBar(payload, target)) return null;
+  return { groupId: target.groupId, side: "center" };
+}
+
+/** The pointer is on another group's tab bar, whose tabs the dragged tab would join. */
+export function joinsTabBar(payload: TabDrag, target: DropTarget | null): boolean {
+  return target?.kind === "tabBar" && target.groupId !== payload.sourceGroupId;
+}
+
 /** A dragged tab's pane stays in place while the pointer is on its own tab bar. */
 export function isLifted(payload: TabDrag, target: DropTarget | null): boolean {
   return !(target?.kind === "tabBar" && target.groupId === payload.sourceGroupId);

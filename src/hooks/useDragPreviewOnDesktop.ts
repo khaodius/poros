@@ -5,7 +5,13 @@ import { findTab, layoutPlacements } from "../lib/layout";
 import { takePanePicture, type PanePicture } from "../lib/panePicture";
 import type { PreviewDrop, PreviewPlacement } from "../lib/types";
 import { onScreen, scaleAt } from "../lib/windowAreas";
-import { isLifted, useDragStore, type DropTarget, type TabDrag } from "../state/dragStore";
+import {
+  isLifted,
+  joinsTabBar,
+  useDragStore,
+  type DropTarget,
+  type TabDrag,
+} from "../state/dragStore";
 import { useLayoutStore } from "../state/layoutStore";
 import { liftedLayers, liftedPane } from "../state/liftedPane";
 import { takeWindowDroppedOnDesktop, tornOutCorner, tornOutSize } from "../state/tabActions";
@@ -69,7 +75,10 @@ function previewFrame(
       drop: null,
     };
   }
-  if (target?.kind === "window" || !isLifted(payload, target)) return null;
+  // Over another pane's tab bar the window draws the pane as it shrinks away into a tab.
+  if (target?.kind === "window" || !isLifted(payload, target) || joinsTabBar(payload, target)) {
+    return null;
+  }
   const { rect, toward } = liftedPane(payload, pointer, target, true);
   const left = payload.dock.left + rect.left;
   const top = payload.dock.top + rect.top;

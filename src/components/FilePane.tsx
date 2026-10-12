@@ -33,6 +33,7 @@ import {
   Info,
   Pencil,
   RefreshCw,
+  RotateCcw,
   Scissors,
   Search,
   SquareTerminal,
@@ -72,7 +73,11 @@ import {
   type PaneHandle,
 } from "../state/paneRegistry";
 import { useSessionStore } from "../state/sessionStore";
-import { saveSettingsSection, useSettingsStore } from "../state/settingsStore";
+import {
+  previewSettingsSection,
+  saveSettingsSection,
+  useSettingsStore,
+} from "../state/settingsStore";
 import { openTerminal } from "../state/terminalActions";
 import { useToastStore } from "../state/toastStore";
 import { transferFromPane, transferToOtherSide } from "../state/transferActions";
@@ -181,6 +186,7 @@ export function FilePane({
   const doubleClickFile = useSettingsStore((state) => state.settings.interface.doubleClickFile);
   const foldersFirst = useSettingsStore((state) => state.settings.interface.foldersFirst);
   const hiddenColumns = useSettingsStore((state) => state.settings.interface.hiddenColumns);
+  const columnWidths = useSettingsStore((state) => state.settings.interface.columnWidths);
   const dateFormat = useSettingsStore((state) => state.settings.interface.dateFormat);
   const rowHeight = useSettingsStore((state) => state.settings.appearance.rowHeight);
   const stripedRows = useSettingsStore((state) => state.settings.appearance.stripedRows);
@@ -446,6 +452,12 @@ export function FilePane({
           onSelect: () => toggleColumn(key),
         })),
         "separator",
+        {
+          label: "Reset column widths",
+          icon: <RotateCcw size={14} />,
+          disabled: Object.keys(columnWidths).length === 0,
+          onSelect: () => void saveSettingsSection("interface", { columnWidths: {} }),
+        },
         sortMenu(),
       ],
     });
@@ -734,6 +746,11 @@ export function FilePane({
           active={active}
           rowHeight={Math.max(rowHeight, fontSize + MIN_ROW_PADDING)}
           hiddenColumns={hiddenColumns}
+          columnWidths={columnWidths}
+          onColumnWidthsChange={(widths, done) => {
+            if (done) void saveSettingsSection("interface", { columnWidths: widths });
+            else previewSettingsSection("interface", { columnWidths: widths });
+          }}
           dateFormat={dateFormat}
           striped={stripedRows}
           fontSize={fontSize}

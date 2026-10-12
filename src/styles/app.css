@@ -650,7 +650,27 @@ input.has-error {
 }
 
 .dock > .tab-panel.is-floating {
-  transition: opacity 120ms ease;
+  transform-origin: var(--grab-x) calc(var(--grab-y) - 30px);
+  transition:
+    opacity 120ms ease,
+    transform 160ms ease-out;
+}
+
+/* Over another pane's tab bar, the lifted pane shrinks away toward the pointer, into the tab that
+   opens there. */
+.dock.is-joining-tabs > .tab-panel.is-floating,
+.dock.is-joining-tabs > .dock-floating,
+.dock.is-joining-tabs > .dock-floating-shadow {
+  opacity: 0;
+  transform: scale(0.4);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dock.is-joining-tabs > .tab-panel.is-floating,
+  .dock.is-joining-tabs > .dock-floating,
+  .dock.is-joining-tabs > .dock-floating-shadow {
+    transform: none;
+  }
 }
 
 /* A tab dragged off the window shows on the desktop or in the window under the pointer instead. */
@@ -743,6 +763,15 @@ input.has-error {
 .dock-drop.is-merge {
   background: color-mix(in srgb, var(--accent) 24%, transparent);
   border-width: 3px;
+  animation: dock-merge-in 180ms ease-out;
+}
+
+/* Turning into a merge, the marker draws in toward the middle of the pane. */
+@keyframes dock-merge-in {
+  from {
+    opacity: 0.4;
+    transform: scale(1.03);
+  }
 }
 
 .dock-drop-badge {
@@ -757,6 +786,14 @@ input.has-error {
   background: var(--accent);
   border-radius: 999px;
   box-shadow: var(--shadow-popover);
+  animation: dock-badge-in 220ms cubic-bezier(0.3, 1.4, 0.6, 1);
+}
+
+@keyframes dock-badge-in {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
 }
 
 .dock-floating {
@@ -765,7 +802,10 @@ input.has-error {
   background: var(--surface-raised);
   border-radius: var(--radius);
   pointer-events: none;
-  transition: opacity 120ms ease;
+  transform-origin: var(--grab-x) var(--grab-y);
+  transition:
+    opacity 120ms ease,
+    transform 160ms ease-out;
 }
 
 /* The lifted pane's edge and shadow, over the drop marker rather than under it: past the
@@ -776,7 +816,10 @@ input.has-error {
   border-radius: var(--radius);
   box-shadow: var(--shadow-popover);
   pointer-events: none;
-  transition: opacity 120ms ease;
+  transform-origin: var(--grab-x) var(--grab-y);
+  transition:
+    opacity 120ms ease,
+    transform 160ms ease-out;
 }
 
 .dock > .tab-panel.is-floating {
@@ -1146,6 +1189,48 @@ input.has-error {
   right: -2px;
 }
 
+/* Where a pane dropped now would join the tabs. Its place opens between the tabs, and it glows
+   until the drop. */
+.tab-button.tab-ghost {
+  overflow: hidden;
+  color: var(--accent);
+  background: var(--accent-softer);
+  border: 1px dashed var(--accent);
+  border-bottom: none;
+  pointer-events: none;
+  animation:
+    tab-ghost-open 160ms ease-out,
+    tab-ghost-glow 900ms ease-in-out 160ms infinite alternate;
+}
+
+.tab-button.tab-ghost .tab-icon {
+  color: var(--accent);
+}
+
+@keyframes tab-ghost-open {
+  from {
+    flex-basis: 0;
+    min-width: 0;
+    padding-right: 0;
+    padding-left: 0;
+    opacity: 0;
+  }
+}
+
+@keyframes tab-ghost-glow {
+  to {
+    background: color-mix(in srgb, var(--accent) 30%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dock-drop.is-merge,
+  .dock-drop-badge,
+  .tab-button.tab-ghost {
+    animation: none;
+  }
+}
+
 .tab-icon {
   flex: none;
   color: var(--text-faint);
@@ -1418,13 +1503,15 @@ input.has-error {
   border-bottom: 1px solid var(--border);
 }
 
+/* Room after the last crumb stays empty however long the path, so a click there can pick up the
+   whole path to copy. */
 .path-bar {
   display: flex;
   flex: 1;
   align-items: center;
   min-width: 0;
   height: 28px;
-  padding: 0 4px;
+  padding: 0 48px 0 4px;
   overflow: hidden;
   background: var(--surface-sunken);
   border: 1px solid var(--border);
@@ -1444,15 +1531,26 @@ form.path-bar {
   font-size: var(--font-size-small);
 }
 
+/* A path too long to show whole keeps its end, the folder on show, and is cut off at its start. */
+.crumbs {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.crumbs.is-clipped {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 32px);
+  mask-image: linear-gradient(to right, transparent, #000 32px);
+}
+
 .crumb-group {
   display: flex;
   flex: none;
   align-items: center;
   min-width: 0;
-}
-
-.crumb-group:last-child {
-  flex: 0 1 auto;
 }
 
 .crumb {
@@ -1576,8 +1674,15 @@ form.path-bar {
   border-bottom: 1px solid var(--border);
 }
 
+.file-list-column {
+  position: relative;
+  display: flex;
+  min-width: 0;
+}
+
 .file-list-heading {
   display: flex;
+  flex: 1;
   align-items: center;
   gap: 4px;
   min-width: 0;
@@ -1603,9 +1708,40 @@ form.path-bar {
   background: var(--surface-hover);
 }
 
-.file-list-heading[aria-sort="ascending"],
-.file-list-heading[aria-sort="descending"] {
+.file-list-column[aria-sort="ascending"] > .file-list-heading,
+.file-list-column[aria-sort="descending"] > .file-list-heading {
   color: var(--text);
+}
+
+/* The line between two headings, which resizes the column after it. */
+.column-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  z-index: 1;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.column-resizer::after {
+  position: absolute;
+  top: 7px;
+  bottom: 7px;
+  left: 3px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--border);
+  content: "";
+  transition: background var(--transition-fast);
+}
+
+.column-resizer:hover::after,
+.column-resizer:active::after {
+  top: 3px;
+  bottom: 3px;
+  background: var(--accent);
 }
 
 .file-list-body {
@@ -1725,6 +1861,17 @@ form.path-bar {
 .file-icon {
   flex: none;
   color: var(--icon-file);
+}
+
+.file-icon-system,
+.file-icon-pending {
+  width: 16px;
+  height: 16px;
+}
+
+.file-icon-system {
+  object-fit: contain;
+  -webkit-user-drag: none;
 }
 
 .file-icon-folder {

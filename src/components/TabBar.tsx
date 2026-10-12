@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type MouseEvent } from "react";
+import { Fragment, useEffect, useRef, useState, type MouseEvent } from "react";
 import {
   AppWindow,
   Cloud,
@@ -10,9 +10,10 @@ import {
   X,
   XSquare,
 } from "lucide-react";
-import { welcomeTab, type GroupNode, type PaneTab } from "../lib/layout";
+import { useShallow } from "zustand/react/shallow";
+import { findTab, welcomeTab, type GroupNode, type PaneTab } from "../lib/layout";
 import { isCloud } from "../lib/protocols";
-import { beginDrag, isLifted, tabDrag, useDragStore } from "../state/dragStore";
+import { beginDrag, isLifted, markedDrop, tabDrag, useDragStore } from "../state/dragStore";
 import { useUnsavedStore } from "../state/editorRegistry";
 import { useLayoutStore } from "../state/layoutStore";
 import { useTabLabel } from "../hooks/useTabLabel";
@@ -48,6 +49,21 @@ export function TabBar({ group }: { group: GroupNode }) {
   });
   const liftedTabId = useDragStore(({ payload, target }) =>
     payload?.kind === "tab" && isLifted(payload, target) ? payload.tabId : null,
+  );
+  // A tab joining this group from elsewhere: a place opens for it where it will go.
+  const joining = useDragStore(
+    useShallow(({ payload, target, incoming }) => {
+      if (markedDrop(payload, target)?.groupId !== group.id) return null;
+      if (target?.kind === "dock" && target.side !== "center") return null;
+      if (payload?.kind === "tab") return { tabId: payload.tabId, label: payload.label };
+      return incoming ? { tabId: null, label: incoming.label, kind: incoming.kind } : null;
+    }),
+  );
+  const joiningKind = useLayoutStore((state) =>
+    joining?.tabId ? findTab(state.root, joining.tabId)?.kind : joining?.kind,
+  );
+  const ghost = joining && (
+    <TabGhost key="ghost" label={joining.label} kind={joiningKind ?? "welcome"} />
   );
 
   const menuItems = (tab: PaneTab): MenuItem[] => {
@@ -120,19 +136,24 @@ export function TabBar({ group }: { group: GroupNode }) {
       }}
     >
       {group.tabs.map((tab, index) => (
-        <TabButton
-          key={tab.id}
-          tab={tab}
-          selected={tab.id === group.activeTabId}
-          lifted={tab.id === liftedTabId}
-          dropBefore={dropIndex === index}
-          dropAfter={dropIndex === group.tabs.length && index === group.tabs.length - 1}
-          onContextMenu={(event) => {
-            event.preventDefault();
-            setMenu({ x: event.clientX, y: event.clientY, tab });
-          }}
-        />
+        <Fragment key={tab.id}>
+          {dropIndex === index && ghost}
+          <TabButton
+            tab={tab}
+            selected={tab.id === group.activeTabId}
+            lifted={tab.id === liftedTabId}
+            dropBefore={!joining && dropIndex === index}
+            dropAfter={
+              !joining && dropIndex === group.tabs.length && index === group.tabs.length - 1
+            }
+            onContextMenu={(event) => {
+              event.preventDefault();
+              setMenu({ x: event.clientX, y: event.clientY, tab });
+            }}
+          />
+        </Fragment>
       ))}
+      {dropIndex === group.tabs.length && ghost}
       <button
         type="button"
         className="icon-button tab-add"
@@ -150,6 +171,20 @@ export function TabBar({ group }: { group: GroupNode }) {
           onClose={() => setMenu(null)}
         />
       )}
+    </div>
+  );
+}
+
+/**
+ * Where a pane dropped now would join the tabs, as a tab of its own: it opens a place between
+ * the tabs, moving on as the pointer does, and glows until the drop.
+ */
+function TabGhost({ label, kind }: { label: string; kind: PaneTab["kind"] }) {
+  const Icon = TAB_ICONS[kind];
+  return (
+    <div className="tab-button tab-ghost" aria-hidden>
+      <Icon size={14} className="tab-icon" />
+      <span className="tab-label">{label}</span>
     </div>
   );
 }
