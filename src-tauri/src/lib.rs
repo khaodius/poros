@@ -24,6 +24,7 @@ pub mod ssh;
 pub mod stall;
 pub mod storage;
 pub mod sync;
+pub mod system_icons;
 pub mod terminal;
 pub mod text;
 pub mod themes;
@@ -237,6 +238,7 @@ pub fn run() {
             commands::theme_import,
             commands::themes_open_folder,
             commands::fonts_list,
+            commands::system_icons,
             commands::editor_open,
             commands::editor_load,
             commands::editor_adopt,

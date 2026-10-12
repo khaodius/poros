@@ -15,7 +15,8 @@ export function DropMarker({ side, style }: { side: DropSide; style: CSSProperti
   const Icon = side === "center" ? Layers : side === "left" || side === "right" ? Columns2 : Rows2;
   return (
     <div className={`dock-drop is-${side === "center" ? "merge" : "split"}`} style={style}>
-      <span className="dock-drop-badge">
+      {/* Pops up again as the drop changes. */}
+      <span key={side} className="dock-drop-badge">
         <Icon size={15} />
         {DROP_LABELS[side]}
       </span>

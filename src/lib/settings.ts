@@ -2,7 +2,12 @@
 // cloud sections; the interface, appearance, log, sync, updates and automation sections are
 // stored as given, so they are checked here.
 
-import { DETAIL_COLUMNS, type DetailColumn } from "./columns";
+import {
+  DETAIL_COLUMNS,
+  sanitizeColumnWidths,
+  type ColumnWidths,
+  type DetailColumn,
+} from "./columns";
 import { DEFAULT_SYNC_OPTIONS, legacySyncOptions, sanitizeSyncOptions } from "./rsyncOptions";
 import { SORT_KEYS, type SortSpec } from "./sort";
 import type { ExistsAction, LogLevel, PowerAction, SyncDirection, SyncOptions } from "./types";
@@ -114,6 +119,7 @@ export interface InterfaceSettings {
   sort: SortSpec;
   dateFormat: DateFormat;
   hiddenColumns: DetailColumn[];
+  columnWidths: ColumnWidths;
 }
 
 export interface AppearanceSettings {
@@ -127,6 +133,10 @@ export interface AppearanceSettings {
   radius: number | null;
   rowHeight: number;
   stripedRows: boolean;
+  /** File lists show the operating system's icons rather than Poros's. */
+  systemIcons: boolean;
+  /** The mouse wheel glides lists and panels rather than jumping. */
+  smoothScrolling: boolean;
 }
 
 export interface LogSettings {
@@ -273,6 +283,7 @@ export const DEFAULT_SETTINGS: Settings = {
     sort: { key: "name", direction: 1 },
     dateFormat: "minutes",
     hiddenColumns: [],
+    columnWidths: {},
   },
   appearance: {
     theme: "builtin:system",
@@ -282,6 +293,8 @@ export const DEFAULT_SETTINGS: Settings = {
     radius: null,
     rowHeight: 24,
     stripedRows: false,
+    systemIcons: false,
+    smoothScrolling: false,
   },
   log: {
     maxLines: 5000,
@@ -361,6 +374,7 @@ export function sanitizeSettings(stored: unknown): Settings {
     options.sort = DEFAULT_SETTINGS.interface.sort;
   }
   options.hiddenColumns = DETAIL_COLUMNS.filter((column) => options.hiddenColumns.includes(column));
+  options.columnWidths = sanitizeColumnWidths(asSection(source.interface).columnWidths);
 
   const appearance = settings.appearance;
   const storedAppearance = asSection(source.appearance);

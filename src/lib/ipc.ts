@@ -237,6 +237,19 @@ export const fonts = {
   list: () => call<FontFamily[]>("fonts_list"),
 };
 
+/** A file to show the system's icon for; mirrors `IconRequest` in system_icons.rs. */
+export interface SystemIconRequest {
+  name: string;
+  folder: boolean;
+  link: boolean;
+}
+
+export const systemIcons = {
+  /** Each icon as a PNG data URL, `size` pixels square, or null where the system has none. */
+  get: (requests: SystemIconRequest[], size: number) =>
+    call<(string | null)[]>("system_icons", { requests, size }),
+};
+
 export const editor = {
   open: (location: DocumentLocation) => call<DocumentInfo>("editor_open", { location }),
   /** Reads the file; this window becomes the document's owner. */

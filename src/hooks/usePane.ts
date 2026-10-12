@@ -48,6 +48,8 @@ export interface PaneController {
   selectOnly: (path: string) => void;
   toggleSelected: (path: string) => void;
   selectRangeTo: (path: string) => void;
+  /** Adds the rows from the anchor to `path` and keeps the rest of the selection. */
+  addRangeTo: (path: string) => void;
   selectAll: () => void;
   clearSelection: () => void;
   moveCursor: (delta: number, extendSelection: boolean) => void;
@@ -283,6 +285,17 @@ export function usePane(
     [anchorPath, rangeBetween],
   );
 
+  const addRangeTo = useCallback(
+    (path: string) => {
+      const anchor = anchorPath ?? cursorPath ?? path;
+      const range = rangeBetween(anchor, path);
+      setSelection((current) => new Set([...current, ...range]));
+      setAnchorPath(anchor);
+      setCursorPath(path);
+    },
+    [anchorPath, cursorPath, rangeBetween],
+  );
+
   const selectAll = useCallback(() => {
     setSelection(new Set(visibleEntries.map((entry) => entry.path)));
   }, [visibleEntries]);
@@ -371,6 +384,7 @@ export function usePane(
     selectOnly,
     toggleSelected,
     selectRangeTo,
+    addRangeTo,
     selectAll,
     clearSelection,
     moveCursor,

@@ -34,6 +34,7 @@ use crate::sync::{
     OptionCheck, SyncDirection, SyncManager, SyncOptions, SyncPlanView, SyncRequest,
     SyncRunRequest, SyncRunSummary,
 };
+use crate::system_icons::{self, IconRequest};
 use crate::terminal::{Sink, TerminalEvent, TerminalInfo, TerminalManager};
 use crate::themes::{self, ThemeFile, ThemeStore};
 use crate::transfer::{
@@ -566,6 +567,15 @@ pub fn themes_open_folder(themes: State<'_, ThemeStore>) -> AppResult<()> {
 #[tauri::command]
 pub async fn fonts_list() -> AppResult<Vec<FontFamily>> {
     Ok(tokio::task::spawn_blocking(fonts::installed_families).await?)
+}
+
+#[tauri::command]
+pub async fn system_icons(
+    app: AppHandle,
+    requests: Vec<IconRequest>,
+    size: u32,
+) -> AppResult<Vec<Option<String>>> {
+    system_icons::icons(&app, requests, size).await
 }
 
 #[tauri::command]

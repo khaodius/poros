@@ -3,6 +3,28 @@
 Installers for every version are attached to its
 [release](https://github.com/khaodius/poros/releases), with SHA-256 checksums.
 
+## 0.4.8 - 2026-10-12
+
+- **Ctrl + Shift + click adds a range.** It selects every row from the one last clicked to the
+  one you click and keeps the rows already selected, as in Windows Explorer, so Ctrl + click one
+  file and Ctrl + Shift + click another to fill in the rows between them.
+- **Resize the file list's columns** by dragging the line before a heading. The name column gives
+  or takes the room, so the line follows the pointer. Double-click the line to fit the column to
+  what it shows. Widths are remembered, and Reset column widths in a heading's right-click menu
+  puts them back.
+- **System file icons.** Settings > Appearance can show the icons Windows Explorer uses for each
+  type of file, or your Linux desktop's icon theme, in place of Poros's own, for files on servers
+  too.
+- **Smooth scrolling.** Settings > Appearance can make the mouse wheel glide file lists, the log
+  and other panels rather than jump. Touchpads scroll as before.
+- **Copy the whole path.** The path bar keeps room after the last folder however long the path, so
+  a click there turns it into a field with the whole path selected. A path too long to show keeps
+  its end in view and fades out at its start.
+- **Merging a pane shows where its tab goes.** Dragged onto another pane's tab bar, the pane
+  shrinks away into a tab that opens between the tabs where it will land, and the pane it joins
+  lights up with Merge as tab. Dropping a pane on the middle of another opens its tab at the end
+  of that pane's tab bar the same way.
+
 ## 0.4.7 - 2026-10-12
 
 - **A dragged pane drops where the pointer is.** Over a pane, the outer third on each side splits

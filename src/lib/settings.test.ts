@@ -66,6 +66,19 @@ describe("sanitizeSettings", () => {
     expect(sorted.interface.sort).toEqual({ key: "type", direction: -1 });
   });
 
+  it("keeps the column widths of known columns, within limits", () => {
+    const widths = sanitizeSettings({
+      interface: {
+        columnWidths: { size: 120.4, type: 2, modified: 5000, name: 300, owner: "wide" },
+      },
+    }).interface.columnWidths;
+    expect(widths).toEqual({ size: 120, type: 40, modified: 640 });
+    expect(sanitizeSettings({ interface: { columnWidths: [90] } }).interface.columnWidths).toEqual(
+      {},
+    );
+    expect(sanitizeSettings({}).interface.columnWidths).toEqual({});
+  });
+
   it("checks the synchronization defaults", () => {
     const sync = sanitizeSettings({
       sync: {

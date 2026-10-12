@@ -26,6 +26,7 @@ import { WindowControls } from "./components/WindowControls";
 import { Workspace } from "./components/Workspace";
 import { isSideButton } from "./hooks/useBackForwardButtons";
 import { useDragPreviewOnDesktop } from "./hooks/useDragPreviewOnDesktop";
+import { useSmoothScrolling } from "./hooks/useSmoothScrolling";
 import { useTabDragsBetweenWindows } from "./hooks/useTabDragsBetweenWindows";
 import { useWindowMaximized } from "./hooks/useWindowMaximized";
 import { EMPTY_DRAFT } from "./lib/connectDraft";
@@ -433,6 +434,7 @@ export function App() {
   useShortcuts();
   useSideButtonsInPanes();
   useFontSizeShortcuts();
+  useSmoothScrolling(useSettingsStore((state) => state.settings.appearance.smoothScrolling));
   useUpdateCheckOnStart(ready);
   const systemTitleBar = useSystemTitleBar();
   const maximized = useWindowMaximized();

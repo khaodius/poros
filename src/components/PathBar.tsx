@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronRight } from "lucide-react";
 import type { PathStyle } from "../lib/fileSource";
 import { breadcrumbs } from "../lib/path";
@@ -17,6 +17,8 @@ export function PathBar({ path, pathStyle, editRequest, onNavigate, onDone }: Pa
   const [draft, setDraft] = useState("");
   const [handledEditRequest, setHandledEditRequest] = useState(editRequest);
   const inputRef = useRef<HTMLInputElement>(null);
+  const crumbsRef = useRef<HTMLDivElement>(null);
+  const [clipped, setClipped] = useState(false);
 
   const startEditing = () => {
     setDraft(path ?? "");
@@ -31,6 +33,22 @@ export function PathBar({ path, pathStyle, editRequest, onNavigate, onDone }: Pa
   useEffect(() => {
     if (editing) inputRef.current?.select();
   }, [editing]);
+
+  // A long path shows its end, the folder on show, and fades out where its start is cut off.
+  useLayoutEffect(() => {
+    const crumbs = crumbsRef.current;
+    if (!crumbs) return;
+    const measure = () => {
+      const first = crumbs.firstElementChild;
+      setClipped(
+        !!first && first.getBoundingClientRect().left < crumbs.getBoundingClientRect().left - 0.5,
+      );
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(crumbs);
+    return () => observer.disconnect();
+  }, [editing, path]);
 
   if (editing) {
     return (
@@ -61,23 +79,30 @@ export function PathBar({ path, pathStyle, editRequest, onNavigate, onDone }: Pa
   }
 
   const crumbs = path ? breadcrumbs(path, pathStyle) : [];
+  // The space after the crumbs is always there, so the whole path can be picked up to copy.
   return (
-    <div className="path-bar" onClick={startEditing} title="Click to type a path (Ctrl+L)">
-      {crumbs.map((crumb, index) => (
-        <span key={crumb.path} className="crumb-group">
-          {index > 0 && <ChevronRight size={12} className="crumb-separator" />}
-          <button
-            type="button"
-            className="crumb"
-            onClick={(event) => {
-              event.stopPropagation();
-              void onNavigate(crumb.path);
-            }}
-          >
-            {crumb.label}
-          </button>
-        </span>
-      ))}
+    <div
+      className="path-bar"
+      onClick={startEditing}
+      title="Click to type or copy the path (Ctrl+L)"
+    >
+      <div ref={crumbsRef} className={`crumbs ${clipped ? "is-clipped" : ""}`}>
+        {crumbs.map((crumb, index) => (
+          <span key={crumb.path} className="crumb-group">
+            {index > 0 && <ChevronRight size={12} className="crumb-separator" />}
+            <button
+              type="button"
+              className="crumb"
+              onClick={(event) => {
+                event.stopPropagation();
+                void onNavigate(crumb.path);
+              }}
+            >
+              {crumb.label}
+            </button>
+          </span>
+        ))}
+      </div>
     </div>
   );
 }
