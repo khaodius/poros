@@ -7,10 +7,8 @@ import {
   changesLayout,
   dropSide,
   floatingFrame,
-  floatingRect,
   groupNearest,
   groupRects,
-  rectCenter,
   TAB_BAR_HEIGHT,
   type GroupRect,
   type Point,
@@ -156,18 +154,26 @@ function tabBarAt(groups: GroupRect[], x: number, y: number): DropTarget | null 
 }
 
 /**
- * A tab bar under the pointer, else the group under the middle of the lifted pane: dropped over
+ * A tab bar under the pointer, else the group under the pointer: dropped with the pointer over
  * the group's middle it joins the group's tabs, and toward an edge it splits the group there.
+ * The pointer rather than the lifted pane decides, as the pane hangs below and beside it, so
+ * the drop always lands under the pointer whatever part of the pane is past the dock's edge.
  */
-function tabTarget({ clientX: x, clientY: y }: DragPointer, payload: TabDrag): DropTarget | null {
+function tabTarget(
+  { clientX: x, clientY: y }: DragPointer,
+  payload: TabDrag,
+  current: DropTarget | null,
+): DropTarget | null {
   const { root } = useLayoutStore.getState();
   const groups = groupRects(root, payload.dock);
   const bar = tabBarAt(groups, x, y);
   if (bar) return bar;
-  const center = rectCenter(floatingRect(payload, { x, y }));
-  const under = contains(payload.dock, center) ? groupNearest(groups, center) : null;
+  const pointer = { x, y };
+  const under = contains(payload.dock, pointer) ? groupNearest(groups, pointer) : null;
   if (!under) return null;
-  const side = dropSide(under.rect, center);
+  const held =
+    current?.kind === "dock" && current.groupId === under.groupId ? current.side : undefined;
+  const side = dropSide(under.rect, pointer, held);
   return changesLayout(root, payload.tabId, under.groupId, side)
     ? { kind: "dock", groupId: under.groupId, side }
     : null;
@@ -196,15 +202,22 @@ function outsideWindow({ clientX: x, clientY: y }: DragPointer): boolean {
   return x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight;
 }
 
-/** Finds what is under the pointer: a folder row, a pane, a tab bar slot or a dock zone. */
-export function hitTest(position: DragPointer, payload: DragPayload): DropTarget | null {
+/**
+ * Finds what is under the pointer: a folder row, a pane, a tab bar slot or a dock zone.
+ * `current` is the target so far, whose dock zone holds while the pointer stays near it.
+ */
+export function hitTest(
+  position: DragPointer,
+  payload: DragPayload,
+  current: DropTarget | null = null,
+): DropTarget | null {
   const { clientX: x, clientY: y } = position;
   if (outsideWindow(position)) {
     if (payload.kind !== "tab") return null;
     const other = windowUnder(position.screen);
     return other ? { kind: "window", ...other } : { kind: "outside", screen: position.screen };
   }
-  if (payload.kind === "tab") return tabTarget(position, payload);
+  if (payload.kind === "tab") return tabTarget(position, payload, current);
   const element = document.elementFromPoint(x, y);
   if (!element) return null;
   const pane = element.closest<HTMLElement>("[data-drop-pane]");
@@ -221,6 +234,32 @@ export function swallowNextClick(): void {
   };
   window.addEventListener("click", swallow, { capture: true, once: true });
   window.setTimeout(() => window.removeEventListener("click", swallow, { capture: true }), 0);
+}
+
+/**
+ * Keeps a button pressed to cancel a drag from also opening a menu: the right button opens one
+ * as it goes down on Linux and macOS, and as it comes up on Windows. A new press, or another
+ * program taking the pointer, ends the wait.
+ */
+export function swallowNextContextMenu(): void {
+  const swallow = (event: MouseEvent) => {
+    event.stopPropagation();
+    event.preventDefault();
+    stop();
+  };
+  const stop = () => {
+    window.removeEventListener("contextmenu", swallow, { capture: true });
+    window.removeEventListener("pointerdown", stop, { capture: true });
+    window.removeEventListener("blur", stop);
+  };
+  window.addEventListener("contextmenu", swallow, { capture: true });
+  window.addEventListener("pointerdown", stop, { capture: true });
+  window.addEventListener("blur", stop);
+}
+
+/** Whether a button other than the main one is down, such as a right click during a drag. */
+export function holdsOtherButton(event: PointerEvent): boolean {
+  return (event.buttons & ~1) !== 0;
 }
 
 /**
@@ -250,7 +289,7 @@ export function beginDrag(
     useDragStore.setState({
       payload: dragging,
       pointer: { x: position.clientX, y: position.clientY },
-      target: hitTest(position, dragging),
+      target: hitTest(position, dragging, useDragStore.getState().target),
     });
   };
   // Off the window a tab drag follows the system cursor: some webviews stop reporting the
@@ -278,6 +317,15 @@ export function beginDrag(
     // Released where this window could not see it: the press is over, and the drag with it.
     if (!(moveEvent.buttons & 1)) {
       stop();
+      return;
+    }
+    // Another button, such as a right click, cancels the drag as Escape does, as the system's
+    // own drag and drop does. Left running, the drag can lose the pointer as that button comes
+    // up, and with it the release that would drop the tab.
+    if (holdsOtherButton(moveEvent)) {
+      const cancelled = dragging !== null;
+      stop();
+      if (cancelled) swallowNextContextMenu();
       return;
     }
     if (!dragging) {

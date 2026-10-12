@@ -62,14 +62,28 @@ describe("docking geometry", () => {
     expect(marker("bottom")).toEqual(rect(508, 344, 500, 296));
   });
 
-  it("merges in the middle of a group and splits toward its edges", () => {
+  it("merges in the middle third of a group and splits in the outer thirds", () => {
     const target = rect(0, 0, 400, 400);
     expect(dropSide(target, { x: 200, y: 200 })).toBe("center");
-    expect(dropSide(target, { x: 110, y: 290 })).toBe("center");
-    expect(dropSide(target, { x: 90, y: 200 })).toBe("left");
-    expect(dropSide(target, { x: 320, y: 250 })).toBe("right");
-    expect(dropSide(target, { x: 200, y: 20 })).toBe("top");
-    expect(dropSide(target, { x: 250, y: 380 })).toBe("bottom");
+    expect(dropSide(target, { x: 140, y: 260 })).toBe("center");
+    expect(dropSide(target, { x: 120, y: 200 })).toBe("left");
+    expect(dropSide(target, { x: 300, y: 250 })).toBe("right");
+    expect(dropSide(target, { x: 200, y: 100 })).toBe("top");
+    expect(dropSide(target, { x: 250, y: 300 })).toBe("bottom");
+  });
+
+  it("holds the zone the pointer is in until it is clearly in another", () => {
+    const target = rect(0, 0, 400, 400);
+    // The bottom third starts at y 266.7.
+    expect(dropSide(target, { x: 200, y: 260 })).toBe("center");
+    expect(dropSide(target, { x: 200, y: 260 }, "bottom")).toBe("bottom");
+    expect(dropSide(target, { x: 200, y: 250 }, "bottom")).toBe("center");
+    expect(dropSide(target, { x: 200, y: 275 }, "center")).toBe("center");
+    expect(dropSide(target, { x: 200, y: 285 }, "center")).toBe("bottom");
+    // Near the corner, between the right and bottom edges.
+    expect(dropSide(target, { x: 330, y: 338 })).toBe("bottom");
+    expect(dropSide(target, { x: 330, y: 338 }, "right")).toBe("right");
+    expect(dropSide(target, { x: 330, y: 370 }, "right")).toBe("bottom");
   });
 
   it("ignores drops that would leave the layout as it is", () => {

@@ -1,4 +1,5 @@
 import {
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -109,6 +110,94 @@ function detailColumn(key: DetailColumn, dateFormat: DateFormat): Column {
 
 /** Columns kept longest when the list gets narrow come first. */
 const FIT_PRIORITY: DetailColumn[] = ["size", "modified", "type", "permissions", "owner"];
+
+interface RowEvents {
+  onPointerDown: (event: ReactPointerEvent<HTMLElement>, entry: FileEntry) => void;
+  onClick: (event: MouseEvent, entry: FileEntry) => void;
+  onOpen: (entry: FileEntry) => void;
+  onContextMenu: (event: MouseEvent, entry: FileEntry) => void;
+}
+
+interface FileRowProps {
+  entry: FileEntry;
+  columns: Column[];
+  gridTemplateColumns: string;
+  top: number;
+  height: number;
+  odd: boolean;
+  selected: boolean;
+  cursor: boolean;
+  cut: boolean;
+  /** Files dragged over the list would drop into this folder. */
+  dropTarget: boolean;
+  events: RowEvents;
+}
+
+/**
+ * A file's row. Rows render again only when what they show changes, so selecting rows, as a
+ * box drawn across the list does on every row it reaches, touches only those rows.
+ */
+const FileRow = memo(function FileRow({
+  entry,
+  columns,
+  gridTemplateColumns,
+  top,
+  height,
+  odd,
+  selected,
+  cursor,
+  cut,
+  dropTarget,
+  events,
+}: FileRowProps) {
+  const folder = isDirLike(entry);
+  return (
+    <div
+      className={[
+        "file-row",
+        odd && "is-odd",
+        selected && "is-selected",
+        cursor && "is-cursor",
+        entry.hidden && "is-hidden",
+        cut && "is-cut",
+        dropTarget && "is-drop-folder",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      style={{
+        transform: `translateY(${top}px)`,
+        width: `calc(100% - ${DROP_STRIP_WIDTH}px)`,
+        height,
+        gridTemplateColumns,
+      }}
+      role="row"
+      aria-selected={selected}
+      title={entry.name}
+      data-drop-folder={folder ? entry.path : undefined}
+      onPointerDown={(event) => events.onPointerDown(event, entry)}
+      onClick={(event) => events.onClick(event, entry)}
+      onDoubleClick={() => events.onOpen(entry)}
+      onContextMenu={(event) => events.onContextMenu(event, entry)}
+    >
+      {columns.map((column) =>
+        column.key === "name" ? (
+          <span key="name" className="file-cell file-name" role="gridcell">
+            <FileIcon entry={entry} />
+            <span className="file-name-text">{entry.name}</span>
+          </span>
+        ) : (
+          <span
+            key={column.key}
+            role="gridcell"
+            className={`file-cell file-${column.key} ${column.align === "end" ? "align-end" : ""}`}
+          >
+            {column.render(entry)}
+          </span>
+        ),
+      )}
+    </div>
+  );
+});
 
 interface FileListProps extends FileListActions {
   pane: PaneController;
@@ -440,6 +529,27 @@ export function FileList({
     actions.onContextMenu({ x: event.clientX, y: event.clientY }, entry);
   };
 
+  // Rows get handlers that stay the same from render to render and call the latest ones, so a
+  // row renders again only when it shows something new.
+  const latestRowEvents = useRef<RowEvents | null>(null);
+  useLayoutEffect(() => {
+    latestRowEvents.current = {
+      onPointerDown: handleRowPointerDown,
+      onClick: handleRowClick,
+      onOpen: openEntry,
+      onContextMenu: handleRowContextMenu,
+    };
+  });
+  const rowEvents = useMemo<RowEvents>(
+    () => ({
+      onPointerDown: (event, entry) => latestRowEvents.current?.onPointerDown(event, entry),
+      onClick: (event, entry) => latestRowEvents.current?.onClick(event, entry),
+      onOpen: (entry) => latestRowEvents.current?.onOpen(entry),
+      onContextMenu: (event, entry) => latestRowEvents.current?.onContextMenu(event, entry),
+    }),
+    [],
+  );
+
   /** The Menu key or Shift+F10: the menu for the cursor's row, or the selection, beside it. */
   const showKeyboardMenu = () => {
     const list = scrollRef.current;
@@ -519,19 +629,18 @@ export function FileList({
       >
         <div ref={contentRef} style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
           {virtualizer.getVirtualItems().map((item) => {
-            const style = {
-              transform: `translateY(${item.start}px)`,
-              width: `calc(100% - ${DROP_STRIP_WIDTH}px)`,
-              height: rowHeight,
-              gridTemplateColumns,
-            };
             if (showParentRow && item.index === 0) {
               const parent = pane.listing?.parent ?? undefined;
               return (
                 <div
                   key="parent"
                   className={`file-row file-row-parent ${dropFolder && dropFolder === parent ? "is-drop-folder" : ""}`}
-                  style={style}
+                  style={{
+                    transform: `translateY(${item.start}px)`,
+                    width: `calc(100% - ${DROP_STRIP_WIDTH}px)`,
+                    height: rowHeight,
+                    gridTemplateColumns,
+                  }}
                   role="row"
                   data-drop-folder={parent}
                   onDoubleClick={pane.goUp}
@@ -551,64 +660,24 @@ export function FileList({
               );
             }
             const entry = entries[item.index - rowOffset];
-            const selected = pane.selection.has(entry.path);
-            const isCursor = pane.cursorPath === entry.path;
-            const folder = isDirLike(entry);
             return (
-              <div
+              <FileRow
                 key={entry.path}
-                className={[
-                  "file-row",
-                  item.index % 2 === 1 && "is-odd",
-                  selected && "is-selected",
-                  isCursor && "is-cursor",
-                  entry.hidden && "is-hidden",
-                  cutPaths?.has(entry.path) && "is-cut",
-                  folder && dropFolder === entry.path && "is-drop-folder",
-                ]
-                  .filter(Boolean)
-                  .join(" ")}
-                style={style}
-                role="row"
-                aria-selected={selected}
-                title={entry.name}
-                data-drop-folder={folder ? entry.path : undefined}
-                onPointerDown={(event) => handleRowPointerDown(event, entry)}
-                onClick={(event) => handleRowClick(event, entry)}
-                onDoubleClick={() => openEntry(entry)}
-                onContextMenu={(event) => handleRowContextMenu(event, entry)}
-              >
-                {columns.map((column) =>
-                  column.key === "name" ? (
-                    <span key="name" className="file-cell file-name" role="gridcell">
-                      <FileIcon entry={entry} />
-                      <span className="file-name-text">{entry.name}</span>
-                    </span>
-                  ) : (
-                    <span
-                      key={column.key}
-                      role="gridcell"
-                      className={`file-cell file-${column.key} ${column.align === "end" ? "align-end" : ""}`}
-                    >
-                      {column.render(entry)}
-                    </span>
-                  ),
-                )}
-              </div>
+                entry={entry}
+                columns={columns}
+                gridTemplateColumns={gridTemplateColumns}
+                top={item.start}
+                height={rowHeight}
+                odd={item.index % 2 === 1}
+                selected={pane.selection.has(entry.path)}
+                cursor={pane.cursorPath === entry.path}
+                cut={cutPaths?.has(entry.path) ?? false}
+                dropTarget={isDirLike(entry) && dropFolder === entry.path}
+                events={rowEvents}
+              />
             );
           })}
-          {selectionBox.box && (
-            <div
-              className="selection-box"
-              style={{
-                left: selectionBox.box.left,
-                top: selectionBox.box.top,
-                width: selectionBox.box.width,
-                height: selectionBox.box.height,
-              }}
-              aria-hidden
-            />
-          )}
+          <div ref={selectionBox.boxRef} className="selection-box" aria-hidden />
         </div>
         {entries.length === 0 && <p className="file-list-empty">{emptyMessage}</p>}
       </div>

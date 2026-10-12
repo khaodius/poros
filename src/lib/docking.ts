@@ -34,9 +34,13 @@ export interface Rect {
 export const DOCK_GAP = 8;
 /** Matches the .tab-bar height. */
 export const TAB_BAR_HEIGHT = 31;
-/** In halves of a group's size: a pane centered this close to a group's center merges into it
- * as a tab, and farther out it splits the group on the side it leans toward. */
-const MERGE_ZONE = 0.5;
+/** In halves of a group's size: a pane dropped with the pointer this close to a group's center
+ * merges into it as a tab, and farther out, in the outer third, it splits the group on that
+ * side. */
+const MERGE_ZONE = 1 / 3;
+/** How far, in pixels, the pointer goes past the edge of the zone it is in before another zone
+ * of the same group takes over, so the marker holds still while the pointer wavers on a line. */
+const ZONE_HOLD = 12;
 /** The lifted pane is never larger than this share of the dock, so the layout under it shows. */
 const FLOATING_MAX = { width: 0.5, height: 0.6 };
 /** How near an edge of the window, in pixels, a lifted pane starts turning into a window. */
@@ -110,14 +114,30 @@ export function groupNearest(groups: GroupRect[], point: Point): GroupRect | nul
   return nearest;
 }
 
-/** Where a pane centered on `point` drops into `target`: its middle merges, its edges split. */
-export function dropSide(target: Rect, point: Point): DropSide {
+function zoneAt(target: Rect, point: Point): DropSide {
   const center = rectCenter(target);
   const x = (point.x - center.x) / (target.width / 2);
   const y = (point.y - center.y) / (target.height / 2);
   if (Math.max(Math.abs(x), Math.abs(y)) < MERGE_ZONE) return "center";
   if (Math.abs(x) >= Math.abs(y)) return x < 0 ? "left" : "right";
   return y < 0 ? "top" : "bottom";
+}
+
+/**
+ * Where a pane dropped with the pointer at `point` lands in `target`: its middle merges, its
+ * edges split. While the pointer stays within `ZONE_HOLD` pixels of the zone it was in,
+ * `current`, that zone holds.
+ */
+export function dropSide(target: Rect, point: Point, current?: DropSide): DropSide {
+  const side = zoneAt(target, point);
+  if (current === undefined || side === current) return side;
+  const nearby = [
+    { x: point.x - ZONE_HOLD, y: point.y },
+    { x: point.x + ZONE_HOLD, y: point.y },
+    { x: point.x, y: point.y - ZONE_HOLD },
+    { x: point.x, y: point.y + ZONE_HOLD },
+  ];
+  return nearby.some((near) => zoneAt(target, near) === current) ? current : side;
 }
 
 /** Whether two layouts hold the same tabs in the same arrangement, whatever their sizes. */

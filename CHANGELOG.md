@@ -3,6 +3,19 @@
 Installers for every version are attached to its
 [release](https://github.com/khaodius/poros/releases), with SHA-256 checksums.
 
+## 0.4.7 - 2026-10-12
+
+- **A dragged pane drops where the pointer is.** Over a pane, the outer third on each side splits
+  it that way and the middle merges the tab in, measured at the pointer rather than at the middle
+  of the lifted pane. Dragging a pane low over another one no longer shows nothing, then Split
+  down, then nothing again as the pointer rises a little. The marker also holds still while the
+  pointer wavers on the line between two zones.
+- **Right-clicking during a drag cancels it**, as Escape does and as Windows' own drag and drop
+  does, and opens no menu. With the pointer over another program's window, the drag used to
+  stall for a few seconds instead. The same goes for the box that selects files.
+- **The box that selects files keeps up with the pointer.** It is drawn as the pointer moves
+  instead of a frame later, and selecting rows redraws only the rows that change.
+
 ## 0.4.6 - 2026-10-11
 
 - **Updates download in the background.** Choosing Update, whether Poros offered it at start-up
