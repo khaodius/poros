@@ -1,9 +1,9 @@
 import { useEffect } from "react";
-import { DOCK_GAP, dropPlacement, placementRect, type Point, type Rect } from "../lib/docking";
+import type { Point } from "../lib/docking";
 import { dragPreview, onDragPreviewShown } from "../lib/ipc";
-import { findTab, layoutPlacements } from "../lib/layout";
+import { findTab, type DropSide } from "../lib/layout";
 import { takePanePicture, type PanePicture } from "../lib/panePicture";
-import type { PreviewDrop, PreviewPlacement } from "../lib/types";
+import type { PreviewPlacement } from "../lib/types";
 import { onScreen, scaleAt } from "../lib/windowAreas";
 import {
   isLifted,
@@ -30,26 +30,7 @@ interface PreviewFrame {
   width: number;
   height: number;
   toward: number;
-  drop: PreviewDrop | null;
-}
-
-/**
- * The marker of a drop into the dock, placed on the lifted pane at `pane`, so the preview draws
- * it over the pane as this window does.
- */
-function dropOnPane(target: DropTarget | null, dock: Rect, pane: Rect): PreviewDrop | null {
-  if (target?.kind !== "dock") return null;
-  const placements = layoutPlacements(useLayoutStore.getState().root, DOCK_GAP);
-  const group = placements.get(target.groupId);
-  if (!group) return null;
-  const marker = placementRect(dropPlacement(group, target.side), { ...dock, left: 0, top: 0 });
-  return {
-    side: target.side,
-    left: marker.left - pane.left,
-    top: marker.top - pane.top,
-    width: marker.width,
-    height: marker.height,
-  };
+  drop: DropSide | null;
 }
 
 /**
@@ -89,7 +70,7 @@ function previewFrame(
     top + rect.height <= window.innerHeight;
   const corner = inside ? null : onScreen({ x: left - room, y: top - room });
   if (!corner) return null;
-  const drop = dropOnPane(target, payload.dock, rect);
+  const drop = target?.kind === "dock" ? target.side : null;
   return { ...corner, width: rect.width, height: rect.height, toward, drop };
 }
 

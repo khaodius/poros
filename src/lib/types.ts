@@ -802,8 +802,8 @@ export interface PreviewContent {
   toward: number;
   /** The drag whose picture of the pane to show. */
   drag: number;
-  /** The marker of where the pane will land, where it falls on the pane. */
-  drop: PreviewDrop | null;
+  /** How the pane docks where the pointer is, which its title bar names. */
+  drop: "left" | "right" | "top" | "bottom" | "center" | null;
   /** The pane's size, in logical pixels. */
   width: number;
   height: number;
@@ -820,15 +820,6 @@ export interface PreviewSupport {
   available: boolean;
   /** It can be see-through, and so draw the pane as it looks in its window, shadow and all. */
   seeThrough: boolean;
-}
-
-/** A drop marker in the drag preview, placed in its logical pixels. */
-export interface PreviewDrop {
-  side: "left" | "right" | "top" | "bottom" | "center";
-  left: number;
-  top: number;
-  width: number;
-  height: number;
 }
 
 /** Where the drag preview sits on screen and what it shows. */

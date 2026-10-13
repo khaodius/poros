@@ -7,7 +7,7 @@ import type { PreviewContent } from "../lib/types";
 import { matchWindowBackground } from "../lib/windowReveal";
 import { liftedLayers } from "../state/liftedPane";
 import { applyRememberedTheme } from "../state/themeStore";
-import { DropMarker } from "./DropMarker";
+import { DropHint } from "./DropMarker";
 import { TAB_ICONS } from "./tabIcons";
 import { WindowSketch } from "./WindowSketch";
 
@@ -75,12 +75,14 @@ export function DragPreview() {
   const layers = drawn ? liftedLayers(content.toward) : { content: 0, sketch: 1 };
   const { room, drop } = content;
   const pane = { left: room, top: room, width: content.width, height: content.height };
+  // The drop marker lies under the pane, so the window behind draws all of it.
   return (
     <div className={`drag-preview ${seeThrough ? "" : "is-opaque"}`}>
       <div className="dock-floating" style={pane}>
         <div className="dock-floating-title" style={{ opacity: layers.content }}>
           <TabIcon size={14} className={`tab-icon tab-icon-${content.kind}`} />
           <span className="tab-label">{content.label}</span>
+          {drop && <DropHint side={drop} className="dock-floating-hint" iconSize={12} />}
         </div>
       </div>
       <div
@@ -102,14 +104,6 @@ export function DragPreview() {
         />
       )}
       {seeThrough && <div className="dock-floating-shadow" style={pane} />}
-      {drop && (
-        <div className="drag-preview-marker" style={pane}>
-          <DropMarker
-            side={drop.side}
-            style={{ left: drop.left, top: drop.top, width: drop.width, height: drop.height }}
-          />
-        </div>
-      )}
     </div>
   );
 }

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useLastUsedWindow } from "../hooks/useLastUsedWindow";
 import { formatDate, formatSize } from "../lib/format";
 import { transfers } from "../lib/ipc";
 import { jobsIn } from "../lib/transfers";
@@ -14,31 +15,16 @@ const ACTIONS: { action: ExistsAction; label: string }[] = [
   { action: "rename", label: "Keep both" },
 ];
 
-/** Hook for whether this window has the user's attention, so only one window asks. */
-function useWindowFocused(): boolean {
-  const [focused, setFocused] = useState(() => document.hasFocus());
-  useEffect(() => {
-    const onFocus = () => setFocused(true);
-    const onBlur = () => setFocused(false);
-    window.addEventListener("focus", onFocus);
-    window.addEventListener("blur", onBlur);
-    return () => {
-      window.removeEventListener("focus", onFocus);
-      window.removeEventListener("blur", onBlur);
-    };
-  }, []);
-  return focused;
-}
-
 export function ConflictDialog() {
   const snapshot = useTransferStore((state) => state.snapshot);
   const conflicts = useMemo(() => jobsIn(snapshot, ["conflict"]), [snapshot]);
-  const focused = useWindowFocused();
+  // One window asks.
+  const asking = useLastUsedWindow();
   const dateFormat = useSettingsStore((state) => state.settings.interface.dateFormat);
   const [applyToAll, setApplyToAll] = useState(false);
   const [answeredId, setAnsweredId] = useState<number | null>(null);
   const job = conflicts.find((candidate) => candidate.id !== answeredId);
-  if (!job?.conflict || !focused) return null;
+  if (!job?.conflict || !asking) return null;
   const info = job.conflict;
   const others = conflicts.length - 1;
 

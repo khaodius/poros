@@ -9,6 +9,7 @@ import {
   layoutPlacements,
   resizeShares,
   setSizes,
+  type DropSide,
   type Extent,
   type GroupNode,
   type LayoutNode,
@@ -26,7 +27,7 @@ import {
 } from "../state/dragStore";
 import { useLayoutStore } from "../state/layoutStore";
 import { liftedLayers, liftedPane } from "../state/liftedPane";
-import { DropMarker } from "./DropMarker";
+import { DropHint, DropMarker } from "./DropMarker";
 import { TabBar } from "./TabBar";
 import { TabContent } from "./TabContent";
 import { TAB_ICONS } from "./tabIcons";
@@ -79,8 +80,8 @@ interface Resizing {
 /**
  * Groups, resize handles and tab panes are all placed absolutely in one flat list, so moving a
  * tab between groups never remounts its pane, and position changes animate. A dragged tab
- * lifts its pane under the pointer, and the groups stay put while a marker shows where it would
- * land.
+ * lifts its pane under the pointer, and the groups stay put while a marker under the pane shows
+ * where it would land.
  */
 export function DockArea() {
   const root = useLayoutStore((state) => state.root);
@@ -266,6 +267,7 @@ export function DockArea() {
           tab={liftedTab}
           label={drag.payload.label}
           leavingTo={leaving && !away ? target : null}
+          drop={dropTarget?.side ?? null}
           titleOpacity={contentOpacity}
           style={floating}
         />
@@ -273,7 +275,11 @@ export function DockArea() {
       {floating && drag && toward > 0 && (
         <WindowSketch
           className="dock-floating-window"
-          content={{ label: drag.payload.label, kind: liftedTab?.kind ?? "welcome" }}
+          content={{
+            label: drag.payload.label,
+            kind: liftedTab?.kind ?? "welcome",
+            drop: dropTarget?.side ?? null,
+          }}
           style={{ ...floating, opacity: away ? undefined : sketchOpacity }}
         />
       )}
@@ -281,6 +287,7 @@ export function DockArea() {
       {dropTarget && placements.has(dropTarget.groupId) && (
         <DropMarker
           side={dropTarget.side}
+          labelled={!floating || joiningTabs}
           style={placementStyle(
             dropPlacement(placements.get(dropTarget.groupId)!, dropTarget.side),
           )}
@@ -346,6 +353,8 @@ interface FloatingFrameProps {
   label: string;
   /** Where the pane goes when the pointer is outside the window. */
   leavingTo: DropTarget | null;
+  /** How the pane docks where the pointer is in the window. */
+  drop: DropSide | null;
   titleOpacity: number | undefined;
   style: CSSProperties;
 }
@@ -355,7 +364,7 @@ function leavingHint(target: DropTarget): string {
   return target.label === MAIN_WINDOW ? "Move to main window" : "Move to that window";
 }
 
-function FloatingFrame({ tab, label, leavingTo, titleOpacity, style }: FloatingFrameProps) {
+function FloatingFrame({ tab, label, leavingTo, drop, titleOpacity, style }: FloatingFrameProps) {
   const Icon = TAB_ICONS[tab?.kind ?? "welcome"];
   return (
     <div className="dock-floating" style={style}>
@@ -368,6 +377,7 @@ function FloatingFrame({ tab, label, leavingTo, titleOpacity, style }: FloatingF
             {leavingHint(leavingTo)}
           </span>
         )}
+        {drop && <DropHint side={drop} className="dock-floating-hint" iconSize={12} />}
       </div>
     </div>
   );
