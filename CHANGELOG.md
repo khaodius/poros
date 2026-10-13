@@ -3,6 +3,18 @@
 Installers for every version are attached to its
 [release](https://github.com/khaodius/poros/releases), with SHA-256 checksums.
 
+## 0.4.9 - 2026-10-13
+
+- **A dragged pane stays on top of the drop highlight.** The highlight of where the pane will
+  land is drawn under the pane rather than over it, so it no longer tints the pane or cuts across
+  it, and where the pane reaches past the window's edge the two windows no longer draw parts of
+  it a few pixels apart. Split down, Merge as tab and the rest now show in the pane's own title
+  bar.
+- **Replacing files asks at once.** Dropping files on a server that already has them shows the
+  File already exists prompt as soon as the transfer reaches them. It used to wait until the
+  window was clicked again when Windows had not handed the page its focus, which could happen
+  while dragging. The prompt now shows in whichever Poros window was used last.
+
 ## 0.4.8 - 2026-10-12
 
 - **Ctrl + Shift + click adds a range.** It selects every row from the one last clicked to the

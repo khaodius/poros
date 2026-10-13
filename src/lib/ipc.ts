@@ -81,6 +81,8 @@ export const DRAG_PREVIEW_EVENT = "poros://drag-preview";
 export const DRAG_PREVIEW_PICTURE_EVENT = "poros://drag-preview-picture";
 /** Mirrored in src-tauri/src/desktop.rs. Says the drag preview shows a drag's tab. */
 export const DRAG_PREVIEW_SHOWN_EVENT = "poros://drag-preview-shown";
+/** Sent to every window by the window the user turns to, with its label. */
+export const WINDOW_USED_EVENT = "poros://window-used";
 
 /** The label of the window Poros starts with; windows torn out of it get others. */
 export const MAIN_WINDOW = "main";

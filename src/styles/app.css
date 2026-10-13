@@ -742,10 +742,10 @@ input.has-error {
   border-radius: var(--radius);
 }
 
-/* Where a dragged pane will land, drawn over it. */
+/* Where a dragged pane will land, over the panes there and under the lifted pane. */
 .dock-drop {
   position: absolute;
-  z-index: 32;
+  z-index: 29;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -808,8 +808,7 @@ input.has-error {
     transform 160ms ease-out;
 }
 
-/* The lifted pane's edge and shadow, over the drop marker rather than under it: past the
-   window's edge they are drawn by the preview window, which lies over the marker. */
+/* The lifted pane's edge and shadow, over its content. */
 .dock-floating-shadow {
   position: absolute;
   z-index: 33;
@@ -851,6 +850,20 @@ input.has-error {
   font-weight: 500;
 }
 
+/* The drop marker's badge, which the lifted pane carries as it lies over the marker. */
+.dock-floating-hint.is-drop {
+  padding: 3px 9px;
+  color: var(--text-on-accent);
+  font-weight: 600;
+  background: var(--accent);
+  border-radius: 999px;
+}
+
+.dock-floating-hint.is-drop,
+.window-sketch-hint.is-drop {
+  animation: dock-badge-in 220ms cubic-bezier(0.3, 1.4, 0.6, 1);
+}
+
 /* The window a tab dragged out of Poros opens in, drawn at its size and laid out like it. The
    lifted pane turns into it near the window's edge, and the preview on the desktop shows it. */
 .window-sketch {
@@ -882,24 +895,9 @@ input.has-error {
   transition: opacity 120ms ease;
 }
 
-/* The drop marker where it falls on the pane; the window behind draws the rest of it. */
-.drag-preview-marker {
-  position: absolute;
-  z-index: 32;
-  overflow: hidden;
-  border-radius: var(--radius);
-  pointer-events: none;
-}
-
-/* Placed anew as the preview moves, so it keeps still on screen. */
-.drag-preview-marker > .dock-drop {
-  transition: none;
-}
-
 /* Where the window cannot be see-through, the pane fills it, square, with its edge inside. */
 .drag-preview.is-opaque > .dock-floating,
-.drag-preview.is-opaque > .dock-floating-window,
-.drag-preview.is-opaque > .drag-preview-marker {
+.drag-preview.is-opaque > .dock-floating-window {
   border-radius: 0;
 }
 
@@ -1226,6 +1224,8 @@ input.has-error {
 @media (prefers-reduced-motion: reduce) {
   .dock-drop.is-merge,
   .dock-drop-badge,
+  .dock-floating-hint.is-drop,
+  .window-sketch-hint.is-drop,
   .tab-button.tab-ghost {
     animation: none;
   }
