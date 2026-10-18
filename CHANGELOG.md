@@ -3,6 +3,22 @@
 Installers for every version are attached to its
 [release](https://github.com/khaodius/poros/releases), with SHA-256 checksums.
 
+## 0.4.10 - 2026-10-18
+
+- **Copy from programs that take over the mouse.** Text selected in a terminal program that draws
+  its own selection and copies through the terminal, such as tmux in mouse mode or an AI coding
+  assistant, now reaches the clipboard. These programs send the text as an OSC 52 sequence,
+  which the terminal used to ignore. A server can put text on the clipboard this way but never
+  read it. Hold Shift while dragging to select with the terminal itself instead.
+- **The terminal cursor fades.** It fades out and back in rather than snapping on and off, a
+  little slower than before. With reduced motion turned on in the system it blinks as before.
+- **Follow finished transfers.** Follow in the Completed list keeps each transfer in view as it
+  finishes, until you turn it off.
+- **Drag to select transfers.** Dragging across the Queue, Failed or Completed list selects every
+  transfer from the one you pressed on to the one under the pointer. Holding the pointer near or
+  past the list's top or bottom edge scrolls it, and so does the mouse wheel. Hold Ctrl or Shift
+  to add to the selection, and press Esc to cancel.
+
 ## 0.4.9 - 2026-10-13
 
 - **A dragged pane stays on top of the drop highlight.** The highlight of where the pane will

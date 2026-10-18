@@ -33,7 +33,8 @@
 - **File compare** of any two files, side by side with changed words highlighted.
 - **Built-in editor** for text files up to 16 MiB, local or on any server, with syntax highlighting
   and find and replace. Each save uploads the file and warns first if it changed on the server.
-- **SSH terminal** in a tab for any SFTP connection.
+- **SSH terminal** in a tab for any SFTP connection. Programs on the server that copy through the
+  terminal (OSC 52), such as tmux, copy to this computer's clipboard.
 - **Folder sync** one way or both ways with rsync's options, set as defaults, per site and per
   run, or typed as rsync arguments, with a preview of every change and the command line the
   options amount to. See [Folder synchronization](#folder-synchronization).
@@ -245,6 +246,7 @@ The Windows installers are not code-signed yet, so SmartScreen may warn about an
 | Ctrl + Shift + click               | Add the rows from the last one clicked        |
 | Drag beside the names              | Select rows in a box, Ctrl or Shift adds      |
 | Esc, right-click while dragging    | Cancel the drag or the box                    |
+| Drag across transfers              | Select them, Ctrl or Shift adds               |
 | Ctrl + H                           | Show hidden files                             |
 | Menu key, Shift + F10              | Menu for the selection                        |
 | F2                                 | Rename                                        |
@@ -253,6 +255,7 @@ The Windows installers are not code-signed yet, so SmartScreen may warn about an
 | F4                                 | Edit                                          |
 | Ctrl + S                           | Save in the editor                            |
 | Ctrl + Shift + C, Ctrl + Shift + V | Copy, paste in the terminal                   |
+| Shift + drag in the terminal       | Select when a program has taken the mouse     |
 | Alt + Down, Alt + Up               | Next, previous change in a compare            |
 | F7, Ctrl + Shift + N               | New folder                                    |
 | Shift + F4                         | New file                                      |

@@ -4980,6 +4980,70 @@ textarea::placeholder {
   background-color: transparent;
 }
 
+/* The cursor fades out and back in rather than snapping on and off. The colors are the ones
+   lib/terminalTheme.ts gives the terminal: the accent for the cursor, the background for the
+   character under it. Typing redraws the row, which starts the cursor solid again. */
+@media (prefers-reduced-motion: no-preference) {
+  .terminal-host
+    .xterm
+    .xterm-rows.xterm-focus
+    .xterm-cursor.xterm-cursor-blink.xterm-cursor-block {
+    animation: terminal-cursor-block 1.2s ease-in-out infinite;
+  }
+
+  .terminal-host .xterm .xterm-rows.xterm-focus .xterm-cursor.xterm-cursor-blink.xterm-cursor-bar {
+    animation: terminal-cursor-bar 1.2s ease-in-out infinite;
+  }
+
+  .terminal-host
+    .xterm
+    .xterm-rows.xterm-focus
+    .xterm-cursor.xterm-cursor-blink.xterm-cursor-underline {
+    animation: terminal-cursor-underline 1.2s ease-in-out infinite;
+  }
+}
+
+@keyframes terminal-cursor-block {
+  0%,
+  30%,
+  100% {
+    color: var(--surface-sunken);
+    background-color: var(--accent);
+  }
+
+  50%,
+  80% {
+    color: var(--text);
+    background-color: transparent;
+  }
+}
+
+@keyframes terminal-cursor-bar {
+  0%,
+  30%,
+  100% {
+    box-shadow: 1px 0 0 var(--accent) inset;
+  }
+
+  50%,
+  80% {
+    box-shadow: 1px 0 0 transparent inset;
+  }
+}
+
+@keyframes terminal-cursor-underline {
+  0%,
+  30%,
+  100% {
+    border-bottom-color: var(--accent);
+  }
+
+  50%,
+  80% {
+    border-bottom-color: transparent;
+  }
+}
+
 .terminal-ended {
   display: flex;
   flex: none;
