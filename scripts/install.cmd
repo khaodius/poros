@@ -16,8 +16,10 @@ set "releases=https://github.com/khaodius/poros/releases"
 set "suffix=_x64-setup.exe"
 set "uninstall_key=HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\Poros"
 
-set "requested_version=%~1"
-if defined requested_version if /i "%requested_version:~0,1%"=="v" set "requested_version=%requested_version:~1%"
+rem The version argument without its leading v. A substring of an undefined variable would break
+rem the line, so a for loop strips it.
+set "requested_version="
+for /f "tokens=* delims=v" %%V in ("%~1") do set "requested_version=%%V"
 
 if /i "%PROCESSOR_ARCHITECTURE%"=="x86" if not defined PROCESSOR_ARCHITEW6432 (
   set "message=Poros needs 64-bit Windows"
