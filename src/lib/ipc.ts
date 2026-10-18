@@ -295,6 +295,11 @@ export const files = {
   saveText: (path: string, contents: string) => call<void>("save_text_file", { path, contents }),
 };
 
+export const clipboard = {
+  /** Copies text with no click or key press behind it, which the web view's clipboard refuses. */
+  writeText: (text: string) => call<void>("clipboard_write_text", { text }),
+};
+
 export const windows = {
   /**
    * Opens a window showing `layout`, `width` by `height` logical pixels, its top left corner at

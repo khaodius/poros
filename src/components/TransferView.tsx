@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type MouseEvent,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
@@ -22,6 +23,7 @@ import {
   Trash2,
   type LucideIcon,
 } from "lucide-react";
+import { useSelectionBox, type RowRange } from "../hooks/useSelectionBox";
 import { formatSize, formatSpeed } from "../lib/format";
 import { transfers } from "../lib/ipc";
 import { jobProgress, jobsIn, VIEW_STATES, type TransferViewKind } from "../lib/transfers";
@@ -82,11 +84,23 @@ interface TransferViewProps {
   view: TransferViewKind;
   selection: ReadonlySet<number>;
   onSelectionChange: (selection: Set<number>) => void;
+  /** Keeps the transfer that joined the list last in view, so each one is seen as it finishes. */
+  follow?: boolean;
 }
 
-export function TransferView({ view, selection, onSelectionChange }: TransferViewProps) {
+export function TransferView({
+  view,
+  selection,
+  onSelectionChange,
+  follow = false,
+}: TransferViewProps) {
   const jobs = useViewJobs(view);
+  const jobsRef = useRef(jobs);
+  useLayoutEffect(() => {
+    jobsRef.current = jobs;
+  });
   const scrollRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const [anchor, setAnchor] = useState<number | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const virtualizer = useVirtualizer({
@@ -95,6 +109,32 @@ export function TransferView({ view, selection, onSelectionChange }: TransferVie
     estimateSize: () => ROW_HEIGHT,
     overscan: 12,
   });
+  const selectionBox = useSelectionBox(scrollRef, contentRef, {
+    rowHeight: ROW_HEIGHT,
+    rowCount: jobs.length,
+    rowsInset: 0,
+  });
+
+  // The jobs listed when the list last followed, to tell the ones that have joined it since.
+  const followedIds = useRef<ReadonlySet<number> | null>(null);
+  useLayoutEffect(() => {
+    if (!follow) {
+      followedIds.current = null;
+      return;
+    }
+    const before = followedIds.current;
+    followedIds.current = new Set(jobs.map((job) => job.id));
+    if (!before) {
+      if (jobs.length > 0) virtualizer.scrollToIndex(jobs.length - 1, { align: "end" });
+      return;
+    }
+    for (let index = jobs.length - 1; index >= 0; index--) {
+      if (!before.has(jobs[index].id)) {
+        virtualizer.scrollToIndex(index, { align: "auto" });
+        return;
+      }
+    }
+  }, [follow, jobs, virtualizer]);
 
   const select = (event: MouseEvent, job: JobSnapshot) => {
     if (event.ctrlKey || event.metaKey) {
@@ -110,6 +150,24 @@ export function TransferView({ view, selection, onSelectionChange }: TransferVie
       onSelectionChange(new Set([job.id]));
       setAnchor(job.id);
     }
+  };
+
+  // Dragging from a row, or from below the rows, selects every row from the one pressed to the
+  // one under the pointer, scrolling the list while the pointer is near or past its top or
+  // bottom edge. With Ctrl or Shift held the rows join the selection.
+  const startBox = (event: ReactPointerEvent<HTMLElement>) => {
+    const before = selection;
+    const kept = event.ctrlKey || event.metaKey || event.shiftKey ? [...before] : [];
+    const idsIn = (rows: RowRange | null) =>
+      rows ? jobsRef.current.slice(rows.first, rows.last + 1).map((job) => job.id) : [];
+    selectionBox.begin(event, {
+      onRows: (rows) => onSelectionChange(new Set([...kept, ...idsIn(rows)])),
+      onFinish: (rows, downward) => {
+        const ids = idsIn(rows);
+        if (ids.length > 0) setAnchor(downward ? ids[0] : ids[ids.length - 1]);
+      },
+      onCancel: () => onSelectionChange(new Set(before)),
+    });
   };
 
   const openMenu = (event: MouseEvent, job: JobSnapshot) => {
@@ -215,11 +273,17 @@ export function TransferView({ view, selection, onSelectionChange }: TransferVie
             onSelectionChange(new Set(jobs.map((job) => job.id)));
           }
         }}
+        onPointerDown={(event) => {
+          // The scrollbar is right of the content.
+          const body = event.currentTarget;
+          if (event.clientX >= body.getBoundingClientRect().left + body.clientWidth) return;
+          startBox(event);
+        }}
         onClick={(event) => {
           if (event.target === event.currentTarget) onSelectionChange(new Set());
         }}
       >
-        <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+        <div ref={contentRef} style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
           {virtualizer.getVirtualItems().map((item) => {
             const job = jobs[item.index];
             return (
@@ -233,6 +297,7 @@ export function TransferView({ view, selection, onSelectionChange }: TransferVie
               />
             );
           })}
+          <div ref={selectionBox.boxRef} className="selection-box" aria-hidden />
         </div>
         {jobs.length === 0 && <p className="transfer-empty">{EMPTY_MESSAGES[view]}</p>}
       </div>

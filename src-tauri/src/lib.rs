@@ -1,5 +1,6 @@
 pub mod automation;
 pub mod checksum;
+pub mod clipboard;
 pub mod cloud;
 pub mod commands;
 pub mod connections;
@@ -41,6 +42,7 @@ use tauri::{Manager, RunEvent, WindowEvent};
 
 use automation::remote_command::CommandRunner;
 use automation::scheduler::Scheduler;
+use clipboard::SystemClipboard;
 use cloud::OAuthVault;
 use commands::PendingWindows;
 use connections::{ConnectionStore, Keychain, SecretScope};
@@ -128,6 +130,7 @@ pub fn run() {
             app.manage(settings);
             app.manage(connections);
             app.manage(OAuthVault::default());
+            app.manage(SystemClipboard::default());
             let handle = app.handle().clone();
             app.state::<Arc<SessionManager>>().set_grant_sink(Arc::new(
                 move |grant_id: &str, refresh_token: &str| {
@@ -250,6 +253,7 @@ pub fn run() {
             commands::terminal_resize,
             commands::terminal_restart,
             commands::terminal_close,
+            commands::clipboard_write_text,
             commands::save_text_file,
             commands::remote_command_run,
             commands::remote_command_stop,

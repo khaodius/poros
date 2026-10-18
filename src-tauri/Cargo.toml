@@ -1,6 +1,6 @@
 [package]
 name = "poros"
-version = "0.4.9"
+version = "0.5.0"
 description = "SFTP and rsync client"
 authors = ["khaodius"]
 license = "Apache-2.0"
@@ -65,6 +65,9 @@ percent-encoding = "2"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 # Desktop notifications when the transfer queue finishes.
 tauri-plugin-notification = "2.5"
+# Text a program in a terminal copies (OSC 52) arrives with no click behind it, which the web
+# view's own clipboard refuses on Linux. Text only, so no image codecs.
+arboard = { version = "3.6", default-features = false, features = ["wayland-data-control"] }
 # A second launch brings the running window forward instead of starting another copy, which
 # would run every scheduled task twice and overwrite the saved schedules.
 tauri-plugin-single-instance = "2.5"

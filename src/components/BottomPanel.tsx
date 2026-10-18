@@ -22,6 +22,7 @@ import { WhenDoneControl } from "./WhenDoneControl";
 type PanelTab = TransferViewKind | "log";
 
 const STORAGE_KEY = "poros.bottomTab";
+const FOLLOW_KEY = "poros.followCompleted";
 const PANEL_TABS: PanelTab[] = ["queue", "failed", "completed", "log"];
 
 function readTab(): PanelTab {
@@ -33,9 +34,18 @@ function readTab(): PanelTab {
   }
 }
 
+function readFollow(): boolean {
+  try {
+    return localStorage.getItem(FOLLOW_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
 export function BottomPanel() {
   const [tab, setTab] = useState<PanelTab>(readTab);
   const [selection, setSelection] = useState<Set<number>>(new Set());
+  const [followCompleted, setFollowCompleted] = useState(readFollow);
   const counts = useTransferStore((state) => state.snapshot.stats.counts);
   const queuePaused = useTransferStore((state) => state.snapshot.stats.queuePaused);
   // Only the rows on show: a job selected in the queue that has finished since is not.
@@ -56,6 +66,16 @@ export function BottomPanel() {
       localStorage.setItem(STORAGE_KEY, next);
     } catch {
       // The panel then opens on the queue next time.
+    }
+  };
+
+  const toggleFollow = () => {
+    const next = !followCompleted;
+    setFollowCompleted(next);
+    try {
+      localStorage.setItem(FOLLOW_KEY, String(next));
+    } catch {
+      // The list then opens without following next time.
     }
   };
 
@@ -177,20 +197,38 @@ export function BottomPanel() {
             </>
           )}
           {tab === "completed" && (
-            <PanelButton
-              label="Clear finished transfers"
-              disabled={counts.done + counts.skipped === 0}
-              onClick={() => void transfers.clear([...VIEW_STATES.completed])}
-            >
-              <Eraser size={14} />
-            </PanelButton>
+            <>
+              <button
+                type="button"
+                className={`button button-small ${followCompleted ? "button-primary" : ""}`}
+                title="Keep each transfer in view as it finishes"
+                aria-pressed={followCompleted}
+                onClick={toggleFollow}
+              >
+                <ArrowDownToLine size={13} />
+                <span className="narrow-hidden">Follow</span>
+              </button>
+              <span className="toolbar-divider" />
+              <PanelButton
+                label="Clear finished transfers"
+                disabled={counts.done + counts.skipped === 0}
+                onClick={() => void transfers.clear([...VIEW_STATES.completed])}
+              >
+                <Eraser size={14} />
+              </PanelButton>
+            </>
           )}
         </div>
       </header>
       {tab === "log" ? (
         <LogView />
       ) : (
-        <TransferView view={tab} selection={selection} onSelectionChange={setSelection} />
+        <TransferView
+          view={tab}
+          selection={selection}
+          onSelectionChange={setSelection}
+          follow={tab === "completed" && followCompleted}
+        />
       )}
     </section>
   );

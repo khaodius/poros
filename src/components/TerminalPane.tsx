@@ -3,8 +3,9 @@ import { ClipboardPaste, Copy, Eraser, RotateCw, SquareTerminal, TextSelect } fr
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { terminal as terminals, toAppError } from "../lib/ipc";
+import { clipboard, terminal as terminals, toAppError } from "../lib/ipc";
 import { findTab, type TerminalTab } from "../lib/layout";
+import { clipboardText } from "../lib/osc52";
 import { terminalTheme } from "../lib/terminalTheme";
 import type { TerminalEvent } from "../lib/types";
 import { useLayoutStore } from "../state/layoutStore";
@@ -150,6 +151,17 @@ export default function TerminalPane({ tab, visible, active }: TerminalPaneProps
       xterm.onResize(({ cols, rows }) => {
         const id = terminalIdRef.current;
         if (id) void terminals.resize(id, cols, rows).catch(() => undefined);
+      }),
+      // Programs that take over the mouse and draw their own selection copy it this way once the
+      // button is released; the terminal itself then has nothing selected.
+      xterm.parser.registerOscHandler(52, (data) => {
+        const text = clipboardText(data);
+        if (text !== null) {
+          void clipboard.writeText(text).catch((caught: unknown) => {
+            showToast("error", toAppError(caught).message);
+          });
+        }
+        return true;
       }),
     ];
     xterm.attachCustomKeyEventHandler((event) => {

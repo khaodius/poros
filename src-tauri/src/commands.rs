@@ -11,6 +11,7 @@ use tauri::{
 use crate::automation::remote_command::{CommandRequest, CommandResult, CommandRunner};
 use crate::automation::scheduler::{ScheduledTask, Scheduler, TaskView};
 use crate::automation::system::{self, PowerAction};
+use crate::clipboard::SystemClipboard;
 use crate::cloud::{self, CloudProvider, OAuthClient, OAuthVault, ProviderStatus, SignedIn};
 use crate::connections::{ConnectionStore, SavedConnection, SecretScope};
 use crate::desktop::{self, DragPreview, PreviewPlacement, WindowCorners};
@@ -689,6 +690,15 @@ pub async fn terminal_close(
 ) -> AppResult<()> {
     terminals.close(&terminal_id).await;
     Ok(())
+}
+
+#[tauri::command]
+pub async fn clipboard_write_text(
+    clipboard: State<'_, SystemClipboard>,
+    text: String,
+) -> AppResult<()> {
+    let clipboard = clipboard.inner().clone();
+    tokio::task::spawn_blocking(move || clipboard.write_text(text)).await?
 }
 
 #[tauri::command]
