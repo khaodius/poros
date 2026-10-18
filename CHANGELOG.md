@@ -3,7 +3,7 @@
 Installers for every version are attached to its
 [release](https://github.com/khaodius/poros/releases), with SHA-256 checksums.
 
-## 0.4.10 - 2026-10-18
+## 0.5.0 - 2026-10-18
 
 - **Copy from programs that take over the mouse.** Text selected in a terminal program that draws
   its own selection and copies through the terminal, such as tmux in mouse mode or an AI coding
