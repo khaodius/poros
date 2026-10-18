@@ -1,0 +1,109 @@
+name: Install scripts
+
+# Runs scripts/install.sh, install.ps1 and install.cmd on clean machines the way the one-line
+# commands in README.md run them, against releases already published.
+on:
+  push:
+    branches: [main]
+    paths:
+      - scripts/**
+      - .github/workflows/install-scripts.yml
+  pull_request:
+    paths:
+      - scripts/**
+      - .github/workflows/install-scripts.yml
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: ShellCheck
+        run: shellcheck scripts/install.sh
+
+      - name: Install the AppImage for this user
+        run: |
+          cat scripts/install.sh | bash -s -- --appimage
+          test -x "$HOME/.local/bin/poros"
+          grep -qx "Exec=\"$HOME/.local/bin/poros\"" "$HOME/.local/share/applications/Poros.desktop"
+          test -f "$HOME/.local/share/icons/hicolor/128x128/apps/poros.png"
+
+      - name: Install an earlier .deb with apt
+        run: |
+          cat scripts/install.sh | bash -s -- 0.4.8
+          test "$(dpkg-query -W -f='${Version}' poros)" = 0.4.8
+
+      - name: Upgrade it to the latest release
+        run: |
+          latest=$(curl -fsSL https://github.com/khaodius/poros/releases/latest/download/latest.json | jq -r .version)
+          cat scripts/install.sh | bash
+          test "$(dpkg-query -W -f='${Version}' poros)" = "$latest"
+          test -x /usr/bin/poros
+
+      - name: Install the .rpm with dnf on Fedora
+        run: |
+          docker run --rm -v "$PWD/scripts:/scripts:ro" fedora:latest bash -c '
+            set -e
+            cat /scripts/install.sh | bash
+            rpm -q poros
+            test -x /usr/bin/poros
+          '
+
+      - name: Refuse a version that was never released
+        run: |
+          if cat scripts/install.sh | bash -s -- 0.0.1 --appimage; then
+            echo "::error::install.sh reported success for a missing release"
+            exit 1
+          fi
+
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install an earlier version with install.ps1 in PowerShell 7
+        shell: pwsh
+        run: |
+          & ([scriptblock]::Create((Get-Content -Raw scripts/install.ps1))) 0.4.8
+          $installed = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Poros'
+          if ($installed.DisplayVersion -ne '0.4.8') { throw "Installed version is $($installed.DisplayVersion)" }
+
+      - name: Upgrade it to the latest release with install.cmd
+        shell: cmd
+        run: |
+          copy scripts\install.cmd install.cmd
+          cmd /d /c "install.cmd && del install.cmd"
+          if exist install.cmd exit /b 1
+
+      - name: Reinstall the latest release with install.ps1 in Windows PowerShell
+        shell: powershell
+        run: |
+          $manifest = (curl.exe -fsSL https://github.com/khaodius/poros/releases/latest/download/latest.json) -join "`n"
+          $latest = ($manifest | ConvertFrom-Json).version
+          Get-Content -Raw scripts/install.ps1 | Invoke-Expression
+          $installed = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Poros'
+          if ($installed.DisplayVersion -ne $latest) { throw "Installed version is $($installed.DisplayVersion), expected $latest" }
+          $binary = Join-Path $installed.InstallLocation.Trim('"') $installed.MainBinaryName
+          if (-not (Test-Path $binary)) { throw "$binary is missing" }
+
+      - name: Refuse a version that was never released
+        shell: cmd
+        run: |
+          copy scripts\install.cmd install.cmd
+          cmd /d /c "install.cmd 0.0.1 && del install.cmd"
+          if not exist install.cmd exit /b 1
+          del install.cmd
+          powershell -NoProfile -Command "& ([scriptblock]::Create((Get-Content -Raw scripts/install.ps1))) 0.0.1"
+          if not errorlevel 1 exit /b 1
+          exit /b 0

@@ -128,7 +128,55 @@ On a real connection, gigabit at both ends, Poros moved 3,643 files (1.4 GiB) in
 
 ## Install
 
-Download an installer from the [latest release](https://github.com/khaodius/poros/releases/latest):
+Windows, in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/khaodius/poros/main/scripts/install.ps1 | iex
+```
+
+Windows, in Command Prompt:
+
+```bat
+curl -fsSL https://raw.githubusercontent.com/khaodius/poros/main/scripts/install.cmd -o install.cmd && install.cmd && del install.cmd
+```
+
+Linux:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/khaodius/poros/main/scripts/install.sh | bash
+```
+
+Each command downloads the latest release, checks it against the release's `SHA256SUMS.txt` and
+installs it:
+
+- **Windows**: the setup program runs silently and installs Poros for the current user in
+  `%LOCALAPPDATA%\Poros`, with Start menu and desktop shortcuts and no admin prompt. A running
+  copy is closed first, and an installed one is upgraded with its settings and saved connections
+  kept.
+- **Linux**: the `.deb` through apt on Debian and Ubuntu, or the `.rpm` through dnf, zypper or
+  yum on Fedora, RHEL and openSUSE, both with sudo. Any other distribution gets the AppImage in
+  `~/.local/bin` with an applications menu entry, and `--appimage` picks it on any distribution,
+  for your user only and without root.
+
+A version number installs that release instead:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/khaodius/poros/main/scripts/install.sh | bash -s -- 0.4.9
+```
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/khaodius/poros/main/scripts/install.ps1))) 0.4.9
+```
+
+```bat
+curl -fsSL https://raw.githubusercontent.com/khaodius/poros/main/scripts/install.cmd -o install.cmd && install.cmd 0.4.9 && del install.cmd
+```
+
+The scripts are in [`scripts/`](scripts) to read before running. To remove Poros, use Installed
+apps in Windows Settings, `sudo apt remove poros` or `sudo dnf remove poros`, or for the AppImage
+delete `~/.local/bin/poros` and `~/.local/share/applications/Poros.desktop`.
+
+Or download an installer from the [latest release](https://github.com/khaodius/poros/releases/latest):
 
 | Platform | Packages                             |
 | -------- | ------------------------------------ |
