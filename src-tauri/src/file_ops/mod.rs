@@ -207,13 +207,10 @@ impl Progress {
         self.total.fetch_add(count, Ordering::Relaxed);
     }
 
-    /// Takes back entries found twice, as when another way of working goes over them again.
+    /// Takes back entries an earlier `found` counted, as when another way of working goes over
+    /// them again.
     fn unfound(&self, count: u64) {
-        let _ = self
-            .total
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |total| {
-                Some(total.saturating_sub(count))
-            });
+        self.total.fetch_sub(count, Ordering::Relaxed);
     }
 
     fn set_counting(&self, counting: bool) {
