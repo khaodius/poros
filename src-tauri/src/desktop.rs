@@ -180,6 +180,10 @@ impl DragPreview {
             return Ok(());
         };
         place(&window, corner, state.inset, size)?;
+        // Windows put on top since it showed, such as the taskbar, would cover it.
+        if state.visible {
+            raise_without_focus(&window)?;
+        }
         if state.content.as_ref() != Some(&placement.content) {
             if state.ready {
                 window.emit_to(DRAG_PREVIEW_WINDOW, DRAG_PREVIEW_EVENT, &placement.content)?;
@@ -394,19 +398,48 @@ pub fn can_place_windows() -> bool {
     true
 }
 
-/// Shows the preview without taking focus from the window the tab is dragged from, which would
-/// end the drag. Windows activates a window it shows unless asked not to.
+/// Shows the preview above every other window without taking focus from the window the tab is
+/// dragged from, which would end the drag. The preview is opened once and only hidden between
+/// drags, and showing a window leaves it where it was among the others: windows put on top in the
+/// meantime, and anything that took its always on top away, would cover it. So it is put on top
+/// each time it shows. Windows activates a window it shows unless asked not to.
 #[cfg(windows)]
 fn show_without_focus(window: &WebviewWindow) -> tauri::Result<()> {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{ShowWindowAsync, SW_SHOWNOACTIVATE};
-    let hwnd = window.hwnd()?;
-    unsafe { ShowWindowAsync(hwnd.0, SW_SHOWNOACTIVATE) };
-    Ok(())
+    use windows_sys::Win32::UI::WindowsAndMessaging::SWP_SHOWWINDOW;
+    set_topmost(window, SWP_SHOWWINDOW)
 }
 
 #[cfg(not(windows))]
 fn show_without_focus(window: &WebviewWindow) -> tauri::Result<()> {
+    window.set_always_on_top(true)?;
     window.show()
+}
+
+/// Puts the preview back on top of every other window, without focus.
+#[cfg(windows)]
+fn raise_without_focus(window: &WebviewWindow) -> tauri::Result<()> {
+    set_topmost(window, 0)
+}
+
+#[cfg(not(windows))]
+fn raise_without_focus(_window: &WebviewWindow) -> tauri::Result<()> {
+    Ok(())
+}
+
+/// Moves a window to the top of the windows kept on top, and keeps it there, with `extra`
+/// flags. Without waiting for the window's thread, as `ShowWindowAsync` did.
+#[cfg(windows)]
+fn set_topmost(
+    window: &WebviewWindow,
+    extra: windows_sys::Win32::UI::WindowsAndMessaging::SET_WINDOW_POS_FLAGS,
+) -> tauri::Result<()> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, HWND_TOPMOST, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    };
+    let hwnd = window.hwnd()?;
+    let flags = SWP_ASYNCWINDOWPOS | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | extra;
+    unsafe { SetWindowPos(hwnd.0, HWND_TOPMOST, 0, 0, 0, 0, flags) };
+    Ok(())
 }
 
 /// Hides the preview the same way it was shown.

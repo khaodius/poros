@@ -1853,6 +1853,17 @@ form.path-bar {
   text-overflow: ellipsis;
 }
 
+/* The name typed in place, its text where the name's text was. */
+.file-name .rename-field {
+  flex: 1;
+  height: calc(1em + 6px);
+  margin-left: -4px;
+  padding: 0 3px;
+  background: var(--surface-sunken);
+  border-color: var(--border-focus);
+  box-shadow: none;
+}
+
 .file-permissions {
   font-family: var(--font-mono);
   font-size: var(--font-size-tiny);
@@ -4436,6 +4447,31 @@ textarea::placeholder {
   color: var(--text-muted);
   font-size: var(--font-size-small);
   font-variant-numeric: tabular-nums;
+}
+
+.operation .progress-track {
+  flex: none;
+  height: 4px;
+  margin: 3px 0 1px;
+}
+
+.operation-path,
+.operation-failure {
+  overflow: hidden;
+  font-size: var(--font-size-small);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Cut from the start, so the end of the path stays in view. */
+.operation-path {
+  color: var(--text-faint);
+  direction: rtl;
+  text-align: left;
+}
+
+.operation-failure {
+  color: var(--danger);
 }
 
 /* Properties */

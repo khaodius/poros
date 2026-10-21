@@ -21,8 +21,8 @@ use crate::editor::{
 use crate::error::{AppError, AppResult};
 use crate::events::{Events, LogLevel, LogRecord, Store};
 use crate::file_ops::{
-    CompareRequest, Comparison, Details, FileOperations, Location, MoveCopyRequest,
-    OperationSummary, PermissionRequest, PermissionSummary, Usage,
+    CompareRequest, Comparison, DeleteRequest, DeleteSummary, Details, FileOperations, Location,
+    MoveCopyRequest, OperationSummary, PermissionRequest, PermissionSummary, Usage,
 };
 use crate::fonts::{self, FontFamily};
 use crate::local;
@@ -267,6 +267,14 @@ pub async fn files_move_or_copy(
     request: MoveCopyRequest,
 ) -> AppResult<OperationSummary> {
     operations.move_or_copy(request).await
+}
+
+#[tauri::command]
+pub async fn files_delete(
+    operations: State<'_, FileOperations>,
+    request: DeleteRequest,
+) -> AppResult<DeleteSummary> {
+    operations.delete(request).await
 }
 
 #[tauri::command]

@@ -1,9 +1,15 @@
 import { useEffect, useState } from "react";
 import { LoaderCircle } from "lucide-react";
+import { deleteFraction, deleteProgressText, formatCount } from "../lib/deletion";
 import { formatSize, pluralize } from "../lib/format";
 import { fileOperations, onFileOperation } from "../lib/ipc";
+import { baseName } from "../lib/path";
 import type { NameClash } from "../lib/types";
-import { useOperationStore, type NameClashQuestion } from "../state/operationStore";
+import {
+  useOperationStore,
+  type NameClashQuestion,
+  type RunningOperation,
+} from "../state/operationStore";
 import { Dialog } from "./Dialog";
 
 /** The moves and copies running in this window, and the question when names are taken. */
@@ -42,9 +48,13 @@ function OperationTray() {
           <LoaderCircle size={16} className="spin" />
           <div className="operation-text">
             <span className="operation-title">{operation.title}</span>
-            <span className="operation-detail">
-              {pluralize(operation.files, "file")} done, {formatSize(operation.bytes)}
-            </span>
+            {operation.kind === "delete" ? (
+              <DeleteDetail operation={operation} />
+            ) : (
+              <span className="operation-detail">
+                {pluralize(operation.files, "file")} done, {formatSize(operation.bytes)}
+              </span>
+            )}
           </div>
           <button
             type="button"
@@ -57,6 +67,42 @@ function OperationTray() {
         </div>
       ))}
     </div>
+  );
+}
+
+/** How many entries are gone, where the delete is, and the latest that would not go. */
+function DeleteDetail({ operation }: { operation: RunningOperation }) {
+  const fraction = deleteFraction(operation);
+  const { current, failed, lastFailure } = operation;
+  return (
+    <>
+      <span className="operation-detail">
+        {deleteProgressText(operation)}
+        {failed ? `, ${formatCount(failed)} failed` : ""}
+      </span>
+      <span
+        className={`progress-track ${fraction === null ? "is-indeterminate" : ""}`}
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={fraction === null ? undefined : Math.round(fraction * 100)}
+      >
+        <span
+          className="progress-fill"
+          style={fraction === null ? undefined : { width: `${fraction * 100}%` }}
+        />
+      </span>
+      {current && (
+        <span className="operation-path" title={current}>
+          <bdi>{current}</bdi>
+        </span>
+      )}
+      {lastFailure && (
+        <span className="operation-failure" title={`${lastFailure.path}: ${lastFailure.message}`}>
+          {baseName(lastFailure.path)}: {lastFailure.message}
+        </span>
+      )}
+    </>
   );
 }
 

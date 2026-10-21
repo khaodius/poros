@@ -1,6 +1,7 @@
 // Moving and copying files within one filesystem: on this computer, or on one SFTP server.
-// Files headed elsewhere go through the transfer queue instead.
+// Files headed elsewhere go through the transfer queue instead. Deleting on SFTP servers too.
 
+import { formatCount } from "../lib/deletion";
 import { localSource, type PathStyle } from "../lib/fileSource";
 import { sameFilesystem, toLocation, worksInPlace, type FileOrigin } from "../lib/fileOrigin";
 import { pluralize } from "../lib/format";
@@ -206,6 +207,75 @@ export async function placeEntries(request: PlaceRequest): Promise<boolean> {
     // Whatever was done before a failure or cancel shows too.
     refreshFolder(targetOrigin, targetFolder, placed);
     if (mode === "move") refreshFolder(origin, sourceFolder);
+  }
+}
+
+export interface DeleteOnServer {
+  origin: FileOrigin;
+  /** The folder the entries are in. */
+  folder: string;
+  entries: FileEntry[];
+  /** Where the cursor goes once the folder reloads. */
+  focusPath?: string;
+}
+
+/**
+ * Deletes entries on an SFTP server, showing in the tray how many of how many are gone, where it
+ * is and what would not go, with a button to stop. The panes showing the folder reload after.
+ */
+export async function deleteOnServer(request: DeleteOnServer): Promise<void> {
+  const { origin, folder, entries, focusPath } = request;
+  const sessionId = origin.sessionId;
+  if (!sessionId || entries.length === 0) return;
+  const write = useLogStore.getState().write;
+  const showToast = useToastStore.getState().show;
+  const what = entries.length === 1 ? entries[0].name : pluralize(entries.length, "item");
+  const title = `Deleting ${what} from ${baseName(folder) || folder}`;
+  try {
+    const summary = await track(
+      title,
+      (operationId) =>
+        fileOperations.delete({
+          operationId,
+          sessionId,
+          paths: entries.map((entry) => entry.path),
+        }),
+      "delete",
+    );
+    const inside =
+      summary.deleted > entries.length ? `, ${formatCount(summary.deleted)} entries` : "";
+    write(
+      "info",
+      `Deleted ${what} in ${folder}${inside}${howItWasDone(summary.methods)}`,
+      sessionId,
+    );
+    for (const failure of summary.failures) {
+      write("error", `${failure.path}: ${failure.message}`, sessionId);
+    }
+    const unlisted = summary.failed - summary.failures.length;
+    if (unlisted > 0) {
+      write("error", `${formatCount(unlisted)} more entries could not be deleted`, sessionId);
+    }
+    const [first] = summary.failures;
+    if (first) {
+      showToast(
+        "error",
+        summary.failed === 1
+          ? `${baseName(first.path)}: ${first.message}`
+          : `${formatCount(summary.failed)} entries could not be deleted. The log lists why.`,
+      );
+    }
+  } catch (caught) {
+    const error = toAppError(caught);
+    if (error.kind === "cancelled") {
+      write("info", `Cancelled: ${title}`, sessionId);
+    } else {
+      showToast("error", error.message);
+      write("error", `${title}: ${error.message}`, sessionId);
+    }
+  } finally {
+    // Whatever went before a failure or cancel shows too.
+    refreshFolder(origin, folder, focusPath);
   }
 }
 

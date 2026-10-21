@@ -3,6 +3,24 @@
 Installers for every version are attached to its
 [release](https://github.com/khaodius/poros/releases), with SHA-256 checksums.
 
+## 0.5.1 - 2026-10-21
+
+- **Click a selected name again to rename it.** As in Windows Explorer, clicking the name of the
+  only selected file once more, after a pause, turns the name into a field to type the new one
+  in, with the name before the extension selected. Enter or clicking elsewhere renames, Esc
+  leaves the name as it was. A double click still opens the file, and dragging or pressing a key
+  before the field appears leaves the name alone. F2 and Rename in the menu now rename in the row
+  too, instead of in a dialog.
+- **Deleting on an SFTP server is faster and shows its progress.** Poros asks the server to run
+  `rm` when its shell allows it, and otherwise deletes over four connections at once, so a folder
+  with thousands of files goes in seconds rather than minutes. While it runs, the operations panel
+  shows how many entries are gone out of how many there are, the path being deleted and the
+  latest entry that could not be deleted with the server's reason, and Cancel stops it. Entries
+  that could not be deleted are listed in the log.
+- **A dragged pane stays above other programs.** The pane being dragged could be drawn behind
+  other programs' windows and the taskbar, so it seemed to disappear while dragging. It is now
+  put back on top every time it shows and as it moves.
+
 ## 0.5.0 - 2026-10-18
 
 - **Copy from programs that take over the mouse.** Text selected in a terminal program that draws

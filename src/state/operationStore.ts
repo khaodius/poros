@@ -2,18 +2,26 @@
 // one with its progress, and asks what to do when names are already taken.
 
 import { create } from "zustand";
-import type { NameClash, OperationProgress, PlaceMode } from "../lib/types";
+import type { NameClash, OperationFailure, OperationProgress, PlaceMode } from "../lib/types";
 
 /** Quick operations finish before the tray would show them, so it waits this long. */
 const SHOW_AFTER_MILLIS = 400;
 
+/** Deletes count entries; the rest count files and bytes. */
+export type OperationKind = "place" | "delete";
+
 export interface RunningOperation {
   id: string;
+  kind: OperationKind;
   title: string;
   shown: boolean;
   files: number;
   bytes: number;
   current?: string;
+  total?: number;
+  counting?: boolean;
+  failed?: number;
+  lastFailure?: OperationFailure;
 }
 
 export interface NameClashQuestion {
@@ -34,10 +42,12 @@ interface OperationState {
 export const useOperationStore = create<OperationState>((set) => ({
   running: [],
   question: null,
-  update: ({ operationId, files, bytes, current }) =>
+  update: ({ operationId, files, bytes, current, total, counting, failed, lastFailure }) =>
     set((state) => ({
       running: state.running.map((operation) =>
-        operation.id === operationId ? { ...operation, files, bytes, current } : operation,
+        operation.id === operationId
+          ? { ...operation, files, bytes, current, total, counting, failed, lastFailure }
+          : operation,
       ),
     })),
 }));
@@ -51,10 +61,14 @@ function changeOperation(id: string, change: Partial<RunningOperation>): void {
 }
 
 /** Runs `work` under a fresh operation id, showing it in the tray while it lasts. */
-export async function track<T>(title: string, work: (operationId: string) => Promise<T>) {
+export async function track<T>(
+  title: string,
+  work: (operationId: string) => Promise<T>,
+  kind: OperationKind = "place",
+) {
   const id = crypto.randomUUID();
   useOperationStore.setState((state) => ({
-    running: [...state.running, { id, title, shown: false, files: 0, bytes: 0 }],
+    running: [...state.running, { id, kind, title, shown: false, files: 0, bytes: 0 }],
   }));
   const reveal = window.setTimeout(() => changeOperation(id, { shown: true }), SHOW_AFTER_MILLIS);
   try {
