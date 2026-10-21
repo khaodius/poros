@@ -653,6 +653,27 @@ export interface OperationProgress {
   files: number;
   bytes: number;
   current?: string;
+  /** How many entries the operation covers, as far as it has found them. */
+  total?: number;
+  /** More entries may yet be found, so `total` can still grow. */
+  counting?: boolean;
+  failed?: number;
+  lastFailure?: OperationFailure;
+}
+
+export interface DeleteRequest {
+  operationId: string;
+  sessionId: string;
+  paths: string[];
+}
+
+export interface DeleteSummary {
+  /** Entries removed, counting everything that was inside folders. */
+  deleted: number;
+  /** Entries that could not be removed, of which `failures` holds the first ones. */
+  failed: number;
+  failures: OperationFailure[];
+  methods: OperationMethod[];
 }
 
 export interface FileDetails {

@@ -47,8 +47,9 @@ import { COLUMN_LABELS, availableColumns, type DetailColumn } from "../lib/colum
 import { entryAfterRemoval } from "../lib/cursor";
 import { sameFilesystem, toLocation, worksInPlace } from "../lib/fileOrigin";
 import type { FileSource } from "../lib/fileSource";
+import { toAppError } from "../lib/ipc";
 import { formatSize, pluralize } from "../lib/format";
-import { exampleFileName, stemLength } from "../lib/path";
+import { exampleFileName } from "../lib/path";
 import { groupOfTab } from "../lib/layout";
 import { isDirLike, type SortKey, type SortSpec } from "../lib/sort";
 import type { FileEntry, PlaceMode } from "../lib/types";
@@ -56,6 +57,7 @@ import { useClipboardStore } from "../state/clipboardStore";
 import { beginDrag, useDragStore } from "../state/dragStore";
 import { openInEditor } from "../state/editorActions";
 import {
+  deleteOnServer,
   dropAction,
   paneOrigin,
   paste,
@@ -94,7 +96,6 @@ import { serverCommandsMenu } from "./commandMenu";
 type PaneDialog =
   | { type: "newFolder" }
   | { type: "newFile"; example: string }
-  | { type: "rename"; entry: FileEntry }
   | { type: "delete"; entries: FileEntry[] }
   | { type: "placeTo"; mode: PlaceMode; entries: FileEntry[] }
   | { type: "properties"; entries: FileEntry[] }
@@ -198,6 +199,8 @@ export function FilePane({
     onSortChange: rememberSort,
   });
   const [dialog, setDialog] = useState<PaneDialog | null>(null);
+  /** The entry whose row shows the name field. */
+  const [renaming, setRenaming] = useState<string | null>(null);
   const [menu, setMenu] = useState<OpenMenu | null>(null);
   const [pathEditRequest, setPathEditRequest] = useState(0);
   const sectionRef = useRef<HTMLElement>(null);
@@ -286,8 +289,18 @@ export function FilePane({
   const openNewFolder = () => pane.listing && setDialog({ type: "newFolder" });
   const openNewFile = () =>
     pane.listing && setDialog({ type: "newFile", example: exampleFileName() });
-  const openRename = () =>
-    selected.length === 1 && setDialog({ type: "rename", entry: selected[0] });
+  const renameEntry = async (entry: FileEntry, newName: string): Promise<boolean> => {
+    try {
+      const renamed = await source.rename(entry.path, newName);
+      writeLog("info", `Renamed ${entry.path} to ${renamed}`);
+      setRenaming(null);
+      await pane.refresh(renamed);
+      return true;
+    } catch (caught) {
+      showToast("error", toAppError(caught).message);
+      return false;
+    }
+  };
   const openDelete = () => selected.length > 0 && setDialog({ type: "delete", entries: selected });
 
   const copyPaths = (entries: FileEntry[]) => {
@@ -596,7 +609,7 @@ export function FilePane({
         icon: <Pencil size={14} />,
         shortcut: "F2",
         disabled: targets.length !== 1,
-        onSelect: () => setDialog({ type: "rename", entry: targets[0] }),
+        onSelect: () => setRenaming(targets[0].path),
       },
       {
         label: targets.length > 1 ? "Copy paths" : "Copy path",
@@ -760,7 +773,10 @@ export function FilePane({
           onContextMenu={showContextMenu}
           onHeaderContextMenu={showHeaderMenu}
           onDelete={openDelete}
-          onRename={openRename}
+          renaming={renaming}
+          onRename={(entry) => setRenaming(entry.path)}
+          onRenameSubmit={renameEntry}
+          onRenameCancel={() => setRenaming(null)}
           onEdit={edit}
           onNewFolder={openNewFolder}
           onNewFile={openNewFile}
@@ -838,23 +854,6 @@ export function FilePane({
         />
       )}
 
-      {dialog?.type === "rename" && (
-        <PromptDialog
-          title="Rename"
-          label={`New name for ${dialog.entry.name}`}
-          initialValue={dialog.entry.name}
-          selectLength={stemLength(dialog.entry.name, isDirLike(dialog.entry))}
-          confirmLabel="Rename"
-          onClose={() => setDialog(null)}
-          onSubmit={async (newName) => {
-            if (newName === dialog.entry.name) return;
-            const renamed = await source.rename(dialog.entry.path, newName);
-            writeLog("info", `Renamed ${dialog.entry.path} to ${renamed}`);
-            await pane.refresh(renamed);
-          }}
-        />
-      )}
-
       {dialog?.type === "placeTo" && pane.listing && (
         <PromptDialog
           title={dialog.mode === "move" ? "Move to" : "Copy to"}
@@ -906,6 +905,15 @@ export function FilePane({
           onConfirm={async () => {
             const removed = dialog.entries.map((entry) => entry.path);
             const next = entryAfterRemoval(pane.visibleEntries, new Set(removed), pane.cursorPath);
+            if (overSftp && pane.listing) {
+              void deleteOnServer({
+                origin: paneOrigin({ kind: source.kind, sessionId }),
+                folder: pane.listing.path,
+                entries: dialog.entries,
+                focusPath: next,
+              });
+              return;
+            }
             await source.remove(removed);
             writeLog(
               "info",

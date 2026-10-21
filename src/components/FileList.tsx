@@ -5,12 +5,14 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
   type CSSProperties,
   type KeyboardEvent,
   type MouseEvent,
   type PointerEvent as ReactPointerEvent,
+  type SyntheticEvent,
 } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { defaultRangeExtractor, useVirtualizer, type Range } from "@tanstack/react-virtual";
 import { ArrowDown, ArrowUp, CornerLeftUp } from "lucide-react";
 import { useFitCount } from "../hooks/useFitCount";
 import type { PaneController } from "../hooks/usePane";
@@ -24,6 +26,7 @@ import {
   type ColumnWidths,
   type DetailColumn,
 } from "../lib/columns";
+import { stemLength } from "../lib/path";
 import type { DateFormat } from "../lib/settings";
 import { isDirLike, typeLabel, type SortKey } from "../lib/sort";
 import type { FileEntry } from "../lib/types";
@@ -36,6 +39,13 @@ const SCROLLBAR_GUTTER = 8;
  * folder on show rather than the row under the pointer. */
 const DROP_STRIP_WIDTH = 44;
 const TYPE_AHEAD_RESET_MILLIS = 800;
+/**
+ * How long a second, slower click on the only selected row's name waits before renaming it, as
+ * in Windows Explorer, so that a click that turns out to start a double click can still open it.
+ */
+const SLOW_CLICK_RENAME_MILLIS = 500;
+/** A press that moves further than this before release was a drag, not a click. */
+const CLICK_SLOP = 4;
 
 /** Where a menu opens, in viewport pixels. */
 export interface MenuPosition {
@@ -48,7 +58,11 @@ export interface FileListActions {
   onContextMenu: (position: MenuPosition, entry: FileEntry | null) => void;
   onHeaderContextMenu: (event: MouseEvent) => void;
   onDelete: () => void;
-  onRename: () => void;
+  /** Shows the name field in the entry's row. */
+  onRename: (entry: FileEntry) => void;
+  /** Renames the entry; false when it could not be, which the pane has said why. */
+  onRenameSubmit: (entry: FileEntry, newName: string) => Promise<boolean>;
+  onRenameCancel: () => void;
   /** F4 on a row: opens the file in the editor. */
   onEdit: (entry: FileEntry) => void;
   onNewFolder: () => void;
@@ -130,6 +144,8 @@ interface RowEvents {
   onClick: (event: MouseEvent, entry: FileEntry) => void;
   onOpen: (entry: FileEntry) => void;
   onContextMenu: (event: MouseEvent, entry: FileEntry) => void;
+  onRenameSubmit: (entry: FileEntry, newName: string, fromKeyboard: boolean) => Promise<boolean>;
+  onRenameCancel: (fromKeyboard: boolean) => void;
 }
 
 interface FileRowProps {
@@ -144,6 +160,8 @@ interface FileRowProps {
   cut: boolean;
   /** Files dragged over the list would drop into this folder. */
   dropTarget: boolean;
+  /** The row shows a field to type a new name in. */
+  renaming: boolean;
   events: RowEvents;
 }
 
@@ -162,6 +180,7 @@ const FileRow = memo(function FileRow({
   cursor,
   cut,
   dropTarget,
+  renaming,
   events,
 }: FileRowProps) {
   const folder = isDirLike(entry);
@@ -197,7 +216,11 @@ const FileRow = memo(function FileRow({
         column.key === "name" ? (
           <span key="name" className="file-cell file-name" role="gridcell">
             <FileIcon entry={entry} />
-            <span className="file-name-text">{entry.name}</span>
+            {renaming ? (
+              <RenameField entry={entry} events={events} />
+            ) : (
+              <span className="file-name-text">{entry.name}</span>
+            )}
           </span>
         ) : (
           <span
@@ -212,6 +235,79 @@ const FileRow = memo(function FileRow({
     </div>
   );
 });
+
+/** Keeps events in the field from reaching the row and the list, which would act on them. */
+const stopAtField = (event: SyntheticEvent) => event.stopPropagation();
+
+/**
+ * The new name, typed in place of the old one in the row. Enter or leaving the field renames,
+ * Esc keeps the old name. The name before the extension is selected to start with.
+ */
+function RenameField({ entry, events }: { entry: FileEntry; events: RowEvents }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [name, setName] = useState(entry.name);
+  const [busy, setBusy] = useState(false);
+  const finished = useRef(false);
+
+  useLayoutEffect(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    input.focus({ preventScroll: true });
+    input.setSelectionRange(0, stemLength(entry.name, isDirLike(entry)));
+  }, [entry]);
+
+  const submit = async (fromKeyboard: boolean) => {
+    if (finished.current || busy) return;
+    if (name === "" || name === entry.name) {
+      finished.current = true;
+      events.onRenameCancel(fromKeyboard);
+      return;
+    }
+    setBusy(true);
+    const renamed = await events.onRenameSubmit(entry, name, fromKeyboard);
+    if (renamed) {
+      finished.current = true;
+      return;
+    }
+    setBusy(false);
+    // Typed again after the reason shows; leaving the field gives up instead.
+    if (fromKeyboard) {
+      inputRef.current?.focus({ preventScroll: true });
+    } else {
+      finished.current = true;
+      events.onRenameCancel(false);
+    }
+  };
+
+  return (
+    <input
+      ref={inputRef}
+      className="rename-field"
+      value={name}
+      readOnly={busy}
+      spellCheck={false}
+      aria-label={`New name for ${entry.name}`}
+      onChange={(event) => setName(event.target.value)}
+      onKeyDown={(event) => {
+        event.stopPropagation();
+        if (event.key === "Enter") {
+          event.preventDefault();
+          void submit(true);
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          finished.current = true;
+          events.onRenameCancel(true);
+        }
+      }}
+      onBlur={() => void submit(false)}
+      onPointerDown={stopAtField}
+      onMouseDown={stopAtField}
+      onClick={stopAtField}
+      onDoubleClick={stopAtField}
+      onContextMenu={stopAtField}
+    />
+  );
+}
 
 interface FileListProps extends FileListActions {
   pane: PaneController;
@@ -229,6 +325,8 @@ interface FileListProps extends FileListActions {
   dropFolder?: string;
   /** Entries cut to the clipboard, shown faded until they are pasted. */
   cutPaths?: ReadonlySet<string>;
+  /** The entry whose row shows the name field. */
+  renaming?: string | null;
 }
 
 export function FileList({
@@ -243,6 +341,7 @@ export function FileList({
   fontSize,
   dropFolder,
   cutPaths,
+  renaming,
   ...actions
 }: FileListProps) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -283,12 +382,29 @@ export function FileList({
     )
     .join(" ");
 
+  // The row being renamed stays rendered when scrolled away, so the name typed so far is kept.
+  const renamingIndex = renaming ? entries.findIndex((entry) => entry.path === renaming) : -1;
+  const renamingRow = renamingIndex >= 0 ? renamingIndex + rowOffset : -1;
+  const rangeExtractor = useCallback(
+    (range: Range) => {
+      const rows = defaultRangeExtractor(range);
+      if (renamingRow < 0 || rows.includes(renamingRow)) return rows;
+      return [...rows, renamingRow].sort((first, second) => first - second);
+    },
+    [renamingRow],
+  );
+
   const virtualizer = useVirtualizer({
     count: entries.length + rowOffset,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => rowHeight,
     overscan: 16,
+    rangeExtractor,
   });
+
+  useEffect(() => {
+    if (renamingRow >= 0) virtualizer.scrollToIndex(renamingRow, { align: "auto" });
+  }, [renamingRow, virtualizer]);
 
   // A folder opens at the top, or with the cursor's row in the middle when it has one, as the
   // folder just left does after going up or back.
@@ -326,6 +442,27 @@ export function FileList({
     scrollRef.current?.focus({ preventScroll: true });
   }, []);
 
+  // A slow second click on the only selected row's name renames it after a moment, unless
+  // anything else happens first.
+  const press = useRef<{ path: string; x: number; y: number; renames: boolean } | null>(null);
+  const renameTimer = useRef(0);
+  const latestPane = useRef(pane);
+  useLayoutEffect(() => {
+    latestPane.current = pane;
+  });
+  const cancelSlowRename = useCallback(() => {
+    window.clearTimeout(renameTimer.current);
+    renameTimer.current = 0;
+  }, []);
+  useEffect(() => {
+    window.addEventListener("blur", cancelSlowRename);
+    return () => {
+      window.removeEventListener("blur", cancelSlowRename);
+      cancelSlowRename();
+    };
+  }, [cancelSlowRename]);
+  useEffect(cancelSlowRename, [pane.listing?.path, cancelSlowRename]);
+
   const pageSize = Math.max(
     1,
     Math.floor((scrollRef.current?.clientHeight ?? 400) / rowHeight) - 1,
@@ -354,6 +491,7 @@ export function FileList({
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    cancelSlowRename();
     const primary = event.ctrlKey || event.metaKey;
     const extend = event.shiftKey;
     const handled = (() => {
@@ -404,9 +542,11 @@ export function FileList({
         case "Delete":
           if (pane.selection.size > 0) actions.onDelete();
           return true;
-        case "F2":
-          if (pane.selection.size === 1) actions.onRename();
+        case "F2": {
+          const [only] = pane.selectedEntries();
+          if (pane.selection.size === 1 && only) actions.onRename(only);
           return true;
+        }
         case "F4":
           if (event.shiftKey) actions.onNewFile();
           else if (cursorEntry) actions.onEdit(cursorEntry);
@@ -611,19 +751,36 @@ export function FileList({
   // keeps the selection until release, so several rows can be dragged. Pressing an unselected
   // row away from its name draws a box instead, and selects the row on release if it does not.
   const handleRowPointerDown = (event: ReactPointerEvent<HTMLElement>, entry: FileEntry) => {
+    cancelSlowRename();
     if (event.button !== 0) return;
     const selected = pane.selection.has(entry.path);
     const onName = (event.target as Element).closest(".file-name-text, .file-icon");
+    const modified = event.ctrlKey || event.metaKey || event.shiftKey;
+    // As in Explorer, only once the list already has the focus, so the click that brings the
+    // window or the pane forward never renames.
+    press.current = {
+      path: entry.path,
+      x: event.clientX,
+      y: event.clientY,
+      renames:
+        selected &&
+        pane.selection.size === 1 &&
+        !modified &&
+        event.pointerType !== "touch" &&
+        !!(event.target as Element).closest(".file-name-text") &&
+        document.hasFocus() &&
+        document.activeElement === scrollRef.current,
+    };
     if (!selected && !onName && event.pointerType !== "touch") {
       startBox(event);
       return;
     }
-    const modified = event.ctrlKey || event.metaKey || event.shiftKey;
     if (!modified && !selected) pane.selectOnly(entry.path);
     if (!modified) actions.onRowPointerDown(event, entry);
   };
 
   const handleBodyPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    cancelSlowRename();
     // Rows, the parent row aside, decide for themselves; the scrollbar is right of the content.
     const list = event.currentTarget;
     if ((event.target as Element).closest(".file-row:not(.file-row-parent)")) return;
@@ -631,7 +788,27 @@ export function FileList({
     startBox(event);
   };
 
+  /** Waits out a double click after a slow second click on the selected row, then renames. */
+  const startSlowRename = (event: MouseEvent, entry: FileEntry) => {
+    const pressed = press.current;
+    press.current = null;
+    const slipped =
+      !pressed ||
+      Math.abs(event.clientX - pressed.x) > CLICK_SLOP ||
+      Math.abs(event.clientY - pressed.y) > CLICK_SLOP;
+    if (!pressed?.renames || pressed.path !== entry.path || event.detail !== 1 || slipped) return;
+    renameTimer.current = window.setTimeout(() => {
+      renameTimer.current = 0;
+      const { selection } = latestPane.current;
+      const stillAlone = selection.size === 1 && selection.has(entry.path);
+      const stillFocused = document.hasFocus() && document.activeElement === scrollRef.current;
+      if (stillAlone && stillFocused && !useDragStore.getState().payload) actions.onRename(entry);
+    }, SLOW_CLICK_RENAME_MILLIS);
+  };
+
   const handleRowClick = (event: MouseEvent, entry: FileEntry) => {
+    cancelSlowRename();
+    startSlowRename(event, entry);
     const primary = event.ctrlKey || event.metaKey;
     if (primary && event.shiftKey) pane.addRangeTo(entry.path);
     else if (primary) pane.toggleSelected(entry.path);
@@ -640,6 +817,7 @@ export function FileList({
   };
 
   const handleRowContextMenu = (event: MouseEvent, entry: FileEntry) => {
+    cancelSlowRename();
     event.preventDefault();
     event.stopPropagation();
     if (!pane.selection.has(entry.path)) pane.selectOnly(entry.path);
@@ -653,8 +831,20 @@ export function FileList({
     latestRowEvents.current = {
       onPointerDown: handleRowPointerDown,
       onClick: handleRowClick,
-      onOpen: openEntry,
+      onOpen: (entry) => {
+        cancelSlowRename();
+        openEntry(entry);
+      },
       onContextMenu: handleRowContextMenu,
+      onRenameSubmit: async (entry, newName, fromKeyboard) => {
+        const renamed = await actions.onRenameSubmit(entry, newName);
+        if (renamed && fromKeyboard) scrollRef.current?.focus({ preventScroll: true });
+        return renamed;
+      },
+      onRenameCancel: (fromKeyboard) => {
+        actions.onRenameCancel();
+        if (fromKeyboard) scrollRef.current?.focus({ preventScroll: true });
+      },
     };
   });
   const rowEvents = useMemo<RowEvents>(
@@ -663,6 +853,10 @@ export function FileList({
       onClick: (event, entry) => latestRowEvents.current?.onClick(event, entry),
       onOpen: (entry) => latestRowEvents.current?.onOpen(entry),
       onContextMenu: (event, entry) => latestRowEvents.current?.onContextMenu(event, entry),
+      onRenameSubmit: (entry, newName, fromKeyboard) =>
+        latestRowEvents.current?.onRenameSubmit(entry, newName, fromKeyboard) ??
+        Promise.resolve(false),
+      onRenameCancel: (fromKeyboard) => latestRowEvents.current?.onRenameCancel(fromKeyboard),
     }),
     [],
   );
@@ -807,6 +1001,7 @@ export function FileList({
                 cursor={pane.cursorPath === entry.path}
                 cut={cutPaths?.has(entry.path) ?? false}
                 dropTarget={isDirLike(entry) && dropFolder === entry.path}
+                renaming={renaming === entry.path}
                 events={rowEvents}
               />
             );

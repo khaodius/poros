@@ -29,7 +29,8 @@
 - **File operations**: new files and folders on any server or this computer. Cut, copy and
   paste, Move to and Copy to, and dragging onto a folder (hold Ctrl to copy) move and copy files
   within a server or this computer without a transfer. Properties changes permissions, owner and
-  group.
+  group. Deleting on an SFTP server runs `rm` on the server when its shell allows it, and shows
+  how many entries are gone, the one being deleted and any that could not be.
 - **File compare** of any two files, side by side with changed words highlighted.
 - **Built-in editor** for text files up to 16 MiB, local or on any server, with syntax highlighting
   and find and replace. Each save uploads the file and warns first if it changed on the server.
@@ -249,7 +250,7 @@ The Windows installers are not code-signed yet, so SmartScreen may warn about an
 | Drag across transfers              | Select them, Ctrl or Shift adds               |
 | Ctrl + H                           | Show hidden files                             |
 | Menu key, Shift + F10              | Menu for the selection                        |
-| F2                                 | Rename                                        |
+| F2, click a selected name again    | Rename                                        |
 | Ctrl + X, Ctrl + C, Ctrl + V       | Cut, copy, paste                              |
 | Alt + Enter                        | Properties                                    |
 | F4                                 | Edit                                          |

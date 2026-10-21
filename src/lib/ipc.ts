@@ -11,6 +11,8 @@ import type {
   CompareRequest,
   Comparison,
   ConnectProfile,
+  DeleteRequest,
+  DeleteSummary,
   DirListing,
   DocumentInfo,
   DocumentLocation,
@@ -139,6 +141,8 @@ export const fileOperations = {
     call<string[]>("files_conflicts", { location, names, directory }),
   moveOrCopy: (request: MoveCopyRequest) =>
     call<OperationSummary>("files_move_or_copy", { request }),
+  /** Deletes on an SFTP server, reporting progress like the other operations. */
+  delete: (request: DeleteRequest) => call<DeleteSummary>("files_delete", { request }),
   cancel: (operationId: string) => call<void>("files_cancel", { operationId }),
   details: (sessionId: string, path: string) =>
     call<FileDetails>("files_details", { sessionId, path }),

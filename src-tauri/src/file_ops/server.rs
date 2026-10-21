@@ -718,7 +718,7 @@ fn is_within(path: &str, folder: &str) -> bool {
             .is_some_and(|rest| rest.starts_with('/'))
 }
 
-fn trim_trailing_slash(path: &str) -> String {
+pub(super) fn trim_trailing_slash(path: &str) -> String {
     let trimmed = path.trim_end_matches('/');
     if trimmed.is_empty() {
         "/".to_string()

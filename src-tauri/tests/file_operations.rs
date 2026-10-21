@@ -5,8 +5,9 @@ use std::sync::Arc;
 
 use poros_lib::events::Events;
 use poros_lib::file_ops::{
-    CompareRequest, Comparison, Conflict, FileOperations, FileRef, Location, Method, Mode,
-    ModeChange, MoveCopyRequest, OperationSummary, PermissionRequest, ServerFeatures,
+    CompareRequest, Comparison, Conflict, DeleteRequest, DeleteSummary, FileOperations, FileRef,
+    Location, Method, Mode, ModeChange, MoveCopyRequest, OperationSummary, PermissionRequest,
+    ServerFeatures,
 };
 use poros_lib::model::EntryKind;
 use poros_lib::protocol::Protocol;
@@ -186,6 +187,32 @@ impl Fixture {
             })
             .await
             .unwrap()
+    }
+
+    async fn delete(&self, operations: &FileOperations, paths: &[&str]) -> DeleteSummary {
+        operations
+            .delete(DeleteRequest {
+                operation_id: uuid::Uuid::new_v4().to_string(),
+                session_id: self.session.id.clone(),
+                paths: paths.iter().map(|path| self.path(path)).collect(),
+            })
+            .await
+            .unwrap()
+    }
+
+    async fn names(&self, relative: &str) -> Vec<String> {
+        let session = self.session().await;
+        let mut names: Vec<String> = session
+            .sftp()
+            .unwrap()
+            .entries(&self.path(relative))
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        names.sort();
+        names
     }
 
     async fn close(self) {
@@ -620,6 +647,113 @@ async fn moving_across_disks_keeps_what_could_not_be_copied() {
     fs.delete(std::slice::from_ref(&other_disk)).await.unwrap();
     drop(session);
     fixture.close().await;
+}
+
+#[tokio::test]
+async fn deletes_trees_with_commands_and_over_sftp() {
+    let Some(server) = server() else { return };
+    for (way, commands) in [true, false].into_iter().enumerate() {
+        let fixture = Fixture::new(&server, &format!("delete-{way}")).await;
+        let operations = fixture.operations(ServerFeatures {
+            copy_data: true,
+            commands,
+        });
+        fixture.mkdir("keep").await;
+        fixture.write("keep/precious.txt", b"keep me").await;
+        fixture.mkdir("trash").await;
+        let mut entries = 1;
+        for folder in 0..3 {
+            fixture.mkdir(&format!("trash/sub{folder}")).await;
+            fixture.mkdir(&format!("trash/sub{folder}/deeper")).await;
+            entries += 2;
+            for file in 0..40 {
+                fixture
+                    .write(&format!("trash/sub{folder}/file {file}.txt"), b"x")
+                    .await;
+            }
+            for file in 0..10 {
+                fixture
+                    .write(&format!("trash/sub{folder}/deeper/{file}"), b"y")
+                    .await;
+            }
+            entries += 50;
+        }
+        let session = fixture.session().await;
+        let fs = session.sftp().unwrap();
+        // Links go, what they point at stays.
+        fs.make_symlink(&fixture.path("trash/link"), &fixture.path("keep"))
+            .await
+            .unwrap();
+        entries += 1;
+        for name in ["loose.txt", "it's here.txt", "-delete"] {
+            fixture.write(name, b"z").await;
+            entries += 1;
+        }
+
+        let summary = fixture
+            .delete(
+                &operations,
+                &[
+                    "trash",
+                    "trash/sub0",
+                    "loose.txt",
+                    "it's here.txt",
+                    "-delete",
+                ],
+            )
+            .await;
+        assert_eq!(summary.failed, 0, "{:?}", summary.failures);
+        assert_eq!(summary.deleted, entries);
+        let expected_methods: &[Method] = if commands { &[Method::Command] } else { &[] };
+        assert_eq!(summary.methods, expected_methods);
+        // Nothing else was touched, and nothing was left behind.
+        assert_eq!(fixture.names("").await, ["keep"]);
+        assert_eq!(fixture.read("keep/precious.txt").await, b"keep me");
+        drop(session);
+        fixture.close().await;
+    }
+}
+
+#[tokio::test]
+async fn deleting_reports_what_could_not_go() {
+    let Some(server) = server() else { return };
+    for (way, commands) in [true, false].into_iter().enumerate() {
+        let fixture = Fixture::new(&server, &format!("delete-locked-{way}")).await;
+        let operations = fixture.operations(ServerFeatures {
+            copy_data: true,
+            commands,
+        });
+        fixture.mkdir("site").await;
+        fixture.mkdir("site/locked").await;
+        fixture.write("site/index.html", b"a").await;
+        fixture.write("site/locked/held.txt", b"b").await;
+        fixture.write("other.txt", b"c").await;
+        let session = fixture.session().await;
+        let fs = session.sftp().unwrap();
+        let locked = fixture.path("site/locked");
+        fs.set_permissions(&locked, 0o555).await.unwrap();
+
+        let summary = fixture.delete(&operations, &["site", "other.txt"]).await;
+        assert_eq!(summary.failed, 1, "{:?}", summary.failures);
+        assert_eq!(
+            summary.failures[0].path,
+            fixture.path("site/locked/held.txt")
+        );
+        assert!(
+            summary.failures[0].message.contains("ermission denied"),
+            "{:?}",
+            summary.failures
+        );
+        assert_eq!(summary.deleted, 2);
+        assert!(!fixture.exists("other.txt").await);
+        assert!(!fixture.exists("site/index.html").await);
+        assert!(fixture.exists("site/locked/held.txt").await);
+        assert_eq!(fixture.names("").await, ["site"]);
+
+        fs.set_permissions(&locked, 0o755).await.unwrap();
+        drop(session);
+        fixture.close().await;
+    }
 }
 
 #[tokio::test]

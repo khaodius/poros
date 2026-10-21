@@ -2,6 +2,7 @@
 //! server, without sending them through the transfer queue.
 
 mod compare;
+mod delete;
 mod local_ops;
 mod names;
 mod permissions;
@@ -9,7 +10,7 @@ mod server;
 
 use std::collections::HashMap;
 use std::ops::Deref;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -24,6 +25,8 @@ pub use compare::{CompareRequest, Comparison, FileRef};
 pub use permissions::{Details, ModeChange, PermissionRequest, PermissionSummary, Usage};
 
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
+/// Failures an operation keeps to report; any more are only counted.
+const KEPT_FAILURES: usize = 1000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(
@@ -84,6 +87,26 @@ pub enum Method {
     Local,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteRequest {
+    /// Names this operation for progress events and cancelling.
+    pub operation_id: String,
+    pub session_id: String,
+    pub paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteSummary {
+    /// Entries removed, counting everything that was inside folders.
+    pub deleted: u64,
+    /// Entries that could not be removed, of which `failures` holds the first ones.
+    pub failed: u64,
+    pub failures: Vec<Failure>,
+    pub methods: Vec<Method>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Failure {
@@ -109,6 +132,20 @@ pub struct OperationProgress {
     pub bytes: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current: Option<String>,
+    /// How many entries the operation covers, as far as it has found them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total: Option<u64>,
+    /// More entries may yet be found, so `total` can still grow.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub counting: bool,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub failed: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_failure: Option<Failure>,
+}
+
+fn is_zero(count: &u64) -> bool {
+    *count == 0
 }
 
 /// An SFTP channel of the operation's own, so long server-side work never holds up browsing,
@@ -152,14 +189,35 @@ impl Drop for Channel<'_> {
 pub(crate) struct Progress {
     files: AtomicU64,
     bytes: AtomicU64,
+    total: AtomicU64,
+    counting: AtomicBool,
+    failed: AtomicU64,
     current: Mutex<Option<String>>,
     failures: Mutex<Vec<Failure>>,
+    last_failure: Mutex<Option<Failure>>,
     methods: Mutex<Vec<Method>>,
 }
 
 impl Progress {
     fn file_done(&self) {
         self.files.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn found(&self, count: u64) {
+        self.total.fetch_add(count, Ordering::Relaxed);
+    }
+
+    /// Takes back entries found twice, as when another way of working goes over them again.
+    fn unfound(&self, count: u64) {
+        let _ = self
+            .total
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |total| {
+                Some(total.saturating_sub(count))
+            });
+    }
+
+    fn set_counting(&self, counting: bool) {
+        self.counting.store(counting, Ordering::Relaxed);
     }
 
     fn add_bytes(&self, bytes: u64) {
@@ -180,11 +238,21 @@ impl Progress {
     /// Records a problem with one entry so the rest can go on; cancelling is not a problem.
     fn fail(&self, path: &str, error: AppError) {
         if error.kind != crate::error::ErrorKind::Cancelled {
-            self.failures.lock().unwrap().push(Failure {
+            self.failed.fetch_add(1, Ordering::Relaxed);
+            let failure = Failure {
                 path: path.to_string(),
                 message: error.message,
-            });
+            };
+            let mut failures = self.failures.lock().unwrap();
+            if failures.len() < KEPT_FAILURES {
+                failures.push(failure.clone());
+            }
+            *self.last_failure.lock().unwrap() = Some(failure);
         }
+    }
+
+    fn failed(&self) -> u64 {
+        self.failed.load(Ordering::Relaxed)
     }
 
     fn files_done(&self) -> u64 {
@@ -192,11 +260,16 @@ impl Progress {
     }
 
     fn snapshot(&self, operation_id: &str) -> OperationProgress {
+        let total = self.total.load(Ordering::Relaxed);
         OperationProgress {
             operation_id: operation_id.to_string(),
             files: self.files.load(Ordering::Relaxed),
             bytes: self.bytes.load(Ordering::Relaxed),
             current: self.current.lock().unwrap().clone(),
+            total: (total > 0).then_some(total),
+            counting: self.counting.load(Ordering::Relaxed),
+            failed: self.failed(),
+            last_failure: self.last_failure.lock().unwrap().clone(),
         }
     }
 
@@ -362,6 +435,19 @@ impl FileOperations {
                 work.move_or_copy(&request).await
             }
         }
+    }
+
+    pub async fn delete(&self, request: DeleteRequest) -> AppResult<DeleteSummary> {
+        let running = self.begin(&request.operation_id);
+        let session = self.sessions.get(&request.session_id).await?;
+        delete::delete(
+            &session,
+            self.features,
+            &request.paths,
+            &running.cancel,
+            &running.progress,
+        )
+        .await
     }
 
     pub async fn details(&self, session_id: &str, path: &str) -> AppResult<Details> {
