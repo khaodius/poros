@@ -60,7 +60,10 @@ const DEFAULT_RADIUS = 6;
 const pixels = (value: number) => `${value} px`;
 /** The fonts, sizes and shape on this page, which one button puts back. */
 const LOOK_KEYS = (Object.keys(DEFAULT_SETTINGS.appearance) as (keyof Appearance)[]).filter(
-  (key) => !["theme", "systemIcons", "smoothScrolling"].includes(key),
+  (key) =>
+    !["theme", "systemIcons", "smoothScrolling", "groupLocalByDate", "groupRemoteByDate"].includes(
+      key,
+    ),
 );
 /** How the system's icons are described: whose they are depends on the system. */
 const SYSTEM_ICONS_HINT = navigator.userAgent.includes("Windows")
@@ -399,6 +402,21 @@ export function AppearanceSettings() {
           hint="The mouse wheel glides file lists, the log and other panels rather than jumping a step at a time."
           checked={appearance.smoothScrolling}
           onChange={(smoothScrolling) => setAppearance({ smoothScrolling })}
+        />
+      </SettingGroup>
+
+      <SettingGroup title="Grouping">
+        <SwitchSetting
+          label="Group local files by date"
+          hint="Puts files under Today, Yesterday, Earlier this week and so on, as Windows Explorer does. Click a heading to select what is under it, or its arrow to collapse it."
+          checked={appearance.groupLocalByDate}
+          onChange={(groupLocalByDate) => setAppearance({ groupLocalByDate })}
+        />
+        <SwitchSetting
+          label="Group server files by date"
+          hint="The same for files on servers."
+          checked={appearance.groupRemoteByDate}
+          onChange={(groupRemoteByDate) => setAppearance({ groupRemoteByDate })}
         />
       </SettingGroup>
     </>

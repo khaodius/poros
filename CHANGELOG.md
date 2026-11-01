@@ -3,7 +3,7 @@
 Installers for every version are attached to its
 [release](https://github.com/khaodius/poros/releases), with SHA-256 checksums.
 
-## Unreleased
+## 0.5.4 - 2026-11-01
 
 - **Drag files out to Explorer, GNOME Files and Dolphin.** Files and folders dragged from a tab
   past the edge of the window now drop into Windows Explorer, the desktop, GNOME Files, Dolphin
@@ -12,6 +12,31 @@ Installers for every version are attached to its
   Files and other Linux file managers wait for the download and then copy them, and Dolphin and
   the KDE desktop tell Poros the folder they were dropped in, so they download straight there.
   Letting go back over Poros drops them as if they had never left the window.
+
+## 0.5.3 - 2026-11-01
+
+- **Import connections from other apps.** Import in the Connect dialog and on the new tab page
+  copies the saved sites of FileZilla, WinSCP, SmartFTP, Cyberduck and Mountain Duck, PuTTY and
+  KiTTY, MobaXterm, the OpenSSH config (`~/.ssh/config`, with its `Include` files) and the server
+  bookmarks of GNOME Files and KDE Dolphin. Poros finds them where each app keeps them, including
+  the Windows registry, or reads a file you choose and works out which app wrote it. Every site is
+  listed first with how it signs in, so you pick which to import; sites already saved are left
+  unticked. Folders can go in front of the names, jump hosts and tunnels (`ProxyJump`, WinSCP
+  tunnels, MobaXterm gateways) become saved jump hosts, and the passwords FileZilla and WinSCP
+  keep go straight to the system keychain unless you untick that. Sites Poros cannot connect to,
+  such as Telnet sessions, are listed with the reason.
+
+## 0.5.2 - 2026-11-01
+
+- **Local files are grouped by date, as in Windows Explorer.** The local list puts its files under
+  Today, Yesterday, Earlier this week, Last week, Earlier this month, Last month, Earlier this
+  year and A long time ago, going by the calendar and the week your language starts on. Within
+  each group the files keep the order you sort by, folders first if you keep them there. Sorting
+  by Modified oldest first turns the groups around too. Click a group's arrow to collapse or
+  expand it, or its heading to select everything in it; Ctrl or Shift adds to the selection.
+  Group by in the right-click menu turns grouping off or on for the list and collapses or
+  expands every group at once. Settings > Appearance > Grouping has a switch for local lists and
+  one for server lists, which stay ungrouped unless you turn it on.
 
 ## 0.5.1 - 2026-10-21
 

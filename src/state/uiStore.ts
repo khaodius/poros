@@ -18,6 +18,8 @@ export type AppDialog =
   | { kind: "connect"; draft: ConnectDraft; targetTabId?: string; error?: string }
   | { kind: "settings"; section: SettingsSection }
   | { kind: "saveConnection"; sessionId: string }
+  /** `returnTo` reopens the dialog the import was started from once this one closes. */
+  | { kind: "importConnections"; returnTo?: AppDialog }
   /** Folders to start with; the panes looked at last fill in what is not given. */
   | { kind: "sync"; localPath?: string; sessionId?: string; remotePath?: string }
   | { kind: "closeTab"; tabId: string; sessionId: string; label: string; pendingTransfers: number }

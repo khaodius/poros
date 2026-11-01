@@ -31,6 +31,7 @@ import {
   HardDrive,
   Home,
   Info,
+  ListTree,
   Pencil,
   RefreshCw,
   RotateCcw,
@@ -193,10 +194,13 @@ export function FilePane({
   const rowHeight = useSettingsStore((state) => state.settings.appearance.rowHeight);
   const stripedRows = useSettingsStore((state) => state.settings.appearance.stripedRows);
   const fontSize = useSettingsStore((state) => state.settings.appearance.fontSize);
+  const groupSetting = source.kind === "local" ? "groupLocalByDate" : "groupRemoteByDate";
+  const groupByDate = useSettingsStore((state) => state.settings.appearance[groupSetting]);
   const pane = usePane(source, {
     showHiddenByDefault,
     initialSort: useSettingsStore.getState().settings.interface.sort,
     foldersFirst,
+    groupByDate,
     onSortChange: rememberSort,
   });
   const [dialog, setDialog] = useState<PaneDialog | null>(null);
@@ -451,6 +455,30 @@ export function FilePane({
     ],
   });
 
+  // Explorer's Group by menu, for the one grouping Poros has.
+  const groupMenu = (): MenuItem => ({
+    label: "Group by",
+    icon: <ListTree size={14} />,
+    items: [
+      ...([true, false] as const).map((grouped) => ({
+        label: grouped ? "Date modified" : "None",
+        checked: groupByDate === grouped,
+        onSelect: () => void saveSettingsSection("appearance", { [groupSetting]: grouped }),
+      })),
+      "separator",
+      {
+        label: "Collapse all groups",
+        disabled: !pane.groups || pane.collapsedGroups.size === pane.groups.length,
+        onSelect: () => pane.setAllGroupsCollapsed(true),
+      },
+      {
+        label: "Expand all groups",
+        disabled: !pane.groups || pane.collapsedGroups.size === 0,
+        onSelect: () => pane.setAllGroupsCollapsed(false),
+      },
+    ],
+  });
+
   const showHeaderMenu = (event: MouseEvent) => {
     const toggleColumn = (key: DetailColumn) =>
       void saveSettingsSection("interface", {
@@ -475,6 +503,7 @@ export function FilePane({
           onSelect: () => void saveSettingsSection("interface", { columnWidths: {} }),
         },
         sortMenu(),
+        groupMenu(),
       ],
     });
   };
@@ -598,7 +627,7 @@ export function FilePane({
         shortcut: "Shift+F4",
         onSelect: openNewFile,
       },
-      ...(entry ? [] : [sortMenu()]),
+      ...(entry ? [] : [sortMenu(), groupMenu()]),
       syncMenuItem(entry),
       // Commands run over SSH.
       ...(sessionId && protocol === "sftp" && pane.listing
@@ -813,7 +842,7 @@ export function FilePane({
 
       <footer className="pane-footer">
         <span>
-          {pluralize(pane.visibleEntries.length, "item")}
+          {pluralize(pane.entryCount, "item")}
           {pane.hiddenCount > 0 && `, ${pane.hiddenCount} hidden`}
         </span>
         {selected.length > 0 && (

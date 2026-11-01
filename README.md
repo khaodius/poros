@@ -13,7 +13,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0"></a>
 </p>
 
-![Poros with a local folder, two server tabs, a file open in the editor and transfers running in the queue](.github/assets/screenshot.png)
+![Poros with a local folder grouped by date, two server tabs, a file open in the editor and transfers running in the queue](.github/assets/screenshot.png)
 
 ## Features
 
@@ -64,10 +64,15 @@
   FTPS, WebDAV and S3 certificates the system does not trust get the same approval prompt, by
   fingerprint.
 - **Saved connections**, with passwords and cloud sign-ins stored only on request and only in the
-  system keychain.
+  system keychain. Sites saved in FileZilla, WinSCP, SmartFTP, Cyberduck, PuTTY, KiTTY,
+  MobaXterm, the OpenSSH config, and GNOME Files or KDE Dolphin bookmarks can be imported, with
+  their folders, jump hosts and the passwords FileZilla and WinSCP keep.
 - **Themes** as shareable JSON files, ten built in, with every color editable in settings. File
   lists can show the system's own file icons, Windows Explorer's or your Linux icon theme's, and
   scrolling with the mouse wheel can glide.
+- **Date groups** like Windows Explorer's: local files sit under Today, Yesterday, Earlier this
+  week and so on, each group collapsible, with a switch in Settings > Appearance for local and
+  server lists.
 - **Signed updates**: Poros checks for a new release at start-up, downloads it in the background
   and installs it only after verifying its signature, then lets you choose when to restart.
   Settings > Updates turns the check off, and can install an earlier release the same way.

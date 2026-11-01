@@ -521,6 +521,74 @@ export interface SavedConnection {
   s3?: S3Options;
 }
 
+/** A client whose saved sites can be imported. Mirrors `ImportSource` in import/mod.rs. */
+export type ImportSource =
+  | "fileZilla"
+  | "winScp"
+  | "smartFtp"
+  | "cyberduck"
+  | "putty"
+  | "mobaXterm"
+  | "openSsh"
+  | "fileManager"
+  | "urlList";
+
+export interface ImportSourceInfo {
+  source: ImportSource;
+  /** The files, folders and registry keys with its sites on this computer. */
+  found: string[];
+  /** Where the client keeps its sites on this system, when none were found. */
+  places: string[];
+  /** Why what was found cannot be read, and what to do instead. */
+  note?: string | null;
+}
+
+export interface ImportEntry {
+  /** Not saved yet: no id, and the name has no folder in it. */
+  connection: SavedConnection;
+  /** The folders the site was in, outermost first. */
+  folder: string[];
+  /** A password came with it; it stays in the backend until the import. */
+  hasPassword: boolean;
+  /** The entry this one is reached through. */
+  jump?: number | null;
+  /** A saved connection to the same server and account. */
+  existingId?: string | null;
+  /** What did not carry over. */
+  notes: string[];
+}
+
+export interface ImportSkipped {
+  name: string;
+  reason: string;
+}
+
+export interface ImportScan {
+  scanId: string;
+  source: ImportSource;
+  /** The files and registry keys read. */
+  origins: string[];
+  entries: ImportEntry[];
+  skipped: ImportSkipped[];
+  warnings: string[];
+}
+
+export interface ImportRequest {
+  scanId: string;
+  /** Entry indexes; the jump hosts they go through come along. */
+  selected: number[];
+  savePasswords: boolean;
+  /** Puts the folders a site was in before its name. */
+  folderNames: boolean;
+}
+
+export interface ImportOutcome {
+  imported: number;
+  /** Imported without their password, since the system keychain refused it. */
+  withoutPasswords: number;
+  failures: string[];
+}
+
 export interface CloudProviderStatus {
   provider: CloudProvider;
   /** An app to sign in with is set in Settings or built into this release. */

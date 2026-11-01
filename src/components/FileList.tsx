@@ -13,10 +13,11 @@ import {
   type SyntheticEvent,
 } from "react";
 import { defaultRangeExtractor, useVirtualizer, type Range } from "@tanstack/react-virtual";
-import { ArrowDown, ArrowUp, CornerLeftUp } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, CornerLeftUp } from "lucide-react";
 import { useFitCount } from "../hooks/useFitCount";
 import type { PaneController } from "../hooks/usePane";
 import { useSelectionBox, type RowRange } from "../hooks/useSelectionBox";
+import { DATE_GROUP_LABELS, type DateGroup, type EntryGroup } from "../lib/dateGroups";
 import { formatDate, formatPermissions, formatSize } from "../lib/format";
 import {
   COLUMN_LABELS,
@@ -139,6 +140,35 @@ function defaultColumn(key: DetailColumn, dateFormat: DateFormat): Column {
 /** Columns kept longest when the list gets narrow come first. */
 const FIT_PRIORITY: DetailColumn[] = ["size", "modified", "type", "permissions", "owner"];
 
+/** What each row of the list shows, top to bottom; every row is one height. */
+type ListRow =
+  | { kind: "parent" }
+  | { kind: "group"; group: DateGroup; entries: FileEntry[]; collapsed: boolean }
+  | { kind: "entry"; entry: FileEntry };
+
+function listRows(
+  groups: readonly EntryGroup[] | null,
+  collapsedGroups: ReadonlySet<DateGroup>,
+  visibleEntries: readonly FileEntry[],
+  showParentRow: boolean,
+): ListRow[] {
+  const rows: ListRow[] = showParentRow ? [{ kind: "parent" }] : [];
+  if (!groups) {
+    for (const entry of visibleEntries) rows.push({ kind: "entry", entry });
+    return rows;
+  }
+  for (const { id, entries } of groups) {
+    const collapsed = collapsedGroups.has(id);
+    rows.push({ kind: "group", group: id, entries, collapsed });
+    if (!collapsed) for (const entry of entries) rows.push({ kind: "entry", entry });
+  }
+  return rows;
+}
+
+function pathsInRows(rows: readonly ListRow[]): string[] {
+  return rows.flatMap((row) => (row.kind === "entry" ? [row.entry.path] : []));
+}
+
 interface RowEvents {
   onPointerDown: (event: ReactPointerEvent<HTMLElement>, entry: FileEntry) => void;
   onClick: (event: MouseEvent, entry: FileEntry) => void;
@@ -232,6 +262,70 @@ const FileRow = memo(function FileRow({
           </span>
         ),
       )}
+    </div>
+  );
+});
+
+interface GroupEvents {
+  onToggle: (group: DateGroup) => void;
+  onSelect: (event: MouseEvent, entries: FileEntry[]) => void;
+}
+
+interface GroupRowProps {
+  group: DateGroup;
+  entries: FileEntry[];
+  collapsed: boolean;
+  top: number;
+  height: number;
+  events: GroupEvents;
+}
+
+/**
+ * The heading over a date group, as in Windows Explorer: the arrow collapses or expands the
+ * group, and a click elsewhere selects what is in it, or expands it while collapsed. The second
+ * click of a double click does nothing more, so it never undoes the first.
+ */
+const GroupRow = memo(function GroupRow({
+  group,
+  entries,
+  collapsed,
+  top,
+  height,
+  events,
+}: GroupRowProps) {
+  const label = DATE_GROUP_LABELS[group];
+  const Chevron = collapsed ? ChevronRight : ChevronDown;
+  const onArrow = (event: MouseEvent) => !!(event.target as Element).closest(".file-group-toggle");
+  return (
+    <div
+      className={`file-group-row ${collapsed ? "is-collapsed" : ""}`}
+      style={{
+        transform: `translateY(${top}px)`,
+        width: `calc(100% - ${DROP_STRIP_WIDTH}px)`,
+        height,
+      }}
+      role="row"
+      aria-expanded={!collapsed}
+      onClick={(event) => {
+        event.stopPropagation();
+        if (onArrow(event)) events.onToggle(group);
+        else if (event.detail > 1) return;
+        else if (collapsed) events.onToggle(group);
+        else events.onSelect(event, entries);
+      }}
+    >
+      <span
+        className="file-group-toggle"
+        title={collapsed ? "Expand group" : "Collapse group"}
+        aria-hidden
+      >
+        <Chevron size={14} />
+      </span>
+      <span className="file-group-label" role="rowheader">
+        {label}
+      </span>
+      <span className="file-group-count">{entries.length}</span>
+      <span className="file-group-rule" aria-hidden />
     </div>
   );
 });
@@ -351,7 +445,20 @@ export function FileList({
   const typeAhead = useRef({ text: "", lastKeyAt: 0 });
   const entries = pane.visibleEntries;
   const showParentRow = pane.canGoUp && pane.filter === "";
-  const rowOffset = showParentRow ? 1 : 0;
+  const { groups, collapsedGroups } = pane;
+  const rows = useMemo(
+    () => listRows(groups, collapsedGroups, entries, showParentRow),
+    [groups, collapsedGroups, entries, showParentRow],
+  );
+  const rowOfPath = useMemo(
+    () =>
+      new Map(
+        rows.flatMap((row, index) =>
+          row.kind === "entry" ? [[row.entry.path, index] as const] : [],
+        ),
+      ),
+    [rows],
+  );
   const draggingFiles = useDragStore((state) => !!state.payload && state.payload.kind !== "tab");
 
   const detailColumns = useMemo(() => {
@@ -383,19 +490,18 @@ export function FileList({
     .join(" ");
 
   // The row being renamed stays rendered when scrolled away, so the name typed so far is kept.
-  const renamingIndex = renaming ? entries.findIndex((entry) => entry.path === renaming) : -1;
-  const renamingRow = renamingIndex >= 0 ? renamingIndex + rowOffset : -1;
+  const renamingRow = renaming ? (rowOfPath.get(renaming) ?? -1) : -1;
   const rangeExtractor = useCallback(
     (range: Range) => {
-      const rows = defaultRangeExtractor(range);
-      if (renamingRow < 0 || rows.includes(renamingRow)) return rows;
-      return [...rows, renamingRow].sort((first, second) => first - second);
+      const indexes = defaultRangeExtractor(range);
+      if (renamingRow < 0 || indexes.includes(renamingRow)) return indexes;
+      return [...indexes, renamingRow].sort((first, second) => first - second);
     },
     [renamingRow],
   );
 
   const virtualizer = useVirtualizer({
-    count: entries.length + rowOffset,
+    count: rows.length,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => rowHeight,
     overscan: 16,
@@ -407,20 +513,29 @@ export function FileList({
   }, [renamingRow, virtualizer]);
 
   // A folder opens at the top, or with the cursor's row in the middle when it has one, as the
-  // folder just left does after going up or back.
+  // folder just left does after going up or back. Collapsing or expanding a group leaves the
+  // list where it is, rather than bringing the cursor back into view.
   const scrolledPath = useRef<string | undefined>(undefined);
+  const groupToggled = useRef(false);
   useEffect(() => {
     const opened = scrolledPath.current !== pane.listing?.path;
     scrolledPath.current = pane.listing?.path;
-    const index = pane.cursorPath
-      ? entries.findIndex((entry) => entry.path === pane.cursorPath)
-      : -1;
-    if (index >= 0) {
-      virtualizer.scrollToIndex(index + rowOffset, { align: opened ? "center" : "auto" });
+    const toggled = groupToggled.current;
+    groupToggled.current = false;
+    const row = pane.cursorPath ? rowOfPath.get(pane.cursorPath) : undefined;
+    if (row !== undefined && !(toggled && !opened)) {
+      // The first row of a group brings its heading into view with it on the way up.
+      const headingAbove =
+        !opened &&
+        rows[row - 1]?.kind === "group" &&
+        (row - 1) * rowHeight < (scrollRef.current?.scrollTop ?? 0);
+      virtualizer.scrollToIndex(headingAbove ? row - 1 : row, {
+        align: opened ? "center" : "auto",
+      });
     } else if (opened) {
       scrollRef.current?.scrollTo({ top: 0 });
     }
-  }, [pane.listing?.path, pane.cursorPath, entries, rowOffset, virtualizer]);
+  }, [pane.listing?.path, pane.cursorPath, rows, rowOfPath, rowHeight, virtualizer]);
 
   useEffect(() => {
     virtualizer.measure();
@@ -428,14 +543,14 @@ export function FileList({
 
   const selectionBox = useSelectionBox(scrollRef, contentRef, {
     rowHeight,
-    rowCount: entries.length + rowOffset,
+    rowCount: rows.length,
     rowsInset: DROP_STRIP_WIDTH,
   });
   // Read as a box changes, so the rows it selects are those on show even if the folder reloads
   // while it is drawn.
-  const shownRows = useRef({ entries, rowOffset });
+  const shownRows = useRef(rows);
   useLayoutEffect(() => {
-    shownRows.current = { entries, rowOffset };
+    shownRows.current = rows;
   });
 
   useEffect(() => {
@@ -725,12 +840,8 @@ export function FileList({
   const startBox = (event: ReactPointerEvent<HTMLElement>) => {
     const before = pane.selection;
     const kept = event.ctrlKey || event.metaKey || event.shiftKey ? [...before] : [];
-    const pathsIn = (rows: RowRange | null) => {
-      if (!rows) return [];
-      const { entries: shown, rowOffset: offset } = shownRows.current;
-      const first = Math.max(rows.first - offset, 0);
-      return shown.slice(first, rows.last - offset + 1).map((entry) => entry.path);
-    };
+    const pathsIn = (touched: RowRange | null) =>
+      touched ? pathsInRows(shownRows.current.slice(touched.first, touched.last + 1)) : [];
     selectionBox.begin(event, {
       onRows: (rows) => pane.selectPaths(new Set([...kept, ...pathsIn(rows)])),
       onFinish: (rows, downward) => {
@@ -861,6 +972,30 @@ export function FileList({
     [],
   );
 
+  const latestGroupEvents = useRef<GroupEvents | null>(null);
+  useLayoutEffect(() => {
+    latestGroupEvents.current = {
+      onToggle: (group) => {
+        cancelSlowRename();
+        groupToggled.current = true;
+        pane.toggleGroup(group);
+      },
+      onSelect: (event, groupEntries) => {
+        cancelSlowRename();
+        const paths = groupEntries.map((entry) => entry.path);
+        const kept = event.ctrlKey || event.metaKey || event.shiftKey ? [...pane.selection] : [];
+        pane.selectPaths(new Set([...kept, ...paths]), paths[0], paths[0]);
+      },
+    };
+  });
+  const groupEvents = useMemo<GroupEvents>(
+    () => ({
+      onToggle: (group) => latestGroupEvents.current?.onToggle(group),
+      onSelect: (event, groupEntries) => latestGroupEvents.current?.onSelect(event, groupEntries),
+    }),
+    [],
+  );
+
   /** The Menu key or Shift+F10: the menu for the cursor's row, or the selection, beside it. */
   const showKeyboardMenu = () => {
     const list = scrollRef.current;
@@ -957,7 +1092,9 @@ export function FileList({
       >
         <div ref={contentRef} style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
           {virtualizer.getVirtualItems().map((item) => {
-            if (showParentRow && item.index === 0) {
+            const row = rows[item.index];
+            if (!row) return null;
+            if (row.kind === "parent") {
               const parent = pane.listing?.parent ?? undefined;
               return (
                 <div
@@ -987,7 +1124,20 @@ export function FileList({
                 </div>
               );
             }
-            const entry = entries[item.index - rowOffset];
+            if (row.kind === "group") {
+              return (
+                <GroupRow
+                  key={`group:${row.group}`}
+                  group={row.group}
+                  entries={row.entries}
+                  collapsed={row.collapsed}
+                  top={item.start}
+                  height={rowHeight}
+                  events={groupEvents}
+                />
+              );
+            }
+            const entry = row.entry;
             return (
               <FileRow
                 key={entry.path}
