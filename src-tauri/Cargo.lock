@@ -3757,7 +3757,7 @@ dependencies = [
 
 [[package]]
 name = "poros"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "arboard",
  "async-trait",
@@ -3801,7 +3801,10 @@ dependencies = [
  "tokio-util",
  "ttf-parser",
  "uuid",
+ "windows",
+ "windows-core",
  "windows-sys 0.61.2",
+ "zbus",
 ]
 
 [[package]]

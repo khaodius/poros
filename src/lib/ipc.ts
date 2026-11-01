@@ -16,6 +16,8 @@ import type {
   DirListing,
   DocumentInfo,
   DocumentLocation,
+  DragOutOutcome,
+  DragOutRequest,
   EnqueueRequest,
   ExistsAction,
   FileDetails,
@@ -90,6 +92,8 @@ export const DRAG_PREVIEW_PICTURE_EVENT = "poros://drag-preview-picture";
 export const DRAG_PREVIEW_SHOWN_EVENT = "poros://drag-preview-shown";
 /** Sent to every window by the window the user turns to, with its label. */
 export const WINDOW_USED_EVENT = "poros://window-used";
+/** Mirrored in src-tauri/src/drag_out/mod.rs. Says whether files are dragged out of Poros. */
+export const DRAG_OUT_EVENT = "poros://drag-out";
 
 /** The label of the window Poros starts with; windows torn out of it get others. */
 export const MAIN_WINDOW = "main";
@@ -336,6 +340,12 @@ export const windows = {
   setCorners: (corners: WindowCorners) => call<void>("window_set_corners", { corners }),
 };
 
+/**
+ * Hands files dragged to the window's edge to the system's drag and drop. Answers once they are
+ * dropped somewhere or the drag is cancelled.
+ */
+export const dragOut = (request: DragOutRequest) => call<DragOutOutcome>("drag_out", { request });
+
 export const dragPreview = {
   /** Moves the preview of a tab dragged onto the desktop, opening it if needed. */
   place: (placement: PreviewPlacement) => call<void>("drag_preview_place", { placement }),
@@ -395,6 +405,8 @@ export const onLog = (handler: (record: LogRecord) => void) => subscribe(LOG_EVE
 /** The drag preview has come up showing the tab of the drag `drag`. */
 export const onDragPreviewShown = (handler: (drag: number) => void) =>
   subscribe(DRAG_PREVIEW_SHOWN_EVENT, handler);
+export const onDragOut = (handler: (state: { active: boolean }) => void) =>
+  subscribe(DRAG_OUT_EVENT, handler);
 export const onSessionClosed = (handler: (closed: SessionClosed) => void) =>
   subscribe(SESSION_CLOSED_EVENT, handler);
 export const onTransfers = (handler: (update: TransferUpdate) => void) =>

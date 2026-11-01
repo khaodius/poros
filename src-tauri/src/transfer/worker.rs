@@ -856,6 +856,11 @@ impl Destination {
     }
 }
 
+/// Whether a file name is that of a download or upload still under way.
+pub(crate) fn is_partial_name(name: &str) -> bool {
+    name.starts_with('.') && name.ends_with(PARTIAL_SUFFIX)
+}
+
 /// `.name.poros-part`, unless that would be too long a name.
 fn partial_name(name: &str) -> Option<String> {
     let partial = format!(".{name}{PARTIAL_SUFFIX}");

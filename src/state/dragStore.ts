@@ -39,8 +39,14 @@ export interface TabDrag {
   size: Size;
 }
 
+export interface FilesDrag {
+  kind: "files";
+  sourceTabId: string;
+  entries: FileEntry[];
+}
+
 export type DragPayload =
-  | { kind: "files"; sourceTabId: string; entries: FileEntry[] }
+  | FilesDrag
   | TabDrag
   /** Files dragged in from the operating system. */
   | { kind: "external"; paths: string[] };
@@ -53,6 +59,15 @@ export type DropTarget =
   | { kind: "window"; label: string; x: number; y: number }
   /** Off every Poros window, at a point on the screen. */
   | { kind: "outside"; screen: ScreenPoint };
+
+/** What a drop does: `copy` says the copy key was held. */
+export type DropHandler = (target: DropTarget, payload: DragPayload, copy: boolean) => void;
+
+/** Files this window handed to the system's drag and drop, and what dropping them here does. */
+export interface OutgoingFiles {
+  payload: FilesDrag;
+  onDrop: DropHandler;
+}
 
 /** A tab another window is dragging over this one. */
 export interface IncomingTab {
@@ -76,6 +91,10 @@ interface DragState {
    * window leaves it out.
    */
   drawnOnDesktop: boolean;
+  /** Files this window dragged out of Poros, while the system's drag carries them. */
+  outgoing: OutgoingFiles | null;
+  /** Some Poros window is dragging files out, which no window takes in as dropped files. */
+  draggingOut: boolean;
 }
 
 export const useDragStore = create<DragState>(() => ({
@@ -87,6 +106,8 @@ export const useDragStore = create<DragState>(() => ({
   desktopPreview: false,
   previewSeeThrough: false,
   drawnOnDesktop: false,
+  outgoing: null,
+  draggingOut: false,
 }));
 
 const DRAG_THRESHOLD = 5;
@@ -285,12 +306,14 @@ export function holdsOtherButton(event: PointerEvent): boolean {
 /**
  * Starts tracking a press that may become a drag. `payload` is built once the pointer has
  * moved far enough; `onDrop` receives the target under the pointer on release, and whether
- * the copy key was held.
+ * the copy key was held. A drag of files that reaches the window's edge ends here and goes to
+ * `handOff`, which carries it on outside the window.
  */
 export function beginDrag(
   event: ReactPointerEvent<HTMLElement>,
   payload: () => DragPayload | null,
-  onDrop: (target: DropTarget, payload: DragPayload, copy: boolean) => void,
+  onDrop: DropHandler,
+  handOff?: (payload: FilesDrag) => void,
 ): void {
   if (event.button !== 0) return;
   const pointerId = event.pointerId;
@@ -370,6 +393,18 @@ export function beginDrag(
     }
     useDragStore.setState({ copy: holdsCopyKey(moveEvent) });
     const position = dragPointer(moveEvent);
+    if (dragging.kind === "files" && handOff && outsideWindow(position)) {
+      const handed = dragging;
+      try {
+        // The system's drag takes the pointer from here.
+        document.body.releasePointerCapture(pointerId);
+      } catch {
+        // Already released.
+      }
+      stop();
+      handOff(handed);
+      return;
+    }
     if (dragging.kind !== "tab" || !outsideWindow(position)) {
       lastInside = performance.now();
       track(position);

@@ -15,6 +15,7 @@ use crate::clipboard::SystemClipboard;
 use crate::cloud::{self, CloudProvider, OAuthClient, OAuthVault, ProviderStatus, SignedIn};
 use crate::connections::{ConnectionStore, SavedConnection, SecretScope};
 use crate::desktop::{self, DragPreview, PreviewPlacement, WindowCorners};
+use crate::drag_out::{DragOut, DragOutOutcome, DragOutRequest};
 use crate::editor::{
     DocumentInfo, EditorManager, FileLocation, SaveOutcome, SaveRequest, TextDocument,
 };
@@ -942,6 +943,22 @@ pub async fn drag_preview_reveal(
     preview: State<'_, DragPreview>,
 ) -> AppResult<()> {
     preview.reveal(&window).map_err(window_error)
+}
+
+/// Hands files dragged to the window's edge to the system's drag and drop, and answers once
+/// they are dropped somewhere or the drag is cancelled.
+#[tauri::command]
+pub async fn drag_out(
+    app: AppHandle,
+    window: WebviewWindow,
+    drag_out: State<'_, DragOut>,
+    transfers: State<'_, TransferManager>,
+    events: State<'_, Events>,
+    request: DragOutRequest,
+) -> AppResult<DragOutOutcome> {
+    drag_out
+        .run(&app, &window, &transfers, &events, request)
+        .await
 }
 
 fn window_error(error: tauri::Error) -> AppError {

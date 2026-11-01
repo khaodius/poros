@@ -252,6 +252,23 @@ export interface TransferItem {
   size: number;
 }
 
+/** Files a pane drags out of Poros onto the desktop or into another program. */
+export interface DragOutRequest {
+  /** The server the files are on; `null` for files on this computer. */
+  sessionId: string | null;
+  items: TransferItem[];
+}
+
+/** Mirrored in src-tauri/src/drag_out/mod.rs. */
+export type DragOutOutcome =
+  | { kind: "dropped" }
+  | { kind: "cancelled" }
+  /**
+   * Let go over the window the drag came from. `at` is where in its page, for the page to drop
+   * the files itself; `null` when the page was told of the drop directly.
+   */
+  | { kind: "returned"; at: { x: number; y: number } | null; copy: boolean };
+
 export interface EnqueueRequest {
   sessionId: string;
   /** The server a relay reads from. */

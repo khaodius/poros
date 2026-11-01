@@ -55,7 +55,8 @@ import { groupOfTab } from "../lib/layout";
 import { isDirLike, type SortKey, type SortSpec } from "../lib/sort";
 import type { FileEntry, PlaceMode } from "../lib/types";
 import { useClipboardStore } from "../state/clipboardStore";
-import { beginDrag, useDragStore } from "../state/dragStore";
+import { beginDrag, useDragStore, type DropHandler } from "../state/dragStore";
+import { dragFilesOut } from "../state/dragOut";
 import { openInEditor } from "../state/editorActions";
 import {
   deleteOnServer,
@@ -318,27 +319,29 @@ export function FilePane({
   const startDrag = (event: ReactPointerEvent<HTMLElement>, entry: FileEntry) => {
     const wasSelected = pane.selection.has(entry.path);
     const selectedNow = pane.selectedEntries();
+    const drop: DropHandler = (target, payload, copy) => {
+      if (target.kind !== "pane" || payload.kind !== "files") return;
+      const action = dropAction(tabId, payload.entries, target, copy);
+      if (action?.kind === "transfer") {
+        transferFromPane(tabId, payload.entries, target.tabId, target.folder);
+      } else if (action?.kind === "blocked") {
+        showToast("info", `${action.reason}.`);
+      } else if (action?.kind === "place") {
+        void placeEntries({
+          mode: action.mode,
+          origin: paneOrigin(action.source),
+          sourceFolder: action.source.path() ?? "",
+          entries: payload.entries,
+          target: action.target,
+          targetFolder: action.folder,
+        });
+      }
+    };
     beginDrag(
       event,
       () => ({ kind: "files", sourceTabId: tabId, entries: wasSelected ? selectedNow : [entry] }),
-      (target, payload, copy) => {
-        if (target.kind !== "pane" || payload.kind !== "files") return;
-        const action = dropAction(tabId, payload.entries, target, copy);
-        if (action?.kind === "transfer") {
-          transferFromPane(tabId, payload.entries, target.tabId, target.folder);
-        } else if (action?.kind === "blocked") {
-          showToast("info", `${action.reason}.`);
-        } else if (action?.kind === "place") {
-          void placeEntries({
-            mode: action.mode,
-            origin: paneOrigin(action.source),
-            sourceFolder: action.source.path() ?? "",
-            entries: payload.entries,
-            target: action.target,
-            targetFolder: action.folder,
-          });
-        }
-      },
+      drop,
+      (payload) => void dragFilesOut(payload, drop),
     );
   };
 
