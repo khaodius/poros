@@ -1,10 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FileSource } from "../lib/fileSource";
 import { entryLeadingTo } from "../lib/cursor";
+import {
+  dateGroupFinder,
+  firstDayOfWeek,
+  groupEntriesByDate,
+  type DateGroup,
+  type EntryGroup,
+} from "../lib/dateGroups";
 import { toAppError } from "../lib/ipc";
 import { ListingLoads } from "../lib/listingLoads";
 import { filterEntries, isDirLike, sortEntries, type SortKey, type SortSpec } from "../lib/sort";
 import type { AppError, DirListing, FileEntry } from "../lib/types";
+import { useToday } from "./useToday";
+
+const WEEK_STARTS_ON = firstDayOfWeek(navigator.language);
 
 interface HistoryEntry {
   path: string;
@@ -21,7 +31,16 @@ type NavigationMode = "push" | "replace" | "travel";
 
 export interface PaneController {
   listing: DirListing | null;
+  /** The entries on show, in the order shown; none from collapsed groups. */
   visibleEntries: FileEntry[];
+  /** Entries the filter and the hidden files setting let through, collapsed groups included. */
+  entryCount: number;
+  /** The entries in date groups, in the order shown, while grouping by date; null otherwise. */
+  groups: EntryGroup[] | null;
+  collapsedGroups: ReadonlySet<DateGroup>;
+  /** Collapses or expands one group; collapsing it deselects what it hides. */
+  toggleGroup: (group: DateGroup) => void;
+  setAllGroupsCollapsed: (collapsed: boolean) => void;
   hiddenCount: number;
   loading: boolean;
   error: AppError | null;
@@ -65,6 +84,8 @@ export interface PaneOptions {
   showHiddenByDefault?: boolean;
   initialSort?: SortSpec;
   foldersFirst?: boolean;
+  /** Groups entries as Windows Explorer does by date modified: Today, Yesterday and so on. */
+  groupByDate?: boolean;
   /** Called with each sort order picked in the pane. */
   onSortChange?: (sort: SortSpec) => void;
 }
@@ -75,6 +96,7 @@ export function usePane(
     showHiddenByDefault = false,
     initialSort = { key: "name", direction: 1 },
     foldersFirst = true,
+    groupByDate = false,
     onSortChange,
   }: PaneOptions = {},
 ): PaneController {
@@ -88,6 +110,14 @@ export function usePane(
   const [sort, setSortState] = useState<SortSpec>(initialSort);
   const [filter, setFilter] = useState("");
   const [showHidden, setShowHidden] = useState(showHiddenByDefault);
+  const [collapsedGroups, setCollapsedGroups] = useState<ReadonlySet<DateGroup>>(new Set());
+  // Grouping turned off and on again starts with every group open.
+  const [groupedBefore, setGroupedBefore] = useState(groupByDate);
+  if (groupedBefore !== groupByDate) {
+    setGroupedBefore(groupByDate);
+    setCollapsedGroups(new Set());
+  }
+  const today = useToday();
   const loads = useRef(new ListingLoads());
   const listedPath = useRef<string | null>(null);
   const cursorRef = useRef(cursorPath);
@@ -98,7 +128,7 @@ export function usePane(
   // steps on from there.
   const travelIndex = useRef<number | null>(null);
 
-  const visibleEntries = useMemo(
+  const sortedEntries = useMemo(
     () =>
       sortEntries(
         filterEntries(listing?.entries ?? [], { showHidden, query: filter }),
@@ -106,6 +136,26 @@ export function usePane(
         foldersFirst,
       ),
     [listing, showHidden, filter, sort, foldersFirst],
+  );
+  // As in Explorer, the groups run the other way only while sorting oldest first by date.
+  const newestFirst = sort.key !== "modified" || sort.direction === -1;
+  const groups = useMemo(
+    () =>
+      groupByDate
+        ? groupEntriesByDate(sortedEntries, {
+            today: new Date(today),
+            weekStartsOn: WEEK_STARTS_ON,
+            newestFirst,
+          })
+        : null,
+    [groupByDate, sortedEntries, today, newestFirst],
+  );
+  const visibleEntries = useMemo(
+    () =>
+      groups
+        ? groups.flatMap((group) => (collapsedGroups.has(group.id) ? [] : group.entries))
+        : sortedEntries,
+    [groups, collapsedGroups, sortedEntries],
   );
   const hiddenCount = useMemo(
     () => (showHidden ? 0 : (listing?.entries.filter((entry) => entry.hidden).length ?? 0)),
@@ -135,6 +185,17 @@ export function usePane(
               ? entryLeadingTo(next.entries, leftPath)
               : undefined;
         setListing(next);
+        if (!sameDirectory) setCollapsedGroups(new Set());
+        const focused = focus ? next.entries.find((entry) => entry.path === focus) : undefined;
+        if (focused && sameDirectory) {
+          const group = dateGroupFinder(new Date(), WEEK_STARTS_ON)(focused.modified);
+          setCollapsedGroups((current) => {
+            if (!current.has(group)) return current;
+            const expanded = new Set(current);
+            expanded.delete(group);
+            return expanded;
+          });
+        }
         setSelection((current) => {
           if (focus) return new Set([focus]);
           return sameDirectory
@@ -248,6 +309,31 @@ export function usePane(
     [sort, setSort],
   );
 
+  const toggleGroup = useCallback(
+    (group: DateGroup) => {
+      const collapsing = !collapsedGroups.has(group);
+      setCollapsedGroups((current) => {
+        const next = new Set(current);
+        if (collapsing) next.add(group);
+        else next.delete(group);
+        return next;
+      });
+      const hidden = groups?.find((candidate) => candidate.id === group)?.entries ?? [];
+      if (!collapsing || hidden.length === 0) return;
+      const hiddenPaths = new Set(hidden.map((entry) => entry.path));
+      setSelection((current) => new Set([...current].filter((path) => !hiddenPaths.has(path))));
+    },
+    [collapsedGroups, groups],
+  );
+
+  const setAllGroupsCollapsed = useCallback(
+    (collapsed: boolean) => {
+      setCollapsedGroups(new Set(collapsed ? (groups ?? []).map((group) => group.id) : []));
+      if (collapsed) setSelection(new Set());
+    },
+    [groups],
+  );
+
   const selectOnly = useCallback((path: string) => {
     setSelection(new Set([path]));
     setAnchorPath(path);
@@ -359,6 +445,11 @@ export function usePane(
   return {
     listing,
     visibleEntries,
+    entryCount: sortedEntries.length,
+    groups,
+    collapsedGroups,
+    toggleGroup,
+    setAllGroupsCollapsed,
     hiddenCount,
     loading,
     error,
