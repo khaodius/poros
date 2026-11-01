@@ -3,7 +3,7 @@
 Installers for every version are attached to its
 [release](https://github.com/khaodius/poros/releases), with SHA-256 checksums.
 
-## Unreleased
+## 0.5.3 - 2026-11-01
 
 - **Import connections from other apps.** Import in the Connect dialog and on the new tab page
   copies the saved sites of FileZilla, WinSCP, SmartFTP, Cyberduck and Mountain Duck, PuTTY and
