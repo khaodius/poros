@@ -698,8 +698,10 @@ mod tests {
         let bytes = drop_files(&[PathBuf::from(r"C:\a"), PathBuf::from(r"C:\b")]);
         let header = size_of::<DROPFILES>();
         let units: Vec<u16> = bytes[header..]
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u16::from_le_bytes(*pair))
             .collect();
         let expected: Vec<u16> = "C:\\a\0C:\\b\0\0".encode_utf16().collect();
         assert_eq!(units, expected);
