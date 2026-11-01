@@ -145,8 +145,10 @@ fn unscramble_password(scrambled: &str, key: &str) -> Option<String> {
         .map(|digit| digit.to_digit(16))
         .collect::<Option<_>>()?;
     let mut bytes = digits
-        .chunks_exact(2)
-        .map(|pair| !(((pair[0] << 4) | pair[1]) as u8 ^ PASSWORD_MAGIC));
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|[high, low]| !(((high << 4) | low) as u8 ^ PASSWORD_MAGIC));
     let flag = bytes.next()?;
     let length = if flag == PASSWORD_FLAG {
         bytes.next()?;
