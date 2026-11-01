@@ -1807,6 +1807,56 @@ form.path-bar {
   color: var(--text-muted);
 }
 
+/* A date group's heading: its arrow, name and count, then a line to the end of the row. */
+.file-group-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px 0 5px;
+  color: var(--accent);
+  font-size: var(--font-size-small);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.file-group-row:hover {
+  background: var(--row-hover);
+}
+
+.file-group-toggle {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  color: var(--text-muted);
+  border-radius: var(--radius-small);
+}
+
+.file-group-toggle:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.file-group-count {
+  color: var(--text-faint);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.file-group-rule {
+  flex: 1;
+  min-width: 0;
+  height: 1px;
+  margin-left: 4px;
+  background: var(--border);
+}
+
 /* Dragged across the list to select the rows it touches; placed as the pointer moves. */
 .selection-box {
   position: absolute;

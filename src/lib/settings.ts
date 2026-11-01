@@ -137,6 +137,10 @@ export interface AppearanceSettings {
   systemIcons: boolean;
   /** The mouse wheel glides lists and panels rather than jumping. */
   smoothScrolling: boolean;
+  /** Local file lists group entries by date modified, as Windows Explorer does. */
+  groupLocalByDate: boolean;
+  /** Server file lists do the same. */
+  groupRemoteByDate: boolean;
 }
 
 export interface LogSettings {
@@ -295,6 +299,8 @@ export const DEFAULT_SETTINGS: Settings = {
     stripedRows: false,
     systemIcons: false,
     smoothScrolling: false,
+    groupLocalByDate: true,
+    groupRemoteByDate: false,
   },
   log: {
     maxLines: 5000,
