@@ -16,6 +16,18 @@ Installers for every version are attached to its
   keep go straight to the system keychain unless you untick that. Sites Poros cannot connect to,
   such as Telnet sessions, are listed with the reason.
 
+## 0.5.2 - 2026-11-01
+
+- **Local files are grouped by date, as in Windows Explorer.** The local list puts its files under
+  Today, Yesterday, Earlier this week, Last week, Earlier this month, Last month, Earlier this
+  year and A long time ago, going by the calendar and the week your language starts on. Within
+  each group the files keep the order you sort by, folders first if you keep them there. Sorting
+  by Modified oldest first turns the groups around too. Click a group's arrow to collapse or
+  expand it, or its heading to select everything in it; Ctrl or Shift adds to the selection.
+  Group by in the right-click menu turns grouping off or on for the list and collapses or
+  expands every group at once. Settings > Appearance > Grouping has a switch for local lists and
+  one for server lists, which stay ungrouped unless you turn it on.
+
 ## 0.5.1 - 2026-10-21
 
 - **Click a selected name again to rename it.** As in Windows Explorer, clicking the name of the
