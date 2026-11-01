@@ -12,6 +12,7 @@ import { HostKeyDialog } from "./components/HostKeyDialog";
 import { QuickConnectBar } from "./components/QuickConnectBar";
 import { PorosLogo } from "./components/PorosLogo";
 import { RunCommandDialog } from "./components/RunCommandDialog";
+import { ImportConnectionsDialog } from "./components/ImportConnectionsDialog";
 import { SaveConnectionDialog } from "./components/SaveConnectionDialog";
 import { SchedulerDialog } from "./components/SchedulerDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
@@ -528,6 +529,12 @@ function AppDialog() {
       return <SettingsDialog section={dialog.section} />;
     case "saveConnection":
       return <SaveConnectionDialog sessionId={dialog.sessionId} onClose={close} />;
+    case "importConnections":
+      return (
+        <ImportConnectionsDialog
+          onClose={() => (dialog.returnTo ? open(dialog.returnTo) : close())}
+        />
+      );
     case "sync":
       return (
         <SyncDialog

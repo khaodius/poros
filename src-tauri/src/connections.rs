@@ -190,6 +190,48 @@ fn keychain_error(error: keyring::Error) -> AppError {
     )
 }
 
+/// `connection` tidied up, or why it cannot be saved.
+fn validated(mut connection: SavedConnection) -> AppResult<SavedConnection> {
+    connection.name = connection.name.trim().to_string();
+    connection.host = connection.host.trim().to_string();
+    if let Some(host) = connection.protocol.service_host() {
+        connection.host = host.to_string();
+        connection.port = connection.protocol.default_port();
+        connection.key_path = None;
+    }
+    if connection.protocol == Protocol::S3 {
+        if connection.host.is_empty() {
+            connection.host = crate::cloud::s3::AWS_ENDPOINT.to_string();
+        }
+        connection.s3.region = connection.s3.region.trim().to_string();
+    } else {
+        connection.s3 = S3Options::default();
+    }
+    if connection.host.is_empty() {
+        return Err(AppError::invalid("Host is required"));
+    }
+    if connection.name.is_empty() {
+        connection.name = connection.host.clone();
+    }
+    match connection.auth_type {
+        AuthType::Agent => connection.save_secret = false,
+        // Without the stored sign-in the connection could not be opened again.
+        AuthType::OAuth => connection.save_secret = true,
+        AuthType::Password | AuthType::PublicKey => {}
+    }
+    let oauth = connection.auth_type == AuthType::OAuth;
+    let password_only = connection.protocol.is_http() && !oauth;
+    if connection.protocol.signs_in_with_oauth() != oauth
+        || (password_only && connection.auth_type != AuthType::Password)
+    {
+        return Err(AppError::invalid(format!(
+            "{} connections cannot use this sign-in method",
+            connection.protocol.display_name()
+        )));
+    }
+    Ok(connection)
+}
+
 pub struct ConnectionStore {
     file: PathBuf,
     secrets: Box<dyn SecretStore>,
@@ -215,48 +257,47 @@ impl ConnectionStore {
     /// a change of server, account or sign-in method without a new one.
     pub fn save(
         &self,
+        connection: SavedConnection,
+        secret: Option<String>,
+    ) -> AppResult<SavedConnection> {
+        let connection = validated(connection)?;
+        let _guard = self.lock.lock().unwrap();
+        let mut connections = self.read()?;
+        let saved = self.store_in(&mut connections, connection, secret)?;
+        storage::write_json(&self.file, &connections)?;
+        Ok(saved)
+    }
+
+    /// Saves each connection as `save` does, writing the file once. One that cannot be saved
+    /// leaves the others alone.
+    pub fn save_all(
+        &self,
+        entries: Vec<(SavedConnection, Option<String>)>,
+    ) -> AppResult<Vec<AppResult<SavedConnection>>> {
+        let _guard = self.lock.lock().unwrap();
+        let mut connections = self.read()?;
+        let results = entries
+            .into_iter()
+            .map(|(connection, secret)| {
+                let name = connection.name.clone();
+                validated(connection)
+                    .and_then(|connection| self.store_in(&mut connections, connection, secret))
+                    .map_err(|error| {
+                        AppError::new(error.kind, format!("{name}: {}", error.message))
+                    })
+            })
+            .collect();
+        storage::write_json(&self.file, &connections)?;
+        Ok(results)
+    }
+
+    /// Puts `connection` in `connections` and its secret in the keychain.
+    fn store_in(
+        &self,
+        connections: &mut Vec<SavedConnection>,
         mut connection: SavedConnection,
         secret: Option<String>,
     ) -> AppResult<SavedConnection> {
-        connection.name = connection.name.trim().to_string();
-        connection.host = connection.host.trim().to_string();
-        if let Some(host) = connection.protocol.service_host() {
-            connection.host = host.to_string();
-            connection.port = connection.protocol.default_port();
-            connection.key_path = None;
-        }
-        if connection.protocol == Protocol::S3 {
-            if connection.host.is_empty() {
-                connection.host = crate::cloud::s3::AWS_ENDPOINT.to_string();
-            }
-            connection.s3.region = connection.s3.region.trim().to_string();
-        } else {
-            connection.s3 = S3Options::default();
-        }
-        if connection.host.is_empty() {
-            return Err(AppError::invalid("Host is required"));
-        }
-        if connection.name.is_empty() {
-            connection.name = connection.host.clone();
-        }
-        match connection.auth_type {
-            AuthType::Agent => connection.save_secret = false,
-            // Without the stored sign-in the connection could not be opened again.
-            AuthType::OAuth => connection.save_secret = true,
-            AuthType::Password | AuthType::PublicKey => {}
-        }
-        let oauth = connection.auth_type == AuthType::OAuth;
-        let password_only = connection.protocol.is_http() && !oauth;
-        if connection.protocol.signs_in_with_oauth() != oauth
-            || (password_only && connection.auth_type != AuthType::Password)
-        {
-            return Err(AppError::invalid(format!(
-                "{} connections cannot use this sign-in method",
-                connection.protocol.display_name()
-            )));
-        }
-        let _guard = self.lock.lock().unwrap();
-        let mut connections = self.read()?;
         if connection.id.is_empty() {
             connection.id = uuid::Uuid::new_v4().to_string();
         }
@@ -282,10 +323,12 @@ impl ConnectionStore {
             .filter(|previous| *previous != scope);
         let id = &connection.id;
         let secret = secret.filter(|secret| !secret.is_empty());
+        // A new connection has nothing in the keychain to delete yet.
+        let stored_before = existing.is_some();
         match (&secret, connection.save_secret) {
-            (_, false) => self.secrets.delete(&connection_account(id, &scope))?,
+            (_, false) if stored_before => self.secrets.delete(&connection_account(id, &scope))?,
             (Some(secret), true) => self.secrets.set(&connection_account(id, &scope), secret)?,
-            (None, true) => {}
+            _ => {}
         }
         if let Some(previous_scope) = &previous_scope {
             self.secrets
@@ -293,7 +336,7 @@ impl ConnectionStore {
             // What is stored was for the server, account or sign-in method of before.
             connection.save_secret &= secret.is_some();
         }
-        if !connection.save_secret || secret.is_some() {
+        if stored_before && (!connection.save_secret || secret.is_some()) {
             self.secrets.delete(&unscoped_account(id))?;
         }
 
@@ -301,7 +344,6 @@ impl ConnectionStore {
             Some(index) => connections[index] = connection.clone(),
             None => connections.push(connection.clone()),
         }
-        storage::write_json(&self.file, &connections)?;
         Ok(connection)
     }
 
