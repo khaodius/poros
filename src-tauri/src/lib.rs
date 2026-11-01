@@ -12,6 +12,7 @@ pub mod file_ops;
 pub mod fonts;
 pub mod format;
 pub mod ftp;
+pub mod import;
 pub mod local;
 pub mod model;
 pub mod protocol;
@@ -129,6 +130,7 @@ pub fn run() {
             app.manage(sessions);
             app.manage(settings);
             app.manage(connections);
+            app.manage(Arc::new(import::ImportScans::default()));
             app.manage(OAuthVault::default());
             app.manage(SystemClipboard::default());
             let handle = app.handle().clone();
@@ -233,6 +235,10 @@ pub fn run() {
             commands::connections_list,
             commands::connections_save,
             commands::connections_delete,
+            commands::connections_import_sources,
+            commands::connections_import_scan,
+            commands::connections_import,
+            commands::connections_import_discard,
             commands::cloud_providers,
             commands::cloud_sign_in,
             commands::cloud_cancel_sign_in,

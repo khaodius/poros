@@ -25,6 +25,9 @@ use crate::file_ops::{
     MoveCopyRequest, OperationSummary, PermissionRequest, PermissionSummary, Usage,
 };
 use crate::fonts::{self, FontFamily};
+use crate::import::{
+    self, ImportOutcome, ImportRequest, ImportScan, ImportScans, ImportSource, SourceInfo,
+};
 use crate::local;
 use crate::model::{DirListing, FileEntry};
 use crate::route;
@@ -495,6 +498,49 @@ pub async fn connections_delete(
     tokio::task::spawn_blocking(move || store.delete(&id)).await??;
     events.store_changed(Store::Connections);
     Ok(())
+}
+
+/// The clients connections can be imported from, and whether their sites are on this
+/// computer.
+#[tauri::command]
+pub async fn connections_import_sources() -> AppResult<Vec<SourceInfo>> {
+    Ok(tokio::task::spawn_blocking(import::source_infos).await?)
+}
+
+/// Reads sites from where `source` keeps them, or from `paths`. Their passwords stay here.
+#[tauri::command]
+pub async fn connections_import_scan(
+    connections: State<'_, Arc<ConnectionStore>>,
+    scans: State<'_, Arc<ImportScans>>,
+    source: Option<ImportSource>,
+    paths: Vec<String>,
+) -> AppResult<ImportScan> {
+    let (store, scans) = (connections.inner().clone(), scans.inner().clone());
+    tokio::task::spawn_blocking(move || {
+        let paths: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+        let scanned = import::scan(source, &paths)?;
+        Ok(scans.keep(scanned, &store.list()?))
+    })
+    .await?
+}
+
+#[tauri::command]
+pub async fn connections_import(
+    connections: State<'_, Arc<ConnectionStore>>,
+    scans: State<'_, Arc<ImportScans>>,
+    events: State<'_, Events>,
+    request: ImportRequest,
+) -> AppResult<ImportOutcome> {
+    let (store, scans) = (connections.inner().clone(), scans.inner().clone());
+    let outcome = tokio::task::spawn_blocking(move || scans.import(&request, &store)).await??;
+    events.store_changed(Store::Connections);
+    Ok(outcome)
+}
+
+/// Forgets a scan that will not be imported, with the passwords it read.
+#[tauri::command]
+pub fn connections_import_discard(scans: State<'_, Arc<ImportScans>>, scan_id: String) {
+    scans.discard(&scan_id);
 }
 
 /// Which cloud providers have an app to sign in with.

@@ -23,6 +23,11 @@ import type {
   FileLocation,
   FolderUsage,
   FontFamily,
+  ImportOutcome,
+  ImportRequest,
+  ImportScan,
+  ImportSource,
+  ImportSourceInfo,
   HostKeyApproval,
   JobState,
   LogRecord,
@@ -199,6 +204,16 @@ export const savedConnections = {
       oauthGrant: oauthGrant ?? null,
     }),
   remove: (id: string) => call<void>("connections_delete", { id }),
+};
+
+export const connectionImport = {
+  sources: () => call<ImportSourceInfo[]>("connections_import_sources"),
+  /** Reads where the client keeps its sites, or `paths` (files or folders). */
+  scan: (source: ImportSource | null, paths: string[] = []) =>
+    call<ImportScan>("connections_import_scan", { source, paths }),
+  run: (request: ImportRequest) => call<ImportOutcome>("connections_import", { request }),
+  /** Forgets a scan that will not be imported, with the passwords it read. */
+  discard: (scanId: string) => call<void>("connections_import_discard", { scanId }),
 };
 
 export const cloud = {

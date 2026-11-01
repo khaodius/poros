@@ -1,6 +1,6 @@
 import { useRef, useState, type FormEvent } from "react";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
-import { FolderOpen, Plus } from "lucide-react";
+import { FolderOpen, Import, Plus } from "lucide-react";
 import { useOptionCheck } from "../hooks/useOptionCheck";
 import {
   EMPTY_DRAFT,
@@ -32,6 +32,7 @@ import { byRecentUse, useSavedConnections } from "../state/savedConnectionsStore
 import { CloudSignIn } from "./CloudSignIn";
 import { ConnectionIcon } from "./ConnectionIcon";
 import { useSettingsStore } from "../state/settingsStore";
+import { useUiStore } from "../state/uiStore";
 import { Dialog } from "./Dialog";
 import { OptionCheckView, RsyncArgumentsField } from "./RsyncOptionsEditor";
 
@@ -58,6 +59,7 @@ export function ConnectDialog({
   const connections = useSavedConnections((state) => state.connections);
   const saveConnection = useSavedConnections((state) => state.save);
   const removeConnection = useSavedConnections((state) => state.remove);
+  const openDialog = useUiStore((state) => state.open);
   const [draft, setDraft] = useState(initialDraft);
   const [busy, setBusy] = useState<"saving" | "connecting" | null>(null);
   const [error, setError] = useState<string | null>(initialError ?? null);
@@ -73,6 +75,9 @@ export function ConnectDialog({
   const jumpHostMissing =
     draft.jumpConnectionId !== "" &&
     !jumpHosts.some((connection) => connection.id === draft.jumpConnectionId);
+
+  const importConnections = () =>
+    openDialog({ kind: "importConnections", returnTo: { kind: "connect", draft, targetTabId } });
 
   const update = <K extends keyof ConnectDraft>(key: K, value: ConnectDraft[K]) =>
     setDraft((current) => withField(current, key, value));
@@ -212,18 +217,34 @@ export function ConnectDialog({
         <aside className="site-list">
           <div className="site-list-header">
             <span>Saved connections</span>
-            <button
-              type="button"
-              className="icon-button"
-              title="New connection"
-              aria-label="New connection"
-              onClick={() => select(EMPTY_DRAFT)}
-            >
-              <Plus size={15} />
-            </button>
+            <span className="site-list-actions">
+              <button
+                type="button"
+                className="icon-button"
+                title="Import from FileZilla, WinSCP and other apps"
+                aria-label="Import connections"
+                onClick={importConnections}
+              >
+                <Import size={15} />
+              </button>
+              <button
+                type="button"
+                className="icon-button"
+                title="New connection"
+                aria-label="New connection"
+                onClick={() => select(EMPTY_DRAFT)}
+              >
+                <Plus size={15} />
+              </button>
+            </span>
           </div>
           {connections.length === 0 ? (
-            <p className="site-list-empty">Connections you save appear here.</p>
+            <p className="site-list-empty">
+              Connections you save appear here.{" "}
+              <button type="button" className="link-button" onClick={importConnections}>
+                Import them from another app
+              </button>
+            </p>
           ) : (
             <ul>
               {byRecentUse(connections).map((connection) => (

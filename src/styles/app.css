@@ -3040,6 +3040,25 @@ option {
   font-size: var(--font-size-tiny);
 }
 
+.site-list-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.link-button {
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.link-button:hover {
+  text-decoration: underline;
+}
+
 .site-form {
   flex: 1;
   min-width: 0;
@@ -3075,6 +3094,174 @@ option {
 
 .push-left {
   margin-right: auto;
+}
+
+/* Import connections dialog */
+
+.import-intro {
+  margin: 0 0 12px;
+}
+
+.import-sources {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.import-source {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.import-source-text,
+.import-entry-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.import-source-name,
+.import-entry-name {
+  overflow: hidden;
+  font-weight: 500;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.import-source-detail,
+.import-entry-detail,
+.import-origin {
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: var(--font-size-small);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.import-source-note,
+.import-entry-note {
+  color: var(--warning);
+  font-size: var(--font-size-small);
+}
+
+.import-review {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.import-review-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.import-review-header .check {
+  flex: none;
+  font-weight: 500;
+}
+
+.import-origin {
+  flex: 1;
+  min-width: 0;
+  text-align: right;
+}
+
+.import-entries {
+  max-height: 340px;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  list-style: none;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.import-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-small);
+  cursor: pointer;
+}
+
+.import-entry:hover {
+  background: var(--surface-hover);
+}
+
+.import-entry input {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.import-entry.is-brought-along {
+  cursor: default;
+}
+
+.import-entry-icon {
+  flex: none;
+  color: var(--accent);
+}
+
+.import-entry-folder {
+  color: var(--text-faint);
+  font-weight: 400;
+}
+
+.import-entry-tags {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  max-width: 45%;
+}
+
+.import-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  color: var(--text-muted);
+  font-size: var(--font-size-tiny);
+  white-space: nowrap;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+.import-skipped {
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+}
+
+.import-skipped summary {
+  cursor: pointer;
+}
+
+.import-skipped ul {
+  max-height: 120px;
+  margin: 6px 0 0;
+  padding-left: 18px;
+  overflow-y: auto;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .conflict-table {

@@ -61,7 +61,9 @@
   FTPS, WebDAV and S3 certificates the system does not trust get the same approval prompt, by
   fingerprint.
 - **Saved connections**, with passwords and cloud sign-ins stored only on request and only in the
-  system keychain.
+  system keychain. Sites saved in FileZilla, WinSCP, SmartFTP, Cyberduck, PuTTY, KiTTY,
+  MobaXterm, the OpenSSH config, and GNOME Files or KDE Dolphin bookmarks can be imported, with
+  their folders, jump hosts and the passwords FileZilla and WinSCP keep.
 - **Themes** as shareable JSON files, ten built in, with every color editable in settings. File
   lists can show the system's own file icons, Windows Explorer's or your Linux icon theme's, and
   scrolling with the mouse wheel can glide.

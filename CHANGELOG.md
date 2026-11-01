@@ -3,6 +3,19 @@
 Installers for every version are attached to its
 [release](https://github.com/khaodius/poros/releases), with SHA-256 checksums.
 
+## 0.5.3 - 2026-11-01
+
+- **Import connections from other apps.** Import in the Connect dialog and on the new tab page
+  copies the saved sites of FileZilla, WinSCP, SmartFTP, Cyberduck and Mountain Duck, PuTTY and
+  KiTTY, MobaXterm, the OpenSSH config (`~/.ssh/config`, with its `Include` files) and the server
+  bookmarks of GNOME Files and KDE Dolphin. Poros finds them where each app keeps them, including
+  the Windows registry, or reads a file you choose and works out which app wrote it. Every site is
+  listed first with how it signs in, so you pick which to import; sites already saved are left
+  unticked. Folders can go in front of the names, jump hosts and tunnels (`ProxyJump`, WinSCP
+  tunnels, MobaXterm gateways) become saved jump hosts, and the passwords FileZilla and WinSCP
+  keep go straight to the system keychain unless you untick that. Sites Poros cannot connect to,
+  such as Telnet sessions, are listed with the reason.
+
 ## 0.5.2 - 2026-11-01
 
 - **Local files are grouped by date, as in Windows Explorer.** The local list puts its files under

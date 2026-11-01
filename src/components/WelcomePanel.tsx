@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Globe, HardDrive, KeyRound, Lock, Plus, UserRound } from "lucide-react";
+import { Globe, HardDrive, Import, KeyRound, Lock, Plus, UserRound } from "lucide-react";
 import { EMPTY_DRAFT, connectionDetail } from "../lib/connectDraft";
 import type { SavedConnection } from "../lib/types";
 import { connectSaved } from "../state/connectActions";
@@ -49,6 +49,15 @@ export function WelcomePanel({ tabId }: { tabId: string }) {
             <HardDrive size={14} />
             Local files
           </button>
+          <button
+            type="button"
+            className="button"
+            title="Import from FileZilla, WinSCP and other apps"
+            onClick={() => openDialog({ kind: "importConnections" })}
+          >
+            <Import size={14} />
+            Import
+          </button>
         </div>
 
         <div className="welcome-saved">
@@ -57,7 +66,7 @@ export function WelcomePanel({ tabId }: { tabId: string }) {
           {connections.length === 0 ? (
             <p className="welcome-hint">
               Servers you save from the connect dialog, or from the bookmark button of a server tab,
-              appear here.
+              appear here. Sites saved in FileZilla, WinSCP, PuTTY and other apps can be imported.
             </p>
           ) : (
             <ul className="saved-list">
