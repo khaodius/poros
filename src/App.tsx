@@ -35,6 +35,7 @@ import {
   RETURN_TAB_EVENT,
   application,
   dragPreview,
+  onDragOut,
   onLog,
   onQueueFinished,
   onSessionClosed,
@@ -212,13 +213,21 @@ const DROP_POSITION_SCALE = navigator.userAgent.includes("Windows")
   ? () => window.devicePixelRatio || 1
   : () => 1;
 
-/** Highlights where files dragged in from the system would land, and uploads them on drop. */
+/**
+ * Highlights where files dragged in from the system would land, and uploads them on drop. Files
+ * this window dragged out of Poros drop back as they would have had they never left it; files
+ * another Poros window drags out are not taken in.
+ */
 function useSystemFileDrops() {
   useEffect(() => {
     let dragged: DragPayload | null = null;
+    const dragsOut = onDragOut(({ active }) => useDragStore.setState({ draggingOut: active }));
     const subscription = getCurrentWebview().onDragDropEvent(({ payload: event }) => {
+      const { outgoing, draggingOut } = useDragStore.getState();
       if (event.type === "enter") {
-        dragged = event.paths.length > 0 ? { kind: "external", paths: event.paths } : null;
+        if (outgoing) dragged = outgoing.payload;
+        else if (draggingOut || event.paths.length === 0) dragged = null;
+        else dragged = { kind: "external", paths: event.paths };
       }
       if (event.type === "leave" || !dragged) {
         useDragStore.setState({ payload: null, target: null });
@@ -229,16 +238,22 @@ function useSystemFileDrops() {
       const clientY = event.position.y / scale;
       const target = hitTest({ clientX, clientY, screen: { x: 0, y: 0 } }, dragged);
       if (event.type === "drop") {
+        const dropped = dragged;
         dragged = null;
         useDragStore.setState({ payload: null, target: null });
-        if (target?.kind === "pane") {
+        if (!target) return;
+        if (outgoing && dropped.kind === "files") outgoing.onDrop(target, dropped, false);
+        else if (target.kind === "pane") {
           void uploadDroppedPaths(event.paths, target.tabId, target.folder);
         }
         return;
       }
       useDragStore.setState({ payload: dragged, target, pointer: { x: clientX, y: clientY } });
     });
-    return () => void subscription.then((unlisten) => unlisten());
+    return () => {
+      void dragsOut.then((unlisten) => unlisten());
+      void subscription.then((unlisten) => unlisten());
+    };
   }, []);
 }
 

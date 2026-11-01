@@ -199,6 +199,9 @@ fn snapshot(shared: &Shared) -> Option<(SavedQueue, &Path)> {
     };
     let mut jobs = Vec::new();
     for job in unfinished {
+        if shared.is_unsaved(&job.spec) {
+            continue;
+        }
         let Some(server) = index_of(&job.spec.session_id) else {
             continue;
         };

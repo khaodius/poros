@@ -22,6 +22,9 @@
   and Box.
 - **Server-to-server copies** by dragging files from one server tab onto another. Two FTP servers
   send files straight to each other (FXP) when both allow it.
+- **Drag files out** of any tab into Windows Explorer, the desktop, GNOME Files, Dolphin or any
+  other file manager. Files on a server download as you drag, and files dropped on Dolphin or the
+  KDE desktop download straight into the folder they were dropped in.
 - **Tabs and docking**: local folders, server sessions, editors and terminals are tabs that can be
   merged, split, resized, detached into their own windows and dragged from one window into another.
 - **Parallel transfers**: each worker uses its own connection, large files are split across

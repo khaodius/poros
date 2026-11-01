@@ -30,7 +30,9 @@ use queue::Totals;
 pub use queue::{
     ChangedDirectory, Direction, JobId, JobKind, JobSnapshot, JobState, QueueCounts, Side,
 };
-pub(crate) use worker::{ensure_remote_folders, keep_local_backup, keep_remote_backup};
+pub(crate) use worker::{
+    ensure_remote_folders, is_partial_name, keep_local_backup, keep_remote_backup,
+};
 
 use crate::checksum::Algorithm;
 use crate::error::{AppError, AppResult};
@@ -285,11 +287,22 @@ pub(crate) struct Shared {
     saving: AtomicBool,
     /// Unset in tests, where restored servers connect directly.
     route_resolver: OnceLock<RouteResolver>,
+    /// Jobs writing into these folders are not saved between runs.
+    unsaved_folders: Mutex<Vec<PathBuf>>,
 }
 
 impl Shared {
     fn settings(&self) -> TransferSettings {
         self.settings.read().unwrap().clone()
+    }
+
+    /// The job writes into a folder that is not kept between runs.
+    fn is_unsaved(&self, spec: &JobSpec) -> bool {
+        self.unsaved_folders
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|folder| downloads_into(spec, folder))
     }
 
     fn target(&self, session_id: &str) -> AppResult<Arc<SessionTarget>> {
@@ -404,6 +417,63 @@ impl TransferWatch {
             tokio::time::sleep(TICK * 2).await;
         }
     }
+
+    /// How the downloads into `folder` and below it stand.
+    pub fn downloads_into(&self, folder: &Path) -> FolderProgress {
+        let queue = self.shared.queue.lock().unwrap();
+        let mut progress = FolderProgress {
+            queue_paused: queue.paused,
+            ..FolderProgress::default()
+        };
+        for job in queue.jobs().filter(|job| downloads_into(&job.spec, folder)) {
+            match job.state {
+                JobState::Queued | JobState::Running | JobState::Paused | JobState::Conflict => {
+                    progress.unfinished += 1
+                }
+                JobState::Failed => progress.failures.push(format!(
+                    "{}: {}",
+                    job.spec.name,
+                    job.error.as_deref().unwrap_or("failed")
+                )),
+                JobState::Done | JobState::Skipped => {}
+            }
+        }
+        progress
+    }
+
+    /// Waits until nothing is left to download into `folder`, or the app is closing.
+    pub async fn wait_for_downloads_into(&self, folder: &Path) -> FolderProgress {
+        loop {
+            let progress = self.downloads_into(folder);
+            if progress.unfinished == 0 || self.shared.stopping.load(Ordering::Relaxed) {
+                return progress;
+            }
+            tokio::time::sleep(TICK).await;
+        }
+    }
+
+    /// Takes every download into `folder` off the queue, stopping the running ones.
+    pub fn discard_downloads_into(&self, folder: &Path) {
+        update_queue(&self.shared, |queue| {
+            let ids: Vec<JobId> = queue
+                .jobs()
+                .filter(|job| downloads_into(&job.spec, folder))
+                .map(|job| job.id)
+                .collect();
+            queue.remove(&ids);
+        });
+    }
+}
+
+/// How the downloads into one folder stand.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FolderProgress {
+    /// Jobs still to finish, paused ones and ones waiting on a conflict included.
+    pub unfinished: usize,
+    /// What went wrong with the ones that failed.
+    pub failures: Vec<String>,
+    /// The whole queue is paused, so nothing unfinished moves until it runs again.
+    pub queue_paused: bool,
 }
 
 pub struct TransferManager {
@@ -431,6 +501,7 @@ impl TransferManager {
             queue_file: OnceLock::new(),
             saving: AtomicBool::new(false),
             route_resolver: OnceLock::new(),
+            unsaved_folders: Mutex::new(Vec::new()),
         });
         let manager = Self { shared };
         manager.configure(settings);
@@ -460,6 +531,26 @@ impl TransferManager {
     }
 
     pub async fn enqueue(&self, request: EnqueueRequest) -> AppResult<usize> {
+        let specs = self.specs_for(&request).await?;
+        self.add_jobs(specs, Placement::Last);
+        Ok(request.items.len())
+    }
+
+    /// Queues jobs ahead of everything else, starting them even when transfers wait for Start:
+    /// a drag out of Poros waits on them.
+    pub async fn enqueue_first(&self, request: EnqueueRequest) -> AppResult<()> {
+        let specs = self.specs_for(&request).await?;
+        self.add_jobs(specs, Placement::First);
+        Ok(())
+    }
+
+    /// Leaves out of the saved queue the jobs writing into `folder`, which holds files only for
+    /// as long as Poros runs.
+    pub fn keep_out_of_saved_queue(&self, folder: PathBuf) {
+        self.shared.unsaved_folders.lock().unwrap().push(folder);
+    }
+
+    async fn specs_for(&self, request: &EnqueueRequest) -> AppResult<Vec<JobSpec>> {
         let session = self.shared.sessions.get(&request.session_id).await?;
         let source_session = match (request.direction, &request.source_session_id) {
             (Direction::Relay, Some(source_id)) => Some(self.shared.sessions.get(source_id).await?),
@@ -502,8 +593,7 @@ impl TransferManager {
             self.register(source_session);
         }
         self.register(&session);
-        self.add_jobs(specs);
-        Ok(request.items.len())
+        Ok(specs)
     }
 
     /// Queues single files, each knowing what to do with a file already at its target.
@@ -561,15 +651,16 @@ impl TransferManager {
             .or_insert_with(|| Arc::new(SessionTarget::for_session(session)));
     }
 
-    fn add_jobs(&self, specs: Vec<JobSpec>) {
+    fn add_jobs(&self, specs: Vec<JobSpec>, placement: Placement) {
         let auto_start = self.shared.settings().auto_start;
         {
             let mut queue = self.shared.queue.lock().unwrap();
-            if !auto_start && queue.counts().is_idle() {
+            if placement == Placement::Last && !auto_start && queue.counts().is_idle() {
                 queue.paused = true;
             }
-            for spec in specs {
-                queue.add(spec);
+            let ids: Vec<JobId> = specs.into_iter().map(|spec| queue.add(spec)).collect();
+            if placement == Placement::First {
+                queue.move_to(&ids, true);
             }
         }
         self.shared.work.notify_waiters();
@@ -589,27 +680,7 @@ impl TransferManager {
     }
 
     fn update_queue(&self, change: impl FnOnce(&mut Queue)) {
-        let abandoned = {
-            let mut queue = self.shared.queue.lock().unwrap();
-            change(&mut queue);
-            queue.take_abandoned()
-        };
-        self.shared.work.notify_waiters();
-        if !abandoned.is_empty() {
-            let shared = self.shared.clone();
-            tauri::async_runtime::spawn(async move {
-                for partial in abandoned {
-                    match partial.direction {
-                        Direction::Download => {
-                            let _ = tokio::fs::remove_file(&partial.path).await;
-                        }
-                        Direction::Upload | Direction::Relay => {
-                            discard_with_browsing_session(&shared, &partial).await
-                        }
-                    }
-                }
-            });
-        }
+        update_queue(&self.shared, change);
     }
 
     /// How transfers restored from the last run reach their servers through the proxy and jump
@@ -700,6 +771,42 @@ impl TransferManager {
             .unwrap()
             .session_failures(session_id)
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Placement {
+    First,
+    Last,
+}
+
+/// Changes the queue, then deletes the temporary files of jobs that left it unfinished.
+fn update_queue(shared: &Arc<Shared>, change: impl FnOnce(&mut Queue)) {
+    let abandoned = {
+        let mut queue = shared.queue.lock().unwrap();
+        change(&mut queue);
+        queue.take_abandoned()
+    };
+    shared.work.notify_waiters();
+    if !abandoned.is_empty() {
+        let shared = shared.clone();
+        tauri::async_runtime::spawn(async move {
+            for partial in abandoned {
+                match partial.direction {
+                    Direction::Download => {
+                        let _ = tokio::fs::remove_file(&partial.path).await;
+                    }
+                    Direction::Upload | Direction::Relay => {
+                        discard_with_browsing_session(&shared, &partial).await
+                    }
+                }
+            }
+        });
+    }
+}
+
+/// Whether a download job writes into `folder` or below it.
+fn downloads_into(spec: &JobSpec, folder: &Path) -> bool {
+    spec.direction == Direction::Download && Path::new(&spec.target).starts_with(folder)
 }
 
 impl Drop for TransferManager {

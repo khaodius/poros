@@ -3,6 +3,16 @@
 Installers for every version are attached to its
 [release](https://github.com/khaodius/poros/releases), with SHA-256 checksums.
 
+## Unreleased
+
+- **Drag files out to Explorer, GNOME Files and Dolphin.** Files and folders dragged from a tab
+  past the edge of the window now drop into Windows Explorer, the desktop, GNOME Files, Dolphin
+  or any other program that takes files. Files on a server download ahead of the rest of the queue
+  while you drag. Explorer copies them in once they arrive, with its own progress window. GNOME
+  Files and other Linux file managers wait for the download and then copy them, and Dolphin and
+  the KDE desktop tell Poros the folder they were dropped in, so they download straight there.
+  Letting go back over Poros drops them as if they had never left the window.
+
 ## 0.5.1 - 2026-10-21
 
 - **Click a selected name again to rename it.** As in Windows Explorer, clicking the name of the

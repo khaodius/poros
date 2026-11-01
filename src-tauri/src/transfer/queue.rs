@@ -617,6 +617,10 @@ impl Queue {
         self.jobs.get(&id)
     }
 
+    pub fn jobs(&self) -> impl Iterator<Item = &Job> {
+        self.jobs.values()
+    }
+
     pub fn has_session_jobs(&self, session_id: &str) -> bool {
         self.jobs.values().any(|job| job.spec.involves(session_id))
     }

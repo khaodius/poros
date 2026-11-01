@@ -5,6 +5,7 @@ pub mod cloud;
 pub mod commands;
 pub mod connections;
 pub mod desktop;
+pub mod drag_out;
 pub mod editor;
 pub mod error;
 pub mod events;
@@ -38,7 +39,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tauri::webview::PageLoadEvent;
-use tauri::{Manager, RunEvent, WindowEvent};
+use tauri::{DragDropEvent, Manager, RunEvent, WindowEvent};
 
 use automation::remote_command::CommandRunner;
 use automation::scheduler::Scheduler;
@@ -47,6 +48,7 @@ use cloud::OAuthVault;
 use commands::PendingWindows;
 use connections::{ConnectionStore, Keychain, SecretScope};
 use desktop::{DragPreview, DRAG_PREVIEW_WINDOW};
+use drag_out::DragOut;
 use editor::EditorManager;
 use events::Events;
 use file_ops::FileOperations;
@@ -119,8 +121,11 @@ pub fn run() {
                 let settings = handle.state::<SettingsStore>().get().connection;
                 route::resolve(profile, &settings, &store)
             }));
+            let drag_out = DragOut::new(app.path().app_cache_dir()?.join("drag-out"));
+            transfers.keep_out_of_saved_queue(drag_out.staging_root().to_path_buf());
             transfers.keep_queue_in(config_dir.join("transfers.json"));
             app.manage(transfers);
+            app.manage(drag_out);
             app.manage(SyncManager::new(sessions.clone(), events.clone()));
             app.manage(EditorManager::new(sessions.clone(), events.clone()));
             app.manage(TerminalManager::new(sessions.clone(), events.clone()));
@@ -167,6 +172,9 @@ pub fn run() {
             });
         })
         .on_window_event(|window, event| {
+            if let WindowEvent::DragDrop(DragDropEvent::Drop { paths, .. }) = event {
+                window.state::<DragOut>().dropped_on_poros(paths);
+            }
             if !matches!(event, WindowEvent::Destroyed) {
                 return;
             }
@@ -276,6 +284,7 @@ pub fn run() {
             commands::drag_preview_taken_over,
             commands::drag_preview_ready,
             commands::drag_preview_reveal,
+            commands::drag_out,
             commands::update_download,
             commands::update_versions,
             commands::update_find_release,

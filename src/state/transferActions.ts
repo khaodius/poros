@@ -6,7 +6,8 @@ import { useLogStore } from "./logStore";
 import { getPane, lastActivePane, type PaneHandle } from "./paneRegistry";
 import { useToastStore } from "./toastStore";
 
-function transferable(entries: FileEntry[]): TransferItem[] {
+/** The entries that can be copied: files and folders, not devices or broken links. */
+export function transferable(entries: FileEntry[]): TransferItem[] {
   return entries
     .filter((entry) => entry.kind !== "other" && entry.linkTarget !== "broken")
     .map((entry) => ({
