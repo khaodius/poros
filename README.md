@@ -47,8 +47,8 @@
   every file's size is checked with the server, and an optional setting compares checksums with
   the server's copy.
 - **Automatic recovery**: transfers wait out a dropped connection for up to 10 minutes and resume
-  where they stopped, server tabs reconnect on their own, and unfinished transfers come back
-  paused after a restart.
+  where they stopped, ones that waited longer try again once Poros reaches the server again, server
+  tabs reconnect on their own, and unfinished transfers come back paused after a restart.
 - **Scheduled tasks** synchronize folders or run a server command once, every few minutes, hours
   or days, or at a time of day on chosen weekdays. Tasks run while Poros is open, and a run missed
   while it was closed happens once at the next start.

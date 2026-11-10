@@ -301,6 +301,9 @@ pub struct Job {
     pub resume: Option<ResumePoint>,
     /// Waiting for its server to come back after the connection dropped.
     pub reconnecting: bool,
+    /// When its server went out of reach, for a job that failed because the server stayed away.
+    /// The job goes back in line once the server can be reached again.
+    pub unreachable_since: Option<Instant>,
     pub transferred: u64,
     pub speed: u64,
     /// Bytes sent over the network when rsync moved only the changes.
@@ -512,6 +515,8 @@ pub struct Queue {
     writing: HashMap<WrittenFile, JobId>,
     /// Jobs were added, removed, reordered or changed state since the queue was last saved.
     pub unsaved: bool,
+    /// The number of the latest progress update sent to the windows.
+    pub sequence: u64,
 }
 
 impl Queue {
@@ -557,6 +562,7 @@ impl Queue {
                 not_before: None,
                 resume: None,
                 reconnecting: false,
+                unreachable_since: None,
                 transferred: 0,
                 speed: 0,
                 delta_bytes: None,
@@ -686,6 +692,7 @@ impl Queue {
         job.delta_bytes = None;
         job.direct = false;
         job.reconnecting = false;
+        job.unreachable_since = None;
         job.sample = Some((now, start));
         self.dirty.insert(id);
         Some(Claim {
@@ -859,6 +866,11 @@ impl Queue {
         } else {
             self.server_answered(&session_id)
         };
+        let given_up_since = self
+            .outages
+            .get(&session_id)
+            .filter(|outage| outage.gave_up && failure.is_connection_lost())
+            .map(|outage| outage.since);
         let job = self.jobs.get_mut(&id)?;
         job.attempts += 1;
         if failure.is_retryable() && job.attempts <= settings.retry_attempts {
@@ -870,6 +882,7 @@ impl Queue {
             self.totals.failed += 1;
             job.state = JobState::Failed;
             job.error = Some(failure.message);
+            job.unreachable_since = given_up_since;
         }
         change
     }
@@ -927,15 +940,17 @@ impl Queue {
             }
             Some(outage) => {
                 outage.gave_up = true;
+                let since = outage.since;
                 let message = format!(
                     "{} (gave up after trying to reconnect for {} min)",
                     failure.message, settings.reconnect_minutes
                 );
-                let failed = self.fail_waiting(&session_id, &message) + 1;
+                let failed = self.fail_waiting(&session_id, &message, since) + 1;
                 let job = self.jobs.get_mut(&id)?;
                 self.totals.failed += 1;
                 job.state = JobState::Failed;
                 job.reconnecting = false;
+                job.unreachable_since = Some(since);
                 job.error = Some(message);
                 return Some(Some(ServerChange::GaveUp { failed }));
             }
@@ -949,8 +964,9 @@ impl Queue {
         Some(change)
     }
 
-    /// Fails every queued job of a session; returns how many there were.
-    fn fail_waiting(&mut self, session_id: &str, message: &str) -> usize {
+    /// Fails every queued job of a session, out of reach since `since`; returns how many there
+    /// were.
+    fn fail_waiting(&mut self, session_id: &str, message: &str, since: Instant) -> usize {
         let waiting: Vec<(String, JobId)> = self
             .pending
             .iter()
@@ -962,6 +978,7 @@ impl Queue {
             if let Some(job) = self.jobs.get_mut(id) {
                 job.state = JobState::Failed;
                 job.reconnecting = false;
+                job.unreachable_since = Some(since);
                 job.error = Some(message.to_string());
                 self.dirty.insert(*id);
             }
@@ -991,9 +1008,45 @@ impl Queue {
         ended
     }
 
-    /// Something got through to the server, so it is no longer out of reach.
+    /// Something got through to the server, so it is no longer out of reach, and transfers that
+    /// failed while it was go back in line.
     fn server_answered(&mut self, session_id: &str) -> Option<ServerChange> {
-        self.outages.remove(session_id).map(|_| ServerChange::Back)
+        let outage = self.outages.remove(session_id)?;
+        if outage.gave_up {
+            self.retry_unreachable(session_id);
+        }
+        Some(ServerChange::Back)
+    }
+
+    /// Servers that transfers failed to reach, each with when the earliest of them lost it.
+    pub fn unreachable_servers(&self) -> Vec<(String, Instant)> {
+        let mut servers: HashMap<String, Instant> = HashMap::new();
+        for job in self.jobs.values() {
+            if let (JobState::Failed, Some(since)) = (job.state, job.unreachable_since) {
+                servers
+                    .entry(job.spec.session_id.clone())
+                    .and_modify(|earliest| *earliest = (*earliest).min(since))
+                    .or_insert(since);
+            }
+        }
+        servers.into_iter().collect()
+    }
+
+    /// Puts the transfers that failed because a server was out of reach back in line, with a
+    /// fresh retry budget; returns how many there were.
+    pub fn retry_unreachable(&mut self, session_id: &str) -> usize {
+        let ids: Vec<JobId> = self
+            .jobs
+            .values()
+            .filter(|job| {
+                job.state == JobState::Failed
+                    && job.unreachable_since.is_some()
+                    && job.spec.session_id == session_id
+            })
+            .map(|job| job.id)
+            .collect();
+        self.resume(&ids);
+        ids.len()
     }
 
     fn forget(&mut self, id: JobId) {
@@ -1053,6 +1106,7 @@ impl Queue {
             }
             job.state = JobState::Queued;
             job.not_before = None;
+            job.unreachable_since = None;
             self.pending.insert(job.rank.clone(), *id);
             self.dirty.insert(*id);
             self.unsaved = true;
@@ -1614,6 +1668,78 @@ mod tests {
 
         queue.resume(&[first, second]);
         assert!(queue.claim(late).is_some());
+    }
+
+    #[test]
+    fn transfers_given_up_on_try_again_once_the_server_answers() {
+        let settings = TransferSettings {
+            reconnect_minutes: 1,
+            ..settings()
+        };
+        let mut queue = Queue::new();
+        let first = queue.add(file("a", 1));
+        let second = queue.add(file("b", 1));
+        let start = Instant::now();
+        queue.claim(start).unwrap();
+        drop_connection(&mut queue, first, &settings, start);
+        let late = start + Duration::from_secs(61);
+        queue.claim(late).unwrap();
+        drop_connection(&mut queue, first, &settings, late);
+        assert_eq!(
+            queue.unreachable_servers(),
+            vec![("session".to_string(), start)]
+        );
+
+        // A transfer added since gets through, so the server is back.
+        let third = queue.add(file("c", 1));
+        let claim = queue.claim(late).unwrap();
+        assert_eq!(claim.id, third);
+        assert!(matches!(
+            queue.release(third, &RunOutcome::Completed),
+            Release::Settle
+        ));
+        assert_eq!(
+            queue.settle(third, RunOutcome::Completed, &settings, late),
+            Some(ServerChange::Back)
+        );
+        for id in [first, second] {
+            let job = queue.job(id).unwrap();
+            assert_eq!(job.state, JobState::Queued);
+            assert_eq!(job.attempts, 0);
+            assert!(job.unreachable_since.is_none());
+        }
+        assert!(queue.unreachable_servers().is_empty());
+    }
+
+    #[test]
+    fn transfers_given_up_on_wait_for_the_server_to_be_reached() {
+        let settings = TransferSettings {
+            reconnect_minutes: 1,
+            ..settings()
+        };
+        let mut queue = Queue::new();
+        let first = queue.add(file("a", 1));
+        let second = queue.add(file("b", 1));
+        let start = Instant::now();
+        queue.claim(start).unwrap();
+        drop_connection(&mut queue, first, &settings, start);
+        let late = start + Duration::from_secs(61);
+        queue.claim(late).unwrap();
+        drop_connection(&mut queue, first, &settings, late);
+
+        // Failing for another reason says nothing about the server being out of reach.
+        queue.resume(&[second]);
+        let claim = queue.claim(late).unwrap();
+        assert_eq!(claim.id, second);
+        let denied = AppError::new(ErrorKind::PermissionDenied, "denied");
+        finish(&mut queue, second, RunOutcome::Failed(denied));
+        assert_eq!(queue.job(second).unwrap().state, JobState::Failed);
+        assert!(queue.job(second).unwrap().unreachable_since.is_none());
+
+        assert_eq!(queue.retry_unreachable("elsewhere"), 0);
+        assert_eq!(queue.retry_unreachable("session"), 1);
+        assert_eq!(queue.job(first).unwrap().state, JobState::Queued);
+        assert_eq!(queue.job(second).unwrap().state, JobState::Failed);
     }
 
     #[test]

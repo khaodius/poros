@@ -5,6 +5,8 @@ export interface TransferSnapshot {
   /** Job ids in queue order. */
   order: readonly number[];
   stats: TransferStats;
+  /** The latest update the snapshot holds; 0 before the first. */
+  sequence: number;
 }
 
 export const EMPTY_STATS: TransferStats = {
@@ -15,7 +17,12 @@ export const EMPTY_STATS: TransferStats = {
   queuePaused: false,
 };
 
-export const EMPTY_SNAPSHOT: TransferSnapshot = { jobs: new Map(), order: [], stats: EMPTY_STATS };
+export const EMPTY_SNAPSHOT: TransferSnapshot = {
+  jobs: new Map(),
+  order: [],
+  stats: EMPTY_STATS,
+  sequence: 0,
+};
 
 export type TransferViewKind = "queue" | "failed" | "completed";
 
@@ -34,13 +41,20 @@ function byRank(jobs: ReadonlyMap<number, JobSnapshot>): number[] {
 
 export function snapshotFromList(list: TransferList): TransferSnapshot {
   const jobs = new Map(list.jobs.map((job) => [job.id, job]));
-  return { jobs, order: byRank(jobs), stats: list.stats };
+  return { jobs, order: byRank(jobs), stats: list.stats, sequence: list.sequence };
 }
 
-/** Merges a progress event; the order is only rebuilt when jobs come, go or move. */
+/**
+ * Merges a progress event; the order is only rebuilt when jobs come, go or move. An event the
+ * snapshot already holds, such as one sent before the list it was read from, changes nothing:
+ * its jobs would go back to how they were then, and a job that has finished since would never
+ * be sent again.
+ */
 export function applyUpdate(current: TransferSnapshot, update: TransferUpdate): TransferSnapshot {
+  if (update.sequence <= current.sequence) return current;
+  const { sequence, stats } = update;
   if (update.jobs.length === 0 && update.removed.length === 0) {
-    return { ...current, stats: update.stats };
+    return { ...current, stats, sequence };
   }
   const jobs = new Map(current.jobs);
   let reorder = update.removed.length > 0;
@@ -49,7 +63,35 @@ export function applyUpdate(current: TransferSnapshot, update: TransferUpdate): 
     if (jobs.get(job.id)?.rank !== job.rank) reorder = true;
     jobs.set(job.id, job);
   }
-  return { jobs, order: reorder ? byRank(jobs) : current.order, stats: update.stats };
+  return { jobs, order: reorder ? byRank(jobs) : current.order, stats, sequence };
+}
+
+/** Events went missing between the snapshot and `update`, so the snapshot is out of date. */
+export function missesUpdates(current: TransferSnapshot, update: TransferUpdate): boolean {
+  return update.sequence > current.sequence + 1;
+}
+
+/**
+ * A list read from the queue, with the events that arrived while it was read merged in. Not
+ * `complete` when they show that one went missing, so the list should be read again.
+ */
+export function replayOnList(
+  list: TransferList,
+  arrived: readonly TransferUpdate[],
+): { snapshot: TransferSnapshot; complete: boolean } {
+  let snapshot = snapshotFromList(list);
+  let complete = true;
+  for (const update of [...arrived].sort((left, right) => left.sequence - right.sequence)) {
+    if (update.sequence <= snapshot.sequence) continue;
+    if (missesUpdates(snapshot, update)) complete = false;
+    snapshot = applyUpdate(snapshot, update);
+  }
+  return { snapshot, complete };
+}
+
+/** The queue has nothing left to start or finish. */
+export function isSettled(stats: TransferStats): boolean {
+  return stats.counts.queued === 0 && stats.counts.running === 0;
 }
 
 export function jobsIn(snapshot: TransferSnapshot, states: readonly JobState[]): JobSnapshot[] {

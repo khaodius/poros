@@ -1,7 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { TAB_BAR_HEIGHT } from "../lib/docking";
-import { DRAG_PREVIEW_EVENT, DRAG_PREVIEW_PICTURE_EVENT, dragPreview } from "../lib/ipc";
+import {
+  DRAG_PREVIEW_EVENT,
+  DRAG_PREVIEW_PICTURE_EVENT,
+  DRAG_PREVIEW_RELEASED_EVENT,
+  dragPreview,
+} from "../lib/ipc";
 import { drawPanePicture, type PanePicture } from "../lib/panePicture";
 import type { PreviewContent } from "../lib/types";
 import { matchWindowBackground } from "../lib/windowReveal";
@@ -46,6 +52,15 @@ export function DragPreview() {
       })
       .catch(() => undefined);
     return () => void listening.then((unlisten) => unlisten.forEach((stop) => stop()));
+  }, []);
+
+  // The window dragging the tab holds the pointer, unless another program took that hold, as
+  // some games do. The pointer then goes to the window under it, which is often this one, so
+  // the release that drops the tab is passed on.
+  useEffect(() => {
+    const release = () => void emit(DRAG_PREVIEW_RELEASED_EVENT).catch(() => undefined);
+    window.addEventListener("pointerup", release);
+    return () => window.removeEventListener("pointerup", release);
   }, []);
 
   const drawn = content !== null && picture?.drag === content.drag ? picture : null;

@@ -5,11 +5,14 @@ import {
   storePanelShare,
   storedPanelShare,
 } from "../lib/panelShare";
+import { moveWindowFrom } from "../lib/windowDrag";
+import { useSettingsStore } from "../state/settingsStore";
 import { BottomPanel } from "./BottomPanel";
 import { DockArea } from "./DockArea";
 
 /** The docked panes above the transfer queue and log, split by a draggable bar. */
 export function Workspace() {
+  const systemTitleBar = useSettingsStore((state) => state.settings.interface.systemTitleBar);
   const [share, setShare] = useState(storedPanelShare);
   const containerRef = useRef<HTMLElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -60,7 +63,14 @@ export function Workspace() {
   };
 
   return (
-    <main ref={containerRef} className="workspace">
+    <main
+      ref={containerRef}
+      className="workspace"
+      // The margin around the panes, between them and the top bar too, moves the window.
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !systemTitleBar) moveWindowFrom(event);
+      }}
+    >
       <div className="workspace-main">
         <DockArea />
       </div>
