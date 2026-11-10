@@ -104,6 +104,8 @@ pub struct TransferStats {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TransferUpdate {
+    /// One more than the update before, so a window can tell when it missed one.
+    pub sequence: u64,
     pub jobs: Vec<JobSnapshot>,
     pub removed: Vec<JobId>,
     pub changed_directories: Vec<ChangedDirectory>,
@@ -126,6 +128,8 @@ pub struct QueueFinished {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TransferList {
+    /// The latest update this list already holds.
+    pub sequence: u64,
     pub jobs: Vec<JobSnapshot>,
     pub stats: TransferStats,
 }
@@ -669,6 +673,7 @@ impl TransferManager {
     pub fn list(&self) -> TransferList {
         let queue = self.shared.queue.lock().unwrap();
         TransferList {
+            sequence: queue.sequence,
             jobs: queue.snapshots(),
             stats: TransferStats {
                 counts: queue.counts(),
@@ -851,10 +856,10 @@ async fn report_progress(shared: Weak<Shared>) {
             }
         };
 
-        let (jobs, removed, changed_directories, stats, totals, has_delayed) = {
+        let (update, stats, totals, has_delayed, unreachable) = {
             let mut queue = shared.queue.lock().unwrap();
             queue.sample_progress(now);
-            let (jobs, removed, changed) = queue.take_changes();
+            let (jobs, removed, changed_directories) = queue.take_changes();
             let counts = queue.counts();
             if counts.is_idle() {
                 queue.conflict_override = None;
@@ -874,13 +879,27 @@ async fn report_progress(shared: Weak<Shared>) {
             if queue.unsaved {
                 persist_due.get_or_insert(now);
             }
+            let changed = !jobs.is_empty()
+                || !removed.is_empty()
+                || !changed_directories.is_empty()
+                || stats != last_stats;
+            // Numbered under the lock, so a list read meanwhile tells which updates it holds.
+            let update = changed.then(|| {
+                queue.sequence += 1;
+                TransferUpdate {
+                    sequence: queue.sequence,
+                    jobs,
+                    removed,
+                    changed_directories,
+                    stats: stats.clone(),
+                }
+            });
             (
-                jobs,
-                removed,
-                changed,
+                update,
                 stats,
                 queue.totals,
                 queue.has_delayed_jobs(),
+                queue.unreachable_servers(),
             )
         };
 
@@ -909,22 +928,16 @@ async fn report_progress(shared: Weak<Shared>) {
             _ => {}
         }
 
-        let changed = !jobs.is_empty()
-            || !removed.is_empty()
-            || !changed_directories.is_empty()
-            || stats != last_stats;
-        if changed {
-            last_stats = stats.clone();
-            shared.events.transfers(&TransferUpdate {
-                jobs,
-                removed,
-                changed_directories,
-                stats,
-            });
+        if let Some(update) = update {
+            last_stats = stats;
+            shared.events.transfers(&update);
         }
         if has_delayed {
             shared.work.notify_waiters();
             end_outages_reached_again(&shared).await;
+        }
+        if !unreachable.is_empty() {
+            retry_reached_again(&shared, unreachable).await;
         }
         // Saved at most every few seconds, and while files move, often enough that a crash
         // loses little progress.
@@ -958,6 +971,42 @@ async fn end_outages_reached_again(shared: &Shared) {
                 LogLevel::Info,
                 Some(&session_id),
                 format!("Reconnected to {}; its transfers continue", target.label),
+            );
+            shared.work.notify_waiters();
+        }
+    }
+}
+
+/// Puts transfers that failed because their server stayed out of reach back in line once a new
+/// session reaches that server, such as a tab reconnecting.
+async fn retry_reached_again(shared: &Shared, servers: Vec<(String, Instant)>) {
+    for (session_id, since) in servers {
+        let Ok(target) = shared.target(&session_id) else {
+            continue;
+        };
+        let profile = target.login().profile;
+        let reached = shared
+            .sessions
+            .find_live(&profile, Some(since))
+            .await
+            .is_some();
+        if !reached {
+            continue;
+        }
+        let retried = shared.queue.lock().unwrap().retry_unreachable(&session_id);
+        if retried > 0 {
+            let transfers = if retried == 1 {
+                "transfer"
+            } else {
+                "transfers"
+            };
+            shared.events.log(
+                LogLevel::Info,
+                Some(&session_id),
+                format!(
+                    "Reconnected to {}; {retried} failed {transfers} try again",
+                    target.label
+                ),
             );
             shared.work.notify_waiters();
         }

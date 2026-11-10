@@ -11,11 +11,20 @@ const CONTROLS = "button, input, select, textarea, a, label, [role='button']";
  */
 export function dragWindowFrom(event: ReactMouseEvent<HTMLElement>): void {
   if (event.button !== 0 || (event.target as Element).closest(CONTROLS)) return;
-  const appWindow = getCurrentWindow();
   if (event.detail === 2) {
-    void appWindow.toggleMaximize();
+    void getCurrentWindow().toggleMaximize();
     return;
   }
+  moveWindowFrom(event);
+}
+
+/**
+ * Lets a part of a frameless window with nothing to press on it, such as the space beside its
+ * tabs, move the window as its top bar does. A double click there keeps its own meaning.
+ */
+export function moveWindowFrom(event: ReactMouseEvent<HTMLElement>): void {
+  if (event.button !== 0) return;
+  const appWindow = getCurrentWindow();
   const { clientX: startX, clientY: startY } = event;
   const move = (moveEvent: MouseEvent) => {
     if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < DRAG_THRESHOLD) {

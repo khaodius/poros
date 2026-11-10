@@ -3,6 +3,31 @@
 Installers for every version are attached to its
 [release](https://github.com/khaodius/poros/releases), with SHA-256 checksums.
 
+## 0.5.5 - 2026-11-10
+
+- **Finished transfers always show as finished.** In a large batch the queue could leave a file
+  shown as transferring after it had arrived, when the window took in an update older than what it
+  already showed, or missed one. Updates are now numbered: the window ignores ones it already has,
+  reads the whole queue again when one goes missing, and reads it once more each time the queue
+  settles.
+- **Transfers wait for a server that stops answering, then carry on.** A connection dropping in
+  the middle of an SFTP transfer was reported as an ordinary error, so the transfer spent its few
+  quick retries and failed while the server was still away. It now counts as a lost connection:
+  the server's transfers wait for it, without using up their retries, for as long as Settings >
+  Connection > Keep trying for allows. Transfers that failed because the server stayed away longer
+  than that go back in the queue on their own once Poros reaches the server again, as when its tab
+  reconnects or another transfer to it gets through.
+- **The drop highlight comes back with a pane dragged back into the window.** With a game or
+  another program open that takes the pointer, a pane dragged past the window's edge and back lost
+  its drop highlight, which then stayed where the pointer came back in, if it showed at all. The
+  drag now follows the pointer itself until the window hears from it again, and letting go over
+  the dragged pane drops it there.
+- **More of a window's top left moves it.** The margin around the panes, including the strip
+  between the top bar and the tabs, and the space beside the tabs move the window as the top bar
+  does, so a window just torn out can be taken up again without aiming for the top bar. Double
+  clicking beside the tabs still opens a new tab. A torn-out window opens with the pointer halfway
+  down its top bar, on the Poros name.
+
 ## 0.5.4 - 2026-11-01
 
 - **Drag files out to Explorer, GNOME Files and Dolphin.** Files and folders dragged from a tab

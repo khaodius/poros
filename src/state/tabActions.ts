@@ -32,8 +32,11 @@ import { useUiStore } from "./uiStore";
 
 const TORN_OUT_SHARE = 0.6;
 const TORN_OUT_MIN = { width: 640, height: 420 };
-/** Where the pointer holds a torn-out window, from its top left corner. */
-const TORN_OUT_GRAB = { x: 60, y: 16 };
+/**
+ * Where the pointer holds a torn-out window, from its top left corner: on the name in its top
+ * bar, halfway down, so the window can be taken up again where it opened.
+ */
+const TORN_OUT_GRAB = { x: 60, y: 23 };
 
 /** The size, in logical pixels, of a window a tab is torn out into. */
 export function tornOutSize(): { width: number; height: number } {

@@ -234,6 +234,8 @@ export interface ChangedDirectory {
 }
 
 export interface TransferUpdate {
+  /** One more than the update before, so a missed one shows. */
+  sequence: number;
   jobs: JobSnapshot[];
   removed: number[];
   changedDirectories: ChangedDirectory[];
@@ -241,6 +243,8 @@ export interface TransferUpdate {
 }
 
 export interface TransferList {
+  /** The latest update the list already holds. */
+  sequence: number;
   jobs: JobSnapshot[];
   stats: TransferStats;
 }

@@ -17,6 +17,8 @@ import { beginDrag, isLifted, markedDrop, tabDrag, useDragStore } from "../state
 import { useUnsavedStore } from "../state/editorRegistry";
 import { useLayoutStore } from "../state/layoutStore";
 import { useTabLabel } from "../hooks/useTabLabel";
+import { moveWindowFrom } from "../lib/windowDrag";
+import { useSettingsStore } from "../state/settingsStore";
 import { useSessionStore } from "../state/sessionStore";
 import { openTerminal } from "../state/terminalActions";
 import {
@@ -40,6 +42,7 @@ interface TabMenu {
 
 export function TabBar({ group }: { group: GroupNode }) {
   const addTab = useLayoutStore((state) => state.addTab);
+  const systemTitleBar = useSettingsStore((state) => state.settings.interface.systemTitleBar);
   const [menu, setMenu] = useState<TabMenu | null>(null);
   const dropIndex = useDragStore(({ target }) => {
     if (target?.kind === "tabBar" && target.groupId === group.id) return target.index;
@@ -130,6 +133,11 @@ export function TabBar({ group }: { group: GroupNode }) {
         // Tabs that do not fit scroll sideways under the wheel.
         if (Math.abs(event.deltaY) > Math.abs(event.deltaX))
           event.currentTarget.scrollLeft += event.deltaY;
+      }}
+      // The space beside the tabs moves the window, as the top bar does, so a window just torn
+      // out can be taken up again without aiming for the top bar.
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !systemTitleBar) moveWindowFrom(event);
       }}
       onDoubleClick={(event) => {
         if (event.target === event.currentTarget) addTab(welcomeTab(), group.id);

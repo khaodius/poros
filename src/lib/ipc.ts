@@ -90,6 +90,8 @@ export const DRAG_PREVIEW_EVENT = "poros://drag-preview";
 export const DRAG_PREVIEW_PICTURE_EVENT = "poros://drag-preview-picture";
 /** Mirrored in src-tauri/src/desktop.rs. Says the drag preview shows a drag's tab. */
 export const DRAG_PREVIEW_SHOWN_EVENT = "poros://drag-preview-shown";
+/** Sent by the drag preview when the mouse button comes up over it. */
+export const DRAG_PREVIEW_RELEASED_EVENT = "poros://drag-preview-released";
 /** Sent to every window by the window the user turns to, with its label. */
 export const WINDOW_USED_EVENT = "poros://window-used";
 /** Mirrored in src-tauri/src/drag_out/mod.rs. Says whether files are dragged out of Poros. */
@@ -405,6 +407,9 @@ export const onLog = (handler: (record: LogRecord) => void) => subscribe(LOG_EVE
 /** The drag preview has come up showing the tab of the drag `drag`. */
 export const onDragPreviewShown = (handler: (drag: number) => void) =>
   subscribe(DRAG_PREVIEW_SHOWN_EVENT, handler);
+/** The mouse button came up over the drag preview, out of sight of the window dragging. */
+export const onDragPreviewReleased = (handler: () => void) =>
+  subscribe(DRAG_PREVIEW_RELEASED_EVENT, handler);
 export const onDragOut = (handler: (state: { active: boolean }) => void) =>
   subscribe(DRAG_OUT_EVENT, handler);
 export const onSessionClosed = (handler: (closed: SessionClosed) => void) =>

@@ -15,6 +15,7 @@ import {
   type Rect,
   type Size,
 } from "../lib/docking";
+import { onDragPreviewReleased } from "../lib/ipc";
 import type { DropSide, PaneTab } from "../lib/layout";
 import type { FileEntry } from "../lib/types";
 import {
@@ -243,6 +244,11 @@ function outsideWindow({ clientX: x, clientY: y }: DragPointer): boolean {
   return x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight;
 }
 
+/** The pointer has moved at least a pixel from where the drag last placed it. */
+function movedFrom(pointer: Point, { clientX, clientY }: DragPointer): boolean {
+  return Math.abs(clientX - pointer.x) >= 1 || Math.abs(clientY - pointer.y) >= 1;
+}
+
 /**
  * Finds what is under the pointer: a folder row, a pane, a tab bar slot or a dock zone.
  * `current` is the target so far, whose dock zone holds while the pointer stays near it.
@@ -326,6 +332,10 @@ export function beginDrag(
   let cursorKnown = false;
   /** When this window last reported the pointer inside it. */
   let lastInside = 0;
+  /** When the drag was last seen off this window. */
+  let lastOutside = 0;
+  /** Listens for a release over the drag preview, which this window may not see. */
+  let previewReleases: Promise<() => void> | null = null;
 
   const track = (position: DragPointer) => {
     if (!dragging) return;
@@ -346,9 +356,19 @@ export function beginDrag(
         if (!position) return;
         cursorKnown = true;
         if (asked < lastInside) return;
-        const { target } = useDragStore.getState();
+        if (outsideWindow(position)) {
+          lastOutside = asked;
+          track(position);
+          return;
+        }
+        const { target, pointer } = useDragStore.getState();
         const away = target?.kind === "outside" || target?.kind === "window";
-        if (away || outsideWindow(position)) track(position);
+        // Back over this window, which has not reported the pointer since it left. Once another
+        // program takes the pointer from this window, as some games do, the pointer goes to the
+        // window under it, often the preview of the dragged pane, so the cursor alone places the
+        // drag and its drop marker until this window reports the pointer again.
+        const unreported = lastOutside > lastInside;
+        if (away || (unreported && movedFrom(pointer, position))) track(position);
       })
       .finally(() => {
         reading = false;
@@ -383,6 +403,7 @@ export function beginDrag(
       if (dragging.kind === "tab") {
         void measureWindows();
         following = window.setInterval(followCursor, CURSOR_POLL_MILLIS);
+        previewReleases = onDragPreviewReleased(() => finish(false));
       }
       try {
         // The body, since the source can unmount while the layout previews a drop.
@@ -410,18 +431,22 @@ export function beginDrag(
       track(position);
       return;
     }
+    lastOutside = performance.now();
     if (!cursorKnown) track(position);
     followCursor();
   };
-  const release = (upEvent: PointerEvent) => {
-    if (upEvent.pointerId !== pointerId) return;
+  const finish = (copy: boolean) => {
     const finished = dragging;
     const target = useDragStore.getState().target;
     stop();
     if (finished) {
       swallowNextClick();
-      if (target) onDrop(target, finished, holdsCopyKey(upEvent));
+      if (target) onDrop(target, finished, copy);
     }
+  };
+  const release = (upEvent: PointerEvent) => {
+    if (upEvent.pointerId !== pointerId) return;
+    finish(holdsCopyKey(upEvent));
   };
   const followKeys = (keyEvent: KeyboardEvent) => {
     if (!dragging) return;
@@ -431,6 +456,8 @@ export function beginDrag(
   const stop = () => {
     dragging = null;
     window.clearInterval(following);
+    void previewReleases?.then((unlisten) => unlisten());
+    previewReleases = null;
     window.removeEventListener("pointermove", move);
     window.removeEventListener("pointerup", release);
     window.removeEventListener("pointercancel", stop);

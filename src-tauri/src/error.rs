@@ -226,12 +226,23 @@ impl From<russh_sftp::client::error::Error> for AppError {
                 Self::new(kind, message)
             }
             E::Timeout => Self::new(ErrorKind::Timeout, "The server did not respond in time"),
-            E::UnexpectedBehavior(msg) if msg.contains("session closed") => {
+            // The session stopped reading from its channel, which drops every request still
+            // waiting for a reply, or the channel itself refused to carry a request.
+            E::UnexpectedBehavior(msg) if channel_ended(&msg) => {
                 Self::new(ErrorKind::Disconnected, "The connection was closed")
             }
+            E::IO(message) => Self::new(ErrorKind::Disconnected, message),
             other => Self::new(ErrorKind::Sftp, other.to_string()),
         }
     }
+}
+
+/// What `russh_sftp` says when the channel under a session has gone.
+fn channel_ended(message: &str) -> bool {
+    message.contains("session closed")
+        || message == "sender dropped"
+        || message.starts_with("SendError")
+        || message.starts_with("RecvError")
 }
 
 impl From<tokio::task::JoinError> for AppError {
@@ -269,5 +280,22 @@ mod tests {
         let json = serde_json::to_value(&error).unwrap();
         assert_eq!(json["kind"], "hostKeyUnknown");
         assert_eq!(json["hostKey"]["fingerprint"], "SHA256:abc");
+    }
+
+    #[test]
+    fn a_dropped_sftp_channel_is_a_lost_connection() {
+        use russh_sftp::client::error::Error as SftpError;
+        for dropped in [
+            SftpError::UnexpectedBehavior("sender dropped".into()),
+            SftpError::UnexpectedBehavior("session closed".into()),
+            SftpError::UnexpectedBehavior("RecvError: channel closed".into()),
+            SftpError::IO("connection reset by peer".into()),
+        ] {
+            let error = AppError::from(dropped);
+            assert_eq!(error.kind, ErrorKind::Disconnected);
+            assert!(error.is_connection_lost());
+        }
+        let refused = AppError::from(SftpError::UnexpectedBehavior("Duplicate version".into()));
+        assert_eq!(refused.kind, ErrorKind::Sftp);
     }
 }
