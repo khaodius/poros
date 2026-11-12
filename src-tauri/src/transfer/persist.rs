@@ -262,7 +262,7 @@ pub(super) fn save_in_background(shared: &Arc<Shared>) {
     };
     let file = file.to_path_buf();
     let shared = shared.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::runtime::spawn_blocking(move || {
         write(&file, &saved);
         shared.saving.store(false, Ordering::Release);
     });

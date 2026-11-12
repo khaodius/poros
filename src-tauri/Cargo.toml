@@ -7,20 +7,64 @@ license = "Apache-2.0"
 repository = "https://github.com/khaodius/poros"
 edition = "2021"
 rust-version = "1.88"
+default-run = "poros"
 
 [lib]
 # The `_lib` suffix keeps the lib name distinct from the bin name (cargo#8519 on Windows).
 name = "poros_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[[bin]]
+name = "poros"
+path = "src/main.rs"
+required-features = ["gui"]
+
+# The headless command line, for scripts and agents. `--no-default-features --features cli`
+# builds it without the web view, GTK or the Windows shell, so it runs on servers and in
+# containers that have none of them.
+[[bin]]
+name = "poros-cli"
+path = "src/bin/poros-cli.rs"
+required-features = ["cli"]
+
+# Runs scheduled tasks, which live in the app.
+[[test]]
+name = "sftp_server"
+required-features = ["gui"]
+
+[[test]]
+name = "cli"
+required-features = ["cli"]
+
+[features]
+default = ["gui", "cli"]
+gui = [
+  "dep:tauri",
+  "dep:tauri-build",
+  "dep:tauri-plugin-dialog",
+  "dep:tauri-plugin-updater",
+  "dep:tauri-plugin-notification",
+  "dep:tauri-plugin-single-instance",
+  "dep:fontdb",
+  "dep:ttf-parser",
+  "dep:arboard",
+  "dep:png",
+  "dep:windows-sys",
+  "dep:windows-core",
+  "dep:windows",
+  "dep:gtk",
+  "dep:zbus",
+]
+cli = ["dep:clap", "tokio/signal", "tokio/io-std"]
+
 [build-dependencies]
-tauri-build = { version = "2.7", features = [] }
+tauri-build = { version = "2.7", features = [], optional = true }
 
 [dependencies]
-tauri = { version = "2.12", features = [] }
-tauri-plugin-dialog = "2.8"
+tauri = { version = "2.12", features = [], optional = true }
+tauri-plugin-dialog = { version = "2.8", optional = true }
 # Checks for, verifies and installs the signed releases listed in latest.json on GitHub.
-tauri-plugin-updater = "2.13"
+tauri-plugin-updater = { version = "2.13", optional = true }
 # Release versions, to list the ones a user can switch to.
 semver = "1"
 serde = { version = "1", features = ["derive"] }
@@ -50,8 +94,8 @@ bytes = "1"
 # Saved passwords: Windows Credential Manager, or the Secret Service (GNOME Keyring, KWallet) on Linux.
 keyring = "4.2"
 # Installed font families for the appearance settings.
-fontdb = "0.24.0"
-ttf-parser = { version = "0.25.1", default-features = false, features = ["std", "glyph-names"] }
+fontdb = { version = "0.24.0", optional = true }
+ttf-parser = { version = "0.25.1", default-features = false, features = ["std", "glyph-names"], optional = true }
 async-trait = "0.1"
 # FTPS and the cloud APIs. TLS runs on `ring` like the SSH side, and trusts the system's
 # certificate store.
@@ -64,36 +108,38 @@ percent-encoding = "2"
 # Local time for scheduled tasks, daylight saving changes included.
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 # Desktop notifications when the transfer queue finishes.
-tauri-plugin-notification = "2.5"
+tauri-plugin-notification = { version = "2.5", optional = true }
 # Text a program in a terminal copies (OSC 52) arrives with no click behind it, which the web
 # view's own clipboard refuses on Linux. Text only, so no image codecs.
-arboard = { version = "3.6", default-features = false, features = ["wayland-data-control"] }
+arboard = { version = "3.6", default-features = false, features = ["wayland-data-control"], optional = true }
 # A second launch brings the running window forward instead of starting another copy, which
 # would run every scheduled task twice and overwrite the saved schedules.
-tauri-plugin-single-instance = "2.5"
+tauri-plugin-single-instance = { version = "2.5", optional = true }
 # The system's file icons, handed to the page as PNG images.
-png = "0.18"
+png = { version = "0.18", optional = true }
 # WebDAV listings and S3 answers. Elements are matched by local name, whatever their prefix.
 quick-xml = { version = "0.42", features = ["serialize", "overlapped-lists"] }
 # Checks `.minisig` signatures published beside downloads against the keys in settings. The
 # same version the updater plugin verifies releases with.
 minisign-verify = "0.2"
+# Arguments of the headless command line.
+clap = { version = "4.5", features = ["derive", "env", "wrap_help"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
 # Rounded window corners on Windows 11, showing the drag preview without taking focus, and the
 # shell's file icons.
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61", optional = true, features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 # The COM objects behind files dragged out of Poros into Explorer: a data object, a drop source.
 # `windows-core` is named for the `implement` macro, which refers to it by that name.
-windows-core = "0.62"
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_SystemServices", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_WindowsAndMessaging"] }
+windows-core = { version = "0.62", optional = true }
+windows = { version = "0.62", optional = true, features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_SystemServices", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_WindowsAndMessaging"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Whether a compositing window manager runs, so the drag preview can be see-through, the icon
 # theme's file icons, and files dragged out of Poros.
-gtk = "0.18"
+gtk = { version = "0.18", optional = true }
 # Dolphin and the KDE desktop say over D-Bus where files dragged out of Poros were dropped.
-zbus = "5"
+zbus = { version = "5", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

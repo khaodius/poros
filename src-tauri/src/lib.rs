@@ -1,15 +1,22 @@
 pub mod automation;
 pub mod checksum;
+#[cfg(feature = "cli")]
+pub mod cli;
+#[cfg(feature = "gui")]
 pub mod clipboard;
 pub mod cloud;
+#[cfg(feature = "gui")]
 pub mod commands;
 pub mod connections;
+#[cfg(feature = "gui")]
 pub mod desktop;
+#[cfg(feature = "gui")]
 pub mod drag_out;
 pub mod editor;
 pub mod error;
 pub mod events;
 pub mod file_ops;
+#[cfg(feature = "gui")]
 pub mod fonts;
 pub mod format;
 pub mod ftp;
@@ -20,6 +27,7 @@ pub mod protocol;
 pub mod remote_path;
 pub mod route;
 pub mod rsync;
+pub mod runtime;
 pub mod session;
 pub mod settings;
 pub mod sftp;
@@ -27,6 +35,7 @@ pub mod ssh;
 pub mod stall;
 pub mod storage;
 pub mod sync;
+#[cfg(feature = "gui")]
 pub mod system_icons;
 pub mod terminal;
 pub mod text;
@@ -34,41 +43,51 @@ pub mod themes;
 pub mod timestamp;
 pub mod tls;
 pub mod transfer;
+#[cfg(feature = "gui")]
 pub mod update;
 
-use std::sync::Arc;
-use std::time::Duration;
+#[cfg(feature = "gui")]
+use {
+    std::sync::Arc,
+    std::time::Duration,
+    tauri::webview::PageLoadEvent,
+    tauri::{DragDropEvent, Manager, RunEvent, WindowEvent},
+};
 
-use tauri::webview::PageLoadEvent;
-use tauri::{DragDropEvent, Manager, RunEvent, WindowEvent};
+#[cfg(feature = "gui")]
+use {
+    automation::remote_command::CommandRunner,
+    automation::scheduler::Scheduler,
+    clipboard::SystemClipboard,
+    cloud::OAuthVault,
+    commands::PendingWindows,
+    connections::{ConnectionStore, Keychain, SecretScope},
+    desktop::{DragPreview, DRAG_PREVIEW_WINDOW},
+    drag_out::DragOut,
+    editor::EditorManager,
+    events::Events,
+    file_ops::FileOperations,
+    session::SessionManager,
+    settings::SettingsStore,
+    sync::SyncManager,
+    terminal::TerminalManager,
+    themes::ThemeStore,
+    transfer::TransferManager,
+    update::PendingUpdate,
+};
 
-use automation::remote_command::CommandRunner;
-use automation::scheduler::Scheduler;
-use clipboard::SystemClipboard;
-use cloud::OAuthVault;
-use commands::PendingWindows;
-use connections::{ConnectionStore, Keychain, SecretScope};
-use desktop::{DragPreview, DRAG_PREVIEW_WINDOW};
-use drag_out::DragOut;
-use editor::EditorManager;
-use events::Events;
-use file_ops::FileOperations;
-use session::SessionManager;
-use settings::SettingsStore;
-use sync::SyncManager;
-use terminal::TerminalManager;
-use themes::ThemeStore;
-use transfer::TransferManager;
-use update::PendingUpdate;
-
+#[cfg(feature = "gui")]
 const MAIN_WINDOW: &str = "main";
 /// Windows open hidden and their page shows them once its first frame is ready, so they never
 /// flash white. A page that fails before then still gets its window shown after this long.
+#[cfg(feature = "gui")]
 const REVEAL_FALLBACK: Duration = Duration::from_secs(2);
 /// A tab moving to another window is taken over there after its old window may have closed, so
 /// editor files and terminals a closed window owned are kept this long before they go.
+#[cfg(feature = "gui")]
 const ADOPTION_GRACE: Duration = Duration::from_secs(5);
 
+#[cfg(feature = "gui")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()

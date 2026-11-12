@@ -869,6 +869,7 @@ impl Destination {
 }
 
 /// Whether a file name is that of a download or upload still under way.
+#[cfg_attr(not(feature = "gui"), allow(dead_code))]
 pub(crate) fn is_partial_name(name: &str) -> bool {
     name.starts_with('.') && name.ends_with(PARTIAL_SUFFIX)
 }
