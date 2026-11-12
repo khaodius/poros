@@ -322,8 +322,10 @@ export function FilePane({
     const drop: DropHandler = (target, payload, copy) => {
       if (target.kind !== "pane" || payload.kind !== "files") return;
       const action = dropAction(tabId, payload.entries, target, copy);
+      // The pile flies to where the files were let go of.
+      const landing = { ...useDragStore.getState().pointer };
       if (action?.kind === "transfer") {
-        transferFromPane(tabId, payload.entries, target.tabId, target.folder);
+        transferFromPane(tabId, payload.entries, target.tabId, target.folder, landing);
       } else if (action?.kind === "blocked") {
         showToast("info", `${action.reason}.`);
       } else if (action?.kind === "place") {
@@ -334,6 +336,8 @@ export function FilePane({
           entries: payload.entries,
           target: action.target,
           targetFolder: action.folder,
+          sourceTabId: tabId,
+          landing,
         });
       }
     };

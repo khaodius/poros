@@ -41,6 +41,7 @@ import {
 } from "../state/themeStore";
 import { ColorInput } from "./ColorInput";
 import { FontPicker } from "./FontPicker";
+import { AnimationGroup, ProgressBarGroup } from "./TransferLookSettings";
 import {
   RangeSetting,
   SelectSetting,
@@ -61,9 +62,15 @@ const pixels = (value: number) => `${value} px`;
 /** The fonts, sizes and shape on this page, which one button puts back. */
 const LOOK_KEYS = (Object.keys(DEFAULT_SETTINGS.appearance) as (keyof Appearance)[]).filter(
   (key) =>
-    !["theme", "systemIcons", "smoothScrolling", "groupLocalByDate", "groupRemoteByDate"].includes(
-      key,
-    ),
+    ![
+      "theme",
+      "systemIcons",
+      "smoothScrolling",
+      "groupLocalByDate",
+      "groupRemoteByDate",
+      "progressBars",
+      "transferAnimation",
+    ].includes(key),
 );
 /** How the system's icons are described: whose they are depends on the system. */
 const SYSTEM_ICONS_HINT = navigator.userAgent.includes("Windows")
@@ -419,6 +426,9 @@ export function AppearanceSettings() {
           onChange={(groupRemoteByDate) => setAppearance({ groupRemoteByDate })}
         />
       </SettingGroup>
+
+      <ProgressBarGroup />
+      <AnimationGroup />
     </>
   );
 }

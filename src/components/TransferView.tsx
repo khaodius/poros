@@ -26,10 +26,13 @@ import {
 import { useSelectionBox, type RowRange } from "../hooks/useSelectionBox";
 import { formatSize, formatSpeed } from "../lib/format";
 import { transfers } from "../lib/ipc";
+import { progressLabel, type ProgressBarSettings } from "../lib/progressBars";
 import { jobProgress, jobsIn, VIEW_STATES, type TransferViewKind } from "../lib/transfers";
 import type { Direction, JobSnapshot } from "../lib/types";
+import { useSettingsStore } from "../state/settingsStore";
 import { useTransferStore } from "../state/transferStore";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
+import { ProgressBar } from "./ProgressBar";
 
 const ROW_HEIGHT = 28;
 
@@ -95,6 +98,7 @@ export function TransferView({
   follow = false,
 }: TransferViewProps) {
   const jobs = useViewJobs(view);
+  const bars = useSettingsStore((state) => state.settings.appearance.progressBars);
   const jobsRef = useRef(jobs);
   useLayoutEffect(() => {
     jobsRef.current = jobs;
@@ -290,6 +294,7 @@ export function TransferView({
               <TransferRow
                 key={job.id}
                 job={job}
+                bars={bars}
                 top={item.start}
                 selected={selection.has(job.id)}
                 onClick={handleRowClick}
@@ -310,6 +315,7 @@ export function TransferView({
 
 interface TransferRowProps {
   job: JobSnapshot;
+  bars: ProgressBarSettings;
   top: number;
   selected: boolean;
   onClick: (event: MouseEvent, job: JobSnapshot) => void;
@@ -318,6 +324,7 @@ interface TransferRowProps {
 
 const TransferRow = memo(function TransferRow({
   job,
+  bars,
   top,
   selected,
   onClick,
@@ -330,6 +337,7 @@ const TransferRow = memo(function TransferRow({
     <div
       className={`transfer-row state-${job.state} ${selected ? "is-selected" : ""}`}
       style={{ transform: `translateY(${top}px)`, height: ROW_HEIGHT }}
+      data-direction={job.direction}
       role="row"
       aria-selected={selected}
       title={`${job.source}\nto ${job.target}`}
@@ -345,12 +353,13 @@ const TransferRow = memo(function TransferRow({
       <span className="align-end">{job.kind === "file" ? formatSize(job.size) : ""}</span>
       <span className="transfer-progress">
         {job.kind === "file" && (
-          <>
-            <span className="progress-track">
-              <span className="progress-fill" style={{ width: `${progress * 100}%` }} />
-            </span>
-            <span className="progress-text">{Math.floor(progress * 100)}%</span>
-          </>
+          <ProgressBar
+            fraction={progress}
+            label={progressLabel(job, bars.label, progress)}
+            labelKind={bars.label}
+            labelInside={bars.labelInside}
+            still={job.state !== "running"}
+          />
         )}
       </span>
       <span className="align-end">
