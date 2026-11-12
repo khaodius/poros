@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_SETTINGS, sanitizeSettings } from "./settings";
+import { DEFAULT_SETTINGS, parseMinisignKeys, sanitizeSettings } from "./settings";
 
 describe("sanitizeSettings", () => {
   it("fills missing sections and fields with defaults", () => {
@@ -176,5 +176,37 @@ describe("sanitizeSettings", () => {
       { id: "disk-2", name: "", command: "ls", showOutput: true, refresh: false },
       { id: "command-5", name: "", command: "uptime", showOutput: false, refresh: false },
     ]);
+  });
+});
+
+describe("integrity settings", () => {
+  it("turns every check on by default and keeps the revision the backend set", () => {
+    const transfers = sanitizeSettings(undefined).transfers;
+    expect(transfers.verifyChecksums).toBe(true);
+    expect(transfers.readBack).toBe(true);
+    expect(transfers.repairParts).toBe(true);
+    expect(transfers.verifyResume).toBe(true);
+    expect(transfers.checkMetadata).toBe(true);
+    expect(transfers.checkPublished).toBe(true);
+    expect(transfers.flushToDisk).toBe(true);
+    const turnedOff = sanitizeSettings({
+      transfers: { verifyChecksums: false, integrityRevision: 1, minisignKeys: ["RWQ"] },
+    }).transfers;
+    expect(turnedOff.verifyChecksums).toBe(false);
+    expect(turnedOff.integrityRevision).toBe(1);
+    expect(turnedOff.minisignKeys).toEqual(["RWQ"]);
+  });
+
+  it("reads minisign keys pasted one per line or as whole key files", () => {
+    const pasted =
+      "untrusted comment: minisign public key 5AFDFB2B9F589E85\r\n" +
+      "  RWSFnlifK/v9WrmhvEB4DeXXEaTspaCu+Nqjr78raegjsROt2CILH1Fu  \n\n" +
+      "RWS/niVkxpK9wVVEE3117xI8SWxoH03TKE/xFMTq0ujfzxTOYeXdWLYF\n" +
+      "RWS/niVkxpK9wVVEE3117xI8SWxoH03TKE/xFMTq0ujfzxTOYeXdWLYF\n";
+    expect(parseMinisignKeys(pasted)).toEqual([
+      "RWSFnlifK/v9WrmhvEB4DeXXEaTspaCu+Nqjr78raegjsROt2CILH1Fu",
+      "RWS/niVkxpK9wVVEE3117xI8SWxoH03TKE/xFMTq0ujfzxTOYeXdWLYF",
+    ]);
+    expect(parseMinisignKeys("  \n")).toEqual([]);
   });
 });

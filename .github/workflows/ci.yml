@@ -70,6 +70,9 @@ jobs:
         run: |
           sudo useradd --create-home --shell /bin/bash poros
           echo 'poros:poros-pass' | sudo chpasswd
+          # An account that may only use SFTP, so it has no checksum command.
+          sudo useradd --create-home --shell /bin/bash poros-sftp
+          echo 'poros-sftp:poros-pass' | sudo chpasswd
           sudo -u poros mkdir -p /home/poros/.ssh /home/poros/data
           sudo -u poros ln -s data /home/poros/data-link
           sudo -u poros ln -s missing /home/poros/broken-link
@@ -91,10 +94,13 @@ jobs:
           PubkeyAuthentication yes
           UsePAM no
           Subsystem sftp internal-sftp
+          Match User poros-sftp
+              ForceCommand internal-sftp
           EOF
           sudo mkdir -p /run/sshd
           sudo /usr/sbin/sshd -f "$sshd_dir/sshd_config"
           echo "POROS_TEST_SSH_PORT=2222" >> "$GITHUB_ENV"
+          echo "POROS_TEST_SFTP_ONLY_USER=poros-sftp" >> "$GITHUB_ENV"
 
       # Plain FTP, a second plain server that accepts files straight from the first (FXP),
       # and explicit and implicit FTPS with a self-signed certificate, all for the poros user

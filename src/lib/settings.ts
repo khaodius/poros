@@ -44,8 +44,20 @@ export interface TransferSettings {
   keepQueue: boolean;
   /** Writes under a temporary name and renames into place once complete. */
   temporaryFiles: boolean;
-  /** Compares checksums of both copies after each file, using the server's own command. */
+  /** Compares a SHA-256 of both copies after each file, computed by the server's own command. */
   verifyChecksums: boolean;
+  /** Reads finished files back from servers with no checksum command, to compare them. */
+  readBack: boolean;
+  /** After a checksum mismatch, sends again only the parts whose checksums differ. */
+  repairParts: boolean;
+  /** Compares the part already transferred, part by part, before a file continues. */
+  verifyResume: boolean;
+  /** Reads times and permissions back once a file is in place and logs any that did not stay. */
+  checkMetadata: boolean;
+  /** Compares downloads with checksum files and signatures published beside them. */
+  checkPublished: boolean;
+  /** minisign public keys that `.minisig` signatures are checked against. */
+  minisignKeys: string[];
   flushToDisk: boolean;
   separateConnections: boolean;
   logEachFile: boolean;
@@ -57,6 +69,8 @@ export interface TransferSettings {
   rsyncPath: string;
   /** Copies between two FTP servers go directly from one to the other when both allow it. */
   fxp: boolean;
+  /** Set by the backend once the integrity checks have been turned on for older settings. */
+  integrityRevision: number;
 }
 
 export interface ConnectionSettings {
@@ -249,14 +263,21 @@ export const DEFAULT_SETTINGS: Settings = {
     keepCompleted: true,
     keepQueue: true,
     temporaryFiles: true,
-    verifyChecksums: false,
-    flushToDisk: false,
+    verifyChecksums: true,
+    readBack: true,
+    repairParts: true,
+    verifyResume: true,
+    checkMetadata: true,
+    checkPublished: true,
+    minisignKeys: [],
+    flushToDisk: true,
     separateConnections: true,
     logEachFile: false,
     deltaTransfers: true,
     deltaThresholdKib: 1024,
     rsyncPath: "rsync",
     fxp: true,
+    integrityRevision: 1,
   },
   connection: {
     timeoutSecs: 20,
@@ -337,6 +358,18 @@ export const DEFAULT_SETTINGS: Settings = {
     commands: [],
   },
 };
+
+/**
+ * The keys typed one per line, as pasted from a `minisign.pub` file: its comment lines go, and
+ * so do blank lines and repeats.
+ */
+export function parseMinisignKeys(text: string): string[] {
+  const keys = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line !== "" && !line.startsWith("untrusted comment:"));
+  return [...new Set(keys)];
+}
 
 type Section = Record<string, unknown>;
 

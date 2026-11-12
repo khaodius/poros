@@ -6,10 +6,12 @@
 mod conflict;
 mod copy;
 mod delta;
+mod hash_shell;
 mod limiter;
 mod options;
 mod persist;
 mod pieces;
+mod published;
 mod queue;
 mod streamed;
 mod verify;
@@ -34,7 +36,6 @@ pub(crate) use worker::{
     ensure_remote_folders, is_partial_name, keep_local_backup, keep_remote_backup,
 };
 
-use crate::checksum::Algorithm;
 use crate::error::{AppError, AppResult};
 use crate::events::{Events, LogLevel};
 use crate::format::{format_duration, format_size};
@@ -149,8 +150,13 @@ pub(crate) struct SessionTarget {
     pub channels_only: AtomicBool,
     /// Whether the server ran the configured rsync command, once a worker has tried.
     pub rsync: tokio::sync::Mutex<Option<delta::RsyncCheck>>,
-    /// The server's checksum command once a worker has looked; `Some(None)` when it has none.
-    pub checksum: tokio::sync::Mutex<Option<Option<Algorithm>>>,
+    /// The server's checksum commands once a worker has looked.
+    pub hashing: tokio::sync::Mutex<Option<verify::ServerHashing>>,
+    /// Set once the server would not keep a shell open for checksum commands, which then
+    /// each run on a channel of their own.
+    pub shell_refused: AtomicBool,
+    /// Checksum files and signatures found beside downloads, by folder.
+    pub published: published::FolderCache,
     /// Saved by an earlier run of the app, without the password, passphrase or sign-in.
     restored: AtomicBool,
     /// Sessions this FTP server would not send files to directly, so relays to them skip
@@ -191,7 +197,9 @@ impl SessionTarget {
             login: Mutex::new(login),
             channels_only: AtomicBool::new(false),
             rsync: tokio::sync::Mutex::new(None),
-            checksum: tokio::sync::Mutex::new(None),
+            hashing: tokio::sync::Mutex::new(None),
+            shell_refused: AtomicBool::new(false),
+            published: published::FolderCache::default(),
             restored: AtomicBool::new(restored),
             fxp_refused: Mutex::new(BTreeSet::new()),
             route_pending: tokio::sync::Mutex::new(restored),

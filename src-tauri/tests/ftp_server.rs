@@ -849,14 +849,17 @@ async fn resumes_interrupted_transfers() {
     std::fs::write(&large, &large_bytes).unwrap();
     let remote_large = remote_path::join(&remote, "large.bin");
 
-    // Resuming an upload keeps what is on the server, so a marked prefix survives.
+    // Resuming an upload keeps what is on the server when checksums are off, so a marked
+    // prefix survives.
     let mut partial = large_bytes[..5 * MEBIBYTE].to_vec();
     partial[..512].fill(0);
     write_remote(&files, &remote_large, &partial).await;
-    let transfers = fixture.transfers(TransferSettings {
+    let unchecked = TransferSettings {
         exists_action: ExistsAction::Resume,
+        verify_checksums: false,
         ..transfer_settings()
-    });
+    };
+    let transfers = fixture.transfers(unchecked.clone());
     fixture
         .upload(&transfers, index, std::slice::from_ref(&large), &remote)
         .await;
@@ -869,9 +872,9 @@ async fn resumes_interrupted_transfers() {
     // The same for a download.
     let downloads = fixture.local.path().join("downloads");
     std::fs::create_dir_all(&downloads).unwrap();
-    let mut partial = large_bytes[..7 * MEBIBYTE].to_vec();
-    partial[..512].fill(1);
-    std::fs::write(downloads.join("large.bin"), &partial).unwrap();
+    let mut downloaded_partial = large_bytes[..7 * MEBIBYTE].to_vec();
+    downloaded_partial[..512].fill(1);
+    std::fs::write(downloads.join("large.bin"), &downloaded_partial).unwrap();
     fixture
         .download(&transfers, index, &[&remote_large], &downloads)
         .await;
@@ -881,6 +884,32 @@ async fn resumes_interrupted_transfers() {
     assert_eq!(
         std::fs::read(downloads.join("large.bin")).unwrap(),
         expected_download
+    );
+    transfers.clear(&[JobState::Done]);
+
+    // With checksums on, as by default, reading the finished copy back finds the marked part,
+    // and the next attempt sends the whole file again.
+    transfers.configure(TransferSettings {
+        verify_checksums: true,
+        retry_attempts: 1,
+        retry_delay_secs: 0,
+        ..unchecked
+    });
+    write_remote(&files, &remote_large, &partial).await;
+    fixture
+        .upload(&transfers, index, std::slice::from_ref(&large), &remote)
+        .await;
+    assert_all_done(&wait_until_settled(&transfers).await.0);
+    assert_eq!(read_remote(&files, &remote_large).await, large_bytes);
+    transfers.clear(&[JobState::Done]);
+    std::fs::write(downloads.join("large.bin"), &downloaded_partial).unwrap();
+    fixture
+        .download(&transfers, index, &[&remote_large], &downloads)
+        .await;
+    assert_all_done(&wait_until_settled(&transfers).await.0);
+    assert_eq!(
+        std::fs::read(downloads.join("large.bin")).unwrap(),
+        large_bytes
     );
     transfers.clear(&[JobState::Done]);
     drop(transfers);

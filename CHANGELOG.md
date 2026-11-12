@@ -3,6 +3,49 @@
 Installers for every version are attached to its
 [release](https://github.com/khaodius/poros/releases), with SHA-256 checksums.
 
+## 0.5.7 - 2026-11-12
+
+- **Every transfer is checked, by default.** The checks under Settings > Transfers > Integrity
+  are all on, including on installs updated from an earlier version, where Verify checksums and
+  Flush to disk come on once and stay as you set them after that. Each can be turned off. On
+  3,600 mostly small files over a link with 1 ms latency, they add 24% to an upload and 31% to a
+  download, and 68 to 89% on a server that has every file read back; large files cost less, as
+  most of the cost is a round trip per file. The README's
+  [Integrity checks](README.md#integrity-checks) section has the measurements.
+- **Checksums are SHA-256, part by part.** A finished file is compared with its source by
+  SHA-256, computed on SFTP servers by their own `sha256sum`, or `sha512sum` where that is all
+  there is. SHA-1 and MD5, which can be forged, are no longer used. Where the server has GNU
+  `split`, files of 4 MiB and more are hashed in up to 64 parts, so a file that arrives damaged
+  has only the parts that differ sent again, up to half the file; beyond that it starts over.
+  The checksum commands run through one shell each worker keeps open on the server, so a file's
+  check costs a single round trip rather than a new channel and login shell. rsync results, which
+  rsync itself checks with MD5, are compared by SHA-256 too, and fall back to copying the whole
+  file if they differ.
+- **Servers that cannot hash a file have it read back.** On SFTP servers without a checksum
+  command, such as ones that allow SFTP alone, and on FTP and WebDAV servers, each finished file
+  is read back and hashed here. This doubles the traffic with those servers, and can be turned
+  off on its own with Read files back when the server cannot hash them.
+- **Resumed files are checked before they continue.** The part already transferred is compared
+  with the source part by part, and the transfer continues from the first part that differs,
+  where before only the last 64 KiB were compared and a mismatch started it over. A file that
+  failed a check starts over in full on its next attempt, where before a resume could take a
+  damaged copy of the same size as already there.
+- **A source that changes while it is sent starts over.** Local files are compared to the
+  nanosecond, and on Linux by inode and status change time too, before and after they are read
+  and hashed, so an edit that puts the modification time back is still caught.
+- **Files are on disk before they count as done.** Flush to disk is on: the server stores each
+  upload, and this computer each download and the folder entry its rename makes, before the file
+  is finished.
+- **Times and permissions are read back.** Once a file is in place, its size, time and
+  permissions are read again, and any the server or file system did not keep are noted in the
+  log.
+- **Downloads are checked against what their publisher signed.** A download is compared with
+  `SHA256SUMS`, `SHA512SUMS`, `name.sha256` and similar files beside it on the server, with
+  minisign `.minisig` signatures by keys you add under Trusted minisign keys, and through `gpg`,
+  where it is installed, with `.asc` and `.sig` signatures by keys in your keyring. A file that
+  fails is not saved and is not retried; one with nothing published beside it downloads as
+  before.
+
 ## 0.5.6 - 2026-11-12
 
 - **Progress bars your way.** Settings > Appearance > Progress bars picks how bars are filled

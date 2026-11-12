@@ -143,8 +143,47 @@ pub struct Plan {
     pub source_size: u64,
     pub source_modified: Option<i64>,
     pub source_permissions: Option<u32>,
+    /// A local source's finer marks, to tell a change the size and time would miss.
+    pub source_stamp: Option<SourceStamp>,
     /// The permissions of the file a temporary file replaces, kept when the source's are not.
     pub replaced_permissions: Option<u32>,
+}
+
+/// Finer than the size and whole-second time a local source is otherwise compared by: the time
+/// to the nanosecond and, on Unix, the inode and status change time, which every write moves
+/// even when the modification time is put back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceStamp {
+    pub modified_nanos: Option<i64>,
+    pub changed_nanos: Option<i64>,
+    pub inode: Option<u64>,
+}
+
+impl SourceStamp {
+    pub fn of(metadata: &std::fs::Metadata) -> Self {
+        let modified_nanos = metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .and_then(|since| i64::try_from(since.as_nanos()).ok());
+        #[cfg(unix)]
+        let (changed_nanos, inode) = {
+            use std::os::unix::fs::MetadataExt;
+            let changed = metadata
+                .ctime()
+                .checked_mul(1_000_000_000)
+                .and_then(|nanos| nanos.checked_add(metadata.ctime_nsec()));
+            (changed, Some(metadata.ino()))
+        };
+        #[cfg(not(unix))]
+        let (changed_nanos, inode) = (None, None);
+        Self {
+            modified_nanos,
+            changed_nanos,
+            inode,
+        }
+    }
 }
 
 /// Where an interrupted file continues from.
@@ -158,6 +197,9 @@ pub struct ResumePoint {
     /// The source as it was then. A source that changed since starts over.
     pub source_size: u64,
     pub source_modified: Option<i64>,
+    /// Absent from queues saved before it was kept, and for sources on a server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_stamp: Option<SourceStamp>,
 }
 
 /// Shared by the workers on one running job.
@@ -212,6 +254,7 @@ impl JobRun {
             partial: plan.rename_to.is_some().then(|| plan.target.clone()),
             source_size: plan.source_size,
             source_modified: plan.source_modified,
+            source_stamp: plan.source_stamp,
         })
     }
 
@@ -786,6 +829,9 @@ impl Queue {
             if run.restart.load(Ordering::Relaxed) {
                 job.resume = None;
                 job.transferred = 0;
+                // What is at the target cannot be trusted, so the next attempt replaces it
+                // rather than resuming onto it or skipping it as already there.
+                job.resolution = Some(ExistsAction::Overwrite);
             } else if let Some(resume) = run.resume_point() {
                 job.resume = Some(resume);
             }
@@ -1399,6 +1445,7 @@ mod tests {
             source_size: size,
             source_modified: Some(1),
             source_permissions: None,
+            source_stamp: None,
             replaced_permissions: None,
         }
     }
@@ -1549,6 +1596,26 @@ mod tests {
         let claim = queue.claim(Instant::now()).unwrap();
         assert_eq!(claim.resolution, Some(ExistsAction::Overwrite));
         assert_eq!(queue.counts().queued, 1);
+    }
+
+    #[test]
+    fn a_failed_check_starts_the_next_attempt_over_whatever_is_at_the_target() {
+        let mut queue = Queue::new();
+        let id = queue.add_resolved(file("a", 100), ExistsAction::Resume);
+        let claim = queue.claim(Instant::now()).unwrap();
+        let _ = claim.run.plan.set(plan("/remote/a", 100));
+        claim.run.start_pieces(Pieces::new(40, 100, 10));
+        claim.run.restart.store(true, Ordering::Relaxed);
+        let failed = RunOutcome::Failed(AppError::integrity("does not match"));
+        assert!(matches!(queue.release(id, &failed), Release::Settle));
+        let retrying = TransferSettings {
+            retry_delay_secs: 0,
+            ..settings()
+        };
+        queue.settle(id, failed, &retrying, Instant::now());
+        let retry = queue.claim(Instant::now()).unwrap();
+        assert_eq!(retry.resolution, Some(ExistsAction::Overwrite));
+        assert!(retry.resume.is_none());
     }
 
     #[test]

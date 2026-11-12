@@ -26,6 +26,9 @@ pub enum ErrorKind {
     Unsupported,
     /// A finished file failed a size, change or checksum check.
     Integrity,
+    /// A download does not match the checksum or signature published beside it. Retrying
+    /// brings the same file, so it is not retried.
+    Untrusted,
     Cancelled,
     Keychain,
     /// Downloading, verifying or installing an update failed.

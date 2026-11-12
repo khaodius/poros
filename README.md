@@ -43,9 +43,14 @@
   run, or typed as rsync arguments, with a preview of every change and the command line the
   options amount to. See [Folder synchronization](#folder-synchronization).
 - **rsync delta transfers** over Poros's own SSH connection, with nothing to install locally.
-- **Safe writes**: files are written under a temporary name and renamed into place once complete,
-  every file's size is checked with the server, and an optional setting compares checksums with
-  the server's copy.
+- **Integrity checks, all on by default**: files are written under a temporary name, flushed to
+  disk, compared with the source by SHA-256 and only then renamed into place. Servers hash their
+  copy with their own `sha256sum`, part by part where GNU `split` allows, so a damaged part is
+  sent again on its own; servers without one are read back. A source that changes while it is
+  read starts over, resumed files are compared part by part before they continue, times and
+  permissions are read back, and downloads are checked against `SHA256SUMS`-style files,
+  minisign signatures and, through `gpg`, OpenPGP signatures published beside them. See
+  [Integrity checks](#integrity-checks).
 - **Automatic recovery**: transfers wait out a dropped connection for up to 10 minutes and resume
   where they stopped, ones that waited longer try again once Poros reaches the server again, server
   tabs reconnect on their own, and unfinished transfers come back paused after a restart.
@@ -130,9 +135,9 @@ three runs over a 1 Gbit/s link:
 | OpenSSH sftp 9.6           | 17.6 s |   17.9 s |
 | rsync 3.2.7                | 13.6 s |   13.7 s |
 
-At 8 workers Poros sustains about 900 Mbit/s, 95% of the link's measured TCP throughput. With
-Verify checksums turned on, a similar transfer over a 1 Gbit/s link with 1 ms latency took about
-30% longer; the default checks cost nothing measurable.
+At 8 workers Poros sustains about 900 Mbit/s, 95% of the link's measured TCP throughput. These
+times are from before the integrity checks were on by default; what they cost now is measured
+under [Integrity checks](#integrity-checks).
 
 Setup: Poros 0.2.0 release build and a stock OpenSSH 9.6 server on Ubuntu 24.04, in separate
 network namespaces joined by a link capped at 1 Gbit/s (941 Mbit/s measured with iperf3, no added
@@ -142,6 +147,68 @@ against a server set up as for the end-to-end tests.
 
 On a real connection, gigabit at both ends, Poros moved 3,643 files (1.4 GiB) in 16.6 s, about
 720 Mbit/s.
+
+## Integrity checks
+
+Every check is on by default, and each can be turned off under Settings > Transfers > Integrity.
+
+- **Temporary name, then rename**: a file is written as `.name.poros-part` beside its target and
+  renamed into place only once it is complete and checked, so a partial or failed copy never sits
+  under the real name. FTP uploads are written in place.
+- **Flush to disk**: the server, through OpenSSH's `fsync@openssh.com`, stores each upload, and
+  this computer each download and the folder entry its rename makes, before the file counts as
+  done.
+- **SHA-256 of both copies**: once a file is complete, the server hashes its copy with its own
+  `sha256sum`, or `sha512sum` where that is all it has, and Poros hashes the other copy. SHA-1
+  and MD5 are never used: they catch accidents but can be forged.
+- **Part by part, with repair**: where the server has GNU `split`, files of 4 MiB and more are
+  hashed in up to 64 parts. When no more than half the parts differ, only those are sent again
+  and the file is compared once more; otherwise it starts over.
+- **Read back**: SFTP servers without a checksum command, such as ones that allow SFTP alone, and
+  FTP and WebDAV servers have each finished file read back and hashed here, which doubles the
+  traffic with them. Cloud storage is not read back.
+- **Resume check**: before an interrupted file continues, the part already transferred is
+  compared with the source part by part, and the transfer goes on from the first part that
+  differs.
+- **Source stability**: a local source is compared before and after it is sent and hashed, by
+  size, time to the nanosecond and, on Linux, inode and status change time; a source on a server
+  by size and time. A source that changed starts over.
+- **Times and permissions** are read back once a file is in place, and any the server or file
+  system did not keep are noted in the log.
+- **Published checksums and signatures**: downloads are compared with `SHA256SUMS`,
+  `SHA512SUMS`, `name.sha256` and similar files beside them, with minisign `.minisig` signatures
+  by the keys under Trusted minisign keys and, through `gpg` where it is installed, with `.asc`
+  and `.sig` signatures by keys in its keyring. A file that fails is not saved.
+- **rsync results**, which rsync checks with MD5, are compared by SHA-256 as well.
+
+### What the checks cost
+
+The [Performance](#performance) workload, 3,600 files totaling 1.4 GiB, most of them small, with
+4 workers. Medians of three runs, page cache dropped before each:
+
+| Checks                                         | 1 ms link, upload | 1 ms link, download |  Loopback, upload | Loopback, download |
+| ---------------------------------------------- | ----------------: | ------------------: | ----------------: | -----------------: |
+| Poros 0.5.5 defaults                           |            30.1 s |              25.7 s |            4.55 s |             3.99 s |
+| All off                                        |            29.8 s |              25.4 s |            4.60 s |             4.12 s |
+| Flush to disk only                             |      30.8 s (+3%) |        26.8 s (+6%) |     5.77 s (+25%) |      5.67 s (+38%) |
+| Checksums only, by the server's `sha256sum`    |     36.0 s (+21%) |       31.5 s (+24%) |     7.68 s (+67%) |      7.18 s (+74%) |
+| **All on (default)**                           | **37.0 s (+24%)** |   **33.3 s (+31%)** | **8.91 s (+94%)** | **9.01 s (+119%)** |
+| All on, server without `sha256sum` (read back) |     50.1 s (+68%) |       47.9 s (+89%) |    9.41 s (+105%) |     8.71 s (+111%) |
+
+Percentages are against all off. Most of the cost is per file: each file's checksum takes a round
+trip to the server and a `sha256sum` started there, so it weighs most on many small files and
+on links with more latency, and least on large files. Reading back costs a second pass over the
+network instead. On loopback, Poros and the server share the same four cores, so the checks
+there show their processing cost rather than what a real server adds.
+
+Setup: Poros 0.5.7 release build and OpenSSH 9.6 on Ubuntu 24.04, both on one 4-core Xeon at
+2.3 GHz with ext4 storage. The 1 ms link is a relay on the same machine that adds 1 ms each way
+and caps it at 1 Gbit/s; the relay itself holds throughput to 400 to 480 Mbit/s, so those times
+compare with each other, not with the table above. The read-back row signs in as a user the
+server limits to SFTP. To reproduce, run
+`POROS_TEST_SSH_PORT=2222 POROS_BENCH_WORKERS=4 POROS_BENCH_RUNS=3 POROS_BENCH_CHECKS=default cargo run --release --example transfer_benchmark`
+in `src-tauri`, with `POROS_BENCH_CHECKS` set to `off`, `checksums` or `flush` for the other
+rows, and `POROS_BENCH_DROP_CACHES=1` as root to drop the page cache.
 
 ## Install
 
@@ -224,7 +291,7 @@ The Windows installers are not code-signed yet, so SmartScreen may warn about an
 ## Notes
 
 - **SFTP only**: folder sync, rsync, scheduled tasks, server commands, the terminal, moving and
-  copying on the server, Properties, comparing server files, checksum verification, proxies and
+  copying on the server, Properties, comparing server files, repairing damaged parts, proxies and
   jump hosts. Files pasted or dragged within an FTP or cloud server are copied through the transfer
   queue, and FTP uploads are written in place rather than under a temporary name.
 - **Google Drive, OneDrive and Box** sign in through the system browser. Builds without app

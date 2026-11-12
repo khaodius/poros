@@ -136,6 +136,7 @@ export type ErrorKind =
   | "cloud"
   | "unsupported"
   | "integrity"
+  | "untrusted"
   | "cancelled"
   | "keychain"
   | "update";

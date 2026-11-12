@@ -4,6 +4,12 @@
 //! It uses the server and account the end-to-end tests use, at `POROS_BENCH_HOST` (default
 //! 127.0.0.1), and moves 3,600 files of incompressible data, 1.4 GiB in all, up and back down
 //! with 1, 4 and 8 workers. Every other transfer setting keeps its default.
+//!
+//! `POROS_BENCH_WORKERS` takes other worker counts (`4,8`), `POROS_BENCH_RUNS` repeats each
+//! transfer and reports the median, and `POROS_BENCH_CHECKS` picks the integrity checks:
+//! `default` (all on), `off`, `checksums` or `flush` (only that one on). With
+//! `POROS_BENCH_DROP_CACHES=1`, run as root on Linux, the page cache is dropped before each
+//! transfer.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -22,7 +28,7 @@ use poros_lib::transfer::{
 const OWNER: &str = "main";
 const KIBIBYTE: usize = 1024;
 const MEBIBYTE: usize = 1024 * 1024;
-const WORKER_COUNTS: [u32; 3] = [1, 4, 8];
+const DEFAULT_WORKER_COUNTS: &str = "1,4,8";
 const FOLDERS: usize = 36;
 
 fn profile() -> ConnectProfile {
@@ -104,6 +110,45 @@ fn write_workload(root: &Path) -> (usize, u64) {
     (sizes.len(), sizes.iter().map(|size| *size as u64).sum())
 }
 
+/// The transfer settings for `POROS_BENCH_CHECKS`.
+fn checked_settings(workers: u32) -> TransferSettings {
+    let defaults = TransferSettings {
+        workers,
+        exists_action: ExistsAction::Overwrite,
+        ..TransferSettings::default()
+    };
+    let off = TransferSettings {
+        verify_checksums: false,
+        read_back: false,
+        verify_resume: false,
+        check_metadata: false,
+        check_published: false,
+        flush_to_disk: false,
+        ..defaults.clone()
+    };
+    match std::env::var("POROS_BENCH_CHECKS").as_deref() {
+        Ok("off") => off,
+        Ok("checksums") => TransferSettings {
+            verify_checksums: true,
+            read_back: true,
+            ..off
+        },
+        Ok("flush") => TransferSettings {
+            flush_to_disk: true,
+            ..off
+        },
+        Ok("default") | Err(_) => defaults,
+        Ok(other) => panic!("POROS_BENCH_CHECKS is default, off, checksums or flush, not {other}"),
+    }
+}
+
+fn drop_caches() {
+    if std::env::var("POROS_BENCH_DROP_CACHES").as_deref() == Ok("1") {
+        let _ = std::process::Command::new("sync").status();
+        std::fs::write("/proc/sys/vm/drop_caches", "3").expect("could not drop the page cache");
+    }
+}
+
 /// Queues one folder and returns how long the whole batch took.
 async fn run(
     manager: &Arc<SessionManager>,
@@ -116,12 +161,9 @@ async fn run(
     let transfers = TransferManager::new(
         manager.clone(),
         Events::default(),
-        TransferSettings {
-            workers,
-            exists_action: ExistsAction::Overwrite,
-            ..TransferSettings::default()
-        },
+        checked_settings(workers),
     );
+    drop_caches();
     let started = Instant::now();
     transfers
         .enqueue(EnqueueRequest {
@@ -150,13 +192,24 @@ async fn run(
     }
 }
 
-fn report(direction: &str, workers: u32, files: usize, bytes: u64, elapsed: Duration) {
+fn median(mut runs: Vec<Duration>) -> Duration {
+    runs.sort();
+    runs[runs.len() / 2]
+}
+
+fn report(direction: &str, workers: u32, files: usize, bytes: u64, runs: Vec<Duration>) {
+    let each: Vec<String> = runs
+        .iter()
+        .map(|run| format!("{:.2}", run.as_secs_f64()))
+        .collect();
+    let elapsed = median(runs);
     let seconds = elapsed.as_secs_f64();
     let megabytes_per_second = bytes as f64 / seconds / 1e6;
     println!(
-        "{direction:<8} {workers} workers  {files} files  {:.2} GiB  {seconds:6.1} s  {megabytes_per_second:6.1} MB/s  {:5.0} Mbit/s",
+        "{direction:<8} {workers} workers  {files} files  {:.2} GiB  {seconds:6.2} s  {megabytes_per_second:6.1} MB/s  {:5.0} Mbit/s  runs: {}",
         bytes as f64 / (1u64 << 30) as f64,
         megabytes_per_second * 8.0,
+        each.join(" "),
     );
 }
 
@@ -181,41 +234,62 @@ async fn main() {
         size: 0,
     };
 
-    for workers in WORKER_COUNTS {
-        let scratch = format!("poros-benchmark-{}", std::process::id());
-        let remote = fs.make_dir("~", &scratch).await.unwrap();
-        let elapsed = run(
-            &manager,
-            &session,
-            workers,
-            Direction::Upload,
-            upload_item.clone(),
-            &remote,
-        )
-        .await;
-        report("upload", workers, files, bytes, elapsed);
+    let worker_counts: Vec<u32> = std::env::var("POROS_BENCH_WORKERS")
+        .unwrap_or_else(|_| DEFAULT_WORKER_COUNTS.into())
+        .split(',')
+        .map(|count| {
+            count
+                .trim()
+                .parse()
+                .expect("POROS_BENCH_WORKERS lists numbers")
+        })
+        .collect();
+    let repeats: usize = std::env::var("POROS_BENCH_RUNS").ok().map_or(1, |runs| {
+        runs.parse().expect("POROS_BENCH_RUNS is a number")
+    });
+    for workers in worker_counts {
+        let mut uploads = Vec::new();
+        let mut downloads = Vec::new();
+        for _ in 0..repeats {
+            let scratch = format!("poros-benchmark-{}", std::process::id());
+            let remote = fs.make_dir("~", &scratch).await.unwrap();
+            uploads.push(
+                run(
+                    &manager,
+                    &session,
+                    workers,
+                    Direction::Upload,
+                    upload_item.clone(),
+                    &remote,
+                )
+                .await,
+            );
 
-        let downloaded = local.path().join("downloaded");
-        std::fs::create_dir_all(&downloaded).unwrap();
-        let download_item = TransferItem {
-            path: format!("{remote}/workload"),
-            name: "workload".into(),
-            is_dir: true,
-            size: 0,
-        };
-        let elapsed = run(
-            &manager,
-            &session,
-            workers,
-            Direction::Download,
-            download_item,
-            &downloaded.to_string_lossy(),
-        )
-        .await;
-        report("download", workers, files, bytes, elapsed);
+            let downloaded = local.path().join("downloaded");
+            std::fs::create_dir_all(&downloaded).unwrap();
+            let download_item = TransferItem {
+                path: format!("{remote}/workload"),
+                name: "workload".into(),
+                is_dir: true,
+                size: 0,
+            };
+            downloads.push(
+                run(
+                    &manager,
+                    &session,
+                    workers,
+                    Direction::Download,
+                    download_item,
+                    &downloaded.to_string_lossy(),
+                )
+                .await,
+            );
 
-        fs.delete(std::slice::from_ref(&remote)).await.unwrap();
-        std::fs::remove_dir_all(&downloaded).unwrap();
+            fs.delete(std::slice::from_ref(&remote)).await.unwrap();
+            std::fs::remove_dir_all(&downloaded).unwrap();
+        }
+        report("upload", workers, files, bytes, uploads);
+        report("download", workers, files, bytes, downloads);
     }
     manager.disconnect(&session.id).await.unwrap();
 }
