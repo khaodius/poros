@@ -1,6 +1,6 @@
 [package]
 name = "poros"
-version = "0.5.7"
+version = "0.6.0"
 description = "SFTP and rsync client"
 authors = ["khaodius"]
 license = "Apache-2.0"

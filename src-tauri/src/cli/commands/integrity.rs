@@ -38,6 +38,7 @@ impl Method {
 fn algorithm(choice: HashAlgorithm) -> Algorithm {
     match choice {
         HashAlgorithm::Sha256 => Algorithm::Sha256,
+        HashAlgorithm::Sha512 => Algorithm::Sha512,
         HashAlgorithm::Sha1 => Algorithm::Sha1,
         HashAlgorithm::Md5 => Algorithm::Md5,
     }

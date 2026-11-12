@@ -42,11 +42,26 @@ pub fn settings(base: &TransferSettings, options: &TransferOptions) -> TransferS
     }
     if options.verify {
         settings.verify_checksums = true;
+        settings.read_back = true;
+        settings.repair_parts = true;
+        settings.verify_resume = true;
+        settings.check_metadata = true;
+        settings.check_published = true;
+        settings.flush_to_disk = true;
     }
     if options.no_verify {
         settings.verify_checksums = false;
+        settings.read_back = false;
     }
-    settings.flush_to_disk |= options.flush;
+    settings.read_back &= !options.no_read_back;
+    settings.flush_to_disk &= !options.no_flush;
+    settings.check_published &= !options.no_check_published;
+    settings.minisign_keys.extend(
+        options
+            .minisign_key
+            .iter()
+            .map(|key| key.trim().to_string()),
+    );
     settings.temporary_files &= !options.no_temp_files;
     settings.segmented &= !options.no_segments;
     settings.delta_transfers &= !options.no_delta;
@@ -299,7 +314,38 @@ mod tests {
         assert!(!changed.verify_checksums && !changed.temporary_files);
         assert_eq!(changed.exists_action, ExistsAction::Resume);
 
+        assert!(!changed.read_back && changed.flush_to_disk);
+
         let last_wins = settings(&base, &options(&["--no-verify", "--verify"]));
-        assert!(last_wins.verify_checksums);
+        assert!(last_wins.verify_checksums && last_wins.read_back);
+    }
+
+    #[test]
+    fn integrity_checks_turn_off_one_by_one() {
+        let all_off = TransferSettings {
+            verify_checksums: false,
+            read_back: false,
+            check_published: false,
+            flush_to_disk: false,
+            ..TransferSettings::default()
+        };
+        let verified = settings(&all_off, &options(&["--verify"]));
+        assert!(verified.verify_checksums && verified.read_back && verified.flush_to_disk);
+        assert!(verified.check_published && verified.verify_resume);
+
+        let base = TransferSettings::default();
+        let trimmed = settings(
+            &base,
+            &options(&[
+                "--no-read-back",
+                "--no-flush",
+                "--no-check-published",
+                "--minisign-key",
+                " RWQkey ",
+            ]),
+        );
+        assert!(trimmed.verify_checksums && !trimmed.read_back);
+        assert!(!trimmed.flush_to_disk && !trimmed.check_published);
+        assert_eq!(trimmed.minisign_keys, ["RWQkey"]);
     }
 }

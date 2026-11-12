@@ -297,15 +297,28 @@ pub struct TransferOptions {
     /// What to do with a file already at the destination
     #[arg(long, value_enum, default_value_t = Exists::Overwrite, help_heading = TRANSFERS)]
     pub exists: Exists,
-    /// Compare a checksum of both copies after each file, with the server's sha256sum
+    /// Every integrity check on, whatever the settings say: SHA-256 of both copies, reading
+    /// back from servers that cannot hash, checked resumes, flushing, published checksums and
+    /// signatures, and times and permissions read back
     #[arg(long, overrides_with = "no_verify", help_heading = TRANSFERS)]
     pub verify: bool,
-    /// Check sizes only, whatever the settings say
+    /// Check sizes only: no checksums, no reading back
     #[arg(long, help_heading = TRANSFERS)]
     pub no_verify: bool,
-    /// Have each file written to disk before it counts as done
+    /// Never read a file back to check it on servers that cannot hash it, which doubles the
+    /// traffic with them
     #[arg(long, help_heading = TRANSFERS)]
-    pub flush: bool,
+    pub no_read_back: bool,
+    /// Count a file done without waiting for it to be written to disk
+    #[arg(long, help_heading = TRANSFERS)]
+    pub no_flush: bool,
+    /// Ignore checksum files and signatures published beside downloads
+    #[arg(long, help_heading = TRANSFERS)]
+    pub no_check_published: bool,
+    /// A minisign public key that published .minisig signatures are checked against, besides
+    /// the ones in the settings; may be repeated
+    #[arg(long, value_name = "KEY", help_heading = TRANSFERS)]
+    pub minisign_key: Vec<String>,
     /// Write straight to the destination name instead of a temporary one renamed at the end
     #[arg(long, help_heading = TRANSFERS)]
     pub no_temp_files: bool,
@@ -427,6 +440,7 @@ pub struct ChecksumArgs {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum HashAlgorithm {
     Sha256,
+    Sha512,
     Sha1,
     Md5,
 }

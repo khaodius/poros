@@ -157,9 +157,12 @@ poros-cli exec -- systemctl reload nginx        # exits with the command's own s
 | `batch`                   | Many commands over one connection, one JSON line each         |
 
 `poros-cli help COMMAND` lists each command's options. Transfers take `-w` workers, `--exists
-overwrite|skip|newer|different|resume|rename`, `--verify`, `--limit-up` and `--limit-down`;
-`sync` takes `--include`, `--exclude`, `--checksum`, `--dry-run`, `--conflict local|remote` and
-any rsync option after `--`, read as the app reads them.
+overwrite|skip|newer|different|resume|rename`, `--limit-up` and `--limit-down`, and run the
+[integrity checks](#integrity-checks) as the app's settings have them: `--verify` turns every
+check on, `--no-verify` checks sizes only, and `--no-read-back`, `--no-flush` and
+`--no-check-published` turn off one each. `sync` takes `--include`, `--exclude`, `--checksum`,
+`--dry-run`, `--conflict local|remote` and any rsync option after `--`, read as the app reads
+them.
 
 **Connections.** `-c` (`POROS_CONNECTION`) takes a connection saved in Poros by name or id,
 `user@host[:port]`, or an address: `sftp://`, `ftp://`, `ftpes://` (explicit TLS), `ftps://`
@@ -207,7 +210,7 @@ printf '%s\n' '["mkdir", "-p", "/srv/app"]' \
 |      8 | Permission denied                                        |
 |      9 | Already exists                                           |
 |     10 | Some items failed (transfers, deletes, synchronization)  |
-|     11 | Contents differ, or a file failed its integrity check    |
+|     11 | Contents differ, or a file failed an integrity check     |
 |     12 | Not supported by the connection's protocol               |
 |    130 | Interrupted                                              |
 

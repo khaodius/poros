@@ -47,7 +47,7 @@ Exit status:
   8    permission denied
   9    already exists
   10   some items failed (transfers, deletes, synchronization)
-  11   contents differ, or a file failed its integrity check
+  11   contents differ, or a file failed its integrity check or published checksum
   12   not supported by the connection's protocol
   130  interrupted
   exec exits with the status of the command it ran.";
@@ -86,7 +86,7 @@ impl Exit {
             ErrorKind::PermissionDenied => Self::PermissionDenied,
             ErrorKind::AlreadyExists => Self::AlreadyExists,
             ErrorKind::InvalidInput => Self::Usage,
-            ErrorKind::Integrity => Self::Integrity,
+            ErrorKind::Integrity | ErrorKind::Untrusted => Self::Integrity,
             ErrorKind::Unsupported => Self::Unsupported,
             ErrorKind::Cancelled => Self::Interrupted,
             ErrorKind::Io
