@@ -13,7 +13,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0"></a>
 </p>
 
-![Poros with a local folder grouped by date, two server tabs, a file open in the editor and transfers running in the queue](.github/assets/screenshot.png)
+![Poros connecting to a server, dragging 36 files onto it as a flying pile, uploading them on parallel workers while the worker count goes up, then switching to the Paper and Dusk themes, picking an accent color and restyling the progress bars](.github/assets/showcase.gif)
 
 ## Features
 
@@ -81,6 +81,8 @@
 - **Signed updates**: Poros checks for a new release at start-up, downloads it in the background
   and installs it only after verifying its signature, then lets you choose when to restart.
   Settings > Updates turns the check off, and can install an earlier release the same way.
+
+![Poros with a local folder grouped by date, two server tabs, a file open in the editor and transfers running in the queue](.github/assets/screenshot.png)
 
 ## Folder synchronization
 
