@@ -8,6 +8,11 @@ import {
   type ColumnWidths,
   type DetailColumn,
 } from "./columns";
+import {
+  DEFAULT_PROGRESS_BARS,
+  sanitizeProgressBars,
+  type ProgressBarSettings,
+} from "./progressBars";
 import { DEFAULT_SYNC_OPTIONS, legacySyncOptions, sanitizeSyncOptions } from "./rsyncOptions";
 import { SORT_KEYS, type SortSpec } from "./sort";
 import type { ExistsAction, LogLevel, PowerAction, SyncDirection, SyncOptions } from "./types";
@@ -141,6 +146,9 @@ export interface AppearanceSettings {
   groupLocalByDate: boolean;
   /** Server file lists do the same. */
   groupRemoteByDate: boolean;
+  progressBars: ProgressBarSettings;
+  /** A pile of file icons flies from one pane to the other when files are sent or moved. */
+  transferAnimation: boolean;
 }
 
 export interface LogSettings {
@@ -301,6 +309,8 @@ export const DEFAULT_SETTINGS: Settings = {
     smoothScrolling: false,
     groupLocalByDate: true,
     groupRemoteByDate: false,
+    progressBars: DEFAULT_PROGRESS_BARS,
+    transferAnimation: false,
   },
   log: {
     maxLines: 5000,
@@ -396,6 +406,7 @@ export function sanitizeSettings(stored: unknown): Settings {
     appearance.rowHeight = COMPACT_ROW_HEIGHT;
   }
   appearance.rowHeight = clamp(appearance.rowHeight, ROW_HEIGHT_LIMITS.min, ROW_HEIGHT_LIMITS.max);
+  appearance.progressBars = sanitizeProgressBars(appearance.progressBars);
   settings.log.maxLines = clamp(settings.log.maxLines, LOG_LINE_LIMITS.min, LOG_LINE_LIMITS.max);
 
   settings.updates.skippedVersion = settings.updates.skippedVersion.trim();

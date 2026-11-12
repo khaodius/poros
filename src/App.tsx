@@ -7,6 +7,7 @@ import { CommandOutputDialog } from "./components/CommandOutputDialog";
 import { ConflictDialog } from "./components/ConflictDialog";
 import { ConnectDialog } from "./components/ConnectDialog";
 import { DragGhost } from "./components/DragGhost";
+import { FileFlights } from "./components/FileFlights";
 import { FileOperationsHost } from "./components/FileOperationsHost";
 import { HostKeyDialog } from "./components/HostKeyDialog";
 import { QuickConnectBar } from "./components/QuickConnectBar";
@@ -520,6 +521,7 @@ export function App() {
       <CommandOutputDialog />
       {isMainWindow() && <WhenDoneCountdown />}
       <Toasts />
+      <FileFlights />
       <DragGhost />
       {isMainWindow() && <SplashScreen ready={ready} />}
     </div>

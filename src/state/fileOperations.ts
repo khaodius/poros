@@ -2,6 +2,7 @@
 // Files headed elsewhere go through the transfer queue instead. Deleting on SFTP servers too.
 
 import { formatCount } from "../lib/deletion";
+import type { Point } from "../lib/fileFlight";
 import { localSource, type PathStyle } from "../lib/fileSource";
 import { sameFilesystem, toLocation, worksInPlace, type FileOrigin } from "../lib/fileOrigin";
 import { pluralize } from "../lib/format";
@@ -17,6 +18,7 @@ import type {
 } from "../lib/types";
 import { useClipboardStore } from "./clipboardStore";
 import type { DropTarget } from "./dragStore";
+import { launchFileFlight } from "./fileFlight";
 import { useLogStore } from "./logStore";
 import { askNameClash, track } from "./operationStore";
 import { getPane, listPanes, type PaneHandle } from "./paneRegistry";
@@ -107,6 +109,10 @@ export interface PlaceRequest {
   entries: FileEntry[];
   target: PaneHandle;
   targetFolder: string;
+  /** The pane the entries were dragged from; pasted ones come from wherever their folder shows. */
+  sourceTabId?: string;
+  /** Where a drag let go of them, for the flying pile. */
+  landing?: Point;
 }
 
 /**
@@ -114,7 +120,8 @@ export interface PlaceRequest {
  * Elsewhere the entries are queued as a transfer, which copies. False when nothing was done.
  */
 export async function placeEntries(request: PlaceRequest): Promise<boolean> {
-  const { mode, origin, sourceFolder, entries, target, targetFolder } = request;
+  const { mode, origin, sourceFolder, entries, target, targetFolder, sourceTabId, landing } =
+    request;
   const showToast = useToastStore.getState().show;
   if (entries.length === 0) return false;
   const targetOrigin = paneOrigin(target);
@@ -135,7 +142,7 @@ export async function placeEntries(request: PlaceRequest): Promise<boolean> {
       }
     }
     const source: PaneHandle = {
-      tabId: "clipboard",
+      tabId: sourceTabId ?? "clipboard",
       kind: origin.kind,
       sessionId: origin.sessionId,
       label: origin.server?.host ?? "Local",
@@ -148,7 +155,7 @@ export async function placeEntries(request: PlaceRequest): Promise<boolean> {
     if (mode === "move") {
       showToast("info", "Cut files are copied there; the originals stay.");
     }
-    await transferBetween(source, entries, target, targetFolder);
+    await transferBetween(source, entries, target, targetFolder, landing);
     return true;
   }
 
@@ -179,6 +186,17 @@ export async function placeEntries(request: PlaceRequest): Promise<boolean> {
 
   const what = entries.length === 1 ? entries[0].name : pluralize(entries.length, "item");
   const title = `${mode === "move" ? "Moving" : "Copying"} ${what} to ${baseName(targetFolder)}`;
+  launchFileFlight({
+    source: {
+      tabId: sourceTabId ?? "clipboard",
+      kind: origin.kind,
+      sessionId: origin.sessionId,
+      folder: sourceFolder,
+    },
+    target: { tabId: target.tabId, folder: targetFolder },
+    entries,
+    landing,
+  });
   let placed: string | undefined;
   try {
     const summary = await track(title, (operationId) =>

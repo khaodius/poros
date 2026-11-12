@@ -237,6 +237,7 @@ const FileRow = memo(function FileRow({
       aria-selected={selected}
       title={entry.name}
       data-drop-folder={folder ? entry.path : undefined}
+      data-path={entry.path}
       onPointerDown={(event) => events.onPointerDown(event, entry)}
       onClick={(event) => events.onClick(event, entry)}
       onDoubleClick={() => events.onOpen(entry)}

@@ -3,6 +3,25 @@
 Installers for every version are attached to its
 [release](https://github.com/khaodius/poros/releases), with SHA-256 checksums.
 
+## 0.5.6 - 2026-11-12
+
+- **Progress bars your way.** Settings > Appearance > Progress bars picks how bars are filled
+  (solid, gradient, striped, segmented or glowing), their color (the theme's, the theme's upload
+  and download colors, or one of your own), how thick the transfer list's bars are, rounded or
+  square ends, and what moves on a bar while its work runs: stripes, a shimmer or a pulse, which
+  hold still when the system asks for less motion. Each transfer can show its percent, what has
+  arrived of its size, the time left or nothing, beside the bar or on it, where the text changes
+  color as the fill passes under it. Finished, paused and failed transfers keep their green, gray
+  and red unless you turn that off. A preview shows every change as you make it, and the look
+  applies to the other progress bars in Poros too.
+- **Flying files, for fun.** With Settings > Appearance > Flying files on, files you upload,
+  download, move or copy hop out of their rows as a pile of their own icons, arc across the window
+  and land in a heap where they go, which lights up as they arrive: the folder they were dropped
+  on, the pane, or its tab when the pane is not on show. Folders spill a few files on the way, a
+  count rides on piles of more than one, and at most 24 icons fly however many files there are.
+  It is off unless you turn it on, a button beside the switch plays it first, and it stays still
+  when the system asks for less motion.
+
 ## 0.5.5 - 2026-11-10
 
 - **Finished transfers always show as finished.** In a large batch the queue could leave a file
