@@ -3,6 +3,27 @@
 Installers for every version are attached to its
 [release](https://github.com/khaodius/poros/releases), with SHA-256 checksums.
 
+## 0.6.0 - 2026-11-12
+
+- **Poros on the command line.** `poros-cli` browses, transfers, verifies and synchronizes files
+  without a window, for scripts, CI jobs and AI agents: `ls`, `stat`, `cat`, `write`, `get`,
+  `put`, `mkdir`, `rm`, `mv`, `cp`, `chmod`, `chown`, `du`, `checksum`, `verify`, `sync` and
+  `exec`. It works with every protocol the app does, through the same transfer queue, parallel
+  workers, integrity checks and rsync-style synchronization, and takes connections saved in
+  Poros by name, or any address such as `sftp://user@host`. The README's
+  [Command line](README.md#command-line) section has the details.
+- **It never prompts.** Passwords, keys and passphrases come from flags or environment variables,
+  saved connections, the system keychain or the SSH agent. A host key seen for the first time
+  stops the run with its fingerprint until `--host-key` or `--trust-new-host` accepts it, and a
+  changed key is never accepted without its fingerprint.
+- **Made for programs.** `--json` prints one JSON document for every result and error, exit
+  statuses say what happened (not found, sign-in refused, contents differ and so on), and `batch`
+  runs many commands over one connection, one JSON line in and one out each. `exec` exits with
+  the status of the command it ran on the server.
+- **A download of its own for servers.** Each release now carries `poros-cli` for Linux and
+  Windows on its own, built without the app, so it runs on servers and in containers that have
+  no desktop. On Linux it needs nothing but the C library.
+
 ## 0.5.7 - 2026-11-12
 
 - **Every transfer is checked, by default.** The checks under Settings > Transfers > Integrity

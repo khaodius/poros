@@ -159,9 +159,55 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # poros-cli on its own, built without the app so it runs on servers and in containers that
+  # have no desktop libraries. The installers carry only the app.
+  command-line:
+    name: Command line (${{ matrix.platform.name }})
+    needs: version
+    if: needs.version.outputs.release == 'true'
+    runs-on: ${{ matrix.platform.os }}
+    strategy:
+      matrix:
+        platform:
+          - name: Linux
+            os: ubuntu-22.04
+            built: poros-cli
+            published: linux-x86_64
+          - name: Windows
+            os: windows-latest
+            built: poros-cli.exe
+            published: windows-x86_64.exe
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build
+        shell: bash
+        env:
+          POROS_GOOGLE_CLIENT_ID: ${{ secrets.POROS_GOOGLE_CLIENT_ID }}
+          POROS_GOOGLE_CLIENT_SECRET: ${{ secrets.POROS_GOOGLE_CLIENT_SECRET }}
+          POROS_MICROSOFT_CLIENT_ID: ${{ secrets.POROS_MICROSOFT_CLIENT_ID }}
+          POROS_BOX_CLIENT_ID: ${{ secrets.POROS_BOX_CLIENT_ID }}
+          POROS_BOX_CLIENT_SECRET: ${{ secrets.POROS_BOX_CLIENT_SECRET }}
+        run: |
+          cargo build --manifest-path src-tauri/Cargo.toml --release --locked \
+            --no-default-features --features cli --bin poros-cli
+          mkdir command-line
+          cp "src-tauri/target/release/${{ matrix.platform.built }}" \
+            "command-line/poros-cli_${{ needs.version.outputs.version }}_${{ matrix.platform.published }}"
+          "command-line/poros-cli_${{ needs.version.outputs.version }}_${{ matrix.platform.published }}" --version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-cli-${{ runner.os }}
+          path: command-line/*
+          if-no-files-found: error
+          retention-days: 7
+
   publish:
     name: Publish
-    needs: [version, bundle]
+    needs: [version, bundle, command-line]
     if: needs.version.outputs.release == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -188,7 +234,7 @@ jobs:
             echo "::error::Two installers share a file name"
             exit 1
           fi
-          for pattern in '*.deb' '*.rpm' '*.AppImage' '*.msi' '*-setup.exe'; do
+          for pattern in '*.deb' '*.rpm' '*.AppImage' '*.msi' '*-setup.exe' 'poros-cli_*_linux-x86_64' 'poros-cli_*_windows-x86_64.exe'; do
             count=$(find release -name "$pattern" | wc -l)
             if [ "$count" -ne 1 ]; then
               echo "::error::Expected one $pattern installer, found $count"
@@ -206,6 +252,8 @@ jobs:
           jq -r .plugins.updater.pubkey src-tauri/tauri.conf.json | base64 -d > "$RUNNER_TEMP/update.pub"
           for file in release/*; do
             name=$(basename "$file")
+            # The updater installs only the installers; the command line is not one of them.
+            case "$name" in poros-cli_*) continue ;; esac
             if [ ! -s "signatures/$name.sig" ]; then
               echo "::error::$name has no update signature"
               exit 1
@@ -282,6 +330,8 @@ jobs:
             echo "| ---- | --- | ------- |"
             while read -r hash file; do
               case "$file" in
+                poros-cli_*_linux-x86_64) kind="Command line without the app, x86-64 Linux" ;;
+                poros-cli_*_windows-x86_64.exe) kind="Command line without the app, Windows" ;;
                 *-setup.exe) kind="Windows setup (recommended for Windows)" ;;
                 *.msi) kind="Windows Installer package" ;;
                 *.deb) kind="Debian, Ubuntu, Linux Mint" ;;

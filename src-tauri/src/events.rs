@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
+#[cfg(feature = "gui")]
 use tauri::{AppHandle, Emitter};
 
 // Mirrored in `src/lib/ipc.ts`.
@@ -52,8 +53,10 @@ pub struct SessionClosed {
     pub reason: String,
 }
 
+/// Without the app, as in the headless command line, records go only to the `log` crate.
 #[derive(Clone, Default)]
 pub struct Events {
+    #[cfg(feature = "gui")]
     app: Option<AppHandle>,
     /// What was logged before the main window listened, such as a settings file that could
     /// not be read at start-up. Events sent then would reach no one, so the records wait here
@@ -62,6 +65,7 @@ pub struct Events {
 }
 
 impl Events {
+    #[cfg(feature = "gui")]
     pub fn new(app: AppHandle) -> Self {
         Self {
             app: Some(app),
@@ -73,6 +77,7 @@ impl Events {
     /// tests can read the log.
     pub fn keeping_startup_log() -> Self {
         Self {
+            #[cfg(feature = "gui")]
             app: None,
             startup_log: Arc::new(Mutex::new(Some(Vec::new()))),
         }
@@ -97,9 +102,7 @@ impl Events {
             }
             return;
         }
-        if let Some(app) = &self.app {
-            let _ = app.emit(LOG_EVENT, record);
-        }
+        self.emit(LOG_EVENT, record);
     }
 
     /// Hands over the records logged before the main window listened; from then on, records
@@ -109,52 +112,48 @@ impl Events {
     }
 
     pub fn transfers(&self, update: &crate::transfer::TransferUpdate) {
-        if let Some(app) = &self.app {
-            let _ = app.emit(TRANSFERS_EVENT, update);
-        }
+        self.emit(TRANSFERS_EVENT, update);
     }
 
     pub fn sync_progress(&self, progress: &crate::sync::SyncProgress) {
-        if let Some(app) = &self.app {
-            let _ = app.emit(SYNC_PROGRESS_EVENT, progress);
-        }
+        self.emit(SYNC_PROGRESS_EVENT, progress);
     }
 
     pub fn queue_finished(&self, finished: &crate::transfer::QueueFinished) {
-        if let Some(app) = &self.app {
-            let _ = app.emit(QUEUE_FINISHED_EVENT, finished);
-        }
+        self.emit(QUEUE_FINISHED_EVENT, finished);
     }
 
     pub fn command_output(&self, chunk: &crate::automation::remote_command::OutputChunk) {
-        if let Some(app) = &self.app {
-            let _ = app.emit(COMMAND_OUTPUT_EVENT, chunk);
-        }
+        self.emit(COMMAND_OUTPUT_EVENT, chunk);
     }
 
     pub fn file_operation(&self, progress: &crate::file_ops::OperationProgress) {
-        if let Some(app) = &self.app {
-            let _ = app.emit(FILE_OPERATION_EVENT, progress);
-        }
+        self.emit(FILE_OPERATION_EVENT, progress);
     }
 
     pub fn store_changed(&self, store: Store) {
-        if let Some(app) = &self.app {
-            let _ = app.emit(STORE_CHANGED_EVENT, store);
-        }
+        self.emit(STORE_CHANGED_EVENT, store);
     }
 
     pub fn session_closed(&self, session_id: &str, reason: impl Into<String>) {
+        self.emit(
+            SESSION_CLOSED_EVENT,
+            SessionClosed {
+                session_id: session_id.to_owned(),
+                reason: reason.into(),
+            },
+        );
+    }
+
+    #[cfg(feature = "gui")]
+    fn emit(&self, event: &str, payload: impl Serialize + Clone) {
         if let Some(app) = &self.app {
-            let _ = app.emit(
-                SESSION_CLOSED_EVENT,
-                SessionClosed {
-                    session_id: session_id.to_owned(),
-                    reason: reason.into(),
-                },
-            );
+            let _ = app.emit(event, payload);
         }
     }
+
+    #[cfg(not(feature = "gui"))]
+    fn emit(&self, _event: &str, _payload: impl Serialize + Clone) {}
 }
 
 fn now_millis() -> u64 {

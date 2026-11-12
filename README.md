@@ -83,6 +83,9 @@
 - **Date groups** like Windows Explorer's: local files sit under Today, Yesterday, Earlier this
   week and so on, each group collapsible, with a switch in Settings > Appearance for local and
   server lists.
+- **Command line**: `poros-cli` browses, transfers, verifies and synchronizes files without a
+  window, for scripts, CI jobs and AI agents, with JSON output and exit statuses to branch on. See
+  [Command line](#command-line).
 - **Signed updates**: Poros checks for a new release at start-up, downloads it in the background
   and installs it only after verifying its signature, then lets you choose when to restart.
   Settings > Updates turns the check off, and can install an earlier release the same way.
@@ -121,6 +124,105 @@ with.
 Arguments that make no sense over Poros's own SSH connection are noted and passed over, such as
 `-e`, `--partial-dir`, `--sparse`, `-H`, `-A` and `-X`. A few are refused with the reason:
 `-R`, `--compare-dest`, `--copy-dest`, `--link-dest`, batch files and time limits.
+
+## Command line
+
+`poros-cli` does what the app does with servers, without a window. Each run connects once, does
+one thing and disconnects, and it never prompts: sign-in comes from flags, environment variables
+or saved connections, and an unknown host key stops the run until it is accepted. Transfers use
+the app's parallel workers, segmented large files, delta copies and checksum verification.
+
+```sh
+export POROS_CONNECTION=deploy@example.com      # a saved connection, user@host or sftp://user@host:2222/srv
+export POROS_PASSWORD=...                       # or -i ~/.ssh/id_ed25519, or the SSH agent
+poros-cli --trust-new-host --save-host-key info # first contact: accept and remember the host key
+poros-cli ls -l /srv/www
+poros-cli put -w 8 ./site /srv/www
+poros-cli sync -d up --delete --exclude '*.tmp' ./site /srv/www/site
+poros-cli verify ./site /srv/www/site           # exit status 11 when anything differs
+poros-cli exec -- systemctl reload nginx        # exits with the command's own status
+```
+
+| Command                   | Does                                                          |
+| ------------------------- | ------------------------------------------------------------- |
+| `info`, `connections`     | Show the session; list the connections saved in Poros         |
+| `ls`, `stat`, `du`        | List folders (`-l`, `-R`, `-a`), show paths, count contents   |
+| `cat`, `write`            | Print files (`--offset`, `--length`); write standard input    |
+| `get`, `put`              | Download and upload files and folders, `cp`-style placement   |
+| `mkdir`, `rm`, `mv`, `cp` | Change files on the server, with globs in the last component  |
+| `chmod`, `chown`          | Octal or symbolic modes (`u+x,go-w`), owners and groups, `-R` |
+| `checksum`, `verify`      | Hash on the server; compare a local and a server copy         |
+| `sync`                    | rsync-style synchronization, `-d up`, `down` or `both`        |
+| `exec`                    | Run a command through the server's shell                      |
+| `batch`                   | Many commands over one connection, one JSON line each         |
+
+`poros-cli help COMMAND` lists each command's options. Transfers take `-w` workers, `--exists
+overwrite|skip|newer|different|resume|rename`, `--limit-up` and `--limit-down`, and run the
+[integrity checks](#integrity-checks) as the app's settings have them: `--verify` turns every
+check on, `--no-verify` checks sizes only, and `--no-read-back`, `--no-flush` and
+`--no-check-published` turn off one each. `sync` takes `--include`, `--exclude`, `--checksum`,
+`--dry-run`, `--conflict local|remote` and any rsync option after `--`, read as the app reads
+them.
+
+**Connections.** `-c` (`POROS_CONNECTION`) takes a connection saved in Poros by name or id,
+`user@host[:port]`, or an address: `sftp://`, `ftp://`, `ftpes://` (explicit TLS), `ftps://`
+(implicit TLS), `dav://`, `davs://`, `s3://ACCESS_KEY_ID@endpoint/bucket` or `b2://KEY_ID@`. A
+saved connection keeps its settings, proxy and jump hosts, and its password or cloud sign-in from
+the system keychain unless `--no-keychain` is given. Otherwise the password comes from
+`POROS_PASSWORD`, `--password-env`, `--password-file` or `--password-stdin`, a key from `-i`
+(`POROS_IDENTITY`) with its passphrase in `POROS_PASSPHRASE`, `--passphrase-env` or
+`--passphrase-file`, or the agent with `--agent`. With none of them, SFTP tries the agent and then
+`~/.ssh/id_ed25519`, `id_ecdsa` and `id_rsa`.
+
+**Host keys.** Keys are checked against the ones Poros trusts and `~/.ssh/known_hosts`. An
+unknown key exits with status 5 and a changed one with 6, both with the fingerprint.
+`--host-key SHA256:...` (`POROS_HOST_KEY`) accepts that key for the run, `--trust-new-host`
+accepts a host seen for the first time but never a changed key, and `--save-host-key` remembers
+what was accepted. Certificates of FTPS, WebDAV and S3 servers work the same way.
+
+**JSON.** `--json` (`POROS_JSON=1`) prints one JSON document on standard output, errors included:
+`{"error": {"kind", "message", "path", "hostKey", "exitCode", "hint"}}`. A command given one path
+answers with an object and several with an array. `--progress json` reports transfers on standard
+error as one JSON object a second; `--progress text` draws a progress line.
+
+**Batch.** `batch` reads one command per line of standard input, as a JSON array of arguments or
+an object with `args`, an `id` to echo, and `input` or `inputBase64` for `write`, and answers
+each with one JSON line, in order:
+
+```sh
+printf '%s\n' '["mkdir", "-p", "/srv/app"]' \
+  '{"id": "env", "args": ["write", "/srv/app/.env"], "input": "MODE=production\n"}' \
+  '["stat", "/srv/app/.env"]' | poros-cli batch
+```
+
+**Exit status.**
+
+| Status | Meaning                                                  |
+| -----: | -------------------------------------------------------- |
+|      0 | Success                                                  |
+|      1 | Failure without a status of its own                      |
+|      2 | Invalid arguments                                        |
+|      3 | Could not connect, or the connection dropped             |
+|      4 | Sign-in refused, or no password, key or passphrase given |
+|      5 | Host key or certificate not trusted yet                  |
+|      6 | Host key or certificate changed since it was trusted     |
+|      7 | Not found                                                |
+|      8 | Permission denied                                        |
+|      9 | Already exists                                           |
+|     10 | Some items failed (transfers, deletes, synchronization)  |
+|     11 | Contents differ, or a file failed an integrity check     |
+|     12 | Not supported by the connection's protocol               |
+|    130 | Interrupted                                              |
+
+`exec` exits with the status of the command it ran, 128 plus the signal's number for one ended by
+a signal. `poros-cli` reads the app's settings, saved connections and trusted host keys from its
+config folder (`--config-dir` or `POROS_CONFIG_DIR` picks another, `--default-settings` ignores
+the saved settings) and writes nothing there except a host key it is told to remember and a cloud
+sign-in the provider renewed.
+
+**Without the app.** In `src-tauri`, `cargo build --release --no-default-features --features cli
+--bin poros-cli` builds it without the web view, GTK or the Windows shell, for servers and
+containers that have none of them; on Linux it links only the C library.
 
 ## Performance
 

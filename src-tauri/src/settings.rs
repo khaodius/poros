@@ -3,7 +3,7 @@
 //! sections belong to the frontend and are stored as given. Mirrored in
 //! `src/lib/settings.ts`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
 use serde::{Deserialize, Serialize};
@@ -353,6 +353,18 @@ impl Default for Settings {
 }
 
 impl Settings {
+    /// The settings saved in `file`, defaults when there is none. Unlike `SettingsStore::load`
+    /// it never moves a bad file aside, since the command line only borrows the app's settings.
+    pub fn read_only(file: &Path) -> Result<Self, String> {
+        match std::fs::read(file) {
+            Ok(contents) => serde_json::from_slice::<Settings>(&contents)
+                .map(Settings::sanitize)
+                .map_err(|error| format!("{} is not valid ({error})", file.display())),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(error) => Err(format!("{} could not be read ({error})", file.display())),
+        }
+    }
+
     fn sanitize(mut self) -> Self {
         self.transfers.sanitize();
         self.connection.sanitize();

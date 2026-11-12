@@ -32,9 +32,9 @@ use queue::Totals;
 pub use queue::{
     ChangedDirectory, Direction, JobId, JobKind, JobSnapshot, JobState, QueueCounts, Side,
 };
-pub(crate) use worker::{
-    ensure_remote_folders, is_partial_name, keep_local_backup, keep_remote_backup,
-};
+#[cfg(feature = "gui")]
+pub(crate) use worker::is_partial_name;
+pub(crate) use worker::{ensure_remote_folders, keep_local_backup, keep_remote_backup};
 
 use crate::error::{AppError, AppResult};
 use crate::events::{Events, LogLevel};
@@ -493,7 +493,7 @@ pub struct TransferManager {
 }
 
 impl TransferManager {
-    /// Spawns its tasks on Tauri's runtime, so it can be created outside an async context.
+    /// Spawns its tasks through `runtime`, so the app can create it outside an async context.
     pub fn new(sessions: Arc<SessionManager>, events: Events, settings: TransferSettings) -> Self {
         let shared = Arc::new(Shared {
             queue: Mutex::new(Queue::new()),
@@ -517,7 +517,7 @@ impl TransferManager {
         });
         let manager = Self { shared };
         manager.configure(settings);
-        tauri::async_runtime::spawn(report_progress(Arc::downgrade(&manager.shared)));
+        crate::runtime::spawn(report_progress(Arc::downgrade(&manager.shared)));
         manager
     }
 
@@ -534,7 +534,7 @@ impl TransferManager {
         let mut live = shared.live_workers.lock().unwrap();
         for index in 0..workers {
             if live.insert(index) {
-                tauri::async_runtime::spawn(worker::run(shared.clone(), index));
+                crate::runtime::spawn(worker::run(shared.clone(), index));
             }
         }
         drop(live);
@@ -802,7 +802,7 @@ fn update_queue(shared: &Arc<Shared>, change: impl FnOnce(&mut Queue)) {
     shared.work.notify_waiters();
     if !abandoned.is_empty() {
         let shared = shared.clone();
-        tauri::async_runtime::spawn(async move {
+        crate::runtime::spawn(async move {
             for partial in abandoned {
                 match partial.direction {
                     Direction::Download => {

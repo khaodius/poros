@@ -3,5 +3,6 @@
 
 pub mod remote_command;
 pub mod schedule;
+#[cfg(feature = "gui")]
 pub mod scheduler;
 pub mod system;

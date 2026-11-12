@@ -1,7 +1,16 @@
+#[cfg(feature = "gui")]
 use std::env;
+#[cfg(feature = "gui")]
 use std::path::PathBuf;
 
 fn main() {
+    // The headless build has no app to describe, so nothing for tauri-build to generate.
+    #[cfg(feature = "gui")]
+    build_app();
+}
+
+#[cfg(feature = "gui")]
+fn build_app() {
     if env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
         embed_windows_manifest_in_every_binary();
         let windows = tauri_build::WindowsAttributes::new_without_app_manifest();
@@ -15,6 +24,7 @@ fn main() {
 /// tauri-build links the manifest into the app binary only. Test executables need it too: the
 /// dialog plugin imports `TaskDialogIndirect`, which exists only in Common Controls v6, and
 /// without the manifest they abort with STATUS_ENTRYPOINT_NOT_FOUND.
+#[cfg(feature = "gui")]
 fn embed_windows_manifest_in_every_binary() {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("set by cargo"))
         .join("windows-app-manifest.xml");

@@ -216,6 +216,58 @@ jobs:
       - name: Test
         run: cargo test --manifest-path ${{ env.MANIFEST }} --locked
 
+  # The command line built without the app. No web view or GTK libraries are installed, so this
+  # also shows the build needs none of them.
+  headless:
+    name: Command line (${{ matrix.platform.name }})
+    runs-on: ${{ matrix.platform.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - { name: Linux, os: ubuntu-22.04, binary: poros-cli }
+          - { name: Windows, os: windows-latest, binary: poros-cli.exe }
+    env:
+      FEATURES: --no-default-features --features cli
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: headless
+
+      - name: Clippy
+        run: cargo clippy --manifest-path ${{ env.MANIFEST }} ${{ env.FEATURES }} --all-targets --locked -- -D warnings
+
+      - name: Test
+        run: cargo test --manifest-path ${{ env.MANIFEST }} ${{ env.FEATURES }} --locked
+
+      - name: Build
+        run: cargo build --manifest-path ${{ env.MANIFEST }} ${{ env.FEATURES }} --release --locked --bin poros-cli
+
+      - name: Check that it links no desktop libraries
+        if: runner.os == 'Linux'
+        run: |
+          ldd src-tauri/target/release/poros-cli
+          if ldd src-tauri/target/release/poros-cli | grep -Ei 'gtk|webkit|glib|gdk|dbus'; then
+            echo "::error::poros-cli links a desktop library"
+            exit 1
+          fi
+
+      - run: src-tauri/target/release/${{ matrix.platform.binary }} --version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: poros-cli-${{ runner.os }}
+          path: src-tauri/target/release/${{ matrix.platform.binary }}
+          if-no-files-found: error
+          retention-days: 14
+
   bundle:
     name: Bundle (${{ matrix.platform.name }})
     needs: check

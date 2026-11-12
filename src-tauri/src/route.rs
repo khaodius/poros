@@ -140,7 +140,7 @@ fn require_sftp(saved: &SavedConnection, purpose: &str) -> AppResult<()> {
 }
 
 /// A saved connection's profile, before connection options and the route are added.
-fn profile_from_saved(saved: &SavedConnection, auth: AuthMethod) -> ConnectProfile {
+pub fn profile_from_saved(saved: &SavedConnection, auth: AuthMethod) -> ConnectProfile {
     ConnectProfile {
         protocol: saved.protocol,
         host: saved.host.clone(),
