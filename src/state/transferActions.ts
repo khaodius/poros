@@ -1,7 +1,9 @@
 import { local, toAppError, transfers } from "../lib/ipc";
+import type { Point } from "../lib/fileFlight";
 import { pluralize } from "../lib/format";
 import { isDirLike } from "../lib/sort";
 import type { Direction, FileEntry, TransferItem } from "../lib/types";
+import { launchFileFlight } from "./fileFlight";
 import { useLogStore } from "./logStore";
 import { getPane, lastActivePane, type PaneHandle } from "./paneRegistry";
 import { useToastStore } from "./toastStore";
@@ -27,11 +29,11 @@ async function enqueue(
   folder: string,
   where: string,
   sourceSessionId?: string,
-): Promise<void> {
+): Promise<boolean> {
   const showToast = useToastStore.getState().show;
   if (items.length === 0) {
     showToast("info", "Nothing to transfer: only regular files and folders can be copied.");
-    return;
+    return false;
   }
   try {
     await transfers.enqueue({
@@ -43,41 +45,67 @@ async function enqueue(
     });
     const summary = `Queued ${VERBS[direction]} of ${pluralize(items.length, "item")} to ${where}`;
     useLogStore.getState().write("info", summary, sessionId);
+    return true;
   } catch (caught) {
     showToast("error", toAppError(caught).message);
+    return false;
   }
 }
 
 /**
  * Queues entries from one pane into a folder of another; the panes decide the direction. Between
  * two servers the files are copied directly when both allow it, or stream through Poros.
+ * `landing` is where a drag let go of them, for the flying pile.
  */
 export async function transferBetween(
   source: PaneHandle,
   entries: FileEntry[],
   target: PaneHandle,
   folder: string | null,
+  landing?: Point,
 ): Promise<void> {
-  const showToast = useToastStore.getState().show;
   const targetFolder = folder ?? target.path();
   if (!targetFolder || (source.tabId === target.tabId && folder === null)) return;
+  const queued = await queueBetween(source, entries, target, targetFolder);
+  if (!queued) return;
+  launchFileFlight({
+    source: {
+      tabId: source.tabId,
+      kind: source.kind,
+      sessionId: source.sessionId,
+      folder: source.path(),
+    },
+    target: { tabId: target.tabId, folder: targetFolder },
+    entries: entries.filter((entry) => entry.kind !== "other" && entry.linkTarget !== "broken"),
+    landing,
+  });
+}
+
+async function queueBetween(
+  source: PaneHandle,
+  entries: FileEntry[],
+  target: PaneHandle,
+  targetFolder: string,
+): Promise<boolean> {
   if (source.kind === "local" && target.kind === "remote" && target.sessionId) {
-    await enqueue(
+    return enqueue(
       "upload",
       target.sessionId,
       transferable(entries),
       targetFolder,
       `${target.label}:${targetFolder}`,
     );
-  } else if (source.kind === "remote" && target.kind === "local" && source.sessionId) {
-    await enqueue("download", source.sessionId, transferable(entries), targetFolder, targetFolder);
-  } else if (
+  }
+  if (source.kind === "remote" && target.kind === "local" && source.sessionId) {
+    return enqueue("download", source.sessionId, transferable(entries), targetFolder, targetFolder);
+  }
+  if (
     source.kind === "remote" &&
     target.kind === "remote" &&
     source.sessionId &&
     target.sessionId
   ) {
-    await enqueue(
+    return enqueue(
       "relay",
       target.sessionId,
       transferable(entries),
@@ -85,9 +113,9 @@ export async function transferBetween(
       `${target.label}:${targetFolder}`,
       source.sessionId,
     );
-  } else {
-    showToast("info", "Drop local files on a server tab to upload them.");
   }
+  useToastStore.getState().show("info", "Drop local files on a server tab to upload them.");
+  return false;
 }
 
 export function transferFromPane(
@@ -95,10 +123,11 @@ export function transferFromPane(
   entries: FileEntry[],
   targetTabId: string,
   folder: string | null,
+  landing?: Point,
 ) {
   const source = getPane(sourceTabId);
   const target = getPane(targetTabId);
-  if (source && target) void transferBetween(source, entries, target, folder);
+  if (source && target) void transferBetween(source, entries, target, folder, landing);
 }
 
 /** Sends entries to the pane of the other kind the user looked at last. */

@@ -11,6 +11,7 @@ import {
   type ThemeEntry,
 } from "../lib/theme";
 import { quoteFamily, type FontKind } from "../lib/fonts";
+import { progressBarStyle } from "../lib/progressBars";
 import { sanitizeSettings, type AppearanceSettings } from "../lib/settings";
 import { saveSettingsSection, useSettingsStore } from "./settingsStore";
 
@@ -185,4 +186,10 @@ export function applyTheme(theme: Theme, appearance: AppearanceSettings): void {
   style.setProperty("--font-size", `${fontSize}px`);
   style.setProperty("--font-size-small", `${fontSize - FONT_SIZE_STEPS.small}px`);
   style.setProperty("--font-size-tiny", `${fontSize - FONT_SIZE_STEPS.tiny}px`);
+
+  const bars = progressBarStyle(appearance.progressBars);
+  for (const [property, value] of Object.entries(bars.properties)) {
+    style.setProperty(property, value);
+  }
+  Object.assign(root.dataset, bars.attributes);
 }

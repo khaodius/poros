@@ -70,6 +70,11 @@
 - **Themes** as shareable JSON files, ten built in, with every color editable in settings. File
   lists can show the system's own file icons, Windows Explorer's or your Linux icon theme's, and
   scrolling with the mouse wheel can glide.
+- **Progress bars** to taste: solid, gradient, striped, segmented or glowing fills, the theme's
+  color, upload and download colors or your own, any thickness, moving stripes, a shimmer or a
+  pulse while work runs, and the percent, size or time left beside or on each transfer's bar.
+- **Flying files**, off until you want them: files you send, move or copy hop across the window as
+  a pile of their own icons and land where they go.
 - **Date groups** like Windows Explorer's: local files sit under Today, Yesterday, Earlier this
   week and so on, each group collapsible, with a switch in Settings > Appearance for local and
   server lists.
