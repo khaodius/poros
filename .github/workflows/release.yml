@@ -160,7 +160,7 @@ jobs:
           retention-days: 7
 
   # poros-cli on its own, built without the app so it runs on servers and in containers that
-  # have no desktop libraries. The installers carry it too, built with the app.
+  # have no desktop libraries. The installers carry only the app.
   command-line:
     name: Command line (${{ matrix.platform.name }})
     needs: version
