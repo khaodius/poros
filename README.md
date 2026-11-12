@@ -13,7 +13,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0"></a>
 </p>
 
-![Poros connecting to a server, uploading 36 files on parallel workers while the worker count goes up, then switching to the Paper and Dusk themes and picking an accent color](.github/assets/showcase.gif)
+![Poros connecting to a server, dragging 36 files onto it as a flying pile, uploading them on parallel workers while the worker count goes up, then switching to the Paper and Dusk themes, picking an accent color and restyling the progress bars](.github/assets/showcase.gif)
 
 ## Features
 
