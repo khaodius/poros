@@ -10,7 +10,9 @@ use std::time::{Duration, UNIX_EPOCH};
 use super::conflict::FileFacts;
 use super::copy;
 use super::limiter::RateLimiter;
+use super::published;
 use super::queue::{JobRun, RunOutcome};
+use super::verify::{self, Checked, Copies};
 use super::worker::{
     self, keep_local_backup, local_permissions, set_local_permissions, JobContext,
 };
@@ -70,7 +72,14 @@ pub(super) async fn try_upload(
     let pace = RunPace::new(context);
     let sent = attempt(context, async {
         let channel = context.command_channel().await?;
-        rsync::upload(channel, &request, &pace).await
+        let report = rsync::upload(channel, &request, &pace).await?;
+        let copies = Copies {
+            remote: &spec.target,
+            local: &spec.source,
+            length: source.size,
+        };
+        same_result(context, &copies).await?;
+        Ok(report)
     })
     .await?;
     let Some(report) = sent else {
@@ -109,6 +118,24 @@ pub(super) async fn try_download(
     let received = attempt(context, async {
         let channel = context.command_channel().await?;
         let (report, file) = rsync::download(channel, &request, &pace).await?;
+        let output = partial.to_string_lossy();
+        let copies = Copies {
+            remote: &spec.source,
+            local: &output,
+            length: source.size,
+        };
+        same_result(context, &copies).await?;
+        if context.settings.check_published {
+            let source = published::Source::Sftp(context.fs);
+            let checked = published::check(&context.job(), source, &spec.source, &partial).await;
+            if checked
+                .as_ref()
+                .is_err_and(|error| error.kind == ErrorKind::Untrusted)
+            {
+                context.run.restart.store(true, Ordering::Relaxed);
+            }
+            checked?;
+        }
         put_in_place(context.settings, &partial, &target, file, backup).await?;
         Ok(report)
     })
@@ -121,6 +148,20 @@ pub(super) async fn try_download(
     };
     worker::finish_file(context).await;
     Ok(Some(finished(context, report)))
+}
+
+/// rsync checks its result with MD5 or MD4, which can be forged, so with checksums on the
+/// result is compared by SHA-256 too. A mismatch falls back to copying the whole file.
+async fn same_result(context: &JobContext<'_>, copies: &Copies<'_>) -> AppResult<()> {
+    if !context.settings.verify_checksums {
+        return Ok(());
+    }
+    match verify::compare(context, copies).await? {
+        Checked::Different { .. } => Err(AppError::integrity(
+            "its result does not match the source's checksum",
+        )),
+        Checked::Same | Checked::Unavailable => Ok(()),
+    }
 }
 
 fn wanted(settings: &TransferSettings, source_size: u64, target_size: u64) -> bool {
@@ -175,11 +216,16 @@ async fn attempt<T>(
     }
 }
 
-/// Cancellation, and a lost connection, which a whole-file copy cannot get past either.
+/// Cancellation, a lost connection, and a file its publisher's checksums or signatures reject,
+/// which a whole-file copy cannot get past either.
 fn stops_the_job(error: &AppError) -> bool {
     matches!(
         error.kind,
-        ErrorKind::Cancelled | ErrorKind::Disconnected | ErrorKind::Timeout | ErrorKind::Connection
+        ErrorKind::Cancelled
+            | ErrorKind::Disconnected
+            | ErrorKind::Timeout
+            | ErrorKind::Connection
+            | ErrorKind::Untrusted
     )
 }
 
@@ -253,6 +299,7 @@ async fn put_in_place(
 ) -> AppResult<()> {
     let preserve_timestamps = settings.preserve_timestamps;
     let preserve_permissions = settings.preserve_permissions;
+    let flush = settings.flush_to_disk;
     let partial = partial.to_path_buf();
     let target = target.to_path_buf();
     let target_display = target.to_string_lossy().into_owned();
@@ -269,11 +316,18 @@ async fn put_in_place(
             local_permissions(&std::fs::metadata(&target)?)
         };
         set_local_permissions(&output, permissions)?;
+        if flush {
+            output.sync_all()?;
+        }
         drop(output);
         if let Some(backup) = &backup {
             keep_local_backup(&target, backup)?;
         }
-        std::fs::rename(&partial, &target)
+        std::fs::rename(&partial, &target)?;
+        if flush {
+            worker::sync_folder(&target);
+        }
+        Ok(())
     })
     .await?
     .map_err(|error| AppError::from(error).with_path(target_display))

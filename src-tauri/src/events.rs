@@ -69,8 +69,8 @@ impl Events {
         }
     }
 
-    /// Keeps every record for `take_startup_log`, as the app's own events do at start-up.
-    #[cfg(test)]
+    /// Keeps every record for `take_startup_log`, as the app's own events do at start-up, so
+    /// tests can read the log.
     pub fn keeping_startup_log() -> Self {
         Self {
             app: None,

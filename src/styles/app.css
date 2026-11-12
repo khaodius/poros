@@ -4141,7 +4141,14 @@ textarea::placeholder {
 }
 
 .setting-textarea {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   padding: 6px 0;
+}
+
+.setting-textarea.is-disabled {
+  opacity: 0.5;
 }
 
 .sync-form {

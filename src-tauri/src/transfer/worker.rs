@@ -12,14 +12,16 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use super::conflict::{decide, numbered_name, Decision, ExistsAction, FileFacts};
 use super::copy::{self, CopyContext};
 use super::delta;
+use super::hash_shell::ShellSlot;
 use super::options::{finished_mode, JobOptions};
 use super::pieces::Pieces;
+use super::published;
 use super::queue::{
     Abandoned, Claim, ConflictInfo, Direction, JobId, JobKind, JobRun, JobSpec, JobState, Plan,
-    Release, ResumePoint, Role, RunOutcome, ServerChange,
+    Release, ResumePoint, Role, RunOutcome, ServerChange, SourceStamp,
 };
 use super::streamed;
-use super::verify::{self, Checked};
+use super::verify::{self, Checked, Copies};
 use super::{Login, SessionTarget, Shared};
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::events::{Events, LogLevel};
@@ -44,8 +46,11 @@ const MAX_RENAME_ATTEMPTS: u32 = 9999;
 const PARTIAL_SUFFIX: &str = ".poros-part";
 /// The longest file name most file systems take, in bytes.
 const MAX_NAME_BYTES: usize = 255;
-/// Bytes compared on both sides before an interrupted file continues.
+/// Bytes compared on both sides before an interrupted file continues, where the server cannot
+/// hash the part already transferred.
 const RESUME_CHECK_BYTES: u64 = 64 * 1024;
+/// FAT stores times in two-second steps.
+const LOCAL_TIME_TOLERANCE: i64 = 2;
 /// Marks the key of a worker's compressed connection to a server.
 const COMPRESSED_KEY: &str = "#compressed";
 
@@ -57,6 +62,8 @@ pub(super) struct WorkerConnection {
     pub handle: Option<SshHandle>,
     /// The worker opened `files` itself, as with an FTP connection, and so closes it.
     owns_files: bool,
+    /// The shell on `handle` that checksum commands run through.
+    hash_shell: ShellSlot,
 }
 
 impl WorkerConnection {
@@ -67,6 +74,7 @@ impl WorkerConnection {
             sftp: Some(fs),
             handle,
             owns_files: false,
+            hash_shell: ShellSlot::default(),
         }
     }
 
@@ -76,6 +84,7 @@ impl WorkerConnection {
             sftp: None,
             handle: None,
             owns_files,
+            hash_shell: ShellSlot::default(),
         }
     }
 
@@ -406,6 +415,8 @@ pub(super) struct JobContext<'a> {
     pub fs: &'a RemoteFs,
     /// This worker's own connection; `None` when it borrows a channel of the browsing one.
     pub handle: Option<&'a SshHandle>,
+    /// Where the shell on `handle` for checksum commands is kept.
+    pub hash_shell: Option<&'a ShellSlot>,
     id: JobId,
     pub run: &'a JobRun,
     pub spec: &'a JobSpec,
@@ -413,7 +424,7 @@ pub(super) struct JobContext<'a> {
 }
 
 impl JobContext<'_> {
-    fn job(&self) -> JobRef<'_> {
+    pub(super) fn job(&self) -> JobRef<'_> {
         JobRef {
             shared: self.shared,
             id: self.id,
@@ -625,6 +636,7 @@ fn sftp_context<'a>(
         shared: job.shared,
         fs,
         handle: connection.handle.as_ref(),
+        hash_shell: connection.handle.as_ref().map(|_| &connection.hash_shell),
         id: job.id,
         run: job.run,
         spec: job.spec,
@@ -906,8 +918,29 @@ async fn fresh_upload(
     })
 }
 
-pub(super) fn source_changed(resume: &ResumePoint, source: FileFacts) -> bool {
-    resume.source_size != source.size || resume.source_modified != source.modified
+/// `stamp` is a local source's, compared when the resume point has one too.
+pub(super) fn source_changed(
+    resume: &ResumePoint,
+    source: FileFacts,
+    stamp: Option<SourceStamp>,
+) -> bool {
+    resume.source_size != source.size
+        || resume.source_modified != source.modified
+        || matches!((resume.source_stamp, stamp), (Some(then), Some(now)) if then != now)
+}
+
+/// Whether a local source differs from when its transfer started, by size, time or stamp.
+pub(super) async fn local_source_changed(source: &str, plan: &Plan) -> AppResult<bool> {
+    let metadata = match tokio::fs::metadata(source).await {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+        Err(error) => return Err(AppError::from(error).with_path(source)),
+    };
+    Ok(metadata.len() != plan.source_size
+        || modified_seconds(&metadata) != plan.source_modified
+        || plan
+            .source_stamp
+            .is_some_and(|stamp| stamp != SourceStamp::of(&metadata)))
 }
 
 async fn download(
@@ -934,7 +967,7 @@ async fn download(
     let fresh = |target: String| fresh_download(context.settings, target);
     let existing = local_facts(&spec.target).await?;
     let mut destination = match (resume, existing) {
-        (Some(resume), _) if source_changed(&resume, source_facts) => {
+        (Some(resume), _) if source_changed(&resume, source_facts, None) => {
             fresh(spec.target.clone()).await
         }
         (Some(resume), existing) => {
@@ -987,16 +1020,31 @@ async fn download(
         .await
         .map_err(|error| AppError::from(error).with_path(write_path.clone()))?;
     if destination.start > 0 {
-        let window = check_window(destination.start);
-        let theirs = context
-            .fs
-            .read_range(&spec.source, window.start, window.len)
-            .await?;
-        let ours = read_local_range(&mut file, window.start, window.len).await?;
-        if theirs != ours {
-            context.job().log_starting_over();
-            file.set_len(0).await?;
-            destination.start = 0;
+        let copies = Copies {
+            remote: &spec.source,
+            local: &write_path,
+            length: destination.start,
+        };
+        let start = match resume_point_checked(context, &copies, source.size).await? {
+            Some(start) => start,
+            None => {
+                let window = check_window(destination.start);
+                let theirs = context
+                    .fs
+                    .read_range(&spec.source, window.start, window.len)
+                    .await?;
+                let ours = read_local_range(&mut file, window.start, window.len).await?;
+                if theirs == ours {
+                    destination.start
+                } else {
+                    context.job().log_starting_over();
+                    0
+                }
+            }
+        };
+        if start < destination.start {
+            file.set_len(start).await?;
+            destination.start = start;
         }
     }
     context.begin(
@@ -1006,6 +1054,7 @@ async fn download(
             source_size: source.size,
             source_modified: source.modified,
             source_permissions: source.permissions,
+            source_stamp: None,
             replaced_permissions: None,
         },
         destination.start,
@@ -1035,12 +1084,13 @@ async fn upload(
         size: metadata.len(),
         modified: modified_seconds(&metadata),
     };
+    let source_stamp = SourceStamp::of(&metadata);
 
     let fs = context.fs;
     let fresh = |target: String, replaces: bool| fresh_upload(context, target, replaces);
     let existing = fs.stat(&spec.target).await?;
     let mut destination = match (resume, existing) {
-        (Some(resume), existing) if source_changed(&resume, source_facts) => {
+        (Some(resume), existing) if source_changed(&resume, source_facts, Some(source_stamp)) => {
             fresh(spec.target.clone(), existing.is_some()).await?
         }
         (Some(resume), existing) => {
@@ -1112,15 +1162,30 @@ async fn upload(
         opened => opened?,
     };
     if destination.start > 0 {
-        let window = check_window(destination.start);
-        let theirs = fs
-            .read_range(destination.write_path(), window.start, window.len)
-            .await?;
-        let ours = read_local_range(&mut file, window.start, window.len).await?;
-        if theirs != ours {
-            context.job().log_starting_over();
-            fs.truncate(destination.write_path(), 0).await?;
-            destination.start = 0;
+        let copies = Copies {
+            remote: destination.write_path(),
+            local: &spec.source,
+            length: destination.start,
+        };
+        let start = match resume_point_checked(context, &copies, source_facts.size).await? {
+            Some(start) => start,
+            None => {
+                let window = check_window(destination.start);
+                let theirs = fs
+                    .read_range(destination.write_path(), window.start, window.len)
+                    .await?;
+                let ours = read_local_range(&mut file, window.start, window.len).await?;
+                if theirs == ours {
+                    destination.start
+                } else {
+                    context.job().log_starting_over();
+                    0
+                }
+            }
+        };
+        if start < destination.start {
+            fs.truncate(destination.write_path(), start).await?;
+            destination.start = start;
         }
     }
     let write_path = destination.write_path().to_string();
@@ -1131,6 +1196,7 @@ async fn upload(
             source_size: source_facts.size,
             source_modified: source_facts.modified,
             source_permissions,
+            source_stamp: Some(source_stamp),
             replaced_permissions,
         },
         destination.start,
@@ -1144,6 +1210,78 @@ async fn upload(
     closed?;
     context.keep_closing_stat(stat);
     Ok(RunOutcome::Completed)
+}
+
+/// Where a resumed file continues once the part already transferred is compared part by part
+/// on both sides; `None` when that is turned off or the server cannot do it.
+async fn resume_point_checked(
+    context: &JobContext<'_>,
+    copies: &Copies<'_>,
+    file_length: u64,
+) -> AppResult<Option<u64>> {
+    if !context.settings.verify_resume {
+        return Ok(None);
+    }
+    let Some(start) = verify::resume_from(context, copies, file_length).await? else {
+        return Ok(None);
+    };
+    if start < copies.length {
+        let message = if start == 0 {
+            format!(
+                "The part of {} already transferred does not match the source; starting it over",
+                context.spec.name
+            )
+        } else {
+            format!(
+                "The part of {} already transferred differs from the source after {}; continuing from there",
+                context.spec.name,
+                format_size(start)
+            )
+        };
+        context
+            .shared
+            .events
+            .log(LogLevel::Warn, Some(&context.spec.session_id), message);
+    }
+    Ok(Some(start))
+}
+
+/// Compares a finished file with its source and sends again the parts that differ, when they
+/// are few. The file is still under its temporary name. A server that can hash nothing, with
+/// reading back turned off, passes on the size check alone. `true` when parts were repaired.
+async fn check_contents(context: &JobContext<'_>, copies: &Copies<'_>) -> AppResult<bool> {
+    let Checked::Different { parts, damaged } = verify::compare(context, copies).await? else {
+        return Ok(false);
+    };
+    let spec = context.spec;
+    let mismatch = match spec.direction {
+        Direction::Download => format!(
+            "The downloaded copy of {} does not match the server's copy",
+            spec.name
+        ),
+        Direction::Upload | Direction::Relay => format!(
+            "The copy of {} on the server does not match the local file",
+            spec.name
+        ),
+    };
+    if !(context.settings.repair_parts && verify::repairable(parts, copies.length, &damaged)) {
+        return Err(context.restart(mismatch));
+    }
+    let rewritten = verify::repair(context, copies, parts, &damaged).await?;
+    if !matches!(verify::compare(context, copies).await?, Checked::Same) {
+        return Err(context.restart(mismatch));
+    }
+    context.shared.events.log(
+        LogLevel::Warn,
+        Some(&spec.session_id),
+        format!(
+            "{mismatch} in {} of its {} parts; sent {} of it again, and it matches now",
+            damaged.len(),
+            parts.count(copies.length),
+            format_size(rewritten)
+        ),
+    );
+    Ok(true)
 }
 
 /// The bytes just before `start` that both sides must agree on before a file continues.
@@ -1224,22 +1362,64 @@ async fn finalize_download(context: &JobContext<'_>) -> AppResult<()> {
         })
         .await?
         .map_err(|error| AppError::from(error).with_path(target.clone()))?;
-        if let Checked::Different = verify::same_contents(context, &spec.source, &target).await? {
-            return Err(context.restart(format!(
-                "The downloaded copy of {} does not match the server's checksum",
-                spec.name
-            )));
+        let copies = Copies {
+            remote: &spec.source,
+            local: &target,
+            length: end,
+        };
+        // A copy that matches what the server holds now is whole. One that took repairing
+        // may be of a source that changed since, which starts over.
+        if check_contents(context, &copies).await? {
+            let source = context.fs.stat(&spec.source).await?;
+            downloaded_end(&context.job(), &plan, source)?;
         }
         false
     } else {
         true
     };
+    if settings.check_published {
+        let source = published::Source::Sftp(context.fs);
+        check_published(&context.job(), source, &plan, end, truncate).await?;
+    }
     let backup = spec
         .options
         .as_ref()
         .and_then(|options| options.backup.as_ref())
         .map(|backup| backup.local_path(&spec.target));
-    complete_download(settings, plan, end, truncate, backup).await
+    complete_download(&context.job(), plan, end, truncate, backup).await
+}
+
+/// Checks a download against the checksums and signatures published beside its source. A file
+/// that fails is not saved: its temporary file is deleted.
+pub(super) async fn check_published(
+    job: &JobRef<'_>,
+    source: published::Source<'_>,
+    plan: &Plan,
+    end: u64,
+    truncate: bool,
+) -> AppResult<()> {
+    if truncate {
+        let written = plan.target.clone();
+        tokio::task::spawn_blocking(move || {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&written)?
+                .set_len(end)
+        })
+        .await?
+        .map_err(|error| AppError::from(error).with_path(plan.target.clone()))?;
+    }
+    let checked = published::check(job, source, &job.spec.source, Path::new(&plan.target)).await;
+    if checked
+        .as_ref()
+        .is_err_and(|error| error.kind == ErrorKind::Untrusted)
+    {
+        job.run.restart.store(true, Ordering::Relaxed);
+        if plan.rename_to.is_some() {
+            let _ = tokio::fs::remove_file(&plan.target).await;
+        }
+    }
+    checked
 }
 
 /// Where the downloaded file ends, once the source is known not to have changed meanwhile.
@@ -1264,20 +1444,22 @@ pub(super) fn downloaded_end(
 /// Sets the time and permissions of a downloaded file and moves it into place. `truncate`
 /// cuts it to `end` first.
 pub(super) async fn complete_download(
-    settings: &TransferSettings,
+    job: &JobRef<'_>,
     plan: Plan,
     end: u64,
     truncate: bool,
     backup: Option<PathBuf>,
 ) -> AppResult<()> {
+    let settings = job.settings;
     let modified = settings
         .preserve_timestamps
         .then_some(plan.source_modified)
         .flatten();
     let preserve_permissions = settings.preserve_permissions;
     let flush = settings.flush_to_disk;
+    let check_metadata = settings.check_metadata;
     let target = plan.target.clone();
-    let complete = move || -> std::io::Result<()> {
+    let complete = move || -> std::io::Result<Vec<String>> {
         let file = std::fs::OpenOptions::new().write(true).open(&plan.target)?;
         // Workers write pieces out of order, and a resumed file may be longer than its source.
         if truncate {
@@ -1300,19 +1482,100 @@ pub(super) async fn complete_download(
             file.sync_all()?;
         }
         drop(file);
-        match &plan.rename_to {
+        let finished = match &plan.rename_to {
             Some(replaced) => {
                 if let Some(backup) = &backup {
                     keep_local_backup(Path::new(replaced), backup)?;
                 }
-                std::fs::rename(&plan.target, replaced)
+                std::fs::rename(&plan.target, replaced)?;
+                if flush {
+                    sync_folder(Path::new(replaced));
+                }
+                replaced.as_str()
             }
-            None => Ok(()),
+            None => plan.target.as_str(),
+        };
+        if !check_metadata {
+            return Ok(Vec::new());
         }
+        let metadata = std::fs::metadata(finished)?;
+        Ok(metadata_problems(
+            Some((end, metadata.len())),
+            modified.zip(modified_seconds(&metadata)),
+            permissions.zip(local_permissions(&metadata)),
+            LOCAL_TIME_TOLERANCE,
+        ))
     };
-    tokio::task::spawn_blocking(complete)
+    let problems = tokio::task::spawn_blocking(complete)
         .await?
-        .map_err(|error| AppError::from(error).with_path(target))
+        .map_err(|error| AppError::from(error).with_path(target))?;
+    log_metadata_problems(job, "This computer", &problems);
+    Ok(())
+}
+
+/// Makes a rename durable: on Unix the folder entry is flushed too. Best effort.
+pub(super) fn sync_folder(path: &Path) {
+    #[cfg(unix)]
+    if let Some(folder) = path.parent() {
+        if let Ok(folder) = std::fs::File::open(folder) {
+            let _ = folder.sync_all();
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+}
+
+/// What differs between a finished file and what was asked of it: each pair is (expected,
+/// found). Times within `tolerance` seconds count as kept, for file systems that store them
+/// coarsely (FAT keeps two-second steps).
+pub(super) fn metadata_problems(
+    size: Option<(u64, u64)>,
+    modified: Option<(i64, i64)>,
+    permissions: Option<(u32, u32)>,
+    tolerance: i64,
+) -> Vec<String> {
+    let mut problems = Vec::new();
+    if let Some((expected, found)) = size.filter(|(expected, found)| expected != found) {
+        problems.push(format!(
+            "a size of {} instead of {}",
+            format_size(found),
+            format_size(expected)
+        ));
+    }
+    if let Some((expected, found)) =
+        modified.filter(|(expected, found)| (expected - found).abs() > tolerance)
+    {
+        problems.push(format!(
+            "a modification time {} seconds {} the source's",
+            (expected - found).abs(),
+            if found < expected { "before" } else { "after" }
+        ));
+    }
+    if let Some((expected, found)) =
+        permissions.filter(|(expected, found)| expected & 0o7777 != found & 0o7777)
+    {
+        problems.push(format!(
+            "permissions {:04o} instead of {:04o}",
+            found & 0o7777,
+            expected & 0o7777
+        ));
+    }
+    problems
+}
+
+pub(super) fn log_metadata_problems(job: &JobRef<'_>, side: &str, problems: &[String]) {
+    if problems.is_empty() {
+        return;
+    }
+    job.shared.events.log(
+        LogLevel::Warn,
+        Some(&job.spec.session_id),
+        format!(
+            "{side} did not keep everything asked for {}: it has {}",
+            job.spec.name,
+            problems.join(" and ")
+        ),
+    );
 }
 
 async fn finalize_upload(context: &JobContext<'_>) -> AppResult<()> {
@@ -1336,20 +1599,20 @@ async fn finalize_upload(context: &JobContext<'_>) -> AppResult<()> {
     if size > end {
         fs.truncate(&plan.target, end).await?;
     }
-    let metadata = tokio::fs::metadata(&spec.source)
-        .await
-        .map_err(|error| AppError::from(error).with_path(spec.source.clone()))?;
-    if metadata.len() != plan.source_size || modified_seconds(&metadata) != plan.source_modified {
-        return Err(context.restart(format!("{} changed while it was being uploaded", spec.name)));
+    let changed = || context.restart(format!("{} changed while it was being uploaded", spec.name));
+    if local_source_changed(&spec.source, plan).await? {
+        return Err(changed());
     }
     if settings.verify_checksums {
-        if let Checked::Different =
-            verify::same_contents(context, &plan.target, &spec.source).await?
-        {
-            return Err(context.restart(format!(
-                "The copy of {} on the server does not match the local file's checksum",
-                spec.name
-            )));
+        let copies = Copies {
+            remote: &plan.target,
+            local: &spec.source,
+            length: end,
+        };
+        check_contents(context, &copies).await?;
+        // The source was read again for its checksum, and must still be the one sent.
+        if local_source_changed(&spec.source, plan).await? {
+            return Err(changed());
         }
     }
 
@@ -1371,23 +1634,47 @@ async fn finalize_upload(context: &JobContext<'_>) -> AppResult<()> {
         keep_remote_backup(fs, replaced, &backup.remote_path(replaced)).await?;
     }
     let attributes = fs.set_attributes(&plan.target, modified, permissions);
-    // Sent together: servers apply them in order, so this costs one round trip.
-    let (attributes, replaced) = match &plan.rename_to {
-        Some(replaced) => tokio::join!(attributes, fs.replace(&plan.target, replaced)),
-        None => (attributes.await, Ok(())),
+    let finished = plan.rename_to.as_deref().unwrap_or(&plan.target);
+    let read_back = async {
+        match settings.check_metadata {
+            true => fs.stat(finished).await,
+            false => Ok(None),
+        }
     };
-    // Some servers refuse attribute changes; the file itself is complete.
-    if let Err(error) = attributes {
-        context.shared.events.log(
+    // Sent together: servers apply them in order, so this costs one round trip.
+    let (attributes, replaced, stored) = match &plan.rename_to {
+        Some(replaced) => {
+            tokio::join!(attributes, fs.replace(&plan.target, replaced), read_back)
+        }
+        None => {
+            let (attributes, stored) = tokio::join!(attributes, read_back);
+            (attributes, Ok(()), stored)
+        }
+    };
+    replaced?;
+    match attributes {
+        Ok(()) => {
+            if let Ok(Some(stored)) = stored {
+                let problems = metadata_problems(
+                    Some((end, stored.size)),
+                    modified.zip(stored.modified),
+                    permissions.zip(stored.permissions),
+                    0,
+                );
+                log_metadata_problems(&context.job(), "The server", &problems);
+            }
+        }
+        // Some servers refuse attribute changes; the file itself is complete.
+        Err(error) => context.shared.events.log(
             LogLevel::Warn,
             Some(&spec.session_id),
             format!(
                 "Could not set the time or permissions of {}: {}",
                 spec.target, error.message
             ),
-        );
+        ),
     }
-    replaced
+    Ok(())
 }
 
 /// Moves the local file a copy replaces to its backup path, creating folders on the way.

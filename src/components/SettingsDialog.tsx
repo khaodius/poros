@@ -21,6 +21,7 @@ import {
   MAX_WORKERS,
   SOCKET_BUFFER_LIMITS,
   defaultProxyPort,
+  parseMinisignKeys,
   type ProxyKind,
   type ProxySettings,
   type Settings,
@@ -249,23 +250,63 @@ function TransferSettingsPage({ settings }: { settings: Settings }) {
           checked={transfers.preservePermissions}
           onChange={(preservePermissions) => set({ preservePermissions })}
         />
+      </SettingGroup>
+
+      <SettingGroup title="Integrity">
         <SwitchSetting
           label="Write to a temporary name, then rename"
-          hint="A file appears under its name only once complete, and a replaced file is never left half written. Uploads to FTP servers are written in place."
+          hint="A file appears under its name only once complete and checked, and a replaced file is never left half written. Uploads to FTP servers are written in place."
           checked={transfers.temporaryFiles}
           onChange={(temporaryFiles) => set({ temporaryFiles })}
         />
         <SwitchSetting
           label="Verify checksums"
-          hint="Compares both copies after each file with the server's sha256sum, sha1sum or md5sum, on SFTP servers. Reads every file once more on both sides."
+          hint="Compares a SHA-256 of both copies after each file, computed on SFTP servers by their own sha256sum. SHA-1 and MD5 are never used for this, as they can be forged. Reads every file once more on both sides."
           checked={transfers.verifyChecksums}
           onChange={(verifyChecksums) => set({ verifyChecksums })}
+        />
+        <SwitchSetting
+          label="Read files back when the server cannot hash them"
+          hint="On SFTP servers without sha256sum, and on FTP and WebDAV servers, each finished file is read back and hashed here. Doubles the traffic with those servers. Cloud storage is not read back."
+          checked={transfers.readBack}
+          disabled={!transfers.verifyChecksums}
+          onChange={(readBack) => set({ readBack })}
+        />
+        <SwitchSetting
+          label="Repair only the damaged parts"
+          hint="After a mismatch, each part of the file is compared on its own and only the parts that differ are sent again, up to half the file. Needs GNU split on the server, or reading back."
+          checked={transfers.repairParts}
+          disabled={!transfers.verifyChecksums}
+          onChange={(repairParts) => set({ repairParts })}
+        />
+        <SwitchSetting
+          label="Check the transferred part before resuming"
+          hint="Compares what is already there with the source, part by part, and continues from the first part that differs. Where the server cannot hash parts of a file, the last 64 KiB are compared."
+          checked={transfers.verifyResume}
+          onChange={(verifyResume) => set({ verifyResume })}
         />
         <SwitchSetting
           label="Flush to disk before finishing"
           hint="A file counts as done only once stored, so a power cut right after cannot lose it. On servers that support it; slows many small files."
           checked={transfers.flushToDisk}
           onChange={(flushToDisk) => set({ flushToDisk })}
+        />
+        <SwitchSetting
+          label="Check times and permissions after setting them"
+          hint="Reads them back once a file is in place and notes in the log any the server or file system did not keep."
+          checked={transfers.checkMetadata}
+          onChange={(checkMetadata) => set({ checkMetadata })}
+        />
+        <SwitchSetting
+          label="Check published checksums and signatures"
+          hint="Downloads are compared with SHA256SUMS, name.sha256 and similar files beside them, with .minisig signatures, and through gpg with .asc and .sig ones. A file that fails is not saved."
+          checked={transfers.checkPublished}
+          onChange={(checkPublished) => set({ checkPublished })}
+        />
+        <MinisignKeysSetting
+          keys={transfers.minisignKeys}
+          disabled={!transfers.checkPublished}
+          onCommit={(minisignKeys) => set({ minisignKeys })}
         />
       </SettingGroup>
 
@@ -288,6 +329,45 @@ function TransferSettingsPage({ settings }: { settings: Settings }) {
         />
       </SettingGroup>
     </>
+  );
+}
+
+/** One minisign public key per line, saved when the box loses focus. */
+function MinisignKeysSetting({
+  keys,
+  disabled,
+  onCommit,
+}: {
+  keys: string[];
+  disabled: boolean;
+  onCommit: (keys: string[]) => void;
+}) {
+  const [typed, setTyped] = useState<string | null>(null);
+  const text = keys.join("\n");
+  const commit = () => {
+    if (typed !== null && typed !== text) onCommit(parseMinisignKeys(typed));
+    setTyped(null);
+  };
+  return (
+    <div className={`setting-textarea ${disabled ? "is-disabled" : ""}`}>
+      <div className="setting-text">
+        <span className="setting-label">Trusted minisign keys</span>
+        <span className="setting-hint">
+          One public key per line, as in a publisher&apos;s minisign.pub. Signatures by other keys
+          are noted in the log and not checked.
+        </span>
+      </div>
+      <textarea
+        value={typed ?? text}
+        aria-label="Trusted minisign keys"
+        placeholder="RWQ..."
+        rows={3}
+        spellCheck={false}
+        disabled={disabled}
+        onChange={(event) => setTyped(event.target.value)}
+        onBlur={commit}
+      />
+    </div>
   );
 }
 

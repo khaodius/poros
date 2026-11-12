@@ -21,6 +21,11 @@ const DEFAULT_RSYNC_PATH: &str = "rsync";
 const MAX_RSYNC_PATH_CHARS: usize = 1024;
 const MAX_RECONNECT_MINUTES: u32 = 24 * 60;
 const MAX_PROXY_FIELD_CHARS: usize = 255;
+const MAX_MINISIGN_KEYS: usize = 64;
+const MAX_MINISIGN_KEY_CHARS: usize = 512;
+/// Raised when a release turns on checks that settings saved before it had off by default, so
+/// they come on once for everyone, and stay as the user sets them after that.
+pub const INTEGRITY_REVISION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -53,8 +58,23 @@ pub struct TransferSettings {
     /// Writes each file under a temporary name beside the target and renames it into place
     /// once complete, so a partial file never sits under the real name.
     pub temporary_files: bool,
-    /// Compares a checksum of both copies after each file, using the server's own command.
+    /// Compares a SHA-256 checksum of both copies after each file, computed by the server's
+    /// own command.
     pub verify_checksums: bool,
+    /// On servers with no checksum command, reads each finished file back to compare it.
+    pub read_back: bool,
+    /// After a checksum mismatch, sends again only the parts whose checksums differ.
+    pub repair_parts: bool,
+    /// Compares the part of a file already transferred, part by part on both sides, before
+    /// continuing it.
+    pub verify_resume: bool,
+    /// Reads a finished file's time and permissions back and logs any that did not stay.
+    pub check_metadata: bool,
+    /// Compares downloads with checksum files (`SHA256SUMS`, `name.sha256`) and signatures
+    /// (`.minisig`, `.asc`, `.sig`) published beside them.
+    pub check_published: bool,
+    /// minisign public keys that published `.minisig` signatures are checked against.
+    pub minisign_keys: Vec<String>,
     /// Has the server, and this computer for downloads, write each file to disk before it
     /// counts as done.
     pub flush_to_disk: bool,
@@ -69,6 +89,9 @@ pub struct TransferSettings {
     pub rsync_path: String,
     /// Copies between two FTP servers go straight from one to the other when both allow it.
     pub fxp: bool,
+    /// Missing from settings saved before the integrity checks were on by default.
+    #[serde(default)]
+    pub integrity_revision: u32,
 }
 
 impl Default for TransferSettings {
@@ -92,14 +115,21 @@ impl Default for TransferSettings {
             keep_completed: true,
             keep_queue: true,
             temporary_files: true,
-            verify_checksums: false,
-            flush_to_disk: false,
+            verify_checksums: true,
+            read_back: true,
+            repair_parts: true,
+            verify_resume: true,
+            check_metadata: true,
+            check_published: true,
+            minisign_keys: Vec::new(),
+            flush_to_disk: true,
             separate_connections: true,
             log_each_file: false,
             delta_transfers: true,
             delta_threshold_kib: 1024,
             rsync_path: DEFAULT_RSYNC_PATH.to_string(),
             fxp: true,
+            integrity_revision: INTEGRITY_REVISION,
         }
     }
 }
@@ -114,6 +144,19 @@ impl TransferSettings {
         self.retry_attempts = self.retry_attempts.min(20);
         self.retry_delay_secs = self.retry_delay_secs.min(600);
         self.reconnect_minutes = self.reconnect_minutes.min(MAX_RECONNECT_MINUTES);
+        if self.integrity_revision < INTEGRITY_REVISION {
+            self.verify_checksums = true;
+            self.flush_to_disk = true;
+            self.integrity_revision = INTEGRITY_REVISION;
+        }
+        self.minisign_keys = self
+            .minisign_keys
+            .iter()
+            .map(|key| key.trim())
+            .filter(|key| !key.is_empty() && key.len() <= MAX_MINISIGN_KEY_CHARS)
+            .map(str::to_string)
+            .take(MAX_MINISIGN_KEYS)
+            .collect();
         // The path becomes part of a shell command, so it stays on one line.
         let rsync_path = self.rsync_path.lines().next().unwrap_or("").trim();
         self.rsync_path = if rsync_path.is_empty() {
@@ -404,7 +447,10 @@ mod tests {
         assert!(settings.transfers.delta_transfers);
         assert_eq!(settings.transfers.rsync_path, "rsync");
         assert!(settings.transfers.temporary_files);
-        assert!(!settings.transfers.verify_checksums);
+        assert!(settings.transfers.verify_checksums);
+        assert!(settings.transfers.flush_to_disk);
+        assert!(settings.transfers.read_back);
+        assert!(settings.transfers.check_published);
         assert_eq!(settings.transfers.reconnect_minutes, 10);
         assert!(settings.connection.auto_reconnect);
         assert_eq!(settings.connection.proxy.kind, ProxyKind::None);
@@ -434,6 +480,28 @@ mod tests {
         store.set_proxy_has_password(true).unwrap();
         let resaved = store.set(store.get()).unwrap();
         assert!(resaved.connection.proxy.has_password);
+    }
+
+    #[test]
+    fn integrity_checks_come_on_once_for_settings_saved_before_them() {
+        let saved_before: Settings = serde_json::from_str(
+            r#"{"transfers": {"verifyChecksums": false, "flushToDisk": false, "minisignKeys": [" RWQ ", "", "RWQ"]}}"#,
+        )
+        .unwrap();
+        let migrated = saved_before.sanitize();
+        assert!(migrated.transfers.verify_checksums);
+        assert!(migrated.transfers.flush_to_disk);
+        assert_eq!(migrated.transfers.integrity_revision, INTEGRITY_REVISION);
+        assert_eq!(migrated.transfers.minisign_keys, vec!["RWQ", "RWQ"]);
+
+        let mut turned_off = migrated;
+        turned_off.transfers.verify_checksums = false;
+        turned_off.transfers.flush_to_disk = false;
+        let reloaded: Settings =
+            serde_json::from_str(&serde_json::to_string(&turned_off).unwrap()).unwrap();
+        let kept = reloaded.sanitize();
+        assert!(!kept.transfers.verify_checksums);
+        assert!(!kept.transfers.flush_to_disk);
     }
 
     #[test]

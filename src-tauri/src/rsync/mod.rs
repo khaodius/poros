@@ -21,8 +21,7 @@ use crate::error::{AppError, AppResult, ErrorKind};
 use crate::remote_path;
 use checksum::{block_length, STRONG_SUM_BYTES};
 use delta::{find_matches, BlockSum, Reconstruction, Signature, Token};
-use process::RemoteProcess;
-pub use process::{run_command, shell_quote, CommandOutput};
+pub use process::{run_command, shell_quote, CommandOutput, RemoteProcess};
 
 /// The newest protocol without negotiated checksums and incremental file lists.
 const PROTOCOL_VERSION: i32 = 29;

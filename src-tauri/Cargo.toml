@@ -1,6 +1,6 @@
 [package]
 name = "poros"
-version = "0.5.6"
+version = "0.5.7"
 description = "SFTP and rsync client"
 authors = ["khaodius"]
 license = "Apache-2.0"
@@ -75,6 +75,9 @@ tauri-plugin-single-instance = "2.5"
 png = "0.18"
 # WebDAV listings and S3 answers. Elements are matched by local name, whatever their prefix.
 quick-xml = { version = "0.42", features = ["serialize", "overlapped-lists"] }
+# Checks `.minisig` signatures published beside downloads against the keys in settings. The
+# same version the updater plugin verifies releases with.
+minisign-verify = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 # Rounded window corners on Windows 11, showing the drag preview without taking focus, and the

@@ -69,6 +69,17 @@ impl RemoteProcess {
         })
     }
 
+    /// The next output the process sent, as it came, for a process that does not frame it.
+    pub async fn read_chunk(&mut self) -> AppResult<Bytes> {
+        if !self.current.is_empty() {
+            return Ok(std::mem::take(&mut self.current));
+        }
+        match self.incoming.recv().await {
+            Some(chunk) => Ok(chunk),
+            None => Err(self.ended_early().await),
+        }
+    }
+
     /// The server frames everything after the handshake.
     pub fn start_multiplexed_input(&mut self) {
         self.multiplexed = true;

@@ -7,6 +7,11 @@
 //! Downloads go through a temporary file like SFTP ones. Uploads and copies write the target
 //! itself: cloud uploads appear only once complete anyway, and FTP servers differ on whether a
 //! rename may replace a file.
+//!
+//! FTP and WebDAV servers have no checksum command, so with checksums on, a finished upload or
+//! download is read back and compared with a SHA-256 of the local copy. Cloud storage is not
+//! read back: reading costs money there, and B2 and Box check a SHA-1 of every upload
+//! themselves.
 
 use std::future::Future;
 use std::io::SeekFrom;
@@ -20,7 +25,11 @@ use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use super::conflict::{decide, Decision, ExistsAction, FileFacts};
 use super::copy::read_up_to;
 use super::limiter::RateLimiter;
-use super::queue::{Direction, JobKind, JobRun, JobSpec, Plan, ResumePoint, Role, RunOutcome};
+use super::published;
+use super::queue::{
+    Direction, JobKind, JobRun, JobSpec, Plan, ResumePoint, Role, RunOutcome, SourceStamp,
+};
+use super::verify;
 use super::worker::{self, Connections, Destination, JobRef};
 use super::Shared;
 use crate::error::{AppError, AppResult, ErrorKind};
@@ -148,7 +157,7 @@ async fn download(
     let fresh = |target: String| worker::fresh_download(job.settings, target);
     let existing = worker::local_facts(&spec.target).await?;
     let mut destination = match (resume, existing) {
-        (Some(resume), _) if !can_resume || worker::source_changed(&resume, source_facts) => {
+        (Some(resume), _) if !can_resume || worker::source_changed(&resume, source_facts, None) => {
             fresh(spec.target.clone()).await
         }
         (Some(resume), existing) => {
@@ -217,6 +226,7 @@ async fn download(
             source_size: source.size,
             source_modified: source.modified,
             source_permissions: source.permissions,
+            source_stamp: None,
             replaced_permissions: None,
         },
         destination.start,
@@ -244,13 +254,14 @@ async fn upload(
         size: metadata.len(),
         modified: worker::modified_seconds(&metadata),
     };
+    let source_stamp = SourceStamp::of(&metadata);
     let capabilities = files.capabilities();
     // The bytes before a resume point are compared first, which takes reading them back.
     let can_resume = capabilities.resumable_writes && capabilities.ranged_reads;
     let (target, mut start) = match prepare_remote_target(
         job,
         files.as_ref(),
-        source_facts,
+        (source_facts, Some(source_stamp)),
         resolution,
         resume,
         can_resume,
@@ -292,6 +303,7 @@ async fn upload(
             source_size: source_facts.size,
             source_modified: source_facts.modified,
             source_permissions,
+            source_stamp: Some(source_stamp),
             replaced_permissions: None,
         },
         start,
@@ -319,7 +331,7 @@ async fn relay(
     let (target, mut start) = match prepare_remote_target(
         job,
         target_files.as_ref(),
-        facts(&source),
+        (facts(&source), None),
         resolution,
         resume,
         can_resume,
@@ -347,6 +359,7 @@ async fn relay(
             source_size: source.size,
             source_modified: source.modified,
             source_permissions: source.permissions,
+            source_stamp: None,
             replaced_permissions: None,
         },
         start,
@@ -413,7 +426,21 @@ pub(super) async fn finalize(job: &JobRef<'_>, connections: &mut Connections) ->
     if spec.direction == Direction::Download {
         let source = files.stat(&spec.source).await?;
         let end = worker::downloaded_end(job, &plan, source)?;
-        return worker::complete_download(job.settings, plan, end, true, None).await;
+        if reads_back(job, &files) {
+            if !verify::same_as_read_back(job, &files, &spec.source, &plan.target, end).await? {
+                return Err(job.restart(format!(
+                    "The downloaded copy of {} does not match the server's copy, read back",
+                    spec.name
+                )));
+            }
+            let source = files.stat(&spec.source).await?;
+            worker::downloaded_end(job, &plan, source)?;
+        }
+        if job.settings.check_published {
+            let source = published::Source::Other(&files);
+            worker::check_published(job, source, &plan, end, true).await?;
+        }
+        return worker::complete_download(job, plan, end, true, None).await;
     }
 
     let expected = job.run.end().unwrap_or(0);
@@ -428,8 +455,8 @@ pub(super) async fn finalize(job: &JobRef<'_>, connections: &mut Connections) ->
             )));
         }
     }
-    if source_changed(job, connections, &plan).await? {
-        return Err(job.restart(format!(
+    let changed = || {
+        job.restart(format!(
             "{} changed while it was being {}",
             spec.name,
             if spec.direction == Direction::Upload {
@@ -437,7 +464,21 @@ pub(super) async fn finalize(job: &JobRef<'_>, connections: &mut Connections) ->
             } else {
                 "copied"
             }
-        )));
+        ))
+    };
+    if source_changed(job, connections, &plan).await? {
+        return Err(changed());
+    }
+    if spec.direction == Direction::Upload && reads_back(job, &files) {
+        if !verify::same_as_read_back(job, &files, &plan.target, &spec.source, expected).await? {
+            return Err(job.restart(format!(
+                "The copy of {} on the server, read back, does not match the local file",
+                spec.name
+            )));
+        }
+        if source_changed(job, connections, &plan).await? {
+            return Err(changed());
+        }
     }
     if files.protocol().uploads_carry_time() {
         return Ok(());
@@ -480,11 +521,18 @@ async fn source_changed(
                 .await?
                 .map(|stat| facts(&stat))
         }
-        _ => worker::local_facts(&spec.source)
-            .await?
-            .map(|(_, facts)| facts),
+        _ => return worker::local_source_changed(&spec.source, plan).await,
     };
     Ok(now.is_none_or(|now| now.size != plan.source_size || now.modified != plan.source_modified))
+}
+
+/// Whether a finished file is read back to check it: on FTP and WebDAV servers, which have no
+/// checksum command, when checksums are on.
+fn reads_back(job: &JobRef<'_>, files: &Arc<dyn RemoteFileSystem>) -> bool {
+    let protocol = files.protocol();
+    job.settings.verify_checksums
+        && job.settings.read_back
+        && (protocol.is_ftp() || protocol.is_webdav())
 }
 
 enum Prepared {
@@ -493,10 +541,11 @@ enum Prepared {
 }
 
 /// Decides where on the server a file goes, and from which offset, given what is there.
+/// `source` carries a local source's stamp.
 async fn prepare_remote_target(
     job: &JobRef<'_>,
     files: &dyn RemoteFileSystem,
-    source: FileFacts,
+    (source, stamp): (FileFacts, Option<SourceStamp>),
     resolution: Option<ExistsAction>,
     resume: Option<ResumePoint>,
     can_resume: bool,
@@ -504,7 +553,9 @@ async fn prepare_remote_target(
     let spec = job.spec;
     let existing = files.stat(&spec.target).await?;
     let (target, start) = match (resume, existing) {
-        (Some(resume), existing) if can_resume && !worker::source_changed(&resume, source) => {
+        (Some(resume), existing)
+            if can_resume && !worker::source_changed(&resume, source, stamp) =>
+        {
             let on_server = existing.map_or(0, |stat| stat.size);
             (
                 spec.target.clone(),

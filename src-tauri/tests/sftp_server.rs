@@ -659,28 +659,56 @@ async fn transfer_conflicts_and_resume() {
     assert_eq!(list.jobs[0].state, JobState::Skipped);
     transfers.clear(&[JobState::Skipped]);
 
-    // Resuming keeps what is already there, so a marked prefix survives.
+    // Resuming keeps what is already there when every check is off, so a marked prefix
+    // survives.
     let downloads = fixture.local.path().join("downloads");
     std::fs::create_dir_all(&downloads).unwrap();
     let mut partial = large_bytes[..7 * MEBIBYTE].to_vec();
     partial[..512].fill(0);
-    std::fs::write(downloads.join("large.bin"), &partial).unwrap();
-    transfers.configure(TransferSettings {
+    let resuming = TransferSettings {
         exists_action: ExistsAction::Resume,
         ..transfer_settings()
-    });
+    };
     let remote_large = remote_path_join(&fixture.remote, "large.bin");
+    let resume_with = |settings: TransferSettings| {
+        std::fs::write(downloads.join("large.bin"), &partial).unwrap();
+        transfers.configure(settings);
+    };
+    resume_with(TransferSettings {
+        verify_checksums: false,
+        verify_resume: false,
+        ..resuming.clone()
+    });
     fixture
         .download(&transfers, &[&remote_large], &downloads)
         .await;
     assert_all_done(&wait_until_settled(&transfers).await.0);
-    let mut expected = large_bytes.clone();
-    expected[..512].fill(0);
-    assert_eq!(
-        std::fs::read(downloads.join("large.bin")).unwrap(),
-        expected
-    );
+    let mut marked = large_bytes.clone();
+    marked[..512].fill(0);
+    assert_eq!(std::fs::read(downloads.join("large.bin")).unwrap(), marked);
     transfers.clear(&[JobState::Done]);
+
+    // With the checks on, as they are by default, the marked part is found and sent again:
+    // before resuming, by comparing the part already there, and otherwise by the checksum
+    // after the file, which repairs the one damaged part.
+    for settings in [
+        resuming.clone(),
+        TransferSettings {
+            verify_resume: false,
+            ..resuming.clone()
+        },
+    ] {
+        resume_with(settings);
+        fixture
+            .download(&transfers, &[&remote_large], &downloads)
+            .await;
+        assert_all_done(&wait_until_settled(&transfers).await.0);
+        assert_eq!(
+            std::fs::read(downloads.join("large.bin")).unwrap(),
+            large_bytes
+        );
+        transfers.clear(&[JobState::Done]);
+    }
 
     // A paused download keeps its complete part and continues from there.
     std::fs::remove_file(downloads.join("large.bin")).unwrap();
@@ -831,6 +859,239 @@ async fn replaced_files_stay_whole_and_the_queue_survives_a_restart() {
     }
     assert_eq!(fixture.remote_bytes(&remote_file).await, new_bytes);
     drop(transfers);
+    fixture.close().await;
+}
+
+fn log_messages(events: &Events) -> Vec<String> {
+    events
+        .take_startup_log()
+        .into_iter()
+        .map(|record| record.message)
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn damaged_parts_are_repaired_and_published_checksums_checked() {
+    let Some(server) = server() else { return };
+    let fixture = TransferFixture::new(&server, "integrity").await;
+    let source = fixture.local.path().join("source");
+    std::fs::create_dir_all(&source).unwrap();
+    let file = source.join("data.bin");
+    let bytes = pattern(20 * MEBIBYTE + 777, 9);
+    let remote_file = remote_path_join(&fixture.remote, "data.bin");
+
+    // An upload resumed onto a copy whose start is damaged, with the check before resuming
+    // off: the checksum after the file finds the one damaged part and sends only it again.
+    let mut damaged = bytes[..9 * MEBIBYTE].to_vec();
+    damaged[100..200].fill(0xff);
+    std::fs::write(&file, &damaged).unwrap();
+    let unchecked = fixture.transfers(TransferSettings {
+        verify_checksums: false,
+        ..transfer_settings()
+    });
+    fixture
+        .upload(&unchecked, std::slice::from_ref(&file), &fixture.remote)
+        .await;
+    assert_all_done(&wait_until_settled(&unchecked).await.0);
+    drop(unchecked);
+    std::fs::write(&file, &bytes).unwrap();
+    let events = Events::keeping_startup_log();
+    let transfers = TransferManager::new(
+        fixture.manager.clone(),
+        events.clone(),
+        TransferSettings {
+            exists_action: ExistsAction::Resume,
+            verify_resume: false,
+            ..transfer_settings()
+        },
+    );
+    fixture
+        .upload(&transfers, std::slice::from_ref(&file), &fixture.remote)
+        .await;
+    assert_all_done(&wait_until_settled(&transfers).await.0);
+    drop(transfers);
+    let log = log_messages(&events);
+    assert!(
+        log.iter()
+            .any(|message| message.contains("in 1 of its 6 parts; sent 4.0 MB of it again")),
+        "{log:#?}"
+    );
+    assert!(
+        log.iter()
+            .any(|message| message.contains("part by part, so a damaged part")),
+        "{log:#?}"
+    );
+    assert_eq!(fixture.remote_bytes(&remote_file).await, bytes);
+
+    // Downloads are compared with the checksums and signatures published beside them.
+    let published = source.join("published");
+    std::fs::create_dir_all(&published).unwrap();
+    let release = pattern(300_000, 10);
+    std::fs::write(published.join("release.bin"), &release).unwrap();
+    std::fs::write(published.join("tampered.bin"), pattern(1000, 11)).unwrap();
+    let digest = |data: &[u8]| -> String {
+        use sha2::Digest;
+        sha2::Sha256::digest(data)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    };
+    std::fs::write(
+        published.join("SHA256SUMS"),
+        format!(
+            "{}  release.bin\n{}  tampered.bin\n",
+            digest(&release),
+            digest(b"something else")
+        ),
+    )
+    .unwrap();
+    // minisign 0.11's signature of "test", and the key it was made with.
+    let key = "RWSFnlifK/v9WrmhvEB4DeXXEaTspaCu+Nqjr78raegjsROt2CILH1Fu";
+    let signature = "untrusted comment: signature from minisign secret key\n\
+RUSFnlifK/v9WuHGh691QJojrJUl0dG7Wk8r3X8+z9q+ZS8uSqWXcbRabb3PS6Sg9ZeO+cun0nIm6b2t73Wjfr9Lktj34NIgRgs=\n\
+trusted comment: file:test\n\
+b8QN6w9nN4iHOGzT0ZtAWu0ompwKIV0AbzYpASmLBK/h/eoAYgEHHv1o8tnMS49ecYBqp8a2A9O1g2hbm/0qCg==\n";
+    std::fs::write(published.join("signed.bin"), b"test").unwrap();
+    std::fs::write(published.join("signed.bin.minisig"), signature).unwrap();
+    std::fs::write(published.join("forged.bin"), b"tset").unwrap();
+    std::fs::write(published.join("forged.bin.minisig"), signature).unwrap();
+    let transfers = fixture.transfers(transfer_settings());
+    fixture
+        .upload(
+            &transfers,
+            std::slice::from_ref(&published),
+            &fixture.remote,
+        )
+        .await;
+    assert_all_done(&wait_until_settled(&transfers).await.0);
+    drop(transfers);
+
+    let downloads = fixture.local.path().join("downloads");
+    std::fs::create_dir_all(&downloads).unwrap();
+    let events = Events::keeping_startup_log();
+    let transfers = TransferManager::new(
+        fixture.manager.clone(),
+        events.clone(),
+        TransferSettings {
+            minisign_keys: vec![key.to_string()],
+            ..transfer_settings()
+        },
+    );
+    let remote_published = remote_path_join(&fixture.remote, "published");
+    fixture
+        .download(&transfers, &[&remote_published], &downloads)
+        .await;
+    let (list, _) = wait_until_settled(&transfers).await;
+    drop(transfers);
+    let state = |name: &str| {
+        let job = list
+            .jobs
+            .iter()
+            .find(|job| job.name == name)
+            .unwrap_or_else(|| panic!("{name} was not queued"));
+        (job.state, job.error.clone().unwrap_or_default())
+    };
+    for name in [
+        "release.bin",
+        "SHA256SUMS",
+        "signed.bin",
+        "signed.bin.minisig",
+    ] {
+        assert_eq!(state(name).0, JobState::Done, "{name}: {}", state(name).1);
+    }
+    let (tampered, error) = state("tampered.bin");
+    assert_eq!(tampered, JobState::Failed);
+    assert!(
+        error.contains("does not match the SHA-256 checksum published in SHA256SUMS"),
+        "{error}"
+    );
+    let (forged, error) = state("forged.bin");
+    assert_eq!(forged, JobState::Failed);
+    assert!(error.contains("minisign signature"), "{error}");
+    let saved = downloads.join("published");
+    assert_eq!(std::fs::read(saved.join("release.bin")).unwrap(), release);
+    for name in [
+        "tampered.bin",
+        ".tampered.bin.poros-part",
+        "forged.bin",
+        ".forged.bin.poros-part",
+    ] {
+        assert!(!saved.join(name).exists(), "{name} was kept");
+    }
+    let log = log_messages(&events);
+    assert!(
+        log.iter()
+            .any(|message| message
+                == "release.bin matches the SHA-256 checksum published in SHA256SUMS"),
+        "{log:#?}"
+    );
+    assert!(
+        log.iter()
+            .any(|message| message == "signed.bin has a good minisign signature (file:test)"),
+        "{log:#?}"
+    );
+    fixture.close().await;
+}
+
+/// A second account on the test server, named in `POROS_TEST_SFTP_ONLY_USER`, that may only
+/// use SFTP (`ForceCommand internal-sftp`), so it runs no checksum command.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn files_are_read_back_from_servers_without_checksum_commands() {
+    let Some(mut server) = server() else { return };
+    let Ok(user) = std::env::var("POROS_TEST_SFTP_ONLY_USER") else {
+        return;
+    };
+    server.user = user;
+    let fixture = TransferFixture::new(&server, "read-back").await;
+    let source = fixture.local.path().join("source");
+    write_tree(&source);
+    let events = Events::keeping_startup_log();
+    let transfers =
+        TransferManager::new(fixture.manager.clone(), events.clone(), transfer_settings());
+    fixture
+        .upload(&transfers, std::slice::from_ref(&source), &fixture.remote)
+        .await;
+    assert_all_done(&wait_until_settled(&transfers).await.0);
+    let downloads = fixture.local.path().join("downloads");
+    std::fs::create_dir_all(&downloads).unwrap();
+    let remote_source = remote_path_join(&fixture.remote, "source");
+    fixture
+        .download(&transfers, &[&remote_source], &downloads)
+        .await;
+    assert_all_done(&wait_until_settled(&transfers).await.0);
+    assert_eq!(read_tree(&downloads.join("source")), read_tree(&source));
+    transfers.clear(&[JobState::Done]);
+
+    // A damaged part of a resumed download is found by reading back, and repaired.
+    let large = std::fs::read(source.join("large.bin")).unwrap();
+    let mut partial = large[..9 * MEBIBYTE].to_vec();
+    partial[5 * MEBIBYTE..5 * MEBIBYTE + 10].fill(0);
+    let resumed = downloads.join("resumed");
+    std::fs::create_dir_all(&resumed).unwrap();
+    std::fs::write(resumed.join("large.bin"), &partial).unwrap();
+    transfers.configure(TransferSettings {
+        exists_action: ExistsAction::Resume,
+        ..transfer_settings()
+    });
+    let remote_large = remote_path_join(&remote_source, "large.bin");
+    fixture
+        .download(&transfers, &[&remote_large], &resumed)
+        .await;
+    assert_all_done(&wait_until_settled(&transfers).await.0);
+    assert_eq!(std::fs::read(resumed.join("large.bin")).unwrap(), large);
+    drop(transfers);
+    let log = log_messages(&events);
+    assert!(
+        log.iter().any(|message| message.contains(
+            "has no sha256sum or sha512sum command, so finished files are read back from it"
+        )),
+        "{log:#?}"
+    );
+    assert!(
+        log.iter()
+            .any(|message| message.contains("in 1 of its 6 parts; sent 4.0 MB of it again")),
+        "{log:#?}"
+    );
     fixture.close().await;
 }
 
