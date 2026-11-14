@@ -4,6 +4,7 @@ import {
   heapOffsets,
   intersects,
   pileOf,
+  planArrival,
   planFlight,
   seededRandom,
   toKeyframe,
@@ -130,6 +131,39 @@ describe("planFlight", () => {
       random: seededRandom(1),
     });
     expect(big.icons[MAX_FLIGHT_ICONS - 1].delay).toBeLessThanOrEqual(360);
+  });
+});
+
+describe("planArrival", () => {
+  const arrival = planArrival({
+    source: { x: 120, y: 300 },
+    landing: { x: 860, y: 180 },
+    landingScale: 16 / 24,
+    delay: 140,
+    random: seededRandom(7),
+  });
+  const { frames } = arrival.path;
+  const last = frames[frames.length - 1];
+
+  it("leaves from the file's row and settles into the icon of the row it lands on", () => {
+    expect(frames[0]).toMatchObject({ offset: 0, x: 120, y: 300, opacity: 0 });
+    expect(last).toMatchObject({ offset: 1, x: 860, y: 180, opacity: 0 });
+    expect(last.scaleX).toBeCloseTo(16 / 24);
+    expect(last.scaleY).toBeCloseTo(16 / 24);
+  });
+
+  it("turns once and lands upright, without turning back", () => {
+    const landed = frames.filter((frame) => frame.x === 860 && frame.y === 180);
+    for (const frame of landed) expect(Math.abs(frame.rotate % 360)).toBeCloseTo(0);
+    expect(new Set(landed.map((frame) => frame.rotate)).size).toBe(1);
+  });
+
+  it("waits its turn and is quicker than a pile", () => {
+    expect(arrival.path.delay).toBe(140);
+    expect(arrival.total).toBe(140 + arrival.path.duration);
+    expect(arrival.path.duration).toBeLessThanOrEqual(900);
+    expect(arrival.firstLanding).toBeGreaterThan(140);
+    expect(arrival.firstLanding).toBeLessThan(arrival.total);
   });
 });
 

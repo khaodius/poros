@@ -161,7 +161,7 @@ export interface AppearanceSettings {
   /** Server file lists do the same. */
   groupRemoteByDate: boolean;
   progressBars: ProgressBarSettings;
-  /** A pile of file icons flies from one pane to the other when files are sent or moved. */
+  /** Each file sent, moved or copied flies from its pane to where it lands as it finishes. */
   transferAnimation: boolean;
 }
 

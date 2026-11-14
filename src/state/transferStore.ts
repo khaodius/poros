@@ -9,6 +9,7 @@ import {
   type TransferSnapshot,
 } from "../lib/transfers";
 import type { ChangedDirectory, TransferUpdate } from "../lib/types";
+import { noteTransferUpdate } from "./fileFlight";
 import { panesShowing } from "./paneRegistry";
 
 const REFRESH_DELAY_MILLIS = 400;
@@ -53,6 +54,7 @@ export const useTransferStore = create<TransferState>((set, get) => ({
     refreshChangedPanes(update.changedDirectories);
     const current = get().snapshot;
     if (update.sequence <= current.sequence) return;
+    noteTransferUpdate(current, update);
     set({ snapshot: applyUpdate(current, update) });
     // A missed update can leave a row in a state its job has left for good, such as a finished
     // transfer still shown running, so the whole queue is read again. It is also read once each

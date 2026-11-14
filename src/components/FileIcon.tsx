@@ -54,36 +54,47 @@ function iconFor(entry: IconSubject): [LucideIcon, string] {
   return ICON_BY_EXTENSION.get(extension) ?? [File, "file"];
 }
 
-export function FileIcon({ entry }: { entry: IconSubject }) {
+/**
+ * A file's icon, the system's when Settings asks for those. `size` other than the file lists'
+ * looks the system's icon up at that size, showing the lists' one until it comes, or Poros's
+ * own when neither has come yet, so the icon is never blank.
+ */
+export function FileIcon({ entry, size = FILE_ICON_SIZE }: { entry: IconSubject; size?: number }) {
   const { name, kind, linkTarget } = entry;
   const systemIcons = useSettingsStore((state) => state.settings.appearance.systemIcons);
   const lookup = useMemo(
     () => (systemIcons ? systemIconLookup({ name, kind, linkTarget }) : null),
     [systemIcons, name, kind, linkTarget],
   );
-  const size = Math.round(FILE_ICON_SIZE * (window.devicePixelRatio || 1));
-  const cacheKey = lookup ? iconCacheKey(lookup.key, size) : null;
+  const scale = window.devicePixelRatio || 1;
+  const pixels = Math.round(size * scale);
+  const cacheKey = lookup ? iconCacheKey(lookup.key, pixels) : null;
+  const listKey = lookup ? iconCacheKey(lookup.key, Math.round(FILE_ICON_SIZE * scale)) : null;
   const source = useSystemIconStore((state) => (cacheKey ? state.icons[cacheKey] : null));
+  const listSource = useSystemIconStore((state) => (listKey ? state.icons[listKey] : null));
   useEffect(() => {
     if (lookup && cacheKey && source === undefined) {
-      requestSystemIcon(cacheKey, size, lookup.request);
+      requestSystemIcon(cacheKey, pixels, lookup.request);
     }
-  }, [lookup, cacheKey, size, source]);
+  }, [lookup, cacheKey, pixels, source]);
 
-  if (source) {
+  const shown = source || listSource;
+  if (shown) {
     return (
       <img
         className="file-icon file-icon-system"
-        src={source}
-        width={FILE_ICON_SIZE}
-        height={FILE_ICON_SIZE}
+        src={shown}
+        width={size}
+        height={size}
         alt=""
         draggable={false}
       />
     );
   }
   // The system's icon is on its way: an empty space rather than Poros's icon for a moment.
-  if (source === undefined) return <span className="file-icon file-icon-pending" aria-hidden />;
+  if (source === undefined && size === FILE_ICON_SIZE) {
+    return <span className="file-icon file-icon-pending" aria-hidden />;
+  }
   const [Icon, group] = iconFor(entry);
-  return <Icon size={FILE_ICON_SIZE} className={`file-icon file-icon-${group}`} aria-hidden />;
+  return <Icon size={size} className={`file-icon file-icon-${group}`} aria-hidden />;
 }

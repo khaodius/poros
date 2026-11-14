@@ -3,7 +3,7 @@ import type { Point } from "../lib/fileFlight";
 import { pluralize } from "../lib/format";
 import { isDirLike } from "../lib/sort";
 import type { Direction, FileEntry, TransferItem } from "../lib/types";
-import { launchFileFlight } from "./fileFlight";
+import { watchTransfer } from "./fileFlight";
 import { useLogStore } from "./logStore";
 import { getPane, lastActivePane, type PaneHandle } from "./paneRegistry";
 import { useToastStore } from "./toastStore";
@@ -23,18 +23,17 @@ export function transferable(entries: FileEntry[]): TransferItem[] {
 const VERBS: Record<Direction, string> = { upload: "upload", download: "download", relay: "copy" };
 
 async function enqueue(
-  direction: Direction,
-  sessionId: string,
+  route: Route,
   items: TransferItem[],
   folder: string,
   where: string,
-  sourceSessionId?: string,
 ): Promise<boolean> {
   const showToast = useToastStore.getState().show;
   if (items.length === 0) {
     showToast("info", "Nothing to transfer: only regular files and folders can be copied.");
     return false;
   }
+  const { direction, sessionId, sourceSessionId } = route;
   try {
     await transfers.enqueue({
       sessionId,
@@ -52,10 +51,38 @@ async function enqueue(
   }
 }
 
+interface Route {
+  direction: Direction;
+  /** The server written to, or read from for a download. */
+  sessionId: string;
+  /** The server a copy between servers reads from. */
+  sourceSessionId?: string;
+}
+
+/** How files go from one pane to another, if they can. */
+function routeBetween(source: PaneHandle, target: PaneHandle): Route | null {
+  if (source.kind === "local" && target.kind === "remote" && target.sessionId) {
+    return { direction: "upload", sessionId: target.sessionId };
+  }
+  if (source.kind === "remote" && target.kind === "local" && source.sessionId) {
+    return { direction: "download", sessionId: source.sessionId };
+  }
+  if (
+    source.kind === "remote" &&
+    target.kind === "remote" &&
+    source.sessionId &&
+    target.sessionId
+  ) {
+    return { direction: "relay", sessionId: target.sessionId, sourceSessionId: source.sessionId };
+  }
+  return null;
+}
+
 /**
  * Queues entries from one pane into a folder of another; the panes decide the direction. Between
- * two servers the files are copied directly when both allow it, or stream through Poros.
- * `landing` is where a drag let go of them, for the flying pile.
+ * two servers the files are copied directly when both allow it, or stream through Poros. Each
+ * file flies to where it lands as it finishes; `landing` is where a drag let go of them, where
+ * files land whose rows the pane does not show.
  */
 export async function transferBetween(
   source: PaneHandle,
@@ -66,56 +93,25 @@ export async function transferBetween(
 ): Promise<void> {
   const targetFolder = folder ?? target.path();
   if (!targetFolder || (source.tabId === target.tabId && folder === null)) return;
-  const queued = await queueBetween(source, entries, target, targetFolder);
-  if (!queued) return;
-  launchFileFlight({
-    source: {
-      tabId: source.tabId,
-      kind: source.kind,
-      sessionId: source.sessionId,
-      folder: source.path(),
-    },
-    target: { tabId: target.tabId, folder: targetFolder },
-    entries: entries.filter((entry) => entry.kind !== "other" && entry.linkTarget !== "broken"),
-    landing,
-  });
-}
-
-async function queueBetween(
-  source: PaneHandle,
-  entries: FileEntry[],
-  target: PaneHandle,
-  targetFolder: string,
-): Promise<boolean> {
-  if (source.kind === "local" && target.kind === "remote" && target.sessionId) {
-    return enqueue(
-      "upload",
-      target.sessionId,
-      transferable(entries),
-      targetFolder,
-      `${target.label}:${targetFolder}`,
-    );
+  const route = routeBetween(source, target);
+  if (!route) {
+    useToastStore.getState().show("info", "Drop local files on a server tab to upload them.");
+    return;
   }
-  if (source.kind === "remote" && target.kind === "local" && source.sessionId) {
-    return enqueue("download", source.sessionId, transferable(entries), targetFolder, targetFolder);
-  }
-  if (
-    source.kind === "remote" &&
-    target.kind === "remote" &&
-    source.sessionId &&
-    target.sessionId
-  ) {
-    return enqueue(
-      "relay",
-      target.sessionId,
-      transferable(entries),
-      targetFolder,
-      `${target.label}:${targetFolder}`,
-      source.sessionId,
-    );
-  }
-  useToastStore.getState().show("info", "Drop local files on a server tab to upload them.");
-  return false;
+  const items = transferable(entries);
+  // Watched before it is queued, as small files can be done before queuing returns. Files
+  // dropped in from other programs have no pane to leave from.
+  const forget =
+    source.path() === null
+      ? () => undefined
+      : watchTransfer({
+          ...route,
+          source: { tabId: source.tabId },
+          target: { tabId: target.tabId, folder: targetFolder, dropPoint: landing },
+          items: items.map((item) => ({ path: item.path, isDir: item.isDir })),
+        });
+  const where = target.kind === "remote" ? `${target.label}:${targetFolder}` : targetFolder;
+  if (!(await enqueue(route, items, targetFolder, where))) forget();
 }
 
 export function transferFromPane(
