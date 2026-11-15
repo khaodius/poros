@@ -34,6 +34,13 @@
   within a server or this computer without a transfer. Properties changes permissions, owner and
   group. Deleting on an SFTP server runs `rm` on the server when its shell allows it, and shows
   how many entries are gone, the one being deleted and any that could not be.
+- **Archives**: Extract here, or into a folder named after the archive, from the right-click
+  menu for ZIP, 7z, RAR, tar and compressed tar, gzip, bzip2, xz, zstd, ISO and CAB files,
+  without replacing anything already there. Archives on an SFTP server are extracted on the
+  server with the programs it has, such as 7-Zip, unrar, tar or unzip, with nothing downloaded.
+  On this computer, Settings > Archives lists the extractors installed on Windows or Linux and
+  picks the best for each format, or uses the one you choose, or any other program with your own
+  arguments.
 - **File compare** of any two files, side by side with changed words highlighted.
 - **Built-in editor** for text files up to 16 MiB, local or on any server, with syntax highlighting
   and find and replace. Each save uploads the file and warns first if it changed on the server.
@@ -78,8 +85,9 @@
 - **Progress bars** to taste: solid, gradient, striped, segmented or glowing fills, the theme's
   color, upload and download colors or your own, any thickness, moving stripes, a shimmer or a
   pulse while work runs, and the percent, size or time left beside or on each transfer's bar.
-- **Flying files**, off until you want them: files you send, move or copy hop across the window as
-  a pile of their own icons and land where they go.
+- **Flying files**, off until you want them: each file you send, move or copy hops out of its pane
+  with its own system icon as it finishes and lands on the row where it went, or on the folder it
+  went into, with piles for files that finish together.
 - **Date groups** like Windows Explorer's: local files sit under Today, Yesterday, Earlier this
   week and so on, each group collapsible, with a switch in Settings > Appearance for local and
   server lists.
@@ -393,8 +401,8 @@ The Windows installers are not code-signed yet, so SmartScreen may warn about an
 ## Notes
 
 - **SFTP only**: folder sync, rsync, scheduled tasks, server commands, the terminal, moving and
-  copying on the server, Properties, comparing server files, repairing damaged parts, proxies and
-  jump hosts. Files pasted or dragged within an FTP or cloud server are copied through the transfer
+  copying on the server, extracting archives on the server, Properties, comparing server files,
+  repairing damaged parts, proxies and jump hosts. Files pasted or dragged within an FTP or cloud server are copied through the transfer
   queue, and FTP uploads are written in place rather than under a temporary name.
 - **Google Drive, OneDrive and Box** sign in through the system browser. Builds without app
   credentials ask for your own under Settings > Cloud accounts; see
