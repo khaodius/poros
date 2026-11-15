@@ -12,6 +12,8 @@ export interface PaneHandle {
   /** Reloads the listing, keeping the selection, or moving the cursor to `focusPath`. */
   refresh: (focusPath?: string) => void;
   selected: () => FileEntry[];
+  /** Everything the listing holds, also rows scrolled away or filtered out. */
+  entries?: () => readonly FileEntry[];
   visible: boolean;
   activatedAt: number;
 }

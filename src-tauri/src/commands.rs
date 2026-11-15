@@ -21,9 +21,11 @@ use crate::editor::{
 };
 use crate::error::{AppError, AppResult};
 use crate::events::{Events, LogLevel, LogRecord, Store};
+use crate::file_ops::archive::{self, ExtractSummary, InstalledTool};
 use crate::file_ops::{
-    CompareRequest, Comparison, DeleteRequest, DeleteSummary, Details, FileOperations, Location,
-    MoveCopyRequest, OperationSummary, PermissionRequest, PermissionSummary, Usage,
+    CompareRequest, Comparison, DeleteRequest, DeleteSummary, Details, ExtractRequest,
+    FileOperations, Location, MoveCopyRequest, OperationSummary, PermissionRequest,
+    PermissionSummary, Usage,
 };
 use crate::fonts::{self, FontFamily};
 use crate::import::{
@@ -319,6 +321,19 @@ pub async fn files_compare(
     request: CompareRequest,
 ) -> AppResult<Comparison> {
     operations.compare(request).await
+}
+
+#[tauri::command]
+pub async fn files_extract(
+    operations: State<'_, FileOperations>,
+    request: ExtractRequest,
+) -> AppResult<ExtractSummary> {
+    operations.extract(request).await
+}
+
+#[tauri::command]
+pub async fn archive_tools() -> AppResult<Vec<InstalledTool>> {
+    Ok(tokio::task::spawn_blocking(archive::installed_tools).await?)
 }
 
 #[tauri::command]

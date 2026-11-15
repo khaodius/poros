@@ -4,10 +4,11 @@
 use std::sync::Arc;
 
 use poros_lib::events::Events;
+use poros_lib::file_ops::archive::ExtractInto;
 use poros_lib::file_ops::{
-    CompareRequest, Comparison, Conflict, DeleteRequest, DeleteSummary, FileOperations, FileRef,
-    Location, Method, Mode, ModeChange, MoveCopyRequest, OperationSummary, PermissionRequest,
-    ServerFeatures,
+    CompareRequest, Comparison, Conflict, DeleteRequest, DeleteSummary, ExtractRequest,
+    FileOperations, FileRef, Location, Method, Mode, ModeChange, MoveCopyRequest, OperationSummary,
+    PermissionRequest, ServerFeatures,
 };
 use poros_lib::model::EntryKind;
 use poros_lib::protocol::Protocol;
@@ -948,4 +949,112 @@ async fn compares_server_and_local_files() {
 
 fn json(comparison: Comparison) -> Value {
     serde_json::to_value(comparison).unwrap()
+}
+
+fn extract_request(fixture: &Fixture, relative: &str, into: ExtractInto) -> ExtractRequest {
+    ExtractRequest {
+        operation_id: uuid::Uuid::new_v4().to_string(),
+        location: fixture.location(),
+        path: fixture.path(relative),
+        into,
+        extractor: Default::default(),
+    }
+}
+
+#[tokio::test]
+async fn extracts_archives_with_the_servers_own_programs() {
+    let Some(server) = server() else { return };
+    let fixture = Fixture::new(&server, "extract").await;
+    let operations = fixture.operations(ServerFeatures::default());
+
+    // A tar.gz made here, with a folder inside, uploaded beside a folder of its name.
+    let source = fixture.local.path().join("site");
+    std::fs::create_dir_all(source.join("assets")).unwrap();
+    std::fs::write(source.join("index.html"), b"<h1>hi</h1>").unwrap();
+    std::fs::write(source.join("assets/app.js"), pattern(70_000, 3)).unwrap();
+    let archive = fixture.local.path().join("site.tar.gz");
+    let status = std::process::Command::new("tar")
+        .arg("-czf")
+        .arg(&archive)
+        .arg("-C")
+        .arg(&source)
+        .arg(".")
+        .status()
+        .unwrap();
+    assert!(status.success());
+    fixture
+        .write("site.tar.gz", &std::fs::read(&archive).unwrap())
+        .await;
+    fixture.mkdir("site").await;
+
+    let summary = operations
+        .extract(extract_request(
+            &fixture,
+            "site.tar.gz",
+            ExtractInto::Folder,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(summary.destination, fixture.path("site (2)"));
+    assert_eq!(summary.folder, fixture.remote);
+    assert_eq!(fixture.read("site (2)/index.html").await, b"<h1>hi</h1>");
+    assert_eq!(
+        fixture.read("site (2)/assets/app.js").await,
+        pattern(70_000, 3)
+    );
+
+    // Extracting here keeps what is already there.
+    fixture.write("index.html", b"mine").await;
+    operations
+        .extract(extract_request(&fixture, "site.tar.gz", ExtractInto::Here))
+        .await
+        .unwrap();
+    assert_eq!(fixture.read("index.html").await, b"mine");
+    assert_eq!(fixture.read("assets/app.js").await, pattern(70_000, 3));
+
+    // A single compressed file unpacks beside itself, under a free name.
+    let dump = fixture.local.path().join("dump.sql");
+    std::fs::write(&dump, pattern(9_000, 4)).unwrap();
+    let status = std::process::Command::new("gzip")
+        .arg("-k")
+        .arg(&dump)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let compressed = std::fs::read(fixture.local.path().join("dump.sql.gz")).unwrap();
+    fixture.write("dump.sql.gz", &compressed).await;
+    let summary = operations
+        .extract(extract_request(&fixture, "dump.sql.gz", ExtractInto::Here))
+        .await
+        .unwrap();
+    assert_eq!(summary.destination, fixture.path("dump.sql"));
+    assert_eq!(fixture.read("dump.sql").await, pattern(9_000, 4));
+
+    // A damaged archive leaves no empty folder behind, and says what the program said.
+    fixture
+        .write("broken.tar.gz", b"\x1f\x8b\x08\x00not gzip at all")
+        .await;
+    let error = operations
+        .extract(extract_request(
+            &fixture,
+            "broken.tar.gz",
+            ExtractInto::Folder,
+        ))
+        .await
+        .unwrap_err();
+    assert!(error.message.contains("tar"), "{}", error.message);
+    assert!(!fixture.exists("broken").await);
+
+    // Text is not an archive.
+    fixture.write("notes.txt", b"plain").await;
+    let error = operations
+        .extract(extract_request(&fixture, "notes.txt", ExtractInto::Here))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.message,
+        "notes.txt is not an archive Poros can extract"
+    );
+
+    fixture.close().await;
 }

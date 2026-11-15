@@ -4616,6 +4616,46 @@ textarea::placeholder {
   color: var(--text-muted);
 }
 
+/* Settings > Archives: the extracting programs found on this computer */
+
+.archive-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 0 12px;
+  padding: 6px 0;
+  list-style: none;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.archive-tools li {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 0 12px;
+  padding: 4px 12px;
+  font-size: var(--font-size-small);
+}
+
+.archive-tool-name {
+  grid-row: span 2;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.archive-tool-path {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.archive-tool-formats {
+  color: var(--text-faint);
+}
+
 .command-list {
   display: flex;
   flex-direction: column;

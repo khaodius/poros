@@ -26,12 +26,14 @@ import {
   FilePlus,
   FolderInput,
   FolderOpen,
+  FolderOutput,
   FolderPlus,
   FolderSync,
   HardDrive,
   Home,
   Info,
   ListTree,
+  PackageOpen,
   Pencil,
   RefreshCw,
   RotateCcw,
@@ -44,6 +46,7 @@ import {
 } from "lucide-react";
 import { useBackForwardButtons } from "../hooks/useBackForwardButtons";
 import { usePane } from "../hooks/usePane";
+import { archiveFormatOf, isSingleFile, unpackedName } from "../lib/archives";
 import { COLUMN_LABELS, availableColumns, type DetailColumn } from "../lib/columns";
 import { entryAfterRemoval } from "../lib/cursor";
 import { sameFilesystem, toLocation, worksInPlace } from "../lib/fileOrigin";
@@ -54,6 +57,7 @@ import { exampleFileName } from "../lib/path";
 import { groupOfTab } from "../lib/layout";
 import { isDirLike, type SortKey, type SortSpec } from "../lib/sort";
 import type { FileEntry, PlaceMode } from "../lib/types";
+import { archivesAmong, extractArchives } from "../state/archiveActions";
 import { useClipboardStore } from "../state/clipboardStore";
 import { beginDrag, useDragStore, type DropHandler } from "../state/dragStore";
 import { dragFilesOut } from "../state/dragOut";
@@ -246,6 +250,7 @@ export function FilePane({
         path: () => paneRef.current.listing?.path ?? null,
         refresh: (focusPath) => void paneRef.current.refresh(focusPath),
         selected: () => paneRef.current.selectedEntries(),
+        entries: () => paneRef.current.listing?.entries ?? [],
         visible: false,
         activatedAt: 0,
       }),
@@ -588,9 +593,52 @@ export function FilePane({
     },
   ];
 
+  /** Extract here, and into a folder named after the archive, for the archives among `targets`. */
+  const extractMenuItems = (targets: FileEntry[]): MenuItem[] => {
+    const archives = archivesAmong(targets);
+    if (archives.length === 0) return [];
+    if (!worksHere) {
+      return [
+        {
+          label: "Extract (SFTP only)",
+          icon: <PackageOpen size={14} />,
+          disabled: true,
+          onSelect: () => undefined,
+        },
+      ];
+    }
+    const self = { kind: source.kind, sessionId };
+    const separator = source.pathStyle === "windows" ? "\\" : "/";
+    const [first] = archives;
+    const allSingle = archives.every((archive) => {
+      const format = archiveFormatOf(archive.name);
+      return format !== null && isSingleFile(format);
+    });
+    return [
+      {
+        label: archives.length > 1 ? `Extract ${archives.length} archives here` : "Extract here",
+        icon: <PackageOpen size={14} />,
+        onSelect: () => void extractArchives(self, archives, "here"),
+      },
+      ...(allSingle
+        ? []
+        : [
+            {
+              label:
+                archives.length > 1
+                  ? "Extract each to its own folder"
+                  : `Extract to "${unpackedName(first.name)}${separator}"`,
+              icon: <FolderOutput size={14} />,
+              onSelect: () => void extractArchives(self, archives, "folder"),
+            },
+          ]),
+    ];
+  };
+
   const contextMenuItems = (entry: FileEntry | null): MenuItem[] => {
     const targets = entry ? (pane.selection.has(entry.path) ? selected : [entry]) : [];
     const compare = compareMenuItem(targets);
+    const extract = extractMenuItems(targets);
     return [
       ...(targets.length > 0 ? [transferMenuItem(targets), "separator" as const] : []),
       ...(entry && isDirLike(entry)
@@ -613,6 +661,7 @@ export function FilePane({
             },
           ]
         : []),
+      ...(extract.length > 0 ? ["separator" as const, ...extract, "separator" as const] : []),
       {
         label: "Refresh",
         icon: <RefreshCw size={14} />,

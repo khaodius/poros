@@ -8,16 +8,20 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { toKeyframe, type IconPath } from "../lib/fileFlight";
-import { endFlight, useFlightStore, type Flight } from "../state/fileFlight";
+import {
+  endFlight,
+  FLIGHT_ICON_LOOKUP_SIZE,
+  FLIGHT_ICON_SIZE,
+  useFlightStore,
+  type Flight,
+} from "../state/fileFlight";
 import { FileIcon } from "./FileIcon";
 
-/** The flying icons' size in pixels; the file lists' icons are scaled up to it. */
-const ICON_SIZE = 24;
 const BADGE_SIZE = 24;
 const RING_MILLIS = 520;
 const FLASH_MILLIS = 700;
 
-/** Piles of file icons in flight between panes, above everything else in the window. */
+/** File icons in flight between panes, above everything else in the window. */
 export function FileFlights() {
   const flights = useFlightStore((state) => state.flights);
   if (flights.length === 0) return null;
@@ -74,23 +78,25 @@ const FlightView = memo(function FlightView({ flight }: { flight: Flight }) {
           timing={{ delay: firstLanding, duration: FLASH_MILLIS, easing: "ease-out" }}
         />
       )}
-      <Animated
-        className="flight-ring"
-        style={{ left: landing.x, top: landing.y }}
-        keyframes={[
-          { opacity: 0, transform: "translate(-50%, -50%) scale(0.3)" },
-          { opacity: 0.7, transform: "translate(-50%, -50%) scale(0.45)", offset: 0.1 },
-          { opacity: 0, transform: "translate(-50%, -50%) scale(1.8)" },
-        ]}
-        timing={{
-          delay: firstLanding,
-          duration: RING_MILLIS,
-          easing: "cubic-bezier(0.2, 0, 0, 1)",
-        }}
-      />
+      {flight.ring && (
+        <Animated
+          className="flight-ring"
+          style={{ left: landing.x, top: landing.y }}
+          keyframes={[
+            { opacity: 0, transform: "translate(-50%, -50%) scale(0.3)" },
+            { opacity: 0.7, transform: "translate(-50%, -50%) scale(0.45)", offset: 0.1 },
+            { opacity: 0, transform: "translate(-50%, -50%) scale(1.8)" },
+          ]}
+          timing={{
+            delay: firstLanding,
+            duration: RING_MILLIS,
+            easing: "cubic-bezier(0.2, 0, 0, 1)",
+          }}
+        />
+      )}
       {flight.icons.map((icon, index) => (
-        <FlyingPath key={index} className="flight-icon" path={icon.path} size={ICON_SIZE}>
-          <FileIcon entry={icon.subject} />
+        <FlyingPath key={index} className="flight-icon" path={icon.path} size={FLIGHT_ICON_SIZE}>
+          <FileIcon entry={icon.subject} size={FLIGHT_ICON_LOOKUP_SIZE} />
         </FlyingPath>
       ))}
       {flight.badge && (

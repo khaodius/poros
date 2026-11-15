@@ -44,12 +44,18 @@ function OperationTray() {
   return (
     <div className="operation-tray" role="status" aria-live="polite">
       {shown.map((operation) => (
-        <div key={operation.id} className="operation" title={operation.current}>
+        <div
+          key={operation.id}
+          className="operation"
+          title={operation.kind === "extract" ? undefined : operation.current}
+        >
           <LoaderCircle size={16} className="spin" />
           <div className="operation-text">
             <span className="operation-title">{operation.title}</span>
             {operation.kind === "delete" ? (
               <DeleteDetail operation={operation} />
+            ) : operation.kind === "extract" ? (
+              <ExtractDetail operation={operation} />
             ) : (
               <span className="operation-detail">
                 {pluralize(operation.files, "file")} done, {formatSize(operation.bytes)}
@@ -67,6 +73,18 @@ function OperationTray() {
         </div>
       ))}
     </div>
+  );
+}
+
+/** Which program unpacks the archive, under a bar that moves until it is done. */
+function ExtractDetail({ operation }: { operation: RunningOperation }) {
+  return (
+    <>
+      <span className="operation-detail">{operation.current ?? "Unpacking"}</span>
+      <span className="progress-track is-indeterminate" role="progressbar">
+        <span className="progress-fill" />
+      </span>
+    </>
   );
 }
 

@@ -305,7 +305,7 @@ export function AnimationGroup() {
     <SettingGroup title="Animation">
       <SwitchSetting
         label="Flying files"
-        hint="When you send, move or copy files, a pile of their icons hops out of one pane and lands in the other."
+        hint="Each file you upload, download, move or copy hops out of its pane as it finishes and lands on its row where it went, or on the folder it went into."
         checked={transferAnimation}
         onChange={(checked) =>
           void saveSettingsSection("appearance", { transferAnimation: checked })
@@ -320,13 +320,7 @@ export function AnimationGroup() {
             ))}
           </span>
         </div>
-        <button
-          type="button"
-          className="button"
-          disabled={lessMotion}
-          title={lessMotion ? "The system asks for less motion" : undefined}
-          onClick={play}
-        >
+        <button type="button" className="button" onClick={play}>
           <Play size={14} />
           {toServer ? "Upload" : "Download"}
         </button>
@@ -341,7 +335,8 @@ export function AnimationGroup() {
       </div>
       {lessMotion && (
         <p className="setting-note">
-          The system asks for less motion, so files do not fly even with this on.
+          The system asks apps for less motion, as Windows does while its animation effects are off.
+          Files fly anyway while this is on.
         </p>
       )}
     </SettingGroup>

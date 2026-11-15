@@ -18,7 +18,7 @@ import type {
 } from "../lib/types";
 import { useClipboardStore } from "./clipboardStore";
 import type { DropTarget } from "./dragStore";
-import { launchFileFlight } from "./fileFlight";
+import { flyPlaced, measureRows } from "./fileFlight";
 import { useLogStore } from "./logStore";
 import { askNameClash, track } from "./operationStore";
 import { getPane, listPanes, type PaneHandle } from "./paneRegistry";
@@ -52,7 +52,7 @@ export function placesInPlace(origin: FileOrigin, target: PaneHandle): boolean {
 }
 
 /** Reloads the panes showing `folder`, moving their cursor to `focusPath` when given. */
-function refreshFolder(origin: FileOrigin, folder: string, focusPath?: string): void {
+export function refreshFolder(origin: FileOrigin, folder: string, focusPath?: string): void {
   const style = pathStyleOf(origin);
   for (const pane of listPanes()) {
     const shown = pane.path();
@@ -186,17 +186,9 @@ export async function placeEntries(request: PlaceRequest): Promise<boolean> {
 
   const what = entries.length === 1 ? entries[0].name : pluralize(entries.length, "item");
   const title = `${mode === "move" ? "Moving" : "Copying"} ${what} to ${baseName(targetFolder)}`;
-  launchFileFlight({
-    source: {
-      tabId: sourceTabId ?? "clipboard",
-      kind: origin.kind,
-      sessionId: origin.sessionId,
-      folder: sourceFolder,
-    },
-    target: { tabId: target.tabId, folder: targetFolder },
-    entries,
-    landing,
-  });
+  const side = { kind: origin.kind, sessionId: origin.sessionId };
+  // Moved files' rows go away, so where they were is measured before they leave.
+  const points = measureRows(sourceTabId, side, entries);
   let placed: string | undefined;
   try {
     const summary = await track(title, (operationId) =>
@@ -211,6 +203,13 @@ export async function placeEntries(request: PlaceRequest): Promise<boolean> {
     );
     placed = summary.placed[0];
     report(mode, summary, targetFolder, targetOrigin.sessionId);
+    flyPlaced({
+      side,
+      source: { tabId: sourceTabId, folder: sourceFolder, points },
+      target: { tabId: target.tabId, dropPoint: landing },
+      entries,
+      placed: summary.placed,
+    });
     return true;
   } catch (caught) {
     const error = toAppError(caught);

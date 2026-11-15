@@ -1,7 +1,7 @@
-// Plans the pile of file icons that flies from one pane to another when files are sent, moved or
-// copied: each icon pops out of its row, joins a heap beside the files, arcs across the window
-// and lands on a heap where the files go, then sinks into it. Pure, so the paths are testable;
-// `components/FileFlights.tsx` plays them.
+// Plans the file icons that fly from one pane to another. Each finished file hops out of its row,
+// arcs across the window and settles into the row it now has where it went; a burst of files
+// too large to send one by one goes as a pile that lands on a heap and sinks in. Pure, so the
+// paths are testable; `components/FileFlights.tsx` plays them.
 
 import type { IconSubject } from "./systemIcons";
 
@@ -148,6 +148,73 @@ export interface FlightPlanInput {
   random: () => number;
 }
 
+interface ArcPath {
+  start: Point;
+  /** Where the icon hops to before it sets off. */
+  gathered: Point;
+  landed: Point;
+  /** Where the icon sinks to once it has landed, and how large it is there. */
+  sunk: Point;
+  sunkScale: number;
+  lift: number;
+  tilt: number;
+  spin: number;
+}
+
+/** An icon's frames: pop out, hop, arc over, land with a squash and a bounce, then sink in. */
+function arcFrames({
+  start,
+  gathered,
+  landed,
+  sunk,
+  sunkScale,
+  lift,
+  tilt,
+  spin,
+}: ArcPath): FlightFrame[] {
+  const control = {
+    x: (gathered.x + landed.x) / 2,
+    y: Math.min(gathered.y, landed.y) - lift,
+  };
+  const resting = tilt + spin;
+  const frames: FlightFrame[] = [
+    { offset: 0, ...start, rotate: 0, scaleX: 0.4, scaleY: 0.4, opacity: 0 },
+    { offset: PHASES.popped, ...start, rotate: tilt / 3, scaleX: 1.1, scaleY: 1.1, opacity: 1 },
+    { offset: PHASES.gathered, ...gathered, rotate: tilt, scaleX: 1, scaleY: 1, opacity: 1 },
+  ];
+  for (let index = 1; index <= ARC_STEPS; index++) {
+    const progress = easeInOut(index / ARC_STEPS);
+    const swell = Math.sin(progress * Math.PI) * 0.3;
+    frames.push({
+      offset: PHASES.gathered + ((PHASES.landed - PHASES.gathered) * index) / ARC_STEPS,
+      ...quadratic(gathered, control, landed, progress),
+      rotate: tilt + spin * progress,
+      scaleX: 1 + swell,
+      scaleY: 1 + swell,
+      opacity: 1,
+    });
+  }
+  frames.push(
+    { offset: PHASES.squashed, ...landed, rotate: resting, scaleX: 1.3, scaleY: 0.7, opacity: 1 },
+    {
+      offset: PHASES.rebound,
+      x: landed.x,
+      y: landed.y - 3,
+      rotate: resting,
+      scaleX: 0.92,
+      scaleY: 1.12,
+      opacity: 1,
+    },
+    { offset: PHASES.settled, ...landed, rotate: resting, scaleX: 1, scaleY: 1, opacity: 1 },
+    { offset: 1, ...sunk, rotate: resting, scaleX: sunkScale, scaleY: sunkScale, opacity: 0 },
+  );
+  return frames;
+}
+
+function liftFor(distance: number): number {
+  return Math.min(220, Math.max(60, distance * 0.35));
+}
+
 /** Every icon's path, plus one for the count badge riding at the heap's middle. */
 export function planFlight({ sources, landing, count, random }: FlightPlanInput): {
   icons: IconPath[];
@@ -158,66 +225,16 @@ export function planFlight({ sources, landing, count, random }: FlightPlanInput)
 } {
   const origin = centerOf(sources);
   const distance = Math.hypot(landing.x - origin.x, landing.y - origin.y);
-  const lift = Math.min(220, Math.max(60, distance * 0.35));
+  const lift = liftFor(distance);
   const baseDuration = Math.min(1300, Math.max(900, 900 + (distance / 2000) * 400));
   const step = Math.min(MAX_STAGGER_STEP_MILLIS, MAX_STAGGER_MILLIS / Math.max(1, count));
   const landingHeap = heapOffsets(count, random);
   // The heap leans the way the files travel.
   const lean = Math.sign(landing.x - origin.x) || 1;
-
-  const pathFor = (
-    start: Point,
-    gathered: Point,
-    landed: Point,
-    spin: number,
-    tilt: number,
-  ): FlightFrame[] => {
-    const control = {
-      x: (gathered.x + landed.x) / 2,
-      y: Math.min(gathered.y, landed.y) - lift,
-    };
-    const frames: FlightFrame[] = [
-      { offset: 0, ...start, rotate: 0, scaleX: 0.4, scaleY: 0.4, opacity: 0 },
-      { offset: PHASES.popped, ...start, rotate: tilt / 3, scaleX: 1.1, scaleY: 1.1, opacity: 1 },
-      { offset: PHASES.gathered, ...gathered, rotate: tilt, scaleX: 1, scaleY: 1, opacity: 1 },
-    ];
-    for (let index = 1; index <= ARC_STEPS; index++) {
-      const progress = easeInOut(index / ARC_STEPS);
-      const swell = Math.sin(progress * Math.PI) * 0.3;
-      frames.push({
-        offset: PHASES.gathered + ((PHASES.landed - PHASES.gathered) * index) / ARC_STEPS,
-        ...quadratic(gathered, control, landed, progress),
-        rotate: tilt + spin * progress,
-        scaleX: 1 + swell,
-        scaleY: 1 + swell,
-        opacity: 1,
-      });
-    }
-    const resting = tilt + spin;
-    frames.push(
-      { offset: PHASES.squashed, ...landed, rotate: resting, scaleX: 1.3, scaleY: 0.7, opacity: 1 },
-      {
-        offset: PHASES.rebound,
-        x: landed.x,
-        y: landed.y - 3,
-        rotate: resting,
-        scaleX: 0.92,
-        scaleY: 1.12,
-        opacity: 1,
-      },
-      { offset: PHASES.settled, ...landed, rotate: resting, scaleX: 1, scaleY: 1, opacity: 1 },
-      {
-        offset: 1,
-        x: landing.x + (landed.x - landing.x) * 0.3,
-        y: landing.y + (landed.y - landing.y) * 0.3 + 4,
-        rotate: resting,
-        scaleX: 0.25,
-        scaleY: 0.25,
-        opacity: 0,
-      },
-    );
-    return frames;
-  };
+  const sinkInto = (landed: Point): Point => ({
+    x: landing.x + (landed.x - landing.x) * 0.3,
+    y: landing.y + (landed.y - landing.y) * 0.3 + 4,
+  });
 
   const icons = landingHeap.map((offset, index): IconPath => {
     const start = sources[index % sources.length];
@@ -229,21 +246,34 @@ export function planFlight({ sources, landing, count, random }: FlightPlanInput)
     const tilt = (random() - 0.5) * 50;
     const spin = lean * (180 + random() * 180) * (random() < 0.25 ? -1 : 1);
     return {
-      frames: pathFor(start, gathered, landed, spin, tilt),
+      frames: arcFrames({
+        start,
+        gathered,
+        landed,
+        sunk: sinkInto(landed),
+        sunkScale: 0.25,
+        lift,
+        tilt,
+        spin,
+      }),
       delay: Math.round(index * step),
       duration: Math.round(baseDuration + (random() - 0.5) * 120),
     };
   });
 
   const top = Math.min(0, ...landingHeap.map((offset) => offset.y)) - 18;
+  const badgeLanded = { x: landing.x, y: landing.y + top };
   const badge: IconPath = {
-    frames: pathFor(
-      origin,
-      { x: origin.x, y: origin.y + top },
-      { x: landing.x, y: landing.y + top },
-      0,
-      0,
-    ),
+    frames: arcFrames({
+      start: origin,
+      gathered: { x: origin.x, y: origin.y + top },
+      landed: badgeLanded,
+      sunk: sinkInto(badgeLanded),
+      sunkScale: 0.25,
+      lift,
+      tilt: 0,
+      spin: 0,
+    }),
     delay: Math.round(((count - 1) * step) / 2),
     duration: Math.round(baseDuration),
   };
@@ -254,6 +284,53 @@ export function planFlight({ sources, landing, count, random }: FlightPlanInput)
     ...icons.map((icon) => icon.delay + icon.duration),
   );
   return { icons, badge, firstLanding: Math.round(firstLanding), total };
+}
+
+export interface ArrivalPlanInput {
+  /** Where the file leaves from: its row's icon, or the middle of the pane it is in. */
+  source: Point;
+  /** The icon of the row it now has, or the folder it went into. */
+  landing: Point;
+  /** How large the row's icon is next to a flying one, which shrinks to it as it lands. */
+  landingScale: number;
+  /** Milliseconds to wait before it leaves, so files done together leave one after another. */
+  delay: number;
+  random: () => number;
+}
+
+/**
+ * One finished file's hop from where it came from to the row it has where it went: quicker
+ * than a pile, with a single flip that leaves it upright, so it settles into the row's icon.
+ */
+export function planArrival({ source, landing, landingScale, delay, random }: ArrivalPlanInput): {
+  path: IconPath;
+  firstLanding: number;
+  total: number;
+} {
+  const distance = Math.hypot(landing.x - source.x, landing.y - source.y);
+  const duration = Math.round(Math.min(900, Math.max(640, 640 + (distance / 2000) * 260)));
+  const lean = Math.sign(landing.x - source.x) || 1;
+  const tilt = (random() - 0.5) * 24;
+  const path: IconPath = {
+    frames: arcFrames({
+      start: source,
+      gathered: { x: source.x, y: source.y - 14 },
+      landed: landing,
+      sunk: landing,
+      sunkScale: landingScale,
+      lift: Math.min(160, liftFor(distance)),
+      tilt,
+      // One whole turn from the tilt it leaves at, so it lands upright.
+      spin: lean * 360 - tilt,
+    }),
+    delay: Math.round(delay),
+    duration,
+  };
+  return {
+    path,
+    firstLanding: Math.round(path.delay + duration * PHASES.landed),
+    total: path.delay + duration,
+  };
 }
 
 /** A frame as a Web Animations keyframe; `size` is the icon's, to move its center. */

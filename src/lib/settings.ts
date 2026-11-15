@@ -2,6 +2,7 @@
 // cloud sections; the interface, appearance, log, sync, updates and automation sections are
 // stored as given, so they are checked here.
 
+import { CUSTOM_ARGUMENTS_EXAMPLE, type ExtractorSettings } from "./archives";
 import {
   DETAIL_COLUMNS,
   sanitizeColumnWidths,
@@ -139,6 +140,8 @@ export interface InterfaceSettings {
   dateFormat: DateFormat;
   hiddenColumns: DetailColumn[];
   columnWidths: ColumnWidths;
+  /** The program that extracts archives on this computer. */
+  extractor: ExtractorSettings;
 }
 
 export interface AppearanceSettings {
@@ -161,7 +164,7 @@ export interface AppearanceSettings {
   /** Server file lists do the same. */
   groupRemoteByDate: boolean;
   progressBars: ProgressBarSettings;
-  /** A pile of file icons flies from one pane to the other when files are sent or moved. */
+  /** Each file sent, moved or copied flies from its pane to where it lands as it finishes. */
   transferAnimation: boolean;
 }
 
@@ -317,6 +320,7 @@ export const DEFAULT_SETTINGS: Settings = {
     dateFormat: "minutes",
     hiddenColumns: [],
     columnWidths: {},
+    extractor: { choice: "", program: "", arguments: CUSTOM_ARGUMENTS_EXAMPLE },
   },
   appearance: {
     theme: "builtin:system",

@@ -3,6 +3,36 @@
 Installers for every version are attached to its
 [release](https://github.com/khaodius/poros/releases), with SHA-256 checksums.
 
+## 0.6.1 - 2026-11-15
+
+- **Extract archives from the right-click menu.** Extract here, or Extract to a folder named after
+  the archive, on ZIP, 7z, RAR, tar, tar.gz, tar.bz2, tar.xz, tar.zst, tar.lzma, gzip, bzip2, xz,
+  zstd, LZMA, ISO and CAB files, one or several at once. Archives are recognized by their first
+  bytes as well as their names. Nothing already there is replaced: a folder that is taken gets a
+  numbered name, Extract here leaves existing files alone, and a single compressed file such as
+  `dump.sql.gz` unpacks beside itself under a free name. Extraction shows in the operations tray
+  and can be cancelled, and a damaged archive leaves no empty folder behind and says what the
+  program said.
+- **On a server, with the server's own programs.** Archives on an SFTP server are extracted on the
+  server, with nothing downloaded. Poros looks once per connection for 7-Zip, unrar, unar,
+  bsdtar, tar, unzip, gzip, bzip2, xz and zstd, and runs the one that opens each format best.
+  Servers that allow SFTP alone run no programs, and neither do FTP and cloud servers; download
+  an archive from one of those to extract it on this computer.
+- **On this computer, with the program you choose.** Settings > Archives lists the extractors
+  installed on Windows and Linux, found on the PATH and where 7-Zip, WinRAR and PeaZip install
+  themselves, with the formats each opens. Leave it to pick the best one for each format, choose
+  one to use for every format it opens, or point it at another program with its own arguments,
+  where `{archive}` and `{folder}` stand for the archive and the folder it goes into.
+- **Flying files fly again.** They stayed still for anyone whose system asks for less motion,
+  which Windows does whenever its animation effects are off, so turning them on did nothing on
+  many Windows installs. The switch in Settings > Appearance now decides, and the Play button
+  beside it always plays.
+- **Each file lands where it went.** Files fly one by one as the queue finishes each, out of the
+  pane they came from and onto the row they land on, or onto the folder row they went into. When
+  many finish at once, those headed for the same row go together as a pile with a count. Moves
+  and copies within a server or this computer land on their rows too. Flights use the system's
+  own file icons, at a size that stays sharp, and the app's icons where the system has none.
+
 ## 0.6.0 - 2026-11-12
 
 - **Poros on the command line.** `poros-cli` browses, transfers, verifies and synchronizes files
