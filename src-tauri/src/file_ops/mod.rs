@@ -1,6 +1,7 @@
 //! Moving, copying and changing files where they already are, on this computer or within one
 //! server, without sending them through the transfer queue.
 
+pub mod archive;
 mod compare;
 mod delete;
 mod local_ops;
@@ -85,6 +86,20 @@ pub enum Method {
     Stream,
     /// On this computer's disks.
     Local,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtractRequest {
+    /// Names this operation for progress events and cancelling.
+    pub operation_id: String,
+    pub location: Location,
+    /// The archive.
+    pub path: String,
+    pub into: archive::ExtractInto,
+    /// The program that extracts on this computer; servers use what they have.
+    #[serde(default)]
+    pub extractor: archive::Extractor,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -323,6 +338,8 @@ pub struct FileOperations {
     events: Events,
     features: ServerFeatures,
     running: Mutex<HashMap<String, CancellationToken>>,
+    /// The extracting programs each server has, found once per session.
+    archive_tools: Mutex<HashMap<String, Arc<Vec<archive::Tool>>>>,
 }
 
 /// An operation in progress: reports progress until dropped.
@@ -356,6 +373,7 @@ impl FileOperations {
             events,
             features,
             running: Mutex::new(HashMap::new()),
+            archive_tools: Mutex::new(HashMap::new()),
         }
     }
 
@@ -477,6 +495,49 @@ impl FileOperations {
             &running.progress,
         )
         .await
+    }
+
+    /// Extracts an archive where it is, on this computer or on its server.
+    pub async fn extract(&self, request: ExtractRequest) -> AppResult<archive::ExtractSummary> {
+        let running = self.begin(&request.operation_id);
+        let cancel = running.cancel.clone();
+        let progress = running.progress.clone();
+        match request.location {
+            Location::Local => {
+                tokio::task::spawn_blocking(move || {
+                    let ExtractRequest {
+                        path,
+                        into,
+                        extractor,
+                        ..
+                    } = &request;
+                    archive::extract_local(path, *into, extractor, &cancel, &progress)
+                })
+                .await?
+            }
+            Location::Remote { session_id } => {
+                let session = self.sessions.get(&session_id).await?;
+                let tools = || self.server_archive_tools(&session_id, &session);
+                let (path, into) = (&request.path, request.into);
+                archive::extract_on_server(&session, tools, path, into, &cancel, &progress).await
+            }
+        }
+    }
+
+    async fn server_archive_tools(
+        &self,
+        session_id: &str,
+        session: &Session,
+    ) -> AppResult<Arc<Vec<archive::Tool>>> {
+        if let Some(tools) = self.archive_tools.lock().unwrap().get(session_id) {
+            return Ok(tools.clone());
+        }
+        let tools = Arc::new(archive::server_tools(session).await?);
+        self.archive_tools
+            .lock()
+            .unwrap()
+            .insert(session_id.to_string(), tools.clone());
+        Ok(tools)
     }
 
     pub async fn compare(&self, request: CompareRequest) -> AppResult<Comparison> {

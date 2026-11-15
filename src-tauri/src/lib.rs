@@ -240,6 +240,8 @@ pub fn run() {
             commands::files_measure,
             commands::files_set_permissions,
             commands::files_compare,
+            commands::files_extract,
+            commands::archive_tools,
             commands::transfer_enqueue,
             commands::transfer_list,
             commands::transfer_set_paused,

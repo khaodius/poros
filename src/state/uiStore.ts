@@ -9,6 +9,7 @@ export type SettingsSection =
   | "connection"
   | "cloud"
   | "automation"
+  | "archives"
   | "interface"
   | "appearance"
   | "log"

@@ -7,6 +7,7 @@ import {
   FolderSync,
   LayoutPanelLeft,
   Network,
+  Package,
   Palette,
   Workflow,
   type LucideIcon,
@@ -42,6 +43,7 @@ import {
   type InstallStage,
 } from "../state/updateStore";
 import { AppearanceSettings } from "./AppearanceSettings";
+import { ArchiveSettingsPage } from "./ArchiveSettings";
 import { AutomationSettingsPage } from "./AutomationSettings";
 import { CloudSettingsPage } from "./CloudSettings";
 import { Dialog } from "./Dialog";
@@ -61,6 +63,7 @@ const SECTIONS: { id: SettingsSection; label: string; icon: LucideIcon }[] = [
   { id: "connection", label: "Connection", icon: Network },
   { id: "cloud", label: "Cloud accounts", icon: Cloud },
   { id: "automation", label: "Automation", icon: Workflow },
+  { id: "archives", label: "Archives", icon: Package },
   { id: "interface", label: "Interface", icon: LayoutPanelLeft },
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "log", label: "Log", icon: FileText },
@@ -108,6 +111,7 @@ export function SettingsDialog({ section }: { section: SettingsSection }) {
           {section === "connection" && <ConnectionSettingsPage settings={settings} />}
           {section === "cloud" && <CloudSettingsPage settings={settings} />}
           {section === "automation" && <AutomationSettingsPage settings={settings} />}
+          {section === "archives" && <ArchiveSettingsPage settings={settings} />}
           {section === "interface" && <InterfaceSettingsPage settings={settings} />}
           {section === "appearance" && <AppearanceSettings />}
           {section === "log" && <LogSettingsPage settings={settings} />}

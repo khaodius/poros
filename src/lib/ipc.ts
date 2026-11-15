@@ -12,6 +12,8 @@ import type {
   Comparison,
   ConnectProfile,
   DeleteRequest,
+  ExtractRequest,
+  ExtractSummary,
   DeleteSummary,
   DirListing,
   DocumentInfo,
@@ -23,6 +25,7 @@ import type {
   FileDetails,
   FileEntry,
   FileLocation,
+  InstalledArchiveTool,
   FolderUsage,
   FontFamily,
   ImportOutcome,
@@ -162,6 +165,13 @@ export const fileOperations = {
   setPermissions: (request: PermissionRequest) =>
     call<PermissionSummary>("files_set_permissions", { request }),
   compare: (request: CompareRequest) => call<Comparison>("files_compare", { request }),
+  /** Extracts an archive where it is, reporting progress like the other operations. */
+  extract: (request: ExtractRequest) => call<ExtractSummary>("files_extract", { request }),
+};
+
+export const archives = {
+  /** The extracting programs installed on this computer. */
+  installed: () => call<InstalledArchiveTool[]>("archive_tools"),
 };
 
 export const transfers = {

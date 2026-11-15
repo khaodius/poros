@@ -710,6 +710,79 @@ export interface TaskView extends ScheduledTask {
 /** Where files are: this computer or the server of a session. */
 export type FileLocation = { kind: "local" } | { kind: "remote"; sessionId: string };
 
+/** Mirrored in src-tauri/src/file_ops/archive/formats.rs. */
+export type ArchiveFormat =
+  | "zip"
+  | "sevenZip"
+  | "rar"
+  | "tar"
+  | "tarGzip"
+  | "tarBzip2"
+  | "tarXz"
+  | "tarZstd"
+  | "tarLzma"
+  | "gzip"
+  | "bzip2"
+  | "xz"
+  | "zstd"
+  | "lzma"
+  | "iso"
+  | "cab";
+
+/** Mirrored in src-tauri/src/file_ops/archive/tools.rs. */
+export type ArchiveToolKind =
+  | "sevenZip"
+  | "sevenZipStandalone"
+  | "winRar"
+  | "unRar"
+  | "unrarFree"
+  | "unar"
+  | "bsdTar"
+  | "gnuTar"
+  | "unzip"
+  | "gzip"
+  | "bzip2"
+  | "xz"
+  | "zstd";
+
+/** An extracting program found on this computer. */
+export interface InstalledArchiveTool {
+  kind: ArchiveToolKind;
+  name: string;
+  path: string;
+  formats: ArchiveFormat[];
+}
+
+/** Into the folder the archive is in, or a new folder beside it named after it. */
+export type ExtractInto = "here" | "folder";
+
+/** The program that extracts on this computer. */
+export type Extractor =
+  | { kind: "auto" }
+  | { kind: "installed"; path: string }
+  | { kind: "custom"; program: string; arguments: string };
+
+export interface ExtractRequest {
+  operationId: string;
+  location: FileLocation;
+  /** The archive. */
+  path: string;
+  into: ExtractInto;
+  extractor?: Extractor;
+}
+
+export interface ExtractSummary {
+  /** The new folder, the unpacked file, or the folder extracted into. */
+  destination: string;
+  /** The folder the archive is in. */
+  folder: string;
+  format: ArchiveFormat;
+  /** The program that extracted it. */
+  tool: string;
+  /** What the program said while it succeeded. */
+  warning?: string;
+}
+
 export type PlaceMode = "move" | "copy";
 /** Replace overwrites files and merges folders; keepBoth names the newcomer `name (2)`. */
 export type NameClash = "replace" | "skip" | "keepBoth";

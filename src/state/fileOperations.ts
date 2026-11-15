@@ -52,7 +52,7 @@ export function placesInPlace(origin: FileOrigin, target: PaneHandle): boolean {
 }
 
 /** Reloads the panes showing `folder`, moving their cursor to `focusPath` when given. */
-function refreshFolder(origin: FileOrigin, folder: string, focusPath?: string): void {
+export function refreshFolder(origin: FileOrigin, folder: string, focusPath?: string): void {
   const style = pathStyleOf(origin);
   for (const pane of listPanes()) {
     const shown = pane.path();
