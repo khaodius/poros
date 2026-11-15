@@ -572,11 +572,21 @@ mod tests {
     #[test]
     fn never_overwrites() {
         let args = |kind, program, format, archive, folder| {
-            let planned = plan(&tool(kind, program), format, &placement(archive, folder, None));
+            let planned = plan(
+                &tool(kind, program),
+                format,
+                &placement(archive, folder, None),
+            );
             planned.unwrap().stages[0].args.clone()
         };
         assert_eq!(
-            args(ToolKind::SevenZip, "7z", Format::Zip, "/srv/a.zip", "/srv/a"),
+            args(
+                ToolKind::SevenZip,
+                "7z",
+                Format::Zip,
+                "/srv/a.zip",
+                "/srv/a"
+            ),
             ["x", "-y", "-aos", "-bd", "-o/srv/a", "/srv/a.zip"]
         );
         assert_eq!(
@@ -584,7 +594,13 @@ mod tests {
             ["x", "-y", "-o-", "-p-", "/srv/b.rar", "/srv/"]
         );
         assert_eq!(
-            args(ToolKind::GnuTar, "tar", Format::TarXz, "/srv/c.txz", "/srv/c"),
+            args(
+                ToolKind::GnuTar,
+                "tar",
+                Format::TarXz,
+                "/srv/c.txz",
+                "/srv/c"
+            ),
             ["-x", "--skip-old-files", "-f", "/srv/c.txz", "-C", "/srv/c"]
         );
     }
@@ -616,7 +632,12 @@ mod tests {
             "set -C; 'gzip' '-dc' '/d/x.sql.gz' > '/d/x.sql'"
         );
         let xz = tool(ToolKind::Xz, "xz");
-        let lzma = plan(&xz, Format::Lzma, &placement("/d/y.lzma", "/d", Some("/d/y"))).unwrap();
+        let lzma = plan(
+            &xz,
+            Format::Lzma,
+            &placement("/d/y.lzma", "/d", Some("/d/y")),
+        )
+        .unwrap();
         assert_eq!(lzma.stages[0].args, ["--format=lzma", "-dc", "/d/y.lzma"]);
     }
 
@@ -664,8 +685,14 @@ mod tests {
                       poros-archive-tools\n";
         assert_eq!(parse_server_probe(rarlab).unwrap()[0].kind, ToolKind::UnRar);
         let busybox = "tool tar\ntar tar: unrecognized option\nporos-archive-tools\n";
-        assert_eq!(parse_server_probe(busybox).unwrap()[0].kind, ToolKind::BsdTar);
-        assert_eq!(parse_server_probe("This service allows sftp connections only."), None);
+        assert_eq!(
+            parse_server_probe(busybox).unwrap()[0].kind,
+            ToolKind::BsdTar
+        );
+        assert_eq!(
+            parse_server_probe("This service allows sftp connections only."),
+            None
+        );
     }
 
     #[test]

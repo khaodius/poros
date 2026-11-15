@@ -343,11 +343,20 @@ mod tests {
     fn names_what_comes_out() {
         assert_eq!(unpacked_name("site.tar.gz", ArchiveFormat::TarGzip), "site");
         assert_eq!(unpacked_name("Site.TGZ", ArchiveFormat::TarGzip), "Site");
-        assert_eq!(unpacked_name("dump.sql.gz", ArchiveFormat::Gzip), "dump.sql");
-        assert_eq!(unpacked_name("photos.part1.rar", ArchiveFormat::Rar), "photos");
+        assert_eq!(
+            unpacked_name("dump.sql.gz", ArchiveFormat::Gzip),
+            "dump.sql"
+        );
+        assert_eq!(
+            unpacked_name("photos.part1.rar", ArchiveFormat::Rar),
+            "photos"
+        );
         assert_eq!(unpacked_name("v1.2.zip", ArchiveFormat::Zip), "v1.2");
         assert_eq!(unpacked_name("plain.tar.gz", ArchiveFormat::Tar), "plain");
-        assert_eq!(unpacked_name("download", ArchiveFormat::Zip), "download files");
+        assert_eq!(
+            unpacked_name("download", ArchiveFormat::Zip),
+            "download files"
+        );
         assert_eq!(unpacked_name("blob", ArchiveFormat::Gzip), "blob.out");
     }
 }

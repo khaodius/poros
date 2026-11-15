@@ -7,8 +7,8 @@ use poros_lib::events::Events;
 use poros_lib::file_ops::archive::ExtractInto;
 use poros_lib::file_ops::{
     CompareRequest, Comparison, Conflict, DeleteRequest, DeleteSummary, ExtractRequest,
-    FileOperations, FileRef, Location, Method, Mode, ModeChange, MoveCopyRequest,
-    OperationSummary, PermissionRequest, ServerFeatures,
+    FileOperations, FileRef, Location, Method, Mode, ModeChange, MoveCopyRequest, OperationSummary,
+    PermissionRequest, ServerFeatures,
 };
 use poros_lib::model::EntryKind;
 use poros_lib::protocol::Protocol;
@@ -988,7 +988,11 @@ async fn extracts_archives_with_the_servers_own_programs() {
     fixture.mkdir("site").await;
 
     let summary = operations
-        .extract(extract_request(&fixture, "site.tar.gz", ExtractInto::Folder))
+        .extract(extract_request(
+            &fixture,
+            "site.tar.gz",
+            ExtractInto::Folder,
+        ))
         .await
         .unwrap();
     assert_eq!(summary.destination, fixture.path("site (2)"));
@@ -1031,7 +1035,11 @@ async fn extracts_archives_with_the_servers_own_programs() {
         .write("broken.tar.gz", b"\x1f\x8b\x08\x00not gzip at all")
         .await;
     let error = operations
-        .extract(extract_request(&fixture, "broken.tar.gz", ExtractInto::Folder))
+        .extract(extract_request(
+            &fixture,
+            "broken.tar.gz",
+            ExtractInto::Folder,
+        ))
         .await
         .unwrap_err();
     assert!(error.message.contains("tar"), "{}", error.message);
@@ -1043,7 +1051,10 @@ async fn extracts_archives_with_the_servers_own_programs() {
         .extract(extract_request(&fixture, "notes.txt", ExtractInto::Here))
         .await
         .unwrap_err();
-    assert_eq!(error.message, "notes.txt is not an archive Poros can extract");
+    assert_eq!(
+        error.message,
+        "notes.txt is not an archive Poros can extract"
+    );
 
     fixture.close().await;
 }

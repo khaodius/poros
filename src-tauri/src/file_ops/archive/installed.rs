@@ -345,7 +345,6 @@ pub fn run(plan: &Plan, kind: Option<ToolKind>, cancel: &CancellationToken) -> A
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::file_ops::archive::tools::Invocation;
 
     #[test]
     fn lists_what_is_on_path() {
@@ -361,6 +360,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn pipes_stages_and_reports_failures() {
+        use crate::file_ops::archive::tools::Invocation;
+
         let folder = std::env::temp_dir().join(format!("poros-run-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&folder).unwrap();
         let file = folder.join("out.txt");

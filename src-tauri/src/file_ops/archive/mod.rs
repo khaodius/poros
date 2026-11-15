@@ -94,8 +94,7 @@ fn failure(tool: &str, error_output: &str, status: Option<u32>) -> AppError {
     let said = error_output
         .lines()
         .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .last();
+        .rfind(|line| !line.is_empty());
     let message = match (said, status) {
         (Some(said), _) => format!("{tool}: {said}"),
         (None, Some(status)) => format!("{tool} exited with status {status}"),
@@ -311,8 +310,8 @@ pub(crate) fn extract_local(
         .parent()
         .map(Path::to_path_buf)
         .ok_or_else(|| not_an_archive(&name))?;
-    let format = ArchiveFormat::detect(&name, &read_head(&archive)?)
-        .ok_or_else(|| not_an_archive(&name))?;
+    let format =
+        ArchiveFormat::detect(&name, &read_head(&archive)?).ok_or_else(|| not_an_archive(&name))?;
 
     let installed = match extractor {
         Extractor::Custom(_) => Vec::new(),
@@ -425,10 +424,13 @@ mod tests {
         folder
     }
 
+    #[cfg(unix)]
     fn has(program: &str) -> bool {
-        installed_tools()
-            .iter()
-            .any(|tool| Path::new(&tool.path).file_stem().is_some_and(|stem| stem == program))
+        installed_tools().iter().any(|tool| {
+            Path::new(&tool.path)
+                .file_stem()
+                .is_some_and(|stem| stem == program)
+        })
     }
 
     #[cfg(unix)]
@@ -495,8 +497,14 @@ mod tests {
         )
         .unwrap();
         assert_eq!(summary.destination, text(&folder));
-        assert_eq!(std::fs::read_to_string(folder.join("a.txt")).unwrap(), "old\n");
-        assert_eq!(std::fs::read_to_string(folder.join("c.txt")).unwrap(), "fresh\n");
+        assert_eq!(
+            std::fs::read_to_string(folder.join("a.txt")).unwrap(),
+            "old\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(folder.join("c.txt")).unwrap(),
+            "fresh\n"
+        );
 
         shell(&folder, "echo data > dump.sql && gzip -k dump.sql");
         let single = extract_local(
@@ -545,7 +553,10 @@ mod tests {
             return;
         }
         let folder = scratch();
-        shell(&folder, "echo hi > a.txt && tar -cf pack.tar a.txt && rm a.txt");
+        shell(
+            &folder,
+            "echo hi > a.txt && tar -cf pack.tar a.txt && rm a.txt",
+        );
         let custom = Extractor::Custom(CustomTool {
             program: "tar".into(),
             arguments: "-xf \"{archive}\" -C \"{folder}\"".into(),
@@ -578,7 +589,10 @@ mod tests {
                 .output()
                 .is_ok_and(|output| output.status.success())
         };
-        if !["tar", "gzip", "zip", "xz"].iter().all(|program| has_program(program)) {
+        if !["tar", "gzip", "zip", "xz"]
+            .iter()
+            .all(|program| has_program(program))
+        {
             return;
         }
         let folder = scratch();
@@ -590,10 +604,16 @@ mod tests {
              echo single > one.txt && gzip -k one.txt && xz -k one.txt",
         );
         if has_program("zstd") {
-            shell(&folder, "zstd -q -k one.txt && tar -c -C src . | zstd -q -o pack.tar.zst");
+            shell(
+                &folder,
+                "zstd -q -k one.txt && tar -c -C src . | zstd -q -o pack.tar.zst",
+            );
         }
         if has_program("7z") {
-            shell(&folder, "(cd src && 7z a -bd -bso0 ../pack.7z . >/dev/null)");
+            shell(
+                &folder,
+                "(cd src && 7z a -bd -bso0 ../pack.7z . >/dev/null)",
+            );
         }
         let candidates = [
             (ToolKind::SevenZip, "7z"),
@@ -680,7 +700,10 @@ mod tests {
 
     #[cfg(unix)]
     fn tar_kind_here() -> ToolKind {
-        let output = std::process::Command::new("tar").arg("--version").output().unwrap();
+        let output = std::process::Command::new("tar")
+            .arg("--version")
+            .output()
+            .unwrap();
         tools::tar_kind(&String::from_utf8_lossy(&output.stdout))
     }
 
