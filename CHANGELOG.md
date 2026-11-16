@@ -3,6 +3,17 @@
 Installers for every version are attached to its
 [release](https://github.com/khaodius/poros/releases), with SHA-256 checksums.
 
+## 0.6.2 - 2026-11-16
+
+- **Files dragged out of the window and back show where they will land.** On Windows, files from
+  a server dragged past the window's edge and back over Poros lost the pane's drop highlight and
+  the name of what was being dragged beside the pointer, though letting go still dropped them
+  where they belonged. Windows tells the page nothing of a drag back over it unless the drag
+  carries files already on this computer, so Poros now follows the pointer itself: the pane or
+  folder under it lights up, the dragged files and what a drop would do follow it again, holding
+  Ctrl shows a copy, and the pointer is the ordinary one. The files also fly from where they were
+  let go of rather than from where they left the window.
+
 ## 0.6.1 - 2026-11-15
 
 - **Extract archives from the right-click menu.** Extract here, or Extract to a folder named after

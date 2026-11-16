@@ -274,6 +274,16 @@ export type DragOutOutcome =
    */
   | { kind: "returned"; at: { x: number; y: number } | null; copy: boolean };
 
+/**
+ * Mirrored in src-tauri/src/drag_out/mod.rs. Where in its page the pointer is while files this
+ * window dragged out of Poros are back over it; `at` is `null` once the pointer leaves.
+ */
+export interface DragOutHover {
+  at: { x: number; y: number } | null;
+  /** The copy key is held. */
+  copy: boolean;
+}
+
 export interface EnqueueRequest {
   sessionId: string;
   /** The server a relay reads from. */
