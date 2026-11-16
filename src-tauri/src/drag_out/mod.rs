@@ -28,6 +28,10 @@ use crate::transfer::{
 /// Mirrored in `src/lib/ipc.ts`. Tells every window whether files are being dragged out of
 /// Poros, so none of them takes the drag back as files dropped in from outside.
 pub const DRAG_OUT_EVENT: &str = "poros://drag-out";
+/// Mirrored in `src/lib/ipc.ts`. Tells the window a drag of files left where the pointer is while
+/// it is back over that window, which the system's drag and drop does not tell its page.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub const DRAG_OUT_HOVER_EVENT: &str = "poros://drag-out-hover";
 /// Downloads still running for a drop are checked this often while something waits for them.
 const STAGING_POLL: Duration = Duration::from_millis(100);
 /// A Poros window can report a drop on it a moment after the drag that carried it has ended.
@@ -61,6 +65,16 @@ pub enum DragOutOutcome {
         at: Option<PagePoint>,
         copy: bool,
     },
+}
+
+/// Mirrored in `src/lib/types.ts`. Where the pointer is over the window the files were dragged
+/// out of, for its page to show where they would land; `at` is `None` once the pointer leaves.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[cfg_attr(not(windows), allow(dead_code))]
+pub struct DragOutHover {
+    pub at: Option<PagePoint>,
+    /// The copy key is held.
+    pub copy: bool,
 }
 
 /// The system's drag and drop failed.

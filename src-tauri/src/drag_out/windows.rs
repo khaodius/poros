@@ -5,6 +5,7 @@
 //! wait there for the downloads without holding up the windows, and it lets Explorer read on a
 //! thread of its own (`IDataObjectAsyncCapability`) so Explorer is not held up either.
 
+use std::cell::Cell;
 use std::mem::ManuallyDrop;
 use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
@@ -41,13 +42,14 @@ use ::windows::Win32::UI::Shell::{
     FILEDESCRIPTORW,
 };
 use ::windows::Win32::UI::WindowsAndMessaging::{
-    GetAncestor, GetCursorPos, WindowFromPoint, GA_ROOT,
+    GetAncestor, GetCursorPos, LoadCursorW, SetCursor, WindowFromPoint, GA_ROOT, IDC_ARROW,
 };
-use tauri::{Manager, WebviewWindow};
+use tauri::{Emitter, Manager, WebviewWindow};
 use tokio::sync::oneshot;
 
 use super::{
-    drag_failed, staged_entries, DragOutOutcome, Dragged, PagePoint, StagedEntry, Staging,
+    drag_failed, staged_entries, DragOutHover, DragOutOutcome, Dragged, PagePoint, StagedEntry,
+    Staging, DRAG_OUT_HOVER_EVENT,
 };
 use crate::error::AppResult;
 
@@ -493,12 +495,77 @@ struct Release {
     copy: bool,
 }
 
+/// Where the page of the window the drag began in sits on the screen. The window stays put while
+/// the system's drag holds the pointer.
+#[derive(Clone, Copy)]
+struct PageOrigin {
+    corner: POINT,
+    scale: f64,
+}
+
+impl PageOrigin {
+    fn of(window: &WebviewWindow) -> Option<Self> {
+        let corner = window.inner_position().ok()?;
+        let scale = window.scale_factor().ok()?;
+        Some(Self {
+            corner: POINT {
+                x: corner.x,
+                y: corner.y,
+            },
+            scale,
+        })
+    }
+
+    fn page_point(&self, point: POINT) -> PagePoint {
+        PagePoint {
+            x: f64::from(point.x - self.corner.x) / self.scale,
+            y: f64::from(point.y - self.corner.y) / self.scale,
+        }
+    }
+}
+
+/// Tells the page of the window the drag began in where the pointer is while it is back over
+/// that window. Windows tells a page of a drag over it only when the drag carries a file list,
+/// which files from a server do not, so the page would show neither the pane they would land in
+/// nor what is being dragged.
+struct HoverReport {
+    window: WebviewWindow,
+    page: Option<PageOrigin>,
+    /// What the page was last told: the pointer on the screen and whether the copy key is held,
+    /// or `None` while the pointer is off the window.
+    told: Cell<Option<(POINT, bool)>>,
+}
+
+impl HoverReport {
+    fn follow(&self, over: Option<POINT>, copy: bool) {
+        let Some(page) = self.page else {
+            return;
+        };
+        let now = over.map(|point| (point, copy));
+        if self.told.replace(now) == now {
+            return;
+        }
+        let hover = DragOutHover {
+            at: over.map(|point| page.page_point(point)),
+            copy,
+        };
+        let _ = self
+            .window
+            .emit_to(self.window.label(), DRAG_OUT_HOVER_EVENT, hover);
+    }
+
+    fn is_over(&self) -> bool {
+        self.told.get().is_some()
+    }
+}
+
 #[implement(IDropSource)]
 struct DropSource {
     drag: Arc<DragState>,
     source_window: isize,
     own_windows: Vec<isize>,
     returned: Arc<Mutex<Option<Release>>>,
+    hover: HoverReport,
 }
 
 impl DropSource {
@@ -518,10 +585,15 @@ impl IDropSource_Impl for DropSource_Impl {
         if escape.as_bool() || keys.0 & MK_RBUTTON.0 != 0 {
             return DRAGDROP_S_CANCEL;
         }
+        let under = self.own_window_under();
         if keys.0 & MK_LBUTTON.0 != 0 {
+            let over_source = under
+                .filter(|(window, _)| *window == self.source_window)
+                .map(|(_, point)| point);
+            self.hover.follow(over_source, keys.0 & MK_CONTROL.0 != 0);
             return S_OK;
         }
-        match self.own_window_under() {
+        match under {
             Some((window, point)) => {
                 if window == self.source_window {
                     *self.returned.lock().unwrap() = Some(Release {
@@ -539,6 +611,14 @@ impl IDropSource_Impl for DropSource_Impl {
     }
 
     fn GiveFeedback(&self, _effect: DROPEFFECT) -> HRESULT {
+        // Back over its own window the page shows what a drop would do beside the pointer, which
+        // is then the plain one that drags inside the window have.
+        if self.hover.is_over() {
+            if let Ok(arrow) = unsafe { LoadCursorW(None, IDC_ARROW) } {
+                unsafe { SetCursor(Some(arrow)) };
+                return S_OK;
+            }
+        }
         DRAGDROP_S_USEDEFAULTCURSORS
     }
 }
@@ -591,6 +671,7 @@ fn run_drag(
     drag: Arc<DragState>,
     source_window: isize,
     own_windows: Vec<isize>,
+    hover: HoverReport,
 ) -> AppResult<Ended> {
     let data = data.resolve().map_err(drag_failed)?;
     let returned = Arc::new(Mutex::new(None));
@@ -599,6 +680,7 @@ fn run_drag(
         source_window,
         own_windows,
         returned: returned.clone(),
+        hover,
     }
     .into();
     let mut effect = DROPEFFECT_NONE;
@@ -608,15 +690,6 @@ fn run_drag(
         result,
         effect,
         returned,
-    })
-}
-
-fn page_point(window: &WebviewWindow, point: POINT) -> Option<PagePoint> {
-    let corner = window.inner_position().ok()?;
-    let scale = window.scale_factor().ok()?;
-    Some(PagePoint {
-        x: f64::from(point.x - corner.x) / scale,
-        y: f64::from(point.y - corner.y) / scale,
     })
 }
 
@@ -643,11 +716,17 @@ pub(super) async fn drag(window: &WebviewWindow, dragged: &Dragged) -> AppResult
         .values()
         .filter_map(window_handle)
         .collect();
+    let page = PageOrigin::of(window);
+    let hover = HoverReport {
+        window: window.clone(),
+        page,
+        told: Cell::new(None),
+    };
     let (sender, receiver) = oneshot::channel();
     let state = drag.clone();
     window
         .run_on_main_thread(move || {
-            let _ = sender.send(run_drag(&data, state, source_window, own_windows));
+            let _ = sender.send(run_drag(&data, state, source_window, own_windows, hover));
         })
         .map_err(drag_failed)?;
     let ended = receiver
@@ -655,7 +734,7 @@ pub(super) async fn drag(window: &WebviewWindow, dragged: &Dragged) -> AppResult
         .unwrap_or_else(|_| Err(drag_failed("the drag ended without an answer")))?;
     if let Some(release) = ended.returned {
         return Ok(DragOutOutcome::Returned {
-            at: page_point(window, release.point),
+            at: page.map(|page| page.page_point(release.point)),
             copy: release.copy,
         });
     }

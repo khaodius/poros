@@ -18,6 +18,7 @@ import type {
   DirListing,
   DocumentInfo,
   DocumentLocation,
+  DragOutHover,
   DragOutOutcome,
   DragOutRequest,
   EnqueueRequest,
@@ -99,6 +100,11 @@ export const DRAG_PREVIEW_RELEASED_EVENT = "poros://drag-preview-released";
 export const WINDOW_USED_EVENT = "poros://window-used";
 /** Mirrored in src-tauri/src/drag_out/mod.rs. Says whether files are dragged out of Poros. */
 export const DRAG_OUT_EVENT = "poros://drag-out";
+/**
+ * Mirrored in src-tauri/src/drag_out/mod.rs. Says where the pointer is while files this window
+ * dragged out of Poros are back over it.
+ */
+export const DRAG_OUT_HOVER_EVENT = "poros://drag-out-hover";
 
 /** The label of the window Poros starts with; windows torn out of it get others. */
 export const MAIN_WINDOW = "main";
@@ -422,6 +428,8 @@ export const onDragPreviewReleased = (handler: () => void) =>
   subscribe(DRAG_PREVIEW_RELEASED_EVENT, handler);
 export const onDragOut = (handler: (state: { active: boolean }) => void) =>
   subscribe(DRAG_OUT_EVENT, handler);
+export const onDragOutHover = (handler: (hover: DragOutHover) => void) =>
+  subscribe(DRAG_OUT_HOVER_EVENT, handler);
 export const onSessionClosed = (handler: (closed: SessionClosed) => void) =>
   subscribe(SESSION_CLOSED_EVENT, handler);
 export const onTransfers = (handler: (update: TransferUpdate) => void) =>
