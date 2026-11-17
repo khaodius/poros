@@ -248,7 +248,7 @@ export function FilePane({
         sessionId,
         label: title,
         path: () => paneRef.current.listing?.path ?? null,
-        refresh: (focusPath) => void paneRef.current.refresh(focusPath),
+        refresh: (focus) => void paneRef.current.refresh(focus),
         selected: () => paneRef.current.selectedEntries(),
         entries: () => paneRef.current.listing?.entries ?? [],
         visible: false,

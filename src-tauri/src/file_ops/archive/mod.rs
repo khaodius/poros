@@ -1,6 +1,11 @@
 //! Extracting archives where they are: on a server with the programs it has, found with one
 //! command over SSH, or on this computer with the installed program Settings picks. The first
 //! bytes of the file decide its format, and nothing already there is overwritten.
+//!
+//! Both ways to extract run the program the same way, into a new, empty folder beside the
+//! archive. Extract to a folder keeps that folder under the archive's name. Extract here
+//! unpacks into a hidden working folder, then moves what it holds out beside the archive, each
+//! item under a free name such as `site (2)`, and removes the working folder.
 
 mod formats;
 mod installed;
@@ -19,6 +24,7 @@ pub use tools::{CustomTool, Tool, ToolKind};
 
 use super::{names, Progress};
 use crate::error::{AppError, AppResult, ErrorKind};
+use crate::model::EntryKind;
 use crate::remote_path;
 use crate::rsync::{run_command, shell_quote};
 use crate::session::Session;
@@ -28,6 +34,8 @@ use tools::{choose, custom_plan, plan, shell_script, Placement, Plan};
 
 const COMMAND_OUTPUT_LIMIT: usize = 64 * 1024;
 const MAX_FREE_NAME_ATTEMPTS: usize = 10_000;
+/// How long a move out of the working folder is retried while Windows reports it busy.
+const SETTLE_LIMIT: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -58,10 +66,13 @@ pub enum Extractor {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExtractSummary {
-    /// What to show: the new folder, the unpacked file, or the folder extracted into.
+    /// What to show: the new folder, the unpacked file, the one item extracted here, or the
+    /// folder extracted into.
     pub destination: String,
     /// The folder the archive is in.
     pub folder: String,
+    /// What now stands beside the archive: the new folder, or each item extracted here.
+    pub placed: Vec<String>,
     pub format: ArchiveFormat,
     /// The program that extracted it.
     pub tool: String,
@@ -165,6 +176,36 @@ async fn free_remote_name(
     ))
 }
 
+/// The new folder beside the archive that a program extracts into: under the archive's own
+/// name for Extract to a folder, or a hidden working folder for Extract here.
+fn target_name(into: ExtractInto, unpacked: &str) -> Option<String> {
+    match into {
+        ExtractInto::Folder => None,
+        ExtractInto::Here => Some(names::temporary(unpacked)),
+    }
+}
+
+/// Moves each item in `working` out into `parent` under a free name, and removes `working`.
+/// Returns where the items now are.
+async fn place_remote(fs: &RemoteFs, working: &str, parent: &str) -> AppResult<Vec<String>> {
+    // An archive can make the folder it unpacked into read-only.
+    let _ = fs.set_permissions(working, 0o700).await;
+    let mut items = fs.entries(working).await?;
+    items.sort_by(|(a, _), (b, _)| a.cmp(b));
+    let mut placed = Vec::with_capacity(items.len());
+    for (name, stat) in items {
+        let is_dir = stat.kind == EntryKind::Dir;
+        let free = free_remote_name(fs, parent, &name, is_dir).await?;
+        let to = remote_path::join(parent, &free);
+        fs.rename_path(&remote_path::join(working, &name), &to)
+            .await?;
+        placed.push(to);
+    }
+    // Left behind empty if the server refuses; it is hidden, and holds nothing.
+    let _ = fs.remove_empty_dir(working).await;
+    Ok(placed)
+}
+
 /// Extracts an archive on the server it is on, with the programs `tools` finds there once the
 /// file is known to be an archive.
 pub(crate) async fn extract_on_server<Tools>(
@@ -196,21 +237,14 @@ where
 
     progress.working_on(&format!("With {} on the server", tool.kind.display_name()));
     let unpacked = unpacked_name(&name, format);
-    let created = match into {
-        ExtractInto::Folder => {
-            let free = free_remote_name(fs, &parent, &unpacked, true).await?;
-            Some(fs.make_dir(&parent, &free).await?)
-        }
-        ExtractInto::Here => None,
+    let folder_name = match target_name(into, &unpacked) {
+        Some(working) => working,
+        None => free_remote_name(fs, &parent, &unpacked, true).await?,
     };
-    let folder = created.clone().unwrap_or_else(|| parent.clone());
-    let single_file = match format.is_single_file() {
-        true => Some(remote_path::join(
-            &folder,
-            &free_remote_name(fs, &folder, &unpacked, false).await?,
-        )),
-        false => None,
-    };
+    let folder = remote_path::join(&parent, &folder_name);
+    let single_file = format
+        .is_single_file()
+        .then(|| remote_path::join(&folder, &unpacked));
     let plan = plan(
         tool,
         format,
@@ -223,6 +257,7 @@ where
     )
     .ok_or_else(|| not_an_archive(&name))?;
     let command = format!("sh -c {}", shell_quote(&shell_script(&plan)));
+    fs.make_dir(&parent, &folder_name).await?;
 
     let result = cancellable(cancel, async {
         let channel = session.open_command_channel().await?;
@@ -232,31 +267,58 @@ where
     let tool_name = tool.kind.display_name();
     let failed = match result {
         Ok(output) if tolerated(tool.kind, output.exit_status) => {
-            return Ok(ExtractSummary {
-                destination: single_file.or(created).unwrap_or_else(|| parent.clone()),
-                folder: parent,
-                format,
-                tool: tool_name.to_string(),
-                warning: warning_from(&output.error_output),
-            });
+            let placed = match into {
+                ExtractInto::Folder => Ok(vec![folder.clone()]),
+                ExtractInto::Here => place_remote(fs, &folder, &parent).await,
+            };
+            match placed {
+                Ok(placed) => {
+                    let destination = match into {
+                        ExtractInto::Folder => single_file.unwrap_or_else(|| folder.clone()),
+                        ExtractInto::Here => shown_here(&placed, &parent),
+                    };
+                    return Ok(ExtractSummary {
+                        destination,
+                        folder: parent,
+                        placed,
+                        format,
+                        tool: tool_name.to_string(),
+                        warning: warning_from(&output.error_output),
+                    });
+                }
+                Err(error) => error,
+            }
         }
         Ok(output) => failure(tool_name, &output.error_output, output.exit_status),
         Err(error) => error,
     };
     // Nothing half done stays behind where Poros made the place for it.
-    if let Some(file) = &single_file {
-        let _ = fs.delete(std::slice::from_ref(file)).await;
-    }
-    if let Some(created) = &created {
-        if fs
-            .list_dir(created)
-            .await
-            .is_ok_and(|listing| listing.entries.is_empty())
-        {
-            let _ = fs.delete(std::slice::from_ref(created)).await;
+    match into {
+        ExtractInto::Here => {
+            let _ = fs.delete(std::slice::from_ref(&folder)).await;
+        }
+        ExtractInto::Folder => {
+            if let Some(file) = &single_file {
+                let _ = fs.delete(std::slice::from_ref(file)).await;
+            }
+            if fs
+                .list_dir(&folder)
+                .await
+                .is_ok_and(|listing| listing.entries.is_empty())
+            {
+                let _ = fs.delete(std::slice::from_ref(&folder)).await;
+            }
         }
     }
     Err(failed)
+}
+
+/// What an extraction here shows: the one item it placed, or the folder for several.
+fn shown_here(placed: &[String], parent: &str) -> String {
+    match placed {
+        [only] => only.clone(),
+        _ => parent.to_string(),
+    }
 }
 
 fn tolerated(kind: ToolKind, status: Option<u32>) -> bool {
@@ -277,6 +339,71 @@ fn free_local_name(folder: &Path, name: &str, is_dir: bool) -> AppResult<PathBuf
                 format!("Every name like {name} is taken in {}", folder.display()),
             )
         })
+}
+
+/// Moves each item in `working` out into `parent` under a free name, and removes `working`.
+/// Returns where the items now are.
+fn place_local(working: &Path, parent: &Path) -> AppResult<Vec<PathBuf>> {
+    fn at(path: &Path) -> impl FnOnce(std::io::Error) -> AppError + '_ {
+        move |error| AppError::from(error).with_path(text(path))
+    }
+    open_up_local(working);
+    let mut items: Vec<(std::ffi::OsString, bool)> = std::fs::read_dir(working)
+        .map_err(at(working))?
+        .map(|item| {
+            let item = item?;
+            Ok((item.file_name(), item.file_type()?.is_dir()))
+        })
+        .collect::<std::io::Result<_>>()
+        .map_err(at(working))?;
+    items.sort();
+    let mut placed = Vec::with_capacity(items.len());
+    for (name, is_dir) in items {
+        let from = working.join(&name);
+        let same = parent.join(&name);
+        let to = if std::fs::symlink_metadata(&same).is_err() {
+            same
+        } else {
+            free_local_name(parent, &name.to_string_lossy(), is_dir)?
+        };
+        settle(|| std::fs::rename(&from, &to)).map_err(at(&from))?;
+        placed.push(to);
+    }
+    // Left behind empty if it stays busy; it is hidden, and holds nothing.
+    let _ = settle(|| std::fs::remove_dir(working));
+    Ok(placed)
+}
+
+/// Lets Poros move items out of a working folder whose archive made it read-only.
+#[cfg(unix)]
+fn open_up_local(working: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(working, std::fs::Permissions::from_mode(0o700));
+}
+
+#[cfg(not(unix))]
+fn open_up_local(_working: &Path) {}
+
+/// Runs `step` again for a few seconds while Windows refuses it because something still has
+/// a file open in it, as virus scanners and the search indexer do right after it was written.
+fn settle(mut step: impl FnMut() -> std::io::Result<()>) -> std::io::Result<()> {
+    let mut wait = std::time::Duration::from_millis(25);
+    let mut waited = std::time::Duration::ZERO;
+    loop {
+        match step() {
+            Err(error) if cfg!(windows) && busy(&error) && waited < SETTLE_LIMIT => {
+                std::thread::sleep(wait);
+                waited += wait;
+                wait = (wait * 2).min(std::time::Duration::from_millis(500));
+            }
+            result => return result,
+        }
+    }
+}
+
+/// Access denied or a sharing violation: what Windows says while a file is open.
+fn busy(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::PermissionDenied || error.raw_os_error() == Some(32)
 }
 
 fn read_head(path: &Path) -> AppResult<Vec<u8>> {
@@ -349,20 +476,11 @@ pub(crate) fn extract_local(
     };
 
     let unpacked = unpacked_name(&name, format);
-    let created = match into {
-        ExtractInto::Folder => {
-            let folder = free_local_name(&parent, &unpacked, true)?;
-            std::fs::create_dir(&folder)
-                .map_err(|error| AppError::from(error).with_path(text(&folder)))?;
-            Some(folder)
-        }
-        ExtractInto::Here => None,
+    let folder = match target_name(into, &unpacked) {
+        Some(working) => parent.join(working),
+        None => free_local_name(&parent, &unpacked, true)?,
     };
-    let folder = created.clone().unwrap_or_else(|| parent.clone());
-    let single_file = match (format.is_single_file(), chosen) {
-        (true, Some(_)) => Some(free_local_name(&folder, &unpacked, false)?),
-        _ => None,
-    };
+    let single_file = (format.is_single_file() && chosen.is_some()).then(|| folder.join(&unpacked));
     let (plan, tool_name, kind): (Plan, String, Option<ToolKind>) = match (extractor, chosen) {
         (Extractor::Custom(custom), _) => (
             custom_plan(custom, &text(&archive), &text(&folder)),
@@ -389,27 +507,49 @@ pub(crate) fn extract_local(
         ),
         (_, None) => return Err(not_an_archive(&name)),
     };
+    std::fs::create_dir(&folder).map_err(|error| AppError::from(error).with_path(text(&folder)))?;
 
     progress.working_on(&format!("With {tool_name}"));
     let failed = match installed::run(&plan, kind, cancel) {
         Ok(finished) if finished.succeeded => {
-            return Ok(ExtractSummary {
-                destination: text(single_file.as_ref().or(created.as_ref()).unwrap_or(&parent)),
-                folder: text(&parent),
-                format,
-                tool: tool_name,
-                warning: warning_from(&finished.error_output),
-            });
+            let placed = match into {
+                ExtractInto::Folder => Ok(vec![folder.clone()]),
+                ExtractInto::Here => place_local(&folder, &parent),
+            };
+            match placed {
+                Ok(placed) => {
+                    let placed: Vec<String> = placed.iter().map(|path| text(path)).collect();
+                    let destination = match into {
+                        ExtractInto::Folder => text(single_file.as_ref().unwrap_or(&folder)),
+                        ExtractInto::Here => shown_here(&placed, &text(&parent)),
+                    };
+                    return Ok(ExtractSummary {
+                        destination,
+                        folder: text(&parent),
+                        placed,
+                        format,
+                        tool: tool_name,
+                        warning: warning_from(&finished.error_output),
+                    });
+                }
+                Err(error) => error,
+            }
         }
         Ok(finished) => failure(&tool_name, &finished.error_output, None),
         Err(error) => error,
     };
-    if let Some(file) = &single_file {
-        let _ = std::fs::remove_file(file);
-    }
-    if let Some(created) = &created {
-        // Only removes the folder while it is empty.
-        let _ = std::fs::remove_dir(created);
+    match into {
+        // The working folder is Poros's own, so nothing left in it is kept.
+        ExtractInto::Here => {
+            let _ = std::fs::remove_dir_all(&folder);
+        }
+        ExtractInto::Folder => {
+            if let Some(file) = &single_file {
+                let _ = std::fs::remove_file(file);
+            }
+            // Only removes the folder while it is empty.
+            let _ = std::fs::remove_dir(&folder);
+        }
     }
     Err(failed)
 }
@@ -498,8 +638,16 @@ mod tests {
         .unwrap();
         assert_eq!(summary.destination, text(&folder));
         assert_eq!(
+            summary.placed,
+            [text(&folder.join("a (2).txt")), text(&folder.join("c.txt"))]
+        );
+        assert_eq!(
             std::fs::read_to_string(folder.join("a.txt")).unwrap(),
             "old\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(folder.join("a (2).txt")).unwrap(),
+            "new\n"
         );
         assert_eq!(
             std::fs::read_to_string(folder.join("c.txt")).unwrap(),
@@ -517,10 +665,98 @@ mod tests {
         .unwrap();
         assert_eq!(single.format, ArchiveFormat::Gzip);
         assert_eq!(single.destination, text(&folder.join("dump (2).sql")));
+        assert_eq!(single.placed, [text(&folder.join("dump (2).sql"))]);
         assert_eq!(
             std::fs::read_to_string(folder.join("dump (2).sql")).unwrap(),
             "data\n"
         );
+        assert_eq!(
+            names_in(&folder),
+            [
+                "a (2).txt",
+                "a.txt",
+                "c.txt",
+                "dump (2).sql",
+                "dump.sql",
+                "dump.sql.gz",
+                "pack.zip"
+            ]
+        );
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    /// Names in a folder, sorted, to show nothing else was left there.
+    fn names_in(folder: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(folder)
+            .unwrap()
+            .map(|item| item.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// Extract here unpacks the way Extract to a folder does, then moves the items out: a
+    /// folder in the archive that is already there comes out beside it, not merged into it.
+    #[cfg(unix)]
+    #[test]
+    fn extracts_here_beside_a_folder_of_the_same_name() {
+        if !has("tar") || !has("gzip") {
+            return;
+        }
+        let folder = scratch();
+        shell(
+            &folder,
+            "mkdir -p src/site/inner && echo one > src/site/a.txt && echo two > \
+             src/site/inner/b.txt && tar -czf site.tar.gz -C src site && rm -r src && \
+             mkdir site && echo old > site/a.txt",
+        );
+        let summary = extract_local(
+            &text(&folder.join("site.tar.gz")),
+            ExtractInto::Here,
+            &Extractor::Auto,
+            &CancellationToken::new(),
+            &Progress::default(),
+        )
+        .unwrap();
+        assert_eq!(summary.destination, text(&folder.join("site (2)")));
+        assert_eq!(summary.placed, [text(&folder.join("site (2)"))]);
+        assert_eq!(summary.folder, text(&folder));
+        assert_eq!(
+            std::fs::read_to_string(folder.join("site/a.txt")).unwrap(),
+            "old\n"
+        );
+        assert!(!folder.join("site/inner").exists());
+        assert_eq!(
+            std::fs::read_to_string(folder.join("site (2)/inner/b.txt")).unwrap(),
+            "two\n"
+        );
+        assert_eq!(names_in(&folder), ["site", "site (2)", "site.tar.gz"]);
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    /// An archive whose own folder entry is read-only still comes out here.
+    #[cfg(unix)]
+    #[test]
+    fn extracts_here_from_an_archive_with_a_read_only_root() {
+        if !has("tar") {
+            return;
+        }
+        let folder = scratch();
+        shell(
+            &folder,
+            "mkdir src && echo hi > src/a.txt && chmod 555 src && tar -cf pack.tar -C src . && \
+             chmod 755 src && rm -r src",
+        );
+        let summary = extract_local(
+            &text(&folder.join("pack.tar")),
+            ExtractInto::Here,
+            &Extractor::Auto,
+            &CancellationToken::new(),
+            &Progress::default(),
+        )
+        .unwrap();
+        assert_eq!(summary.placed, [text(&folder.join("a.txt"))]);
+        assert_eq!(names_in(&folder), ["a.txt", "pack.tar"]);
         std::fs::remove_dir_all(&folder).unwrap();
     }
 
@@ -533,16 +769,18 @@ mod tests {
         let folder = scratch();
         let archive = folder.join("broken.tar.gz");
         std::fs::write(&archive, b"\x1F\x8B\x08\x00not really gzip").unwrap();
-        let error = extract_local(
-            &text(&archive),
-            ExtractInto::Folder,
-            &Extractor::Auto,
-            &CancellationToken::new(),
-            &Progress::default(),
-        )
-        .unwrap_err();
-        assert!(error.message.starts_with("GNU tar") || error.message.starts_with("bsdtar"));
-        assert!(!folder.join("broken").exists());
+        for into in [ExtractInto::Folder, ExtractInto::Here] {
+            let error = extract_local(
+                &text(&archive),
+                into,
+                &Extractor::Auto,
+                &CancellationToken::new(),
+                &Progress::default(),
+            )
+            .unwrap_err();
+            assert!(error.message.starts_with("GNU tar") || error.message.starts_with("bsdtar"));
+            assert_eq!(names_in(&folder), ["broken.tar.gz"], "{into:?}");
+        }
         std::fs::remove_dir_all(&folder).unwrap();
     }
 
@@ -574,6 +812,16 @@ mod tests {
             std::fs::read_to_string(folder.join("pack/a.txt")).unwrap(),
             "hi\n"
         );
+        let here = extract_local(
+            &text(&folder.join("pack.tar")),
+            ExtractInto::Here,
+            &custom,
+            &CancellationToken::new(),
+            &Progress::default(),
+        )
+        .unwrap();
+        assert_eq!(here.placed, [text(&folder.join("a.txt"))]);
+        assert_eq!(names_in(&folder), ["a.txt", "pack", "pack.tar"]);
         std::fs::remove_dir_all(&folder).unwrap();
     }
 
@@ -723,123 +971,154 @@ mod tests {
         assert_eq!(error.kind, ErrorKind::Unsupported);
         std::fs::remove_dir_all(&folder).unwrap();
     }
-}
 
-#[cfg(all(test, windows))]
-mod windows_probe {
-    use super::*;
-    use std::fmt::Write as _;
-
-    fn tree(folder: &Path, prefix: &str, out: &mut String) {
-        let mut names: Vec<_> = std::fs::read_dir(folder)
-            .map(|items| items.flatten().map(|item| item.path()).collect())
-            .unwrap_or_default();
-        names.sort();
-        for path in names {
-            let name = path.file_name().unwrap().to_string_lossy().into_owned();
-            if path.is_dir() {
-                let _ = write!(out, "{prefix}{name}/ ");
-                tree(&path, &format!("{prefix}{name}/"), out);
-            } else {
-                let _ = write!(out, "{prefix}{name} ");
-            }
-        }
-    }
-
-    fn sh(program: &Path, args: &[&str], dir: &Path) -> String {
-        let output = std::process::Command::new(program)
-            .args(args)
-            .current_dir(dir)
-            .output()
-            .unwrap();
-        format!(
-            "{} {}{}",
-            output.status,
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        )
-    }
-
+    /// Every extracting program on this Windows machine, both ways, beside items of the same
+    /// names, in a folder with spaces and at the root of a drive.
+    #[cfg(windows)]
     #[test]
-    fn probe() {
-        let mut report = String::from("\n");
-        let base = std::env::temp_dir().join(format!("poros probe {}", uuid::Uuid::new_v4()));
-        let src = base.join("src");
-        std::fs::create_dir_all(src.join("site").join("inner")).unwrap();
-        std::fs::write(src.join("site").join("a.txt"), "one").unwrap();
-        std::fs::write(src.join("site").join("inner").join("b.txt"), "two").unwrap();
+    fn extracts_both_ways_with_every_program_on_windows() {
+        let run = |program: &Path, args: &[&str], dir: &Path| {
+            let output = std::process::Command::new(program)
+                .args(args)
+                .current_dir(dir)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        let base = std::env::temp_dir().join(format!("poros archive {}", uuid::Uuid::new_v4()));
+        let source = base.join("source");
+        std::fs::create_dir_all(source.join("site").join("inner")).unwrap();
+        std::fs::write(source.join("site").join("a.txt"), "one").unwrap();
+        std::fs::write(source.join("site").join("inner").join("b.txt"), "two").unwrap();
         let system = PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32");
         let tar = system.join("tar.exe");
-        let _ = writeln!(report, "zip: {}", sh(&tar, &["--format", "zip", "-cf", "..\\site.zip", "site"], &src));
-        let _ = writeln!(report, "tgz: {}", sh(&tar, &["-czf", "..\\site.tar.gz", "site"], &src));
-        let _ = writeln!(report, "flat: {}", sh(&tar, &["--format", "zip", "-cf", "..\\..\\flat.zip", "."], &src.join("site")));
-        for tool in installed_tools() {
-            let _ = writeln!(report, "tool {:?} {}", tool.kind, tool.path);
-        }
-        let mut extractors = vec![("auto".to_string(), Extractor::Auto)];
-        for tool in installed_tools() {
-            extractors.push((
-                format!("{:?}", tool.kind),
-                Extractor::Installed { path: tool.path.clone() },
-            ));
-        }
+        run(
+            &tar,
+            &["--format", "zip", "-cf", "..\\site.zip", "site"],
+            &source,
+        );
+        run(&tar, &["-czf", "..\\site.tar.gz", "site"], &source);
+        run(
+            &tar,
+            &["--format", "zip", "-cf", "..\\..\\flat.zip", "."],
+            &source.join("site"),
+        );
+
+        let mut seen = std::collections::HashSet::new();
+        let extractors: Vec<Extractor> = std::iter::once(Extractor::Auto)
+            .chain(
+                installed_tools()
+                    .into_iter()
+                    .filter(|tool| seen.insert(tool.kind))
+                    .map(|tool| Extractor::Installed { path: tool.path }),
+            )
+            .collect();
+        let read = |path: PathBuf| std::fs::read_to_string(path).unwrap();
         let mut case = 0;
-        for (label, extractor) in &extractors {
+        let mut runs = 0;
+        for extractor in &extractors {
             for archive in ["site.zip", "site.tar.gz", "flat.zip"] {
-                for collide in [false, true] {
-                    for into in [ExtractInto::Here, ExtractInto::Folder] {
-                        case += 1;
-                        let folder = base.join(format!("case {case}"));
-                        std::fs::create_dir_all(&folder).unwrap();
-                        std::fs::copy(base.join(archive), folder.join(archive)).unwrap();
-                        std::fs::write(folder.join("other.txt"), "x").unwrap();
-                        if collide {
-                            std::fs::create_dir_all(folder.join("site")).unwrap();
-                            std::fs::write(folder.join("site").join("a.txt"), "old").unwrap();
-                            std::fs::write(folder.join("a.txt"), "old").unwrap();
+                let format =
+                    ArchiveFormat::detect(archive, &read_head(&base.join(archive)).unwrap())
+                        .unwrap();
+                if let Extractor::Installed { path } = extractor {
+                    let opens = installed_tools()
+                        .iter()
+                        .any(|tool| tool.path == *path && tool.kind.opens(format));
+                    if !opens {
+                        continue;
+                    }
+                }
+                for into in [ExtractInto::Here, ExtractInto::Folder] {
+                    case += 1;
+                    let folder = base.join(format!("case {case}"));
+                    std::fs::create_dir_all(folder.join("site")).unwrap();
+                    std::fs::write(folder.join("site").join("a.txt"), "old").unwrap();
+                    std::fs::write(folder.join("a.txt"), "old").unwrap();
+                    std::fs::copy(base.join(archive), folder.join(archive)).unwrap();
+                    let label = format!("{extractor:?} {archive} {into:?}");
+                    let summary = extract_local(
+                        &text(&folder.join(archive)),
+                        into,
+                        extractor,
+                        &CancellationToken::new(),
+                        &Progress::default(),
+                    )
+                    .unwrap_or_else(|error| panic!("{label}: {}", error.message));
+                    runs += 1;
+                    assert_eq!(read(folder.join("a.txt")), "old", "{label}");
+                    assert_eq!(read(folder.join("site").join("a.txt")), "old", "{label}");
+                    let mut expected = vec!["a.txt", "site", archive];
+                    match (into, archive) {
+                        (ExtractInto::Here, "flat.zip") => {
+                            assert_eq!(
+                                summary.placed,
+                                [text(&folder.join("a (2).txt")), text(&folder.join("inner"))],
+                                "{label}"
+                            );
+                            assert_eq!(read(folder.join("a (2).txt")), "one", "{label}");
+                            assert_eq!(read(folder.join("inner").join("b.txt")), "two", "{label}");
+                            expected.extend(["a (2).txt", "inner"]);
                         }
-                        let result = extract_local(
-                            &text(&folder.join(archive)),
-                            into,
-                            extractor,
-                            &CancellationToken::new(),
-                            &Progress::default(),
-                        );
-                        let mut listing = String::new();
-                        tree(&folder, "", &mut listing);
-                        let outcome = match result {
-                            Ok(summary) => format!("OK dest={} tool={} warn={:?}", summary.destination, summary.tool, summary.warning),
-                            Err(error) => format!("ERR {:?}: {}", error.kind, error.message),
-                        };
-                        let _ = writeln!(report, "[{label}] {archive} collide={collide} {into:?}: {outcome}\n    {listing}");
+                        (ExtractInto::Here, _) => {
+                            assert_eq!(summary.placed, [text(&folder.join("site (2)"))], "{label}");
+                            assert_eq!(
+                                summary.destination,
+                                text(&folder.join("site (2)")),
+                                "{label}"
+                            );
+                            assert_eq!(
+                                read(folder.join("site (2)").join("a.txt")),
+                                "one",
+                                "{label}"
+                            );
+                            expected.push("site (2)");
+                        }
+                        (ExtractInto::Folder, _) => {
+                            let unpacked = if archive == "flat.zip" {
+                                "flat"
+                            } else {
+                                "site (2)"
+                            };
+                            assert_eq!(summary.placed, [text(&folder.join(unpacked))], "{label}");
+                            expected.push(unpacked);
+                        }
                     }
+                    expected.sort();
+                    assert_eq!(names_in(&folder), expected, "{label}");
                 }
             }
         }
-        // A drive root, through subst.
-        let root_src = base.join("rootcase");
-        std::fs::create_dir_all(&root_src).unwrap();
-        std::fs::copy(base.join("site.zip"), root_src.join("site.zip")).unwrap();
+        assert!(runs >= 6, "{runs}");
+
+        // At the root of a drive, as `subst` makes one of a folder.
+        let root = base.join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::copy(base.join("site.zip"), root.join("site.zip")).unwrap();
         let subst = system.join("subst.exe");
-        let _ = writeln!(report, "subst: {}", sh(&subst, &["P:", &text(&root_src)], &base));
-        for (label, extractor) in &extractors {
-            for into in [ExtractInto::Here, ExtractInto::Folder] {
-                let result = extract_local("P:\\site.zip", into, extractor, &CancellationToken::new(), &Progress::default());
-                let mut listing = String::new();
-                tree(Path::new("P:\\"), "", &mut listing);
-                let outcome = match result {
-                    Ok(summary) => format!("OK dest={} tool={} warn={:?}", summary.destination, summary.tool, summary.warning),
-                    Err(error) => format!("ERR {:?}: {}", error.kind, error.message),
-                };
-                let _ = writeln!(report, "[root {label}] {into:?}: {outcome}\n    {listing}");
-                for item in std::fs::read_dir("P:\\").unwrap().flatten() {
-                    if item.file_name() != "site.zip" {
-                        let _ = std::fs::remove_dir_all(item.path()).or_else(|_| std::fs::remove_file(item.path()));
-                    }
-                }
-            }
-        }
-        let _ = sh(&subst, &["P:", "/D"], &base);
-        panic!("{report}");
+        let letter = ('P'..='Z')
+            .find(|letter| !Path::new(&format!("{letter}:\\")).exists())
+            .unwrap();
+        let drive = format!("{letter}:");
+        run(&subst, &[&drive, &text(&root)], &base);
+        let here = extract_local(
+            &format!("{drive}\\site.zip"),
+            ExtractInto::Here,
+            &Extractor::Auto,
+            &CancellationToken::new(),
+            &Progress::default(),
+        );
+        let _ = std::process::Command::new(&subst)
+            .args([&drive, "/D"])
+            .output();
+        let here = here.unwrap();
+        assert_eq!(here.placed, [format!("{drive}\\site")]);
+        assert_eq!(read(root.join("site").join("a.txt")), "one");
+        assert_eq!(names_in(&root), ["site", "site.zip"]);
+        std::fs::remove_dir_all(&base).unwrap();
     }
 }

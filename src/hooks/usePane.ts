@@ -29,6 +29,14 @@ interface History {
 
 type NavigationMode = "push" | "replace" | "travel";
 
+/** What a reload selects: one path, or several, as an extraction places. */
+export type Focus = string | readonly string[];
+
+function focusList(focus: Focus | undefined): readonly string[] {
+  if (focus === undefined) return [];
+  return typeof focus === "string" ? [focus] : focus;
+}
+
 export interface PaneController {
   listing: DirListing | null;
   /** The entries on show, in the order shown; none from collapsed groups. */
@@ -53,7 +61,8 @@ export interface PaneController {
   canGoForward: boolean;
   canGoUp: boolean;
   navigate: (path: string) => Promise<boolean>;
-  refresh: (focusPath?: string) => Promise<boolean>;
+  /** Reloads the folder, selecting `focus` (one path or several) where the listing has it. */
+  refresh: (focus?: Focus) => Promise<boolean>;
   goUp: () => void;
   goBack: () => void;
   goForward: () => void;
@@ -163,7 +172,7 @@ export function usePane(
   );
 
   const load = useCallback(
-    async (target: string, mode: NavigationMode, focusPath?: string): Promise<boolean> => {
+    async (target: string, mode: NavigationMode, focusPaths?: Focus): Promise<boolean> => {
       const request = loads.current.start(mode === "replace" ? "refresh" : "navigation");
       if (request === null) return false;
       if (mode === "push") travelIndex.current = null;
@@ -176,28 +185,30 @@ export function usePane(
         const leftCursor = cursorRef.current;
         const sameDirectory = leftPath === next.path;
         listedPath.current = next.path;
-        // Back or Forward puts the cursor where it was in the folder, or else on the way back
-        // into the folder just left.
+        // A reload selects what it was asked to, with the cursor on the first; Back or Forward
+        // puts the cursor where it was in the folder, or else on the way back into the folder
+        // just left.
+        const wanted = focusList(focusPaths).filter((path) => existing.has(path));
         const focus =
-          focusPath && existing.has(focusPath)
-            ? focusPath
-            : mode === "travel" && leftPath
-              ? entryLeadingTo(next.entries, leftPath)
-              : undefined;
+          wanted[0] ??
+          (mode === "travel" && leftPath ? entryLeadingTo(next.entries, leftPath) : undefined);
+        const selected = new Set(wanted.length > 0 ? wanted : focus ? [focus] : []);
         setListing(next);
         if (!sameDirectory) setCollapsedGroups(new Set());
-        const focused = focus ? next.entries.find((entry) => entry.path === focus) : undefined;
-        if (focused && sameDirectory) {
-          const group = dateGroupFinder(new Date(), WEEK_STARTS_ON)(focused.modified);
+        const focused = next.entries.filter((entry) => selected.has(entry.path));
+        if (focused.length > 0 && sameDirectory) {
+          // Items shown in a collapsed date group open it, so what was selected can be seen.
+          const groupOf = dateGroupFinder(new Date(), WEEK_STARTS_ON);
+          const groups = new Set(focused.map((entry) => groupOf(entry.modified)));
           setCollapsedGroups((current) => {
-            if (!current.has(group)) return current;
+            if (![...groups].some((group) => current.has(group))) return current;
             const expanded = new Set(current);
-            expanded.delete(group);
+            for (const group of groups) expanded.delete(group);
             return expanded;
           });
         }
         setSelection((current) => {
-          if (focus) return new Set([focus]);
+          if (selected.size > 0) return selected;
           return sameDirectory
             ? new Set([...current].filter((path) => existing.has(path)))
             : new Set<string>();
@@ -252,9 +263,9 @@ export function usePane(
   const navigate = useCallback((path: string) => load(path, "push"), [load]);
   // Reloads the folder last listed, which a navigation sets before the pane renders its listing.
   const refresh = useCallback(
-    (focusPath?: string) =>
+    (focus?: Focus) =>
       listedPath.current !== null
-        ? load(listedPath.current, "replace", focusPath)
+        ? load(listedPath.current, "replace", focus)
         : Promise.resolve(false),
     [load],
   );

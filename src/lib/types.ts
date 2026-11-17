@@ -782,10 +782,12 @@ export interface ExtractRequest {
 }
 
 export interface ExtractSummary {
-  /** The new folder, the unpacked file, or the folder extracted into. */
+  /** The new folder, the unpacked file, the one item extracted here, or the folder. */
   destination: string;
   /** The folder the archive is in. */
   folder: string;
+  /** What now stands beside the archive: the new folder, or each item extracted here. */
+  placed: string[];
   format: ArchiveFormat;
   /** The program that extracted it. */
   tool: string;
