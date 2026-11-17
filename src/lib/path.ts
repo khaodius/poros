@@ -72,10 +72,17 @@ export function baseName(path: string): string {
 }
 
 /** One spelling per place: no trailing separator, and on Windows one case and one slash. */
-function normalizedPath(path: string, style: PathStyle): string {
+export function normalizedPath(path: string, style: PathStyle): string {
   const unified = style === "windows" ? path.replace(/\//g, "\\").toLowerCase() : path;
   const trimmed = unified.replace(style === "windows" ? /\\+$/ : /\/+$/, "");
   return trimmed === "" ? unified.slice(0, 1) : trimmed;
+}
+
+/** `name` inside `folder`: `/srv` and `a.txt` -> `/srv/a.txt`, `C:\` and `a.txt` -> `C:\a.txt`. */
+export function childPath(folder: string, name: string, style: PathStyle): string {
+  const separator = style === "windows" ? "\\" : "/";
+  const ended = folder.endsWith(separator) || (style === "windows" && folder.endsWith("/"));
+  return ended ? folder + name : folder + separator + name;
 }
 
 export function samePath(first: string, second: string, style: PathStyle): boolean {

@@ -121,6 +121,8 @@ describe("planFlight", () => {
     );
     expect(plan.firstLanding).toBeGreaterThan(0);
     expect(plan.firstLanding).toBeLessThan(plan.total);
+    expect(plan.reveal).toBeLessThan(plan.firstLanding);
+    expect(plan.reveal).toBeGreaterThan(plan.firstLanding - 80);
   });
 
   it("launches every icon within a moment, however many there are", () => {
@@ -164,6 +166,18 @@ describe("planArrival", () => {
     expect(arrival.path.duration).toBeLessThanOrEqual(900);
     expect(arrival.firstLanding).toBeGreaterThan(140);
     expect(arrival.firstLanding).toBeLessThan(arrival.total);
+  });
+
+  it("shows its row as it touches down, all but there and not yet landed", () => {
+    const offset = (arrival.reveal - arrival.path.delay) / arrival.path.duration;
+    const after = frames.findIndex((frame) => frame.offset >= offset);
+    const [from, to] = [frames[after - 1], frames[after]];
+    const through = (offset - from.offset) / (to.offset - from.offset);
+    const x = from.x + (to.x - from.x) * through;
+    const y = from.y + (to.y - from.y) * through;
+    expect(arrival.reveal).toBeLessThan(arrival.firstLanding);
+    expect(Math.hypot(860 - x, 180 - y)).toBeLessThan(6);
+    expect(Math.hypot(860 - x, 180 - y)).toBeGreaterThan(0);
   });
 });
 

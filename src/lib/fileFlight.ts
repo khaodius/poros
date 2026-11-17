@@ -59,7 +59,20 @@ const PHASES = {
   settled: 0.9,
 };
 
+/**
+ * How far through its arc an icon is when the row it lands in starts to show. The eased arc has
+ * all but arrived by then, a few pixels short of the row, so the row fades in as the icon
+ * touches down and is whole as it squashes into it.
+ */
+const REVEAL_THROUGH_ARC = 0.9;
+
 const SPILLED_FILE: IconSubject = { name: "file", kind: "file" };
+
+/** When the row an icon lands in starts to show, from the start of its flight. */
+function revealTime(path: IconPath): number {
+  const through = PHASES.gathered + (PHASES.landed - PHASES.gathered) * REVEAL_THROUGH_ARC;
+  return Math.round(path.delay + path.duration * through);
+}
 
 /** A small, seeded generator, so a flight's scatter can be reproduced. */
 export function seededRandom(seed: number): () => number {
@@ -221,6 +234,8 @@ export function planFlight({ sources, landing, count, random }: FlightPlanInput)
   badge: IconPath;
   /** When the first icon lands, from the start. */
   firstLanding: number;
+  /** When what the pile lands in starts to show. */
+  reveal: number;
   total: number;
 } {
   const origin = centerOf(sources);
@@ -283,7 +298,8 @@ export function planFlight({ sources, landing, count, random }: FlightPlanInput)
     badge.delay + badge.duration,
     ...icons.map((icon) => icon.delay + icon.duration),
   );
-  return { icons, badge, firstLanding: Math.round(firstLanding), total };
+  const reveal = icons.length > 0 ? revealTime(icons[0]) : 0;
+  return { icons, badge, firstLanding: Math.round(firstLanding), reveal, total };
 }
 
 export interface ArrivalPlanInput {
@@ -305,6 +321,8 @@ export interface ArrivalPlanInput {
 export function planArrival({ source, landing, landingScale, delay, random }: ArrivalPlanInput): {
   path: IconPath;
   firstLanding: number;
+  /** When the row it lands in starts to show. */
+  reveal: number;
   total: number;
 } {
   const distance = Math.hypot(landing.x - source.x, landing.y - source.y);
@@ -329,6 +347,7 @@ export function planArrival({ source, landing, landingScale, delay, random }: Ar
   return {
     path,
     firstLanding: Math.round(path.delay + duration * PHASES.landed),
+    reveal: revealTime(path),
     total: path.delay + duration,
   };
 }

@@ -1773,6 +1773,7 @@ form.path-bar {
   display: grid;
   align-items: center;
   cursor: default;
+  transition: opacity 140ms ease-out;
 }
 
 :where(.file-list.is-striped) .file-row.is-odd {
@@ -1797,6 +1798,13 @@ form.path-bar {
 
 .file-row.is-hidden {
   opacity: 0.6;
+}
+
+/* A file's new row, hidden until the icon flying to it lands, then fading in under it. */
+.file-row.is-arriving {
+  opacity: 0;
+  pointer-events: none;
+  transition: none;
 }
 
 .file-row.is-cut .file-name {
@@ -5727,6 +5735,12 @@ textarea::placeholder {
   background: transparent;
   border: 0;
   pointer-events: none;
+}
+
+/* Moves a flight after the row it lands in, should that row move on the way. */
+.flight-track {
+  position: absolute;
+  inset: 0;
 }
 
 .flight-icon,

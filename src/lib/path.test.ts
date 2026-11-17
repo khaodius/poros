@@ -3,6 +3,7 @@ import {
   EXAMPLE_EXTENSIONS,
   baseName,
   breadcrumbs,
+  childPath,
   exampleFileName,
   isWithin,
   parseHostInput,
@@ -106,6 +107,23 @@ describe("comparing paths", () => {
     expect(isWithin("/srv/www-old", "/srv/www", "posix")).toBe(false);
     expect(isWithin("/home", "/", "posix")).toBe(true);
     expect(isWithin("D:\\Data\\x", "d:\\data", "windows")).toBe(true);
+  });
+});
+
+describe("childPath", () => {
+  it("joins with the side's separator", () => {
+    expect(childPath("/srv/www", "a.txt", "posix")).toBe("/srv/www/a.txt");
+    expect(childPath("C:\\Users\\me", "a.txt", "windows")).toBe("C:\\Users\\me\\a.txt");
+  });
+
+  it("adds no separator after one the folder ends with", () => {
+    expect(childPath("/", "a.txt", "posix")).toBe("/a.txt");
+    expect(childPath("C:\\", "a.txt", "windows")).toBe("C:\\a.txt");
+    expect(childPath("C:/data/", "a.txt", "windows")).toBe("C:/data/a.txt");
+  });
+
+  it("keeps a backslash that ends a POSIX name", () => {
+    expect(childPath("/srv/odd\\", "a.txt", "posix")).toBe("/srv/odd\\/a.txt");
   });
 });
 

@@ -5,6 +5,7 @@ import {
   useRef,
   type CSSProperties,
   type ReactNode,
+  type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
 import { toKeyframe, type IconPath } from "../lib/fileFlight";
@@ -12,6 +13,7 @@ import {
   endFlight,
   FLIGHT_ICON_LOOKUP_SIZE,
   FLIGHT_ICON_SIZE,
+  revealRows,
   useFlightStore,
   type Flight,
 } from "../state/fileFlight";
@@ -20,6 +22,8 @@ import { FileIcon } from "./FileIcon";
 const BADGE_SIZE = 24;
 const RING_MILLIS = 520;
 const FLASH_MILLIS = 700;
+/** How quickly a flight glides after the row it lands in when that row moves. */
+const FOLLOW_MILLIS = 50;
 
 /** File icons in flight between panes, above everything else in the window. */
 export function FileFlights() {
@@ -62,9 +66,19 @@ const FlightView = memo(function FlightView({ flight }: { flight: Flight }) {
     return () => window.clearTimeout(timer);
   }, [flight.id, flight.total]);
 
+  // Timed from the commit that starts the icons' animations, so the rows show as they land.
+  useLayoutEffect(() => {
+    if (flight.reveals.length === 0) return;
+    const timer = window.setTimeout(() => revealRows(flight.reveals), flight.reveal);
+    return () => window.clearTimeout(timer);
+  }, [flight.reveals, flight.reveal]);
+
+  const track = useRef<HTMLDivElement>(null);
+  useFollowRow(flight, track);
+
   const { landing, target, firstLanding } = flight;
   return (
-    <>
+    <div ref={track} className="flight-track">
       {target && (
         <Animated
           className="flight-flash"
@@ -104,9 +118,52 @@ const FlightView = memo(function FlightView({ flight }: { flight: Flight }) {
           {flight.badge.text}
         </FlyingPath>
       )}
-    </>
+    </div>
   );
 });
+
+/**
+ * Keeps a flight on the row it lands in should that row move on the way, as it does when a
+ * reload lists rows above it or the list scrolls: the icons bend toward where the row is now,
+ * the more the nearer they are to landing, and glide there rather than jump.
+ */
+function useFollowRow(flight: Flight, track: RefObject<HTMLDivElement | null>): void {
+  useLayoutEffect(() => {
+    const row = flight.follow;
+    const element = track.current;
+    if (!row || !element) return;
+    const started = performance.now();
+    let previous = started;
+    let shown = { x: 0, y: 0 };
+    let frame = 0;
+    const step = () => {
+      const now = performance.now();
+      if (row.isConnected) {
+        const icon = (row.querySelector(".file-icon") ?? row).getBoundingClientRect();
+        const through = Math.min(1, (now - started) / Math.max(1, flight.firstLanding));
+        // Eases in and out, so the icons have caught up with the row by the time they land.
+        const reach = through * through * (3 - 2 * through);
+        const wanted = {
+          x: (icon.left + icon.width / 2 - flight.landing.x) * reach,
+          y: (icon.top + icon.height / 2 - flight.landing.y) * reach,
+        };
+        const blend = 1 - Math.exp(-(now - previous) / FOLLOW_MILLIS);
+        const next = {
+          x: shown.x + (wanted.x - shown.x) * blend,
+          y: shown.y + (wanted.y - shown.y) * blend,
+        };
+        if (Math.hypot(next.x - shown.x, next.y - shown.y) > 0.05) {
+          element.style.transform = `translate(${next.x.toFixed(2)}px, ${next.y.toFixed(2)}px)`;
+        }
+        shown = next;
+      }
+      previous = now;
+      if (now - started < flight.total) frame = window.requestAnimationFrame(step);
+    };
+    frame = window.requestAnimationFrame(step);
+    return () => window.cancelAnimationFrame(frame);
+  }, [flight, track]);
+}
 
 function FlyingPath({
   className,

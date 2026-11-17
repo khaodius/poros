@@ -3,6 +3,16 @@
 Installers for every version are attached to its
 [release](https://github.com/khaodius/poros/releases), with SHA-256 checksums.
 
+## 0.6.3 - 2026-11-17
+
+- **Flying files and their rows arrive together.** With flying files on, a finished file's row
+  showed in the pane it went to as soon as the pane reloaded, half a second or more before its
+  icon got there. The row now stays hidden until the icon touches down in it, then fades in
+  under it as the icon settles. Rows already on show, such as that of a file being replaced, are
+  left as they are, and a row never stays hidden for more than a few seconds, should its file
+  not fly. A row that moves while its file is on the way, as it does when files listed above it
+  arrive or the list is scrolled or sorted, is followed, so the icon still lands on it.
+
 ## 0.6.2 - 2026-11-16
 
 - **Files dragged out of the window and back show where they will land.** On Windows, files from

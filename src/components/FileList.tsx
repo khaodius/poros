@@ -32,6 +32,7 @@ import type { DateFormat } from "../lib/settings";
 import { isDirLike, typeLabel, type SortKey } from "../lib/sort";
 import type { FileEntry } from "../lib/types";
 import { useDragStore } from "../state/dragStore";
+import { rowKeyOf, useArriving, type FileSide } from "../state/fileFlight";
 import { FileIcon } from "./FileIcon";
 
 /** Matches `--scrollbar-size`: the list always shows its vertical scrollbar. */
@@ -192,6 +193,8 @@ interface FileRowProps {
   dropTarget: boolean;
   /** The row shows a field to type a new name in. */
   renaming: boolean;
+  /** Names the row for files flying to it, which keep it hidden until they land. */
+  arrivalKey: string;
   events: RowEvents;
 }
 
@@ -211,9 +214,11 @@ const FileRow = memo(function FileRow({
   cut,
   dropTarget,
   renaming,
+  arrivalKey,
   events,
 }: FileRowProps) {
   const folder = isDirLike(entry);
+  const arriving = useArriving(arrivalKey);
   return (
     <div
       className={[
@@ -224,6 +229,7 @@ const FileRow = memo(function FileRow({
         entry.hidden && "is-hidden",
         cut && "is-cut",
         dropTarget && "is-drop-folder",
+        arriving && "is-arriving",
       ]
         .filter(Boolean)
         .join(" ")}
@@ -406,6 +412,8 @@ function RenameField({ entry, events }: { entry: FileEntry; events: RowEvents })
 
 interface FileListProps extends FileListActions {
   pane: PaneController;
+  /** Where the files listed are, to find the rows of files still flying to them. */
+  side: FileSide;
   active: boolean;
   rowHeight: number;
   hiddenColumns: readonly DetailColumn[];
@@ -426,6 +434,7 @@ interface FileListProps extends FileListActions {
 
 export function FileList({
   pane,
+  side,
   active,
   rowHeight,
   hiddenColumns,
@@ -1153,6 +1162,7 @@ export function FileList({
                 cut={cutPaths?.has(entry.path) ?? false}
                 dropTarget={isDirLike(entry) && dropFolder === entry.path}
                 renaming={renaming === entry.path}
+                arrivalKey={rowKeyOf(side, entry.path)}
                 events={rowEvents}
               />
             );
