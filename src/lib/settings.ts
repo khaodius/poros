@@ -131,7 +131,10 @@ export interface InterfaceSettings {
   confirmCloseWithTransfers: boolean;
   /** Adds every new quick connection to the saved connections. */
   saveQuickConnections: boolean;
+  /** Reopens the windows, panes and tabs open at the last exit. */
   rememberLayout: boolean;
+  /** Reconnects the servers of reopened tabs on start, instead of waiting to be asked. */
+  reconnectOnStart: boolean;
   /** Off: Poros draws its own window buttons in the top bar. */
   systemTitleBar: boolean;
   foldersFirst: boolean;
@@ -314,6 +317,7 @@ export const DEFAULT_SETTINGS: Settings = {
     confirmCloseWithTransfers: true,
     saveQuickConnections: false,
     rememberLayout: true,
+    reconnectOnStart: true,
     systemTitleBar: false,
     foldersFirst: true,
     sort: { key: "name", direction: 1 },

@@ -9,6 +9,7 @@ import {
   findTab,
   group,
   groupOfTab,
+  isRestoring,
   localTab,
   newId,
   parseLayout,
@@ -24,6 +25,7 @@ import { askToSave, closeEditorTab } from "./editorActions";
 import { getEditor } from "./editorRegistry";
 import { useLayoutStore } from "./layoutStore";
 import { getPane, lastActivePane } from "./paneRegistry";
+import { reopenWithSession, serverKey } from "./restoreActions";
 import { useSessionStore, withoutSecrets } from "./sessionStore";
 import { useSettingsStore } from "./settingsStore";
 import { closeTerminalTab } from "./terminalActions";
@@ -81,7 +83,8 @@ export function isMainWindow(): boolean {
 
 /**
  * Shows a new session in the given tab, else in a new-tab page on screen (the active group's
- * first), else as a new tab beside the server tab used last.
+ * first), else as a new tab beside the server tab used last. A tab waiting for its server since
+ * the last start takes it, with every other tab waiting for the same one.
  */
 export function showSession(session: SessionInfo, targetTabId?: string): void {
   const layout = useLayoutStore.getState();
@@ -92,6 +95,10 @@ export function showSession(session: SessionInfo, targetTabId?: string): void {
   const target: PaneTab | undefined = targetTabId
     ? (findTab(layout.root, targetTabId) ?? undefined)
     : groups.map(showing).find((tab) => tab?.kind === "welcome");
+  if (target && isRestoring(target)) {
+    reopenWithSession(serverKey(target), session);
+    return;
+  }
   const remoteTab: PaneTab = { id: newId("tab"), kind: "remote", sessionId: session.id };
   if (target?.kind === "welcome") {
     layout.replaceTab(target.id, { ...remoteTab, id: target.id });
@@ -146,6 +153,10 @@ export async function requestCloseTab(tabId: string): Promise<void> {
   const layout = useLayoutStore.getState();
   const tab = findTab(layout.root, tabId);
   if (!tab) return;
+  if (isRestoring(tab)) {
+    layout.closeTab(tabId);
+    return;
+  }
   if (tab.kind === "editor") {
     if (getEditor(tabId)?.draft()) askToSave([tabId]);
     else closeEditorTab(tabId);
@@ -182,7 +193,7 @@ export function closeRemoteTab(tabId: string, sessionId: string): void {
 
 function handoffFor(tab: PaneTab): TabHandoff {
   const sessions: TabHandoff["sessions"] = {};
-  if (tab.kind === "remote") {
+  if (tab.kind === "remote" && !isRestoring(tab)) {
     sessions[tab.sessionId] = withoutSecrets(
       useSessionStore.getState().sessions[tab.sessionId]?.profile ?? null,
     );
@@ -193,7 +204,9 @@ function handoffFor(tab: PaneTab): TabHandoff {
 /** Hands a tab to this window's caller-chosen destination and forgets it here. */
 function detach(tab: PaneTab): void {
   useLayoutStore.getState().closeTab(tab.id);
-  if (tab.kind === "remote") useSessionStore.getState().release(tab.sessionId);
+  if (tab.kind === "remote" && !isRestoring(tab)) {
+    useSessionStore.getState().release(tab.sessionId);
+  }
 }
 
 /** The window a tab just dropped on the desktop is opening in: true once it has opened. */
@@ -289,7 +302,8 @@ export async function adoptHandoff(handoff: unknown): Promise<PaneTab[]> {
   const sessions = value?.sessions ?? {};
   const adopted: PaneTab[] = [];
   for (const tab of allTabs(layout)) {
-    if (tab.kind !== "remote") {
+    // A tab still waiting for its server connects again in the window it lands in.
+    if (tab.kind !== "remote" || isRestoring(tab)) {
       adopted.push(tab);
       continue;
     }

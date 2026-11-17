@@ -10,5 +10,5 @@ export function useTabLabel(tab: PaneTab | null): string {
   if (tab.kind === "welcome") return "New tab";
   if (tab.kind === "editor") return tab.name;
   if (tab.kind === "terminal") return tab.label;
-  return sessionLabel ?? "Closed session";
+  return sessionLabel ?? tab.restore?.server?.label ?? "Closed session";
 }

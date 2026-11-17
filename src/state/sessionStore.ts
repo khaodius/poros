@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { forgetRemoteSource } from "../lib/fileSource";
 import { remote } from "../lib/ipc";
+import type { SavedServer } from "../lib/layout";
 import type { ConnectProfile, HostKeyApproval, SessionInfo } from "../lib/types";
 import { useSettingsStore } from "./settingsStore";
 
@@ -117,4 +118,20 @@ export function withoutSecrets(profile: ConnectProfile | null): ConnectProfile |
         ? { type: "publicKey" as const, keyPath: profile.auth.keyPath, passphrase: null }
         : profile.auth;
   return { ...profile, auth };
+}
+
+/** A profile to keep on disk: without its password, passphrase or browser sign-in. */
+export function withoutStoredSecrets(profile: ConnectProfile): ConnectProfile {
+  const kept = withoutSecrets(profile)!;
+  return kept.auth.type === "oauth" ? { ...kept, auth: { type: "oauth", grantId: null } } : kept;
+}
+
+/** The server a session in this window is connected to, to connect to again after a restart. */
+export function savedServerOf(sessionId: string): SavedServer | null {
+  const entry = useSessionStore.getState().sessions[sessionId];
+  if (!entry) return null;
+  const { label, protocol } = entry.info;
+  const profile = entry.profile && withoutStoredSecrets(entry.profile);
+  const savedConnectionId = entry.info.savedConnectionId ?? profile?.savedConnectionId ?? undefined;
+  return { label, protocol, savedConnectionId, profile };
 }

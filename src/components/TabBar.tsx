@@ -11,7 +11,7 @@ import {
   XSquare,
 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
-import { findTab, welcomeTab, type GroupNode, type PaneTab } from "../lib/layout";
+import { findTab, isRestoring, welcomeTab, type GroupNode, type PaneTab } from "../lib/layout";
 import { isCloud } from "../lib/protocols";
 import { beginDrag, isLifted, markedDrop, tabDrag, useDragStore } from "../state/dragStore";
 import { useUnsavedStore } from "../state/editorRegistry";
@@ -216,12 +216,18 @@ function TabButton({
 }: TabButtonProps) {
   const label = useTabLabel(tab);
   const activateTab = useLayoutStore((state) => state.activateTab);
+  const restoring = isRestoring(tab);
   const lost = useSessionStore((state) =>
-    tab.kind === "remote" ? state.sessions[tab.sessionId]?.status !== "connected" : false,
+    tab.kind === "remote" && !restoring
+      ? state.sessions[tab.sessionId]?.status !== "connected"
+      : false,
   );
   const unsaved = useUnsavedStore((state) => Boolean(state.tabs[tab.id]));
   const cloud = useSessionStore((state) => {
-    const protocol = tab.kind === "remote" ? state.sessions[tab.sessionId]?.info.protocol : null;
+    const protocol =
+      tab.kind === "remote"
+        ? (state.sessions[tab.sessionId]?.info.protocol ?? tab.restore?.server?.protocol)
+        : null;
     return protocol ? isCloud(protocol) : false;
   });
   const Icon = cloud ? Cloud : TAB_ICONS[tab.kind];

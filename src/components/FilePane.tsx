@@ -90,6 +90,7 @@ import { openTerminal } from "../state/terminalActions";
 import { useToastStore } from "../state/toastStore";
 import { transferFromPane, transferToOtherSide } from "../state/transferActions";
 import { useUiStore } from "../state/uiStore";
+import { workspaceChanged } from "../state/workspace";
 import { CompareDialog, type CompareSide } from "./CompareDialog";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
@@ -260,6 +261,12 @@ export function FilePane({
   useEffect(() => {
     updatePane(tabId, active ? { visible, activatedAt: Date.now() } : { visible });
   }, [tabId, visible, active]);
+
+  // The folder a pane shows is kept for the next start along with its tab.
+  const listedPath = pane.listing?.path;
+  useEffect(() => {
+    if (listedPath) workspaceChanged();
+  }, [listedPath]);
 
   const dropFolder = useDragStore((state) => {
     const { payload, target, copy } = state;

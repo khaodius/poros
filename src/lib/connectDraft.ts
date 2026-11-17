@@ -7,6 +7,7 @@ import {
   signsInWithBrowser,
   usesAccessKeys,
 } from "./protocols";
+import type { SavedServer } from "./layout";
 import type {
   AuthMethod,
   AuthType,
@@ -229,6 +230,62 @@ export function draftFromSaved(connection: SavedConnection): ConnectDraft {
     s3Region: connection.s3?.region ?? "",
     s3Addressing: connection.s3?.addressing ?? "automatic",
   };
+}
+
+/** Anonymous FTP logins need no password. */
+function isAnonymousFtp(connection: SavedConnection): boolean {
+  const username = connection.username.toLowerCase();
+  return isFtp(connection.protocol) && (username === "" || username === "anonymous");
+}
+
+/** Whether connecting needs a password typed, as none is kept for the connection. */
+export function asksForPassword(connection: SavedConnection): boolean {
+  return (
+    connection.authType === "password" && !connection.saveSecret && !isAnonymousFtp(connection)
+  );
+}
+
+/** A draft to connect with a profile again, typing its password; it is not saved. */
+export function draftFromProfile(profile: ConnectProfile, name: string): ConnectDraft {
+  const connection = savedFromProfile(profile, name, false);
+  return {
+    ...draftFromSaved({ ...connection, rsyncPath: profile.rsyncPath ?? null }),
+    savedId: null,
+    saveConnection: false,
+    saveSecret: false,
+    hasSavedSecret: false,
+  };
+}
+
+/** How to connect again to a server a tab used before Poros restarted. */
+export interface ReconnectPlan {
+  /** Null when a password or browser sign-in has to be given first. */
+  profile: ConnectProfile | null;
+  /** Fills the connect dialog, for that or for a sign-in the server turned down. */
+  draft: ConnectDraft;
+}
+
+/**
+ * Connects with the saved connection as it is now, else with the profile the session had, which
+ * keeps no secrets. Null when there is neither.
+ */
+export function reconnectPlan(
+  server: SavedServer,
+  connections: SavedConnection[],
+): ReconnectPlan | null {
+  const saved = connections.find((connection) => connection.id === server.savedConnectionId);
+  if (saved) {
+    const draft = draftFromSaved(saved);
+    return { draft, profile: asksForPassword(saved) ? null : profileFromDraft(draft) };
+  }
+  if (!server.profile) return null;
+  // A saved connection deleted since has no keychain entry to fill the password from.
+  const profile: ConnectProfile = { ...server.profile, savedConnectionId: null };
+  const draft = draftFromProfile(profile, server.label);
+  const typed =
+    signsInWithBrowser(profile.protocol) ||
+    (profile.username !== "" && asksForPassword(savedFromProfile(profile, server.label, false)));
+  return { draft, profile: typed ? null : profile };
 }
 
 /** A command kept to its first line, trimmed. */

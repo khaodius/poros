@@ -1,11 +1,10 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use tauri::ipc::Channel;
 use tauri::{
-    AppHandle, LogicalSize, Manager, PhysicalPosition, ResourceId, State, Webview, WebviewUrl,
-    WebviewWindow, WebviewWindowBuilder,
+    AppHandle, LogicalSize, Manager, PhysicalPosition, ResourceId, State, Webview, WebviewWindow,
 };
 
 use crate::automation::remote_command::{CommandRequest, CommandResult, CommandRunner};
@@ -48,6 +47,7 @@ use crate::transfer::{
     EnqueueRequest, ExistsAction, JobId, JobState, TransferList, TransferManager,
 };
 use crate::update::{self, PendingUpdate, ReleaseMetadata, UpdateProgress};
+use crate::workspace::{self, FrameUpdate, Opening, PendingWindows, WorkspaceStore, MAIN_WINDOW};
 
 #[tauri::command]
 pub async fn local_home() -> AppResult<String> {
@@ -836,10 +836,6 @@ pub fn schedule_run_now(
     scheduler.run_now(&id, app)
 }
 
-/// Layouts handed from a window to the window it tears a tab out into.
-#[derive(Default)]
-pub struct PendingWindows(Mutex<HashMap<String, serde_json::Value>>);
-
 #[tauri::command]
 pub async fn window_open(
     app: AppHandle,
@@ -850,46 +846,53 @@ pub async fn window_open(
     width: f64,
     height: f64,
 ) -> AppResult<String> {
-    let label = format!(
-        "workspace-{}",
-        &uuid::Uuid::new_v4().simple().to_string()[..12]
-    );
-    pending.0.lock().unwrap().insert(label.clone(), layout);
-    let mut builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App("index.html".into()))
-        .title("Poros")
-        .decorations(false)
-        .visible(false)
-        .inner_size(width, height)
-        .min_inner_size(480.0, 360.0);
     let corner = match (x, y) {
         (Some(x), Some(y)) if desktop::can_place_windows() => Some(PhysicalPosition::new(x, y)),
         _ => None,
     };
-    builder = match corner {
-        Some(corner) => {
-            let opening = desktop::opening_corner(&app, corner);
-            builder.position(opening.x, opening.y)
-        }
-        None => builder.center(),
-    };
-    let opened = builder.build().and_then(|window| match corner {
-        Some(corner) => {
-            let inset = desktop::content_inset(&window)?;
-            desktop::place(&window, corner, inset, LogicalSize::new(width, height))
-        }
-        None => Ok(()),
-    });
-    if let Err(error) = opened {
-        pending.0.lock().unwrap().remove(&label);
-        return Err(AppError::invalid(format!(
-            "Could not open a window: {error}"
-        )));
-    }
+    let opening = corner.map_or(Opening::Centered, Opening::ContentAt);
+    let label = workspace::open_window(
+        &app,
+        &pending,
+        layout,
+        LogicalSize::new(width, height),
+        opening,
+    )?;
     // Dropped on the desktop: the preview there stands in for the window until it has drawn.
     if corner.is_some() {
         app.state::<DragPreview>().hand_off(&app, &label);
     }
     Ok(label)
+}
+
+/// Keeps the calling window's tabs for the next start, or forgets them for `None`.
+#[tauri::command]
+pub fn workspace_save(
+    window: WebviewWindow,
+    store: State<'_, WorkspaceStore>,
+    layout: Option<serde_json::Value>,
+) -> AppResult<()> {
+    store.save(window.label(), layout, FrameUpdate::of(&window))
+}
+
+/// The main window's tabs from the last time Poros ran. The other windows open again around it.
+#[tauri::command]
+pub async fn workspace_restore(
+    app: AppHandle,
+    window: WebviewWindow,
+    store: State<'_, WorkspaceStore>,
+    pending: State<'_, PendingWindows>,
+) -> AppResult<Option<serde_json::Value>> {
+    if window.label() != MAIN_WINDOW {
+        return Ok(None);
+    }
+    workspace::reopen_windows(&app, &store, &pending, MAIN_WINDOW)?;
+    Ok(store.layout(MAIN_WINDOW))
+}
+
+#[tauri::command]
+pub fn workspace_clear(store: State<'_, WorkspaceStore>) -> AppResult<()> {
+    store.clear()
 }
 
 /// Rounds the calling window's corners to match the app's corner radius, where the system can.
@@ -985,7 +988,7 @@ pub fn window_initial_layout(
     window: WebviewWindow,
     pending: State<'_, PendingWindows>,
 ) -> Option<serde_json::Value> {
-    pending.0.lock().unwrap().remove(window.label())
+    pending.take(window.label())
 }
 
 /// What was logged before the main window listened. Called once it does.

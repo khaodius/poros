@@ -355,6 +355,14 @@ export const windows = {
       y: corner?.y ?? null,
     }),
   initialLayout: () => call<unknown>("window_initial_layout"),
+  /** Keeps this window's tabs for the next start; null forgets them. */
+  saveWorkspace: (layout: unknown) => call<void>("workspace_save", { layout }),
+  /**
+   * The main window's tabs from the last time Poros ran; the other windows open again on their
+   * own.
+   */
+  restoreWorkspace: () => call<unknown>("workspace_restore"),
+  clearWorkspace: () => call<void>("workspace_clear"),
   setCorners: (corners: WindowCorners) => call<void>("window_set_corners", { corners }),
 };
 

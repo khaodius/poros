@@ -4,13 +4,16 @@ import {
   canConnect,
   connectionDetail,
   draftFromSaved,
+  draftFromProfile,
   findSameAccount,
   profileFromDraft,
+  reconnectPlan,
   savedFromDraft,
   withField,
   withProtocol,
 } from "./connectDraft";
-import type { SavedConnection } from "./types";
+import type { SavedServer } from "./layout";
+import type { ConnectProfile, SavedConnection } from "./types";
 
 const saved: SavedConnection = {
   id: "abc",
@@ -265,5 +268,93 @@ describe("protocols", () => {
     expect(connectionDetail({ ...saved, protocol: "backblazeB2", username: "0012ab" })).toBe(
       "Backblaze B2, 0012ab",
     );
+  });
+});
+
+describe("reconnecting after a restart", () => {
+  const passwordProfile: ConnectProfile = {
+    protocol: "sftp",
+    host: "web.example.com",
+    port: 22,
+    username: "deploy",
+    auth: { type: "password", password: "" },
+    initialPath: "/var/www",
+    savedConnectionId: "gone",
+  };
+  const server = (profile: ConnectProfile | null, savedConnectionId?: string): SavedServer => ({
+    label: "web",
+    protocol: profile?.protocol ?? "sftp",
+    savedConnectionId,
+    profile,
+  });
+
+  it("connects with the saved connection as it is now, its secret from the keychain", () => {
+    const plan = reconnectPlan(server(passwordProfile, "abc"), [saved]);
+    expect(plan?.profile).toEqual(profileFromDraft(draftFromSaved(saved)));
+    expect(plan?.draft.savedId).toBe("abc");
+  });
+
+  it("asks for the password a saved connection does not keep", () => {
+    const typed = { ...saved, authType: "password" as const, saveSecret: false };
+    const plan = reconnectPlan(server(passwordProfile, "abc"), [typed]);
+    expect(plan?.profile).toBeNull();
+    expect(plan?.draft.savedId).toBe("abc");
+  });
+
+  it("falls back to the session's own profile once its saved connection is deleted", () => {
+    const plan = reconnectPlan(server(passwordProfile, "gone"), [saved]);
+    // The password went with the restart, so it has to be typed again, into an unsaved draft.
+    expect(plan?.profile).toBeNull();
+    expect(plan?.draft).toMatchObject({
+      savedId: null,
+      saveConnection: false,
+      hasSavedSecret: false,
+      host: "web.example.com",
+      username: "deploy",
+      initialPath: "/var/www",
+    });
+
+    const keyed: ConnectProfile = {
+      ...passwordProfile,
+      auth: { type: "publicKey", keyPath: "/keys/deploy", passphrase: null },
+    };
+    expect(reconnectPlan(server(keyed), [])?.profile).toEqual({
+      ...keyed,
+      savedConnectionId: null,
+    });
+    expect(reconnectPlan(server({ ...keyed, auth: { type: "agent" } }), [])?.profile).toEqual({
+      ...keyed,
+      auth: { type: "agent" },
+      savedConnectionId: null,
+    });
+  });
+
+  it("connects anonymous FTP straight away and sends browser sign-ins to the dialog", () => {
+    const anonymous: ConnectProfile = {
+      protocol: "ftp",
+      host: "mirror.example.com",
+      port: 21,
+      username: "anonymous",
+      auth: { type: "password", password: "" },
+    };
+    expect(reconnectPlan(server(anonymous), [])?.profile).not.toBeNull();
+    const drive: ConnectProfile = {
+      protocol: "googleDrive",
+      host: "",
+      port: 443,
+      username: "me@example.com",
+      auth: { type: "oauth", grantId: null },
+    };
+    expect(reconnectPlan(server(drive), [])?.profile).toBeNull();
+  });
+
+  it("has nothing to go on without a saved connection or profile", () => {
+    expect(reconnectPlan(server(null, "gone"), [saved])).toBeNull();
+  });
+
+  it("keeps the rsync program in a draft made from a profile", () => {
+    const draft = draftFromProfile({ ...passwordProfile, rsyncPath: "sudo rsync" }, "web");
+    expect(draft.rsyncPath).toBe("sudo rsync");
+    expect(draft.name).toBe("web");
   });
 });
