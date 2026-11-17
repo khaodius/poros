@@ -724,3 +724,122 @@ mod tests {
         std::fs::remove_dir_all(&folder).unwrap();
     }
 }
+
+#[cfg(all(test, windows))]
+mod windows_probe {
+    use super::*;
+    use std::fmt::Write as _;
+
+    fn tree(folder: &Path, prefix: &str, out: &mut String) {
+        let mut names: Vec<_> = std::fs::read_dir(folder)
+            .map(|items| items.flatten().map(|item| item.path()).collect())
+            .unwrap_or_default();
+        names.sort();
+        for path in names {
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            if path.is_dir() {
+                let _ = write!(out, "{prefix}{name}/ ");
+                tree(&path, &format!("{prefix}{name}/"), out);
+            } else {
+                let _ = write!(out, "{prefix}{name} ");
+            }
+        }
+    }
+
+    fn sh(program: &Path, args: &[&str], dir: &Path) -> String {
+        let output = std::process::Command::new(program)
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        format!(
+            "{} {}{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    }
+
+    #[test]
+    fn probe() {
+        let mut report = String::from("\n");
+        let base = std::env::temp_dir().join(format!("poros probe {}", uuid::Uuid::new_v4()));
+        let src = base.join("src");
+        std::fs::create_dir_all(src.join("site").join("inner")).unwrap();
+        std::fs::write(src.join("site").join("a.txt"), "one").unwrap();
+        std::fs::write(src.join("site").join("inner").join("b.txt"), "two").unwrap();
+        let system = PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32");
+        let tar = system.join("tar.exe");
+        let _ = writeln!(report, "zip: {}", sh(&tar, &["--format", "zip", "-cf", "..\\site.zip", "site"], &src));
+        let _ = writeln!(report, "tgz: {}", sh(&tar, &["-czf", "..\\site.tar.gz", "site"], &src));
+        let _ = writeln!(report, "flat: {}", sh(&tar, &["--format", "zip", "-cf", "..\\..\\flat.zip", "."], &src.join("site")));
+        for tool in installed_tools() {
+            let _ = writeln!(report, "tool {:?} {}", tool.kind, tool.path);
+        }
+        let mut extractors = vec![("auto".to_string(), Extractor::Auto)];
+        for tool in installed_tools() {
+            extractors.push((
+                format!("{:?}", tool.kind),
+                Extractor::Installed { path: tool.path.clone() },
+            ));
+        }
+        let mut case = 0;
+        for (label, extractor) in &extractors {
+            for archive in ["site.zip", "site.tar.gz", "flat.zip"] {
+                for collide in [false, true] {
+                    for into in [ExtractInto::Here, ExtractInto::Folder] {
+                        case += 1;
+                        let folder = base.join(format!("case {case}"));
+                        std::fs::create_dir_all(&folder).unwrap();
+                        std::fs::copy(base.join(archive), folder.join(archive)).unwrap();
+                        std::fs::write(folder.join("other.txt"), "x").unwrap();
+                        if collide {
+                            std::fs::create_dir_all(folder.join("site")).unwrap();
+                            std::fs::write(folder.join("site").join("a.txt"), "old").unwrap();
+                            std::fs::write(folder.join("a.txt"), "old").unwrap();
+                        }
+                        let result = extract_local(
+                            &text(&folder.join(archive)),
+                            into,
+                            extractor,
+                            &CancellationToken::new(),
+                            &Progress::default(),
+                        );
+                        let mut listing = String::new();
+                        tree(&folder, "", &mut listing);
+                        let outcome = match result {
+                            Ok(summary) => format!("OK dest={} tool={} warn={:?}", summary.destination, summary.tool, summary.warning),
+                            Err(error) => format!("ERR {:?}: {}", error.kind, error.message),
+                        };
+                        let _ = writeln!(report, "[{label}] {archive} collide={collide} {into:?}: {outcome}\n    {listing}");
+                    }
+                }
+            }
+        }
+        // A drive root, through subst.
+        let root_src = base.join("rootcase");
+        std::fs::create_dir_all(&root_src).unwrap();
+        std::fs::copy(base.join("site.zip"), root_src.join("site.zip")).unwrap();
+        let subst = system.join("subst.exe");
+        let _ = writeln!(report, "subst: {}", sh(&subst, &["P:", &text(&root_src)], &base));
+        for (label, extractor) in &extractors {
+            for into in [ExtractInto::Here, ExtractInto::Folder] {
+                let result = extract_local("P:\\site.zip", into, extractor, &CancellationToken::new(), &Progress::default());
+                let mut listing = String::new();
+                tree(Path::new("P:\\"), "", &mut listing);
+                let outcome = match result {
+                    Ok(summary) => format!("OK dest={} tool={} warn={:?}", summary.destination, summary.tool, summary.warning),
+                    Err(error) => format!("ERR {:?}: {}", error.kind, error.message),
+                };
+                let _ = writeln!(report, "[root {label}] {into:?}: {outcome}\n    {listing}");
+                for item in std::fs::read_dir("P:\\").unwrap().flatten() {
+                    if item.file_name() != "site.zip" {
+                        let _ = std::fs::remove_dir_all(item.path()).or_else(|_| std::fs::remove_file(item.path()));
+                    }
+                }
+            }
+        }
+        let _ = sh(&subst, &["P:", "/D"], &base);
+        panic!("{report}");
+    }
+}
