@@ -273,6 +273,7 @@ export function FilePane({
     return target.folder ?? "";
   });
 
+  const side = useMemo(() => ({ kind: source.kind, sessionId }), [source.kind, sessionId]);
   const clip = useClipboardStore((state) => state.clip);
   const cutPaths = useMemo(
     () =>
@@ -841,6 +842,7 @@ export function FilePane({
       {pane.listing ? (
         <FileList
           pane={pane}
+          side={side}
           active={active}
           rowHeight={Math.max(rowHeight, fontSize + MIN_ROW_PADDING)}
           hiddenColumns={hiddenColumns}
