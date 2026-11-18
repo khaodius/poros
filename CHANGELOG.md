@@ -3,6 +3,23 @@
 Installers for every version are attached to its
 [release](https://github.com/khaodius/poros/releases), with SHA-256 checksums.
 
+## 0.6.5 - 2026-11-18
+
+- **Tabs and windows come back after a restart.** Remember tabs and layout only brought back local
+  tabs, at the folder each first opened in, and the main window's arrangement of panes. Now every
+  window reopens as it was: server tabs reconnect and open at the folder they showed, terminals
+  start a new shell on their server, editors reopen their files as last saved, and local panes
+  open at the folder they were in. Windows torn out of the main one open again where they were,
+  at the size they were, and the main window opens where it was, maximized if it was. A window
+  closed by itself is not reopened; only the windows open when Poros closes are.
+- **Reconnecting is shown in the tab.** A server tab says it is reconnecting until its server
+  answers. A server that is down shows why, with Try again. One whose password is not kept asks
+  you to sign in, with the connection filled in, and tabs that shared a session before, such as a
+  server and its terminal, reconnect together. Settings > Interface > Reconnect to servers on start
+  turns the automatic reconnection off, so reopened server tabs wait for Connect.
+- **A folder that is gone opens the usual one instead.** A pane reopened at a folder deleted or
+  unplugged since opens at its usual first folder rather than an error.
+
 ## 0.6.4 - 2026-11-17
 
 - **Extract here does what Extract to a folder does.** In a local pane on Windows, Extract here

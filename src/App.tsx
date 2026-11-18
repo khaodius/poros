@@ -54,7 +54,7 @@ import { matchWindowBackground, revealWindow } from "./lib/windowReveal";
 import type { LogRecord, StoreName } from "./lib/types";
 import { startClipboard } from "./state/clipboardStore";
 import { hitTest, useDragStore, type DragPayload } from "./state/dragStore";
-import { persistLayout, restoreLayout, useLayoutStore } from "./state/layoutStore";
+import { useLayoutStore } from "./state/layoutStore";
 import { useLogStore } from "./state/logStore";
 import { activePane } from "./state/paneRegistry";
 import { askToSave, unsavedEditorTabs } from "./state/editorActions";
@@ -70,6 +70,12 @@ import { useTransferStore } from "./state/transferStore";
 import { useUiStore } from "./state/uiStore";
 import { checkForUpdates } from "./state/updateStore";
 import { handleQueueFinished } from "./state/whenDone";
+import {
+  restoreWorkspace,
+  saveWorkspaceNow,
+  savedLayout,
+  startSavingWorkspace,
+} from "./state/workspace";
 
 let starting: Promise<void> | null = null;
 
@@ -86,15 +92,17 @@ function startApp(): Promise<void> {
       useTransferStore.getState().load(),
     ]);
     if (isMainWindow()) {
-      const remember = () => useSettingsStore.getState().settings.interface.rememberLayout;
-      const restored = remember() ? restoreLayout() : null;
+      const restored = await restoreWorkspace();
       if (restored) useLayoutStore.getState().setRoot(restored);
-      persistLayout(remember);
     } else {
       const handoff = await windows.initialLayout().catch(() => null);
-      const tabs = await adoptHandoff(handoff);
-      useLayoutStore.getState().setRoot(group(tabs.length > 0 ? tabs : [welcomeTab()]));
+      // A window opened again as Poros starts gets the tabs it had; one a tab was torn out
+      // into takes over that tab.
+      const restored = savedLayout(handoff);
+      const tabs = restored ? [] : await adoptHandoff(handoff);
+      useLayoutStore.getState().setRoot(restored ?? group(tabs.length > 0 ? tabs : [welcomeTab()]));
     }
+    startSavingWorkspace();
   })();
   return starting;
 }
@@ -259,10 +267,11 @@ function useSystemFileDrops() {
   }, []);
 }
 
-/** Asks about unsaved files before the window closes. */
+/** Keeps the tabs for the next start and asks about unsaved files before the window closes. */
 function useCloseGuard() {
   useEffect(() => {
-    const subscription = getCurrentWindow().onCloseRequested((event) => {
+    const subscription = getCurrentWindow().onCloseRequested(async (event) => {
+      await saveWorkspaceNow();
       const unsaved = unsavedEditorTabs();
       if (unsaved.length === 0) return;
       event.preventDefault();

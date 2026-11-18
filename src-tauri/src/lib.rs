@@ -45,6 +45,8 @@ pub mod tls;
 pub mod transfer;
 #[cfg(feature = "gui")]
 pub mod update;
+#[cfg(feature = "gui")]
+pub mod workspace;
 
 #[cfg(feature = "gui")]
 use {
@@ -60,7 +62,6 @@ use {
     automation::scheduler::Scheduler,
     clipboard::SystemClipboard,
     cloud::OAuthVault,
-    commands::PendingWindows,
     connections::{ConnectionStore, Keychain, SecretScope},
     desktop::{DragPreview, DRAG_PREVIEW_WINDOW},
     drag_out::DragOut,
@@ -74,10 +75,9 @@ use {
     themes::ThemeStore,
     transfer::TransferManager,
     update::PendingUpdate,
+    workspace::{FrameChange, FrameUpdate, PendingWindows, WorkspaceStore, MAIN_WINDOW},
 };
 
-#[cfg(feature = "gui")]
-const MAIN_WINDOW: &str = "main";
 /// Windows open hidden and their page shows them once its first frame is ready, so they never
 /// flash white. A page that fails before then still gets its window shown after this long.
 #[cfg(feature = "gui")]
@@ -165,6 +165,17 @@ pub fn run() {
                         .replace(grant_id, refresh_token);
                 },
             ));
+            let saved_workspace = WorkspaceStore::load(config_dir.join("workspace.json"), &events);
+            // Before the page shows the window, so it appears where it was.
+            if let (Some(window), Some(frame)) = (
+                app.get_webview_window(MAIN_WINDOW),
+                saved_workspace.frame(MAIN_WINDOW),
+            ) {
+                if let Err(error) = workspace::place(app.handle(), &window, &frame) {
+                    log::warn!("Could not put the window back where it was: {error}");
+                }
+            }
+            app.manage(saved_workspace);
             app.manage(ThemeStore::new(config_dir.join("themes")));
             app.manage(PendingWindows::default());
             app.manage(PendingUpdate::default());
@@ -196,14 +207,59 @@ pub fn run() {
             if let WindowEvent::DragDrop(DragDropEvent::Drop { paths, .. }) = event {
                 window.state::<DragOut>().dropped_on_poros(paths);
             }
-            if !matches!(event, WindowEvent::Destroyed) {
+            if window.label() == DRAG_PREVIEW_WINDOW {
                 return;
+            }
+            let workspace = window.state::<WorkspaceStore>();
+            match event {
+                WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
+                    let change = match event {
+                        WindowEvent::Moved(corner) => FrameChange::Moved {
+                            x: corner.x,
+                            y: corner.y,
+                        },
+                        WindowEvent::Resized(size) => {
+                            let scale = window.scale_factor().unwrap_or(1.0);
+                            let size = size.to_logical::<f64>(scale);
+                            FrameChange::Resized {
+                                width: size.width,
+                                height: size.height,
+                            }
+                        }
+                        _ => return,
+                    };
+                    let webview = window.app_handle().get_webview_window(window.label());
+                    if let Some(update) = webview.as_ref().and_then(FrameUpdate::of) {
+                        workspace.note(window.label(), change, update);
+                    }
+                    return;
+                }
+                // Every window is still open, so which are maximized goes to disk with the rest.
+                WindowEvent::CloseRequested { .. } if window.label() == MAIN_WINDOW => {
+                    let updates = window
+                        .app_handle()
+                        .webview_windows()
+                        .into_iter()
+                        .filter(|(label, _)| label != DRAG_PREVIEW_WINDOW)
+                        .filter_map(|(label, webview)| {
+                            FrameUpdate::of(&webview).map(|update| (label, update))
+                        })
+                        .collect();
+                    if let Err(error) = workspace.keep(updates) {
+                        log::warn!("Could not keep where the windows are: {}", error.message);
+                    }
+                    return;
+                }
+                WindowEvent::Destroyed => {}
+                _ => return,
             }
             // Closing is confirmed by the page first, which may have unsaved files to ask about.
             if window.label() == MAIN_WINDOW {
+                workspace.exiting();
                 window.app_handle().exit(0);
                 return;
             }
+            workspace.forget(window.label());
             let app = window.app_handle().clone();
             let label = window.label().to_string();
             tauri::async_runtime::spawn(async move {
@@ -303,6 +359,9 @@ pub fn run() {
             commands::window_open,
             commands::window_initial_layout,
             commands::window_set_corners,
+            commands::workspace_save,
+            commands::workspace_restore,
+            commands::workspace_clear,
             commands::drag_preview_place,
             commands::drag_preview_available,
             commands::drag_preview_prepare,

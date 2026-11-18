@@ -39,6 +39,9 @@ export const useHostKeyPrompt = create<HostKeyPromptState>((set) => ({
 
 export type ConnectResult = { session: SessionInfo } | { error: AppError };
 
+/** Errors the connect dialog can put right, with a password, passphrase or sign-in. */
+export const NEEDS_CREDENTIALS: ReadonlySet<string> = new Set(["passphraseRequired", "authFailed"]);
+
 /** Runs a connection attempt, asking the user about unknown or changed host keys. */
 async function withHostKeyPrompts(
   attempt: (approval?: HostKeyApproval) => Promise<SessionInfo>,

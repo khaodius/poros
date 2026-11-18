@@ -6,6 +6,7 @@ import { getEditor, useUnsavedStore } from "./editorRegistry";
 import { useLayoutStore } from "./layoutStore";
 import { useToastStore } from "./toastStore";
 import { useUiStore } from "./uiStore";
+import { stopSavingWorkspace } from "./workspace";
 
 function sameFile(tab: PaneTab, location: DocumentLocation): tab is EditorTab {
   if (tab.kind !== "editor" || tab.path !== location.path) return false;
@@ -75,6 +76,9 @@ export async function saveAndClose(tabIds: string[]): Promise<boolean> {
   return results.every(Boolean);
 }
 
+/** Closes the window once its unsaved files are dealt with, keeping the tabs saved as it was
+ * asked to close rather than those left after saving closed some. */
 export function closeWindowNow(): void {
+  stopSavingWorkspace();
   void getCurrentWindow().destroy();
 }

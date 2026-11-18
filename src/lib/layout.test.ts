@@ -13,15 +13,45 @@ import {
   normalize,
   openTab,
   parseLayout,
+  isRestoring,
   persistableLayout,
   removeTab,
   resizeShares,
   terminalTab,
+  type CurrentState,
   type LayoutNode,
   type PaneTab,
+  type SavedServer,
 } from "./layout";
 
 const remote = (id: string): PaneTab => ({ id, kind: "remote", sessionId: `session-${id}` });
+
+const server = (label: string): SavedServer => ({
+  label,
+  protocol: "sftp",
+  savedConnectionId: `saved-${label}`,
+  profile: {
+    protocol: "sftp",
+    host: `${label}.example.com`,
+    port: 22,
+    username: "deploy",
+    auth: { type: "password", password: "" },
+  },
+});
+
+/** A window whose panes show `folders` and whose sessions are connected to `servers`. */
+function current(
+  folders: Record<string, string> = {},
+  servers: Record<string, SavedServer> = {},
+): CurrentState {
+  return {
+    folderOf: (tabId) => folders[tabId] ?? null,
+    serverOf: (sessionId) => servers[sessionId] ?? null,
+  };
+}
+
+const throughStorage = (root: LayoutNode, state: CurrentState) =>
+  parseLayout(JSON.parse(JSON.stringify(persistableLayout(root, state))));
 
 function twoGroups(): { root: LayoutNode; left: string; right: string } {
   const leftGroup = group([{ id: "a", kind: "local" }]);
@@ -138,16 +168,43 @@ describe("layout", () => {
     expect(placements.get("missing")).toBeUndefined();
   });
 
-  it("round-trips through storage without remote tabs", () => {
+  it("keeps the panes, the folders they show and the servers they use", () => {
     const { root } = twoGroups();
-    const stored = JSON.parse(JSON.stringify(persistableLayout(root)));
-    const restored = parseLayout(stored);
-    expect(restored && allTabs(restored).map((tab) => tab.id)).toEqual(["a"]);
+    const restored = throughStorage(
+      root,
+      current(
+        { a: "/home/me/projects", b: "/var/www" },
+        { "session-b": server("web"), "session-c": server("db") },
+      ),
+    );
+    expect(restored && allGroups(restored).map((entry) => entry.tabs)).toEqual([
+      [{ id: "a", kind: "local", path: "/home/me/projects" }],
+      [
+        {
+          id: "b",
+          kind: "remote",
+          sessionId: "session-b",
+          path: "/var/www",
+          restore: { server: server("web") },
+        },
+        { id: "c", kind: "remote", sessionId: "session-c", restore: { server: server("db") } },
+      ],
+    ]);
+    expect(restored?.type === "split" && restored.sizes).toEqual([0.5, 0.5]);
     expect(parseLayout({ type: "group", id: "g", tabs: [{ id: 1 }] })).toBeNull();
     expect(parseLayout(JSON.parse(JSON.stringify(root)))).toEqual(root);
   });
 
-  it("hands editor and terminal tabs between windows but does not keep them", () => {
+  it("leaves out server tabs whose session has ended, and the panes they empty", () => {
+    const { root } = twoGroups();
+    const restored = throughStorage(root, current({}, { "session-c": server("db") }));
+    expect(restored && allTabs(restored).map((tab) => tab.id)).toEqual(["a", "c"]);
+    const alone = throughStorage(root, current());
+    expect(alone?.type).toBe("group");
+    expect(alone && allTabs(alone).map((tab) => tab.id)).toEqual(["a"]);
+  });
+
+  it("reopens editors from their files and terminals with a new shell", () => {
     const editor: PaneTab = {
       ...editorTab({
         id: "doc-1",
@@ -157,16 +214,60 @@ describe("layout", () => {
       }),
       draft: { text: "user www;\n", encoding: "utf8", lineEnding: "lf", stamp: null },
     };
-    const shell = terminalTab("session-1", "root@srv");
-    const root = group([{ id: "a", kind: "local" }, editor, shell]);
+    const remoteEditor: PaneTab = {
+      ...editorTab({ id: "doc-2", name: "app.env", path: "/srv/app.env", origin: "srv" }, "s"),
+      id: "e2",
+    };
+    const shell: PaneTab = { ...terminalTab("s", "root@srv"), id: "t", terminalId: "shell-1" };
+    const root = group([{ id: "a", kind: "local" }, editor, remoteEditor, shell]);
     expect(parseLayout(JSON.parse(JSON.stringify(root)))).toEqual(root);
-    const restored = parseLayout(JSON.parse(JSON.stringify(persistableLayout(root))));
-    expect(restored && allTabs(restored).map((tab) => tab.kind)).toEqual(["local"]);
+
+    const restored = throughStorage(root, current({}, { s: server("srv") }));
+    const tabs = restored ? allTabs(restored) : [];
+    expect(tabs.map((tab) => tab.kind)).toEqual(["local", "editor", "editor", "terminal"]);
+    expect(tabs.slice(1).every(isRestoring)).toBe(true);
+    expect(tabs[1]).toEqual({
+      id: editor.id,
+      kind: "editor",
+      documentId: "doc-1",
+      name: "nginx.conf",
+      path: "/etc/nginx/nginx.conf",
+      origin: "srv",
+      restore: {},
+    });
+    expect(tabs[2]).toMatchObject({ sessionId: "s", restore: { server: server("srv") } });
+    expect(tabs[3]).toEqual({
+      id: "t",
+      kind: "terminal",
+      sessionId: "s",
+      label: "root@srv",
+      restore: { server: server("srv") },
+    });
+
+    // Without the server, only the local tabs come back.
+    const offline = throughStorage(root, current());
+    expect(offline && allTabs(offline).map((tab) => tab.id)).toEqual(["a", editor.id]);
 
     const broken = { ...editor, draft: { text: 4 } };
     expect(parseLayout({ type: "group", id: "g", tabs: [broken] })).toBeNull();
     const nameless = { id: "t", kind: "terminal", sessionId: "s" };
     expect(parseLayout({ type: "group", id: "g", tabs: [nameless] })).toBeNull();
+    const serverless = { id: "r", kind: "remote", sessionId: "s", restore: {} };
+    expect(parseLayout({ type: "group", id: "g", tabs: [serverless] })).toBeNull();
+    const badServer = { ...serverless, restore: { server: { label: "srv" } } };
+    expect(parseLayout({ type: "group", id: "g", tabs: [badServer] })).toBeNull();
+  });
+
+  it("keeps tabs still waiting for their server for the next start", () => {
+    const waiting: PaneTab = {
+      id: "b",
+      kind: "remote",
+      sessionId: "old-session",
+      path: "/var/www",
+      restore: { server: server("web") },
+    };
+    const root = group([waiting]);
+    expect(throughStorage(root, current({ b: "/elsewhere" }))).toEqual(root);
   });
 
   it("opens a tab in a pane of its own after the pane it came from", () => {

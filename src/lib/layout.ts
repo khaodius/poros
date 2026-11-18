@@ -1,7 +1,14 @@
 // The dock layout of a window: groups of tabs, arranged in nested rows and columns. Every
 // operation returns a new tree, normalized so no empty group or single-child split remains.
 
-import type { DocumentInfo, FileStamp, TextLineEnding, TextEncoding } from "./types";
+import type {
+  ConnectProfile,
+  DocumentInfo,
+  FileStamp,
+  Protocol,
+  TextLineEnding,
+  TextEncoding,
+} from "./types";
 
 /** Unsaved text an editor tab takes along when it moves to another window. */
 export interface EditorDraft {
@@ -12,9 +19,28 @@ export interface EditorDraft {
   stamp: FileStamp | null;
 }
 
+/** A server tabs were using when Poros closed, to connect to again on the next start. */
+export interface SavedServer {
+  label: string;
+  protocol: Protocol;
+  savedConnectionId?: string;
+  /** What the session was opened with, without passwords, passphrases or browser sign-ins. */
+  profile: ConnectProfile | null;
+}
+
+/**
+ * Marks a tab put back from the last time Poros ran, which shows once what it needs is back: its
+ * server, or for an editor its file. Until then the tab's session and document ids are those it
+ * had then, so tabs that shared a session share the new one.
+ */
+export interface Restore {
+  /** Absent for a file on this computer. */
+  server?: SavedServer;
+}
+
 export type PaneTab =
   | { id: string; kind: "local"; path?: string }
-  | { id: string; kind: "remote"; sessionId: string; path?: string }
+  | { id: string; kind: "remote"; sessionId: string; path?: string; restore?: Restore }
   | { id: string; kind: "welcome" }
   | {
       id: string;
@@ -27,6 +53,7 @@ export type PaneTab =
       /** The session the file was opened from, for server files. */
       sessionId?: string;
       draft?: EditorDraft;
+      restore?: Restore;
     }
   | {
       id: string;
@@ -35,10 +62,17 @@ export type PaneTab =
       label: string;
       /** Absent until the shell has started. */
       terminalId?: string;
+      restore?: Restore;
     };
 
 export type EditorTab = Extract<PaneTab, { kind: "editor" }>;
 export type TerminalTab = Extract<PaneTab, { kind: "terminal" }>;
+export type RemoteTab = Extract<PaneTab, { kind: "remote" }>;
+export type RestoringTab = (RemoteTab | EditorTab | TerminalTab) & { restore: Restore };
+
+export function isRestoring(tab: PaneTab): tab is RestoringTab {
+  return "restore" in tab && tab.restore !== undefined;
+}
 
 export interface GroupNode {
   type: "group";
@@ -374,6 +408,35 @@ function isDraft(value: unknown): value is EditorDraft {
   return isString(draft.text) && isString(draft.encoding) && isString(draft.lineEnding);
 }
 
+function isServer(value: unknown): value is SavedServer {
+  if (!value || typeof value !== "object") return false;
+  const server = value as Record<string, unknown>;
+  const profile = server.profile as Record<string, unknown> | null | undefined;
+  const profileShape =
+    profile === null ||
+    (typeof profile === "object" &&
+      isString(profile.protocol) &&
+      isString(profile.host) &&
+      typeof profile.port === "number" &&
+      isString(profile.username) &&
+      typeof profile.auth === "object" &&
+      profile.auth !== null);
+  return (
+    isString(server.label) &&
+    isString(server.protocol) &&
+    isOptionalString(server.savedConnectionId) &&
+    profileShape
+  );
+}
+
+/** A restore mark is optional; tabs that need a server to restore must name one. */
+function isRestore(value: unknown, needsServer: boolean): boolean {
+  if (value === undefined) return true;
+  if (!value || typeof value !== "object") return false;
+  const server = (value as Record<string, unknown>).server;
+  return server === undefined ? !needsServer : isServer(server);
+}
+
 function isTab(value: unknown): value is PaneTab {
   if (!value || typeof value !== "object") return false;
   const tab = value as Record<string, unknown>;
@@ -381,15 +444,21 @@ function isTab(value: unknown): value is PaneTab {
   if (tab.path !== undefined && typeof tab.path !== "string") return false;
   switch (tab.kind) {
     case "remote":
-      return isString(tab.sessionId);
+      return isString(tab.sessionId) && isRestore(tab.restore, true);
     case "editor":
       return (
         [tab.documentId, tab.name, tab.path, tab.origin].every(isString) &&
         isOptionalString(tab.sessionId) &&
-        (tab.draft === undefined || isDraft(tab.draft))
+        (tab.draft === undefined || isDraft(tab.draft)) &&
+        isRestore(tab.restore, isString(tab.sessionId))
       );
     case "terminal":
-      return isString(tab.sessionId) && isString(tab.label) && isOptionalString(tab.terminalId);
+      return (
+        isString(tab.sessionId) &&
+        isString(tab.label) &&
+        isOptionalString(tab.terminalId) &&
+        isRestore(tab.restore, true)
+      );
     default:
       return tab.kind === "local" || tab.kind === "welcome";
   }
@@ -423,14 +492,58 @@ export function parseLayout(value: unknown): LayoutNode | null {
   });
 }
 
-/** The layout worth restoring after a restart: server, editor and terminal tabs need what
- * only this run had open, so they go. */
-export function persistableLayout(root: LayoutNode): LayoutNode | null {
+/** What a window has now that its layout does not: where each pane is, and its servers. */
+export interface CurrentState {
+  /** The folder a file pane shows, or null before it has listed one. */
+  folderOf: (tabId: string) => string | null;
+  /** The server a session in this window is connected to, or null for one it no longer has. */
+  serverOf: (sessionId: string) => SavedServer | null;
+}
+
+/** A tab as it reopens after a restart, or null for one that cannot. */
+function restorableTab(tab: PaneTab, current: CurrentState): PaneTab | null {
+  if (isRestoring(tab)) {
+    // Its server never came back this time; it waits for the next.
+    return tab.kind === "editor" ? { ...tab, draft: undefined } : tab;
+  }
+  switch (tab.kind) {
+    case "welcome":
+      return tab;
+    case "local":
+      return { ...tab, path: current.folderOf(tab.id) ?? tab.path };
+    case "remote": {
+      const server = current.serverOf(tab.sessionId);
+      if (!server) return null;
+      const path = current.folderOf(tab.id) ?? tab.path;
+      return { id: tab.id, kind: "remote", sessionId: tab.sessionId, path, restore: { server } };
+    }
+    case "terminal": {
+      const server = current.serverOf(tab.sessionId);
+      if (!server) return null;
+      const { id, sessionId, label } = tab;
+      return { id, kind: "terminal", sessionId, label, restore: { server } };
+    }
+    case "editor": {
+      // Reopened from the file as last saved; the close guard has asked about any changes.
+      const { id, documentId, name, path, origin, sessionId } = tab;
+      const reopened: EditorTab = { id, kind: "editor", documentId, name, path, origin };
+      if (sessionId === undefined) return { ...reopened, restore: {} };
+      const server = current.serverOf(sessionId);
+      return server ? { ...reopened, sessionId, restore: { server } } : null;
+    }
+  }
+}
+
+/**
+ * The layout to reopen after a restart: every tab whose files, server or folder Poros can find
+ * again, each marked to reconnect or reopen first, and panes at the folders they show now.
+ */
+export function persistableLayout(root: LayoutNode, current: CurrentState): LayoutNode | null {
   return normalize(
     mapGroups(root, (entry) =>
       withTabs(
         entry,
-        entry.tabs.filter((tab) => tab.kind === "local" || tab.kind === "welcome"),
+        entry.tabs.flatMap((tab) => restorableTab(tab, current) ?? []),
       ),
     ),
   );

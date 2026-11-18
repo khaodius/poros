@@ -10,8 +10,6 @@ import {
   groupOfTab,
   moveTab,
   openTab,
-  parseLayout,
-  persistableLayout,
   removeTab,
   setSizes,
   updateTab,
@@ -20,9 +18,6 @@ import {
   type LayoutNode,
   type PaneTab,
 } from "../lib/layout";
-
-const STORAGE_KEY = "poros.layout";
-const SAVE_DELAY_MILLIS = 400;
 
 interface LayoutState {
   root: LayoutNode;
@@ -80,30 +75,3 @@ export const useLayoutStore = create<LayoutState>((set, get) => {
     },
   };
 });
-
-export function restoreLayout(): LayoutNode | null {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    return stored ? parseLayout(JSON.parse(stored)) : null;
-  } catch {
-    return null;
-  }
-}
-
-/** Saves the main window's layout as it changes; returns the unsubscribe function. */
-export function persistLayout(enabled: () => boolean): () => void {
-  let timer = 0;
-  return useLayoutStore.subscribe((state, previous) => {
-    if (state.root === previous.root) return;
-    window.clearTimeout(timer);
-    timer = window.setTimeout(() => {
-      try {
-        const layout = enabled() ? persistableLayout(state.root) : null;
-        if (layout) localStorage.setItem(STORAGE_KEY, JSON.stringify(layout));
-        else localStorage.removeItem(STORAGE_KEY);
-      } catch {
-        // Storage can be unavailable; the default layout then opens next time.
-      }
-    }, SAVE_DELAY_MILLIS);
-  });
-}

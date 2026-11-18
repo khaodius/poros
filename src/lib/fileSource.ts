@@ -11,6 +11,8 @@ export interface FileSource {
   label: string;
   pathStyle: PathStyle;
   initialPath(): Promise<string>;
+  /** Where to open instead when the first folder cannot be listed, such as one deleted since. */
+  fallbackPath?(): Promise<string>;
   home(): Promise<string>;
   /** Drive letters on Windows; absent where a single root exists. */
   roots?(): Promise<string[]>;
@@ -67,7 +69,10 @@ export function forgetRemoteSource(sessionId: string): void {
   remoteSources.delete(sessionId);
 }
 
-/** The same source, opening at `path` instead of its usual first folder. */
+/** The same source, opening at `path` instead of its usual first folder, or at that folder when
+ * `path` cannot be listed. */
 export function startingAt(source: FileSource, path: string | undefined): FileSource {
-  return path ? { ...source, initialPath: async () => path } : source;
+  return path
+    ? { ...source, initialPath: async () => path, fallbackPath: source.initialPath }
+    : source;
 }

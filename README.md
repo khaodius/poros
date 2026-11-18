@@ -27,6 +27,8 @@
   KDE desktop download straight into the folder they were dropped in.
 - **Tabs and docking**: local folders, server sessions, editors and terminals are tabs that can be
   merged, split, resized, detached into their own windows and dragged from one window into another.
+  Poros reopens them as they were on the next start, windows where they were, panes at the folders
+  they showed, reconnected to their servers.
 - **Parallel transfers**: each worker uses its own connection, large files are split across
   idle connections, and the worker count can change while transfers run.
 - **File operations**: new files and folders on any server or this computer. Cut, copy and
@@ -418,8 +420,8 @@ The Windows installers are not code-signed yet, so SmartScreen may warn about an
   (`rsync://`, port 873) are not supported. Servers without rsync fall back to SFTP.
 - **Data** is stored in `~/.config/io.github.khaodius.poros/` on Linux and
   `%APPDATA%\io.github.khaodius.poros\` on Windows. Themes live in its `themes/` folder,
-  unfinished transfers in `transfers.json` and scheduled tasks in `schedules.json`. Neither file
-  holds passwords or sign-ins.
+  unfinished transfers in `transfers.json`, scheduled tasks in `schedules.json` and the windows
+  and tabs to reopen in `workspace.json`. None of these files holds passwords or sign-ins.
 - **Wayland**: Poros sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` and `__NV_DISABLE_EXPLICIT_SYNC=1`
   at startup to avoid blank windows on some compositors and NVIDIA drivers. Set either variable
   to override.

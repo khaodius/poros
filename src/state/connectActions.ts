@@ -1,12 +1,12 @@
 import {
+  asksForPassword,
   draftFromSaved,
   findSameAccount,
   profileFromDraft,
   savedFromProfile,
 } from "../lib/connectDraft";
-import { isFtp } from "../lib/protocols";
 import type { AppError, ConnectProfile, SavedConnection } from "../lib/types";
-import { connectWithPrompts, type ConnectResult } from "./connectFlow";
+import { NEEDS_CREDENTIALS, connectWithPrompts, type ConnectResult } from "./connectFlow";
 import { useSavedConnections } from "./savedConnectionsStore";
 import { useSessionStore } from "./sessionStore";
 import { useSettingsStore } from "./settingsStore";
@@ -38,14 +38,6 @@ export async function quickConnect(profile: ConnectProfile): Promise<AppError | 
   return null;
 }
 
-const NEEDS_CREDENTIALS = new Set(["passphraseRequired", "authFailed"]);
-
-/** Anonymous FTP logins need no password. */
-function isAnonymousFtp(connection: SavedConnection): boolean {
-  const username = connection.username.toLowerCase();
-  return isFtp(connection.protocol) && (username === "" || username === "anonymous");
-}
-
 /** Connects to a saved connection. When a password or sign-in is needed, opens the connect dialog. */
 export async function connectSaved(
   connection: SavedConnection,
@@ -54,7 +46,7 @@ export async function connectSaved(
   const draft = draftFromSaved(connection);
   const openDialog = (error?: string) =>
     useUiStore.getState().open({ kind: "connect", draft, targetTabId, error });
-  if (connection.authType === "password" && !connection.saveSecret && !isAnonymousFtp(connection)) {
+  if (asksForPassword(connection)) {
     openDialog();
     return null;
   }

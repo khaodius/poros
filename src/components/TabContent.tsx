@@ -1,7 +1,7 @@
 import { lazy, memo, Suspense, useMemo, useState } from "react";
 import { HardDrive, RotateCw, Unplug } from "lucide-react";
 import { localSource, remoteSource, startingAt } from "../lib/fileSource";
-import type { PaneTab } from "../lib/layout";
+import { isRestoring, type PaneTab } from "../lib/layout";
 import { attemptUnderWay, useAutoReconnect } from "../hooks/useAutoReconnect";
 import type { SessionInfo } from "../lib/types";
 import { reconnectWithPrompts } from "../state/connectFlow";
@@ -10,6 +10,7 @@ import { getPane } from "../state/paneRegistry";
 import { useSessionStore } from "../state/sessionStore";
 import { ConnectionIcon } from "./ConnectionIcon";
 import { FilePane } from "./FilePane";
+import { RestoringPane } from "./RestoringPane";
 import { WelcomePanel } from "./WelcomePanel";
 
 // Loaded on first use, so the editor and terminal cost nothing until one opens.
@@ -24,6 +25,7 @@ interface TabContentProps {
 
 /** Memoized, since the dock re-renders on every pointer move while a pane is dragged. */
 export const TabContent = memo(function TabContent({ tab, visible, active }: TabContentProps) {
+  if (isRestoring(tab)) return <RestoringPane tab={tab} />;
   if (tab.kind === "local") return <LocalTab tab={tab} visible={visible} active={active} />;
   if (tab.kind === "remote") return <RemoteTab tab={tab} visible={visible} active={active} />;
   if (tab.kind === "editor" || tab.kind === "terminal") {

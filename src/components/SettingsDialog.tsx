@@ -662,9 +662,16 @@ function InterfaceSettingsPage({ settings }: { settings: Settings }) {
         />
         <SwitchSetting
           label="Remember tabs and layout"
-          hint="Reopens local tabs and the arrangement of panes on the next start."
+          hint="Reopens the windows, panes and tabs open at the last exit, each at its folder."
           checked={options.rememberLayout}
           onChange={(rememberLayout) => set({ rememberLayout })}
+        />
+        <SwitchSetting
+          label="Reconnect to servers on start"
+          hint="Off: reopened server tabs wait for you to connect them."
+          checked={options.reconnectOnStart}
+          disabled={!options.rememberLayout}
+          onChange={(reconnectOnStart) => set({ reconnectOnStart })}
         />
         <SwitchSetting
           label="Use the system title bar"

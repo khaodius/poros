@@ -1656,6 +1656,20 @@ form.path-bar {
   color: var(--text-muted);
 }
 
+/* Centered while it fits, scrolled from the top in a pane too short for it. */
+.restoring-pane {
+  justify-content: flex-start;
+  overflow-y: auto;
+}
+
+.restoring-pane > :first-child {
+  margin-top: auto;
+}
+
+.restoring-pane > :last-child {
+  margin-bottom: auto;
+}
+
 /* File list */
 
 .file-list {

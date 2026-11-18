@@ -247,14 +247,16 @@ export function usePane(
 
   useEffect(() => {
     let cancelled = false;
-    source
-      .initialPath()
-      .then((path) => {
-        if (!cancelled) void load(path, "push");
-      })
-      .catch((caught) => {
-        if (!cancelled) setError(toAppError(caught));
-      });
+    const open = async () => {
+      const opened = await load(await source.initialPath(), "push");
+      // Nothing listed yet, so the user has not gone anywhere else meanwhile.
+      if (opened || cancelled || !source.fallbackPath || listedPath.current !== null) return;
+      const fallback = await source.fallbackPath();
+      if (!cancelled) await load(fallback, "push");
+    };
+    open().catch((caught) => {
+      if (!cancelled) setError(toAppError(caught));
+    });
     return () => {
       cancelled = true;
     };
