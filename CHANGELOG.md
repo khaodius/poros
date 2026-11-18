@@ -3,6 +3,20 @@
 Installers for every version are attached to its
 [release](https://github.com/khaodius/poros/releases), with SHA-256 checksums.
 
+## 0.6.4 - 2026-11-17
+
+- **Extract here does what Extract to a folder does.** In a local pane on Windows, Extract here
+  could seem to do nothing. Both choices ran the same program, but Extract here unpacked straight
+  into the archive's folder and quietly left out anything whose name was already there. An
+  archive with the folder or files it holds already beside it, as there are after extracting it
+  to a folder or when it was zipped from that folder, added nothing that could be seen, and what
+  did come out was not selected, so it was lost among the folder's other files. Extract here now
+  unpacks into a new folder beside the archive, as Extract to a folder does, then moves what came
+  out next to the archive. Anything whose name is taken gets a numbered one, such as `site (2)`
+  or `notes (2).txt`, so nothing is replaced or mixed into what is there. What came out is
+  selected in every pane showing the folder, with its date group opened if it was collapsed.
+  Servers work the same way, and a failed or cancelled extraction leaves nothing behind.
+
 ## 0.6.3 - 2026-11-17
 
 - **Flying files and their rows arrive together.** With flying files on, a finished file's row
