@@ -1,8 +1,9 @@
 // Extracting archives from a pane's context menu: on a server with the programs it has, or on
 // this computer with the program Settings > Archives picks. Each archive shows in the tray
-// while it unpacks, and the panes showing its folder reload with the result selected.
+// while it unpacks, and the panes showing its folder reload with what came out selected.
 
 import { archiveFormatOf, CUSTOM_EXTRACTOR, extractorOf } from "../lib/archives";
+import { pluralize } from "../lib/format";
 import { fileOperations, toAppError } from "../lib/ipc";
 import { baseName } from "../lib/path";
 import type { ExtractInto, FileEntry } from "../lib/types";
@@ -50,13 +51,16 @@ export async function extractArchives(
           fileOperations.extract({ operationId, location, path: archive.path, into, extractor }),
         "extract",
       );
+      const items =
+        summary.placed.length > 1 ? ` (${pluralize(summary.placed.length, "item")})` : "";
       write(
         "info",
-        `Extracted ${archive.name} to ${summary.destination} with ${summary.tool}`,
+        `Extracted ${archive.name} to ${summary.destination}${items} with ${summary.tool}`,
         pane.sessionId,
       );
       if (summary.warning) write("warn", `${summary.tool}: ${summary.warning}`, pane.sessionId);
-      refreshFolder(origin, summary.folder, summary.destination);
+      // What came out is selected, so it shows among what the folder already held.
+      refreshFolder(origin, summary.folder, summary.placed);
     } catch (caught) {
       const error = toAppError(caught);
       if (error.kind === "cancelled") {

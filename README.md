@@ -38,7 +38,8 @@
   how many entries are gone, the one being deleted and any that could not be.
 - **Archives**: Extract here, or into a folder named after the archive, from the right-click
   menu for ZIP, 7z, RAR, tar and compressed tar, gzip, bzip2, xz, zstd, ISO and CAB files,
-  without replacing anything already there. Archives on an SFTP server are extracted on the
+  without replacing anything already there: what comes out gets a numbered name where its own is
+  taken, and is selected once it is in place. Archives on an SFTP server are extracted on the
   server with the programs it has, such as 7-Zip, unrar, tar or unzip, with nothing downloaded.
   On this computer, Settings > Archives lists the extractors installed on Windows or Linux and
   picks the best for each format, or uses the one you choose, or any other program with your own

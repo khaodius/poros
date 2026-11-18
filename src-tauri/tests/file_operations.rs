@@ -1003,13 +1003,20 @@ async fn extracts_archives_with_the_servers_own_programs() {
         pattern(70_000, 3)
     );
 
-    // Extracting here keeps what is already there.
+    // Extracting here keeps what is already there, and puts what came out beside it under
+    // free names, as Extract to a folder does with the folder.
     fixture.write("index.html", b"mine").await;
-    operations
+    let summary = operations
         .extract(extract_request(&fixture, "site.tar.gz", ExtractInto::Here))
         .await
         .unwrap();
+    assert_eq!(
+        summary.placed,
+        [fixture.path("assets"), fixture.path("index (2).html")]
+    );
+    assert_eq!(summary.destination, fixture.remote);
     assert_eq!(fixture.read("index.html").await, b"mine");
+    assert_eq!(fixture.read("index (2).html").await, b"<h1>hi</h1>");
     assert_eq!(fixture.read("assets/app.js").await, pattern(70_000, 3));
 
     // A single compressed file unpacks beside itself, under a free name.
@@ -1028,6 +1035,7 @@ async fn extracts_archives_with_the_servers_own_programs() {
         .await
         .unwrap();
     assert_eq!(summary.destination, fixture.path("dump.sql"));
+    assert_eq!(summary.placed, [fixture.path("dump.sql")]);
     assert_eq!(fixture.read("dump.sql").await, pattern(9_000, 4));
 
     // A damaged archive leaves no empty folder behind, and says what the program said.
@@ -1044,6 +1052,20 @@ async fn extracts_archives_with_the_servers_own_programs() {
         .unwrap_err();
     assert!(error.message.contains("tar"), "{}", error.message);
     assert!(!fixture.exists("broken").await);
+    operations
+        .extract(extract_request(
+            &fixture,
+            "broken.tar.gz",
+            ExtractInto::Here,
+        ))
+        .await
+        .unwrap_err();
+    // No working folder stays behind, after a failure or a success.
+    let names = fixture.names("").await;
+    assert!(
+        !names.iter().any(|name| name.contains(".poros-")),
+        "{names:?}"
+    );
 
     // Text is not an archive.
     fixture.write("notes.txt", b"plain").await;

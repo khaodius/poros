@@ -9,8 +9,11 @@ export interface PaneHandle {
   sessionId?: string;
   label: string;
   path: () => string | null;
-  /** Reloads the listing, keeping the selection, or moving the cursor to `focusPath`. */
-  refresh: (focusPath?: string) => void;
+  /**
+   * Reloads the listing, keeping the selection, or selecting `focus` (a path, or several)
+   * with the cursor on the first.
+   */
+  refresh: (focus?: string | readonly string[]) => void;
   selected: () => FileEntry[];
   /** Everything the listing holds, also rows scrolled away or filtered out. */
   entries?: () => readonly FileEntry[];
