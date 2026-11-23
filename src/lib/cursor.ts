@@ -29,16 +29,3 @@ export function entryAfterRemoval(
   const after = entries.slice(start).find(stays);
   return (after ?? entries.slice(0, start).reverse().find(stays))?.path;
 }
-
-/** Where the cursor, or the anchor a range is selected from, is once a folder has been listed:
- * on the entry the listing was asked to select, otherwise where it was while the same folder
- * still lists that entry. */
-export function placeAfterListing(
-  current: string | null,
-  focus: string | undefined,
-  sameFolder: boolean,
-  listed: ReadonlySet<string>,
-): string | null {
-  if (focus) return focus;
-  return sameFolder && current !== null && listed.has(current) ? current : null;
-}

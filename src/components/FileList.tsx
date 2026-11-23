@@ -16,10 +16,10 @@ import { defaultRangeExtractor, useVirtualizer, type Range } from "@tanstack/rea
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, CornerLeftUp } from "lucide-react";
 import { useFitCount } from "../hooks/useFitCount";
 import type { PaneController } from "../hooks/usePane";
+import { useListAnchor } from "../hooks/useListAnchor";
 import { useSelectionBox, type RowRange } from "../hooks/useSelectionBox";
 import { DATE_GROUP_LABELS, type DateGroup, type EntryGroup } from "../lib/dateGroups";
 import { formatDate, formatPermissions, formatSize } from "../lib/format";
-import { cursorScroll } from "../lib/listScroll";
 import {
   COLUMN_LABELS,
   COLUMN_WIDTH_LIMITS,
@@ -435,6 +435,16 @@ interface FileListProps extends FileListActions {
   cutPaths?: ReadonlySet<string>;
   /** The entry whose row shows the name field. */
   renaming?: string | null;
+  /** Rows the user is in the middle of something with, which a newer listing leaves in place. */
+  heldPaths?: ReadonlySet<string>;
+}
+
+const NO_HELD_PATHS: ReadonlySet<string> = new Set();
+
+/** Names a row so that it can be found again among the rows of a newer listing. */
+function rowKey(row: ListRow): string {
+  if (row.kind === "entry") return row.entry.path;
+  return row.kind === "group" ? `\0group:${row.group}` : "\0parent";
 }
 
 export function FileList({
@@ -451,6 +461,7 @@ export function FileList({
   dropFolder,
   cutPaths,
   renaming,
+  heldPaths = NO_HELD_PATHS,
   ...actions
 }: FileListProps) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -531,37 +542,52 @@ export function FileList({
     if (started) virtualizer.scrollToIndex(renamingRow, { align: "auto" });
   }, [renaming, renamingRow, virtualizer]);
 
+  // The folder on show listed again, as when the server answers for a remembered listing,
+  // leaves the list where the user has it.
+  const rowKeys = useMemo(() => rows.map(rowKey), [rows]);
+  const keptInPlace = useListAnchor(scrollRef, {
+    folder: pane.listing?.path,
+    listing: pane.listing,
+    rowKeys,
+    cursor: pane.cursorPath,
+    held: heldPaths,
+    rowHeight,
+  });
+
   // A folder opens at the top, or with the cursor's row in the middle when it has one, as the
-  // folder just left does after going up or back. Collapsing or expanding a group, or a reload
-  // that leaves the cursor where it was, leaves the list where it is.
+  // folder just left does after going up or back. Collapsing or expanding a group leaves the
+  // list where it is, rather than bringing the cursor back into view.
   const scrolledPath = useRef<string | undefined>(undefined);
-  const scrolledListing = useRef(pane.listing);
-  const scrolledCursor = useRef(pane.cursorPath);
   const groupToggled = useRef(false);
   useEffect(() => {
     const opened = scrolledPath.current !== pane.listing?.path;
-    const align = cursorScroll({
-      opened,
-      reloaded: scrolledListing.current !== pane.listing,
-      cursorMoved: scrolledCursor.current !== pane.cursorPath,
-      groupToggled: groupToggled.current,
-    });
     scrolledPath.current = pane.listing?.path;
-    scrolledListing.current = pane.listing;
-    scrolledCursor.current = pane.cursorPath;
+    const toggled = groupToggled.current;
     groupToggled.current = false;
+    if (keptInPlace(rowKeys)) return;
     const row = pane.cursorPath ? rowOfPath.get(pane.cursorPath) : undefined;
-    if (row !== undefined && align) {
+    if (row !== undefined && !(toggled && !opened)) {
       // The first row of a group brings its heading into view with it on the way up.
       const headingAbove =
         !opened &&
         rows[row - 1]?.kind === "group" &&
         (row - 1) * rowHeight < (scrollRef.current?.scrollTop ?? 0);
-      virtualizer.scrollToIndex(headingAbove ? row - 1 : row, { align });
+      virtualizer.scrollToIndex(headingAbove ? row - 1 : row, {
+        align: opened ? "center" : "auto",
+      });
     } else if (opened) {
       scrollRef.current?.scrollTo({ top: 0 });
     }
-  }, [pane.listing, pane.cursorPath, rows, rowOfPath, rowHeight, virtualizer]);
+  }, [
+    pane.listing?.path,
+    pane.cursorPath,
+    rows,
+    rowKeys,
+    rowOfPath,
+    rowHeight,
+    virtualizer,
+    keptInPlace,
+  ]);
 
   useEffect(() => {
     virtualizer.measure();
