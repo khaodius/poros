@@ -13,6 +13,7 @@ import {
   useUpdateStore,
   type InstallStage,
 } from "../state/updateStore";
+import { DriveStatus } from "./DriveStatus";
 
 const APP_VERSION = formatVersion(__APP_VERSION__);
 
@@ -101,6 +102,7 @@ export function StatusBar() {
         {session.text}
       </span>
       <span className="status-right">
+        <DriveStatus />
         {pending > 0 && (
           <span className="status-item status-queue">
             {pluralize(pending, "transfer")} left

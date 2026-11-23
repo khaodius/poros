@@ -32,8 +32,19 @@ export type AppDialog =
       pendingTransfers: number;
       /** How many of those are for its unlocked vaults, which close with the tab. */
       vaultTransfers: number;
+      /** Where the server and its vaults are mounted as drives, which go with the tab. */
+      drives?: string[];
     }
-  | { kind: "lockVault"; sessionId: string; name: string; pendingTransfers: number }
+  | {
+      kind: "lockVault";
+      sessionId: string;
+      name: string;
+      pendingTransfers: number;
+      /** Where the vault is mounted as a drive, which goes when it locks. */
+      drives?: string[];
+    }
+  /** Mounts a session's server or vault, starting from the folder `path` its pane shows. */
+  | { kind: "mount"; sessionId: string; path: string | null }
   /** Editor tabs with unsaved changes that are about to close, or whose window is. */
   | { kind: "unsavedChanges"; tabIds: string[]; closeWindow: boolean }
   /** `returnTo` reopens the dialog the update was found from once this one closes. */

@@ -3,6 +3,7 @@ import {
   AppWindow,
   Columns2,
   CornerUpLeft,
+  HardDrive,
   Plus,
   Rows2,
   SquareTerminal,
@@ -11,10 +12,13 @@ import {
 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { findTab, isRestoring, welcomeTab, type GroupNode, type PaneTab } from "../lib/layout";
-import { isLost } from "../lib/vaults";
+import { isLost, sessionFamily } from "../lib/vaults";
 import { beginDrag, isLifted, markedDrop, tabDrag, useDragStore } from "../state/dragStore";
 import { useUnsavedStore } from "../state/editorRegistry";
 import { useLayoutStore } from "../state/layoutStore";
+import { requestMount } from "../state/mountActions";
+import { useMountStore } from "../state/mountStore";
+import { getPane } from "../state/paneRegistry";
 import { useTabLabel } from "../hooks/useTabLabel";
 import { moveWindowFrom } from "../lib/windowDrag";
 import { useSettingsStore } from "../state/settingsStore";
@@ -70,14 +74,30 @@ export function TabBar({ group }: { group: GroupNode }) {
 
   const menuItems = (tab: PaneTab): MenuItem[] => {
     const others = group.tabs.filter((other) => other.id !== tab.id);
+    const connected =
+      tab.kind === "remote" && !isRestoring(tab)
+        ? useSessionStore.getState().sessions[tab.sessionId]
+        : undefined;
     return [
-      ...(tab.kind === "remote" &&
-      useSessionStore.getState().sessions[tab.sessionId]?.info.protocol === "sftp"
+      ...(connected?.info.protocol === "sftp"
         ? [
             {
               label: "Open terminal",
               icon: <SquareTerminal size={14} />,
-              onSelect: () => openTerminal(tab.sessionId, group.id),
+              onSelect: () => openTerminal(connected.info.id, group.id),
+            },
+          ]
+        : []),
+      ...(connected
+        ? [
+            {
+              label: "Mount as drive...",
+              icon: <HardDrive size={14} />,
+              onSelect: () =>
+                requestMount(
+                  connected.info.id,
+                  getPane(tab.id)?.path() ?? (tab.kind === "remote" ? tab.path : null),
+                ),
             },
             "separator" as const,
           ]
@@ -227,6 +247,19 @@ function TabButton({
   );
   const Icon = protocol ? CONNECTION_ICONS[connectionKind(protocol)] : TAB_ICONS[tab.kind];
   const tabRef = useRef<HTMLDivElement>(null);
+  // The tab's server and its vaults, whose drives go when the tab closes.
+  const family = useSessionStore(
+    useShallow((state) =>
+      tab.kind === "remote" && !restoring ? sessionFamily(state.sessions, tab.sessionId) : [],
+    ),
+  );
+  const mountedAt = useMountStore(
+    useShallow((state) =>
+      state.drives
+        .filter((drive) => family.includes(drive.sessionId))
+        .map((drive) => drive.mountPoint),
+    ),
+  );
 
   // A tab chosen with the keyboard, or opened past the end of a full bar, scrolls into view.
   useEffect(() => {
@@ -281,6 +314,11 @@ function TabButton({
     >
       <Icon size={14} className={`tab-icon tab-icon-${tab.kind}`} />
       <span className="tab-label">{label}</span>
+      {mountedAt.length > 0 && (
+        <span className="tab-drive" title={`Mounted as a drive at ${mountedAt.join(", ")}`}>
+          <HardDrive size={11} aria-label="Mounted as a drive" />
+        </span>
+      )}
       {lost && <span className="tab-lost" title="Disconnected" />}
       {unsaved && <span className="tab-unsaved" title="Unsaved changes" />}
       <button

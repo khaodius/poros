@@ -25,6 +25,7 @@ import type { DropTarget } from "./dragStore";
 import { askToSave, closeEditorTab } from "./editorActions";
 import { getEditor } from "./editorRegistry";
 import { useLayoutStore } from "./layoutStore";
+import { mountedDrives } from "./mountStore";
 import { getPane, lastActivePane } from "./paneRegistry";
 import { reopenWithSession, serverKey } from "./restoreActions";
 import { useSessionStore, withoutSecrets } from "./sessionStore";
@@ -163,7 +164,8 @@ export function familyOf(sessionId: string): string[] {
 }
 
 /** Closes a tab, disconnecting its server and locking that server's vaults; asks first when
- * transfers for them are queued or the file it edits has unsaved changes. */
+ * transfers for them are queued, they are mounted as drives, or the file it edits has unsaved
+ * changes. */
 export async function requestCloseTab(tabId: string): Promise<void> {
   const layout = useLayoutStore.getState();
   const tab = findTab(layout.root, tabId);
@@ -193,7 +195,8 @@ export async function requestCloseTab(tabId: string): Promise<void> {
     ? await Promise.all([serverId, ...vaultIds].map(jobsOf))
     : [0];
   const vaultTransfers = transfersOfVaults.reduce((total, jobs) => total + jobs, 0);
-  if (serverTransfers + vaultTransfers > 0) {
+  const drives = mountedDrives([serverId, ...vaultIds]).map((drive) => drive.mountPoint);
+  if (serverTransfers + vaultTransfers > 0 || drives.length > 0) {
     useUiStore.getState().open({
       kind: "closeTab",
       tabId,
@@ -201,6 +204,7 @@ export async function requestCloseTab(tabId: string): Promise<void> {
       label: server?.info.label ?? "this server",
       pendingTransfers: serverTransfers + vaultTransfers,
       vaultTransfers,
+      drives,
     });
     return;
   }

@@ -15,6 +15,7 @@ import { PorosLogo } from "./components/PorosLogo";
 import { RunCommandDialog } from "./components/RunCommandDialog";
 import { ImportConnectionsDialog } from "./components/ImportConnectionsDialog";
 import { LockVaultDialog } from "./components/LockVaultDialog";
+import { MountDialog } from "./components/MountDialog";
 import { SaveConnectionDialog } from "./components/SaveConnectionDialog";
 import { SchedulerDialog } from "./components/SchedulerDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
@@ -581,6 +582,7 @@ function AppDialog() {
           label={dialog.label}
           pendingTransfers={dialog.pendingTransfers}
           vaultTransfers={dialog.vaultTransfers}
+          drives={dialog.drives ?? []}
           onClose={close}
         />
       );
@@ -590,9 +592,12 @@ function AppDialog() {
           sessionId={dialog.sessionId}
           name={dialog.name}
           pendingTransfers={dialog.pendingTransfers}
+          drives={dialog.drives ?? []}
           onClose={close}
         />
       );
+    case "mount":
+      return <MountDialog sessionId={dialog.sessionId} path={dialog.path} onClose={close} />;
     case "unsavedChanges":
       return (
         <UnsavedChangesDialog
