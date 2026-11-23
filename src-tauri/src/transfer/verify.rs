@@ -201,11 +201,30 @@ async fn command_digests(
 /// Runs a checksum command through the worker's shell on the server where it keeps one, or
 /// else on a channel of its own.
 async fn run_hash_command(context: &JobContext<'_>, command: &str) -> AppResult<CommandOutput> {
+    run_on_server(context, command, command).await
+}
+
+/// `run_hash_command` for a command that needs a POSIX shell. The kept shell is `sh`; a channel
+/// of its own runs the user's login shell, which may be fish or csh, so it is given `sh` too.
+async fn run_sh_command(context: &JobContext<'_>, command: &str) -> AppResult<CommandOutput> {
+    run_on_server(context, command, &under_sh(command)).await
+}
+
+async fn run_on_server(
+    context: &JobContext<'_>,
+    command: &str,
+    on_a_channel: &str,
+) -> AppResult<CommandOutput> {
     if let Some(output) = hash_shell::run(context, command, OUTPUT_LIMIT).await {
         return Ok(output);
     }
     let channel = context.command_channel().await?;
-    run_command(channel, command, OUTPUT_LIMIT).await
+    run_command(channel, on_a_channel, OUTPUT_LIMIT).await
+}
+
+/// A command line any login shell hands to `sh` as one argument.
+fn under_sh(command: &str) -> String {
+    format!("sh -c {}", shell_quote(command))
 }
 
 /// Reads the server's copy and hashes it here, for servers with no checksum command.
@@ -498,7 +517,7 @@ pub(super) async fn resume_from(
         let path = PathBuf::from(copies.local);
         tokio::task::spawn_blocking(move || hash_file_parts(&path, start, parts))
     };
-    let remote = async { run_hash_command(context, &command).await };
+    let remote = async { run_sh_command(context, &command).await };
     let (local, remote) = tokio::select! {
         biased;
         _ = context.run.cancel.cancelled() => return Err(AppError::cancelled()),
@@ -674,6 +693,41 @@ mod tests {
         assert_eq!(methods(in_parts, false, length).len(), 1);
         assert_eq!(methods(ServerHashing::default(), true, length), [read_back]);
         assert!(methods(ServerHashing::default(), false, length).is_empty());
+    }
+
+    #[test]
+    fn on_a_channel_of_its_own_the_part_already_transferred_is_hashed_under_sh() {
+        let command = resume_command("/srv/data.bin", 5, Parts::WHOLE);
+        assert_eq!(
+            command,
+            "[ -r '/srv/data.bin' ] && { head -c 5 -- '/srv/data.bin' | sha256sum; }"
+        );
+        // Quoted once, so a login shell of any kind passes it to `sh` whole.
+        assert_eq!(
+            under_sh(&command),
+            r"sh -c '[ -r '\''/srv/data.bin'\'' ] && { head -c 5 -- '\''/srv/data.bin'\'' | sha256sum; }'"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_command_under_sh_answers_as_it_does_in_the_kept_shell() {
+        use crate::transfer::hash_shell::tests::run_locally;
+
+        let folder = tempfile::tempdir().unwrap();
+        let file = folder.path().join("it's here.bin");
+        std::fs::write(&file, b"abcdef").unwrap();
+        let command = resume_command(&file.to_string_lossy(), 5, Parts { size: 2 });
+        let (kept_shell, status) = run_locally(&command);
+        assert_eq!(status, 0, "{kept_shell}");
+        // As a login shell runs what an exec request asks for.
+        let channel = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(under_sh(&command))
+            .output()
+            .unwrap();
+        assert!(channel.status.success());
+        assert_eq!(String::from_utf8(channel.stdout).unwrap(), kept_shell);
     }
 
     #[cfg(unix)]
