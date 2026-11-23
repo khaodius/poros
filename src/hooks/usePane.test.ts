@@ -570,6 +570,30 @@ describe("search results in a pane that remembers listings", () => {
     ]);
   });
 
+  it("leave the folder's own listing behind them", async () => {
+    const server = new FakeServer();
+    const view = await paneWithResults(server);
+    expect(view.pane.listing).toBe(found);
+    expect(view.pane.folder?.path).toBe("/home");
+    expect(view.pane.folder?.parent).toBe("/");
+    expect(view.pane.folder?.entries.map((entry) => entry.name)).toEqual(["notes.txt", "site"]);
+    // More results do not touch it; a reload of the folder does.
+    const more = { ...found, entries: [...found.entries, file("/home/site/b.html")] };
+    const before = view.pane.folder;
+    await view.rerender({ ...REMEMBERING, results: more });
+    expect(view.pane.folder).toBe(before);
+    await act(async () => void view.pane.refresh());
+    await server.answer("/home", ["notes.txt", "site", "todo.txt"]);
+    expect(view.pane.listing).toBe(more);
+    expect(view.pane.folder?.entries.map((entry) => entry.name)).toEqual([
+      "notes.txt",
+      "site",
+      "todo.txt",
+    ]);
+    await act(async () => view.pane.closeResults());
+    expect(view.pane.folder).toBe(view.pane.listing);
+  });
+
   it("go back to the folder they were found in, shown at once from memory", async () => {
     const server = new FakeServer();
     const view = await paneWithResults(server);

@@ -838,8 +838,9 @@ function OtherVersionSetting() {
     setFindError(null);
     try {
       await installVersion(picked);
-      // The notice in the corner shows the download, and dialogs cover it.
-      closeDialogs();
+      // The notice in the corner shows the download, and dialogs cover it. One opened since
+      // Settings was closed stays open.
+      if (useUiStore.getState().dialog?.kind === "settings") closeDialogs();
     } catch (caught) {
       setFindError(`${formatVersion(picked)} is not available: ${toAppError(caught).message}`);
       setFinding(false);

@@ -82,6 +82,11 @@ export const COLOR_TOKENS: ColorToken[] = [
   token("diff-added-word", "Added words", "Compare", true),
   token("diff-removed", "Removed lines", "Compare", true),
   token("diff-removed-word", "Removed words", "Compare", true),
+  token("compare-newer", "Newer here", "Folder compare"),
+  token("compare-older", "Older here", "Folder compare"),
+  token("compare-only", "Only here", "Folder compare"),
+  token("compare-different", "Different", "Folder compare"),
+  token("compare-identical", "Identical", "Folder compare"),
   token("backdrop", "Dialog backdrop", "Window", true),
 ];
 
@@ -151,6 +156,8 @@ const BUILTIN_DEFINITIONS: Theme[] = [
       text: "#ebe7f3",
       "text-muted": "#a69eb7",
       "text-faint": "#746b86",
+      // Kept apart from the purple selection.
+      "compare-only": "#3cc7c7",
     },
   },
   {
@@ -191,6 +198,8 @@ const BUILTIN_DEFINITIONS: Theme[] = [
       "text-faint": "#66786c",
       "icon-folder": "#d9b25a",
       upload: "#e0b85a",
+      // Kept apart from the green selection.
+      "compare-newer": "#57b6e8",
     },
     radius: 8,
   },
@@ -212,6 +221,8 @@ const BUILTIN_DEFINITIONS: Theme[] = [
       "text-muted": "#b3a497",
       "text-faint": "#7f7064",
       "icon-folder": "#e8a64b",
+      // Kept apart from the orange selection.
+      "compare-older": "#57b6e8",
     },
   },
   {
@@ -232,6 +243,8 @@ const BUILTIN_DEFINITIONS: Theme[] = [
       "text-faint": "#9a8f82",
       titlebar: "#efe9df",
       "icon-folder": "#c48a1c",
+      // Kept apart from the teal selection, and dark enough for the cream panels.
+      "compare-newer": "#2a70b8",
     },
     radius: 8,
   },
@@ -254,6 +267,8 @@ const BUILTIN_DEFINITIONS: Theme[] = [
       "text-faint": "#6e6f75",
       progress: "#3dbb76",
       upload: "#6aa6ff",
+      // Kept apart from the gray selection.
+      "compare-identical": "#6fa39a",
     },
     radius: 2,
   },
@@ -275,6 +290,12 @@ const BUILTIN_DEFINITIONS: Theme[] = [
       text: "#ffffff",
       "text-muted": "#dddddd",
       "text-faint": "#b0b0b0",
+      "compare-newer": "#00e676",
+      // Kept apart from the yellow selection.
+      "compare-older": "#40c4ff",
+      "compare-only": "#ea80fc",
+      "compare-different": "#ff5252",
+      "compare-identical": "#c8c8c8",
     },
   },
 ];

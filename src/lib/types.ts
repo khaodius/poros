@@ -127,6 +127,8 @@ export interface SessionInfo {
   protocol: Protocol;
   /** Set for the session of an unlocked vault, whose host, port and username are its server's. */
   vault?: VaultInfo;
+  /** Listings give times only to the minute, or to the day, as FTP's `LIST` does. */
+  coarseTimes?: boolean;
 }
 
 export type ErrorKind =
@@ -536,6 +538,47 @@ export interface SyncProgress {
   remoteEntries: number;
   compared: number;
   toCompare: number;
+}
+
+/** One of two compared folders. The backend knows itself whether its listings' times are coarse. */
+export interface FolderRef {
+  location: FileLocation;
+  path: string;
+}
+
+export interface FolderCompareRequest {
+  /** Names the comparison for `SyncProgress` events and for `sync_cancel`. */
+  requestId: string;
+  left: FolderRef;
+  right: FolderRef;
+  sizeOnly: boolean;
+  timeToleranceSecs: number;
+  ignoreHourOffsets: boolean;
+  includeHidden: boolean;
+  ignoreCase: boolean;
+}
+
+/** How the files in one folder that both sides have compare, at any depth below it. */
+export interface FolderSummary {
+  /** Below the compared folders, with `/` between names; in lower case when case is ignored. */
+  path: string;
+  identical: number;
+  newerLeft: number;
+  newerRight: number;
+  onlyLeft: number;
+  onlyRight: number;
+  different: number;
+  /** Folders that could not be read, links that lead nowhere and special files. */
+  notCompared: number;
+}
+
+export interface FolderComparison {
+  /** Shallowest first. */
+  folders: FolderSummary[];
+  /** More folders were compared than are reported; the deepest are left out. */
+  truncated: boolean;
+  leftEntries: number;
+  rightEntries: number;
 }
 
 export interface SyncChoice {
