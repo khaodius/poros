@@ -144,6 +144,8 @@ export function withHeldEntries(
 export interface ListingTicket {
   readonly scope: string;
   readonly path: string;
+  /** Counts the folders asked for, so an answer can tell whether a later one was kept already. */
+  readonly serial: number;
   /** What changed on the connection since, to match against the folder the answer names. */
   changes: { path: string; subtree: boolean }[];
   outdated: boolean;
@@ -163,6 +165,8 @@ export interface StoredListing {
 interface Slot {
   scope: string;
   listing: DirListing;
+  /** The serial of the ticket the listing was asked for with; 0 for one taken in otherwise. */
+  serial: number;
 }
 
 function slotKey(scope: string, path: string): string {
@@ -180,6 +184,7 @@ export class ListingCache {
   private readonly pending = new Set<ListingTicket>();
   private readonly watchers = new Set<(stored: StoredListing) => void>();
   private entryTotal = 0;
+  private lastSerial = 0;
 
   constructor(private readonly limits: ListingCacheLimits = LISTING_CACHE_LIMITS) {}
 
@@ -213,7 +218,14 @@ export class ListingCache {
 
   /** Notes that the folder is being asked for; its answer goes to `put` or to `cancel`. */
   begin(scope: string, path: string): ListingTicket {
-    const ticket: ListingTicket = { scope, path, changes: [], outdated: false };
+    this.lastSerial += 1;
+    const ticket: ListingTicket = {
+      scope,
+      path,
+      serial: this.lastSerial,
+      changes: [],
+      outdated: false,
+    };
     this.pending.add(ticket);
     return ticket;
   }
@@ -225,14 +237,18 @@ export class ListingCache {
 
   /**
    * Remembers a listing the server gave, and tells the watchers. With the `ticket` taken when
-   * it was asked for, a listing is not kept when its folder changed while it was on its way: it
-   * may be from before the change. A listing larger than the whole cache is not kept either.
-   * Returns whether it was.
+   * it was asked for, a listing is not kept when its folder changed while it was on its way, as
+   * it may be from before the change, nor when the folder was asked for again later and that
+   * answer came first. A listing larger than the whole cache is not kept either. Returns whether
+   * it was.
    */
   put(scope: string, listing: DirListing, ticket?: ListingTicket, by?: unknown): boolean {
+    const key = slotKey(scope, listing.path);
+    const replaced = this.slots.get(key);
     if (ticket) {
       this.pending.delete(ticket);
       if (ticket.outdated || ticket.scope !== scope) return false;
+      if (replaced && replaced.serial > ticket.serial) return false;
       const changed = ticket.changes.some(({ path, subtree }) =>
         [ticket.path, listing.path].some((folder) =>
           subtree
@@ -242,17 +258,15 @@ export class ListingCache {
       );
       if (changed) return false;
     }
-    const key = slotKey(scope, listing.path);
     if (listing.entries.length > this.limits.entries) {
       this.remove(key);
       return false;
     }
-    const replaced = this.slots.get(key);
     if (replaced) {
       this.slots.delete(key);
       this.entryTotal -= replaced.listing.entries.length;
     }
-    this.slots.set(key, { scope, listing });
+    this.slots.set(key, { scope, listing, serial: ticket?.serial ?? 0 });
     this.entryTotal += listing.entries.length;
     if (ticket) {
       const asked = slotKey(scope, ticket.path);

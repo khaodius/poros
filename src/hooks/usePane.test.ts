@@ -444,6 +444,19 @@ describe("a refresh that fails", () => {
     expect(view.pane.canGoBack).toBe(false);
   });
 
+  it("forgets a folder that cannot be listed though the pane has left it", async () => {
+    const server = new FakeServer();
+    const view = await paneThatVisited(server);
+    await act(async () => void view.pane.navigate("/home/site"));
+    await act(async () => view.pane.goUp());
+    await server.fail("/home/site", gone);
+    expect(view.pane.listing?.path).toBe("/home");
+    expect(view.pane.error).toBeNull();
+    expect(view.pane.stale).toBe("refreshing");
+    expect(cache.has(SCOPE, "/home/site")).toBe(false);
+    expect(cache.has(SCOPE, "/home")).toBe(true);
+  });
+
   it("leaves the folder on show alone when another one cannot be opened", async () => {
     const server = new FakeServer();
     const view = await paneThatVisited(server);

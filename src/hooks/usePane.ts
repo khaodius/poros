@@ -452,6 +452,10 @@ export function usePane(
         } catch (caught) {
           noteAnswer?.(null);
           const failure = toAppError(caught);
+          const unreachable = serverUnreachable(failure);
+          // The server says the folder cannot be listed, so nothing remembered of it holds,
+          // wherever the pane has gone since.
+          if (!unreachable) listings?.forget(lister, target);
           const current = loads.current.isCurrent(request);
           // Whether the listing on show is one this load was to confirm: the remembered one it
           // put up, or the one it reloads.
@@ -460,13 +464,15 @@ export function usePane(
             : current && mode === "replace" && listings !== undefined && shown.current !== null;
           if (current || unconfirmed) setError(failure);
           if (!unconfirmed) return false;
-          if (serverUnreachable(failure)) {
+          if (unreachable) {
             // Nothing says the folder changed: it stays up, marked as not confirmed.
             setStaleness("outdated");
             return false;
           }
-          for (const path of new Set([target, listedPath.current ?? target])) {
-            listings?.forget(lister, path);
+          // The folder on show, which a link asked for as `target` may have listed under its own
+          // path.
+          if (listedPath.current !== null && listedPath.current !== target) {
+            listings?.forget(lister, listedPath.current);
           }
           drop(first && remembered !== null);
           return false;

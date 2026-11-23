@@ -196,6 +196,22 @@ describe("ListingCache", () => {
     expect(cache.put(SERVER, listing("/srv", ["new"]), after)).toBe(true);
   });
 
+  it("keeps the folder's later answer when an earlier one arrives after it", () => {
+    const cache = new ListingCache();
+    const seen: string[] = [];
+    cache.watch((stored) => seen.push(stored.listing.entries[0].name));
+    const earlier = cache.begin(SERVER, "/srv");
+    const later = cache.begin(SERVER, "/srv");
+    expect(cache.put(SERVER, listing("/srv", ["new"]), later)).toBe(true);
+    expect(cache.put(SERVER, listing("/srv", ["old"]), earlier)).toBe(false);
+    expect(cache.get(SERVER, "/srv")?.entries[0].name).toBe("new");
+    expect(seen).toEqual(["new"]);
+    // Another folder asked for earlier is not held back by it.
+    const elsewhere = cache.begin(SERVER, "/var");
+    cache.begin(SERVER, "/srv");
+    expect(cache.put(SERVER, listing("/var", ["log"]), elsewhere)).toBe(true);
+  });
+
   it("does not keep a listing asked for before its vault locked", () => {
     const cache = new ListingCache();
     const vault = listingScope(
