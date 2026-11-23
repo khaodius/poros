@@ -18,7 +18,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
-use crate::error::{AppError, AppResult, ErrorKind};
+use crate::error::{AppError, AppResult};
 use crate::events::Events;
 use crate::session::{Session, SessionManager};
 use crate::sftp::RemoteFs;
@@ -133,9 +133,6 @@ pub struct DeleteSummary {
 pub struct Failure {
     pub path: String,
     pub message: String,
-    /// What went wrong, for a caller that reports a failure as an error of its own.
-    #[serde(skip)]
-    pub kind: ErrorKind,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -146,6 +143,10 @@ pub struct OperationSummary {
     pub skipped: u64,
     pub failures: Vec<Failure>,
     pub methods: Vec<Method>,
+    /// The error of each item given that could not be placed, for a caller that reports one
+    /// as an error of its own.
+    #[serde(skip)]
+    pub errors: Vec<AppError>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -258,12 +259,11 @@ impl Progress {
 
     /// Records a problem with one entry so the rest can go on; cancelling is not a problem.
     fn fail(&self, path: &str, error: AppError) {
-        if error.kind != ErrorKind::Cancelled {
+        if error.kind != crate::error::ErrorKind::Cancelled {
             self.failed.fetch_add(1, Ordering::Relaxed);
             let failure = Failure {
                 path: path.to_string(),
                 message: error.message,
-                kind: error.kind,
             };
             let mut failures = self.failures.lock().unwrap();
             if failures.len() < KEPT_FAILURES {
@@ -318,7 +318,10 @@ fn summarize(
         match result {
             Ok(Some(placed)) => summary.placed.push(placed),
             Ok(None) => summary.skipped += 1,
-            Err(error) => progress.fail(&source, error),
+            Err(error) => {
+                summary.errors.push(error.clone());
+                progress.fail(&source, error);
+            }
         }
     }
     summary.failures = progress.take_failures();

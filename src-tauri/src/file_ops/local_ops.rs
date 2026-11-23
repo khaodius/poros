@@ -699,7 +699,7 @@ mod tests {
             ));
             assert!(summary.placed.is_empty(), "{mode:?}");
             assert_eq!(summary.failures.len(), 1, "{mode:?}");
-            assert_eq!(summary.failures[0].kind, ErrorKind::AlreadyExists);
+            assert_eq!(summary.errors[0].kind, ErrorKind::AlreadyExists);
             assert_eq!(fs::read(root.join("into/a.txt")).unwrap(), b"kept");
             assert_eq!(fs::read(root.join("a.txt")).unwrap(), b"a");
         }
