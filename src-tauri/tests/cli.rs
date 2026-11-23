@@ -595,3 +595,47 @@ fn rm_force_passes_over_only_what_is_not_there() {
     assert_eq!(code, 7, "{value}");
     assert_eq!(run.names(""), ["keep.txt"]);
 }
+
+#[test]
+fn verify_names_what_it_could_not_compare() {
+    let Some(run) = Run::online("unread") else {
+        return;
+    };
+    write_tree(
+        run.local.path(),
+        &[
+            ("site/index.html", b"<h1>poros</h1>\n"),
+            ("site/photos/a.jpg", b"a"),
+            ("site/photos/b.jpg", b"b"),
+        ],
+    );
+    let (code, value) = run.json(&["put", "site", &run.remote("")]);
+    assert_eq!(code, 0, "{value}");
+    let (code, value) = run.json(&["verify", "site", &run.remote("site")]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(value["same"], true);
+
+    // The server's photos folder cannot be listed, so nothing in it is compared.
+    let (code, _) = run.json(&["chmod", "000", &run.remote("site/photos")]);
+    assert_eq!(code, 0);
+    let unread = run.json(&["verify", "site", &run.remote("site")]);
+    let shown = run.run(&["verify", "site", &run.remote("site")]);
+    std::fs::write(run.local("site/index.html"), b"<h1>changed</h1>\n").unwrap();
+    let differing = run.json(&["verify", "site", &run.remote("site")]);
+    run.json(&["chmod", "755", &run.remote("site/photos")]);
+
+    let (code, value) = unread;
+    assert_eq!(code, 10, "{value}");
+    assert_eq!(value["same"], false, "{value}");
+    assert_eq!(value["notCompared"], serde_json::json!(["photos"]));
+    assert_eq!(status(&shown), 10);
+    let text = String::from_utf8_lossy(&shown.stdout);
+    assert!(text.contains("not compared: photos"), "{text}");
+    assert!(!text.contains("Same contents"), "{text}");
+
+    // A difference that was found is still what the status reports.
+    let (code, value) = differing;
+    assert_eq!(code, 11, "{value}");
+    assert_eq!(value["different"][0]["path"], "index.html");
+    assert_eq!(value["notCompared"], serde_json::json!(["photos"]));
+}

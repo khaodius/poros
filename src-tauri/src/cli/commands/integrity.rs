@@ -222,20 +222,6 @@ async fn verify_folder(
             connected.info.protocol.display_name()
         )));
     }
-    let mut words = vec![
-        "--checksum".to_string(),
-        "--delete".to_string(),
-        "--no-times".to_string(),
-    ];
-    words.extend(
-        arguments
-            .exclude
-            .iter()
-            .map(|pattern| shell_quote(&format!("--exclude={pattern}"))),
-    );
-    if let Some(more) = &arguments.rsync {
-        words.push(more.clone());
-    }
     let manager = SyncManager::new(context.sessions.clone(), context.events.clone());
     let request_id = uuid::Uuid::new_v4().to_string();
     let compared = manager.compare(SyncRequest {
@@ -245,7 +231,7 @@ async fn verify_folder(
         remote_path: remote.to_string(),
         direction: SyncDirection::Upload,
         options: SyncOptions::default(),
-        arguments: words.join(" "),
+        arguments: comparison_arguments(arguments),
     });
     let plan = tokio::select! {
         plan = compared => plan?,
@@ -264,13 +250,17 @@ async fn verify_folder(
             _ => different.push(listed),
         }
     }
+    // Unreadable folders, special files and links that lead nowhere, on either side.
+    let mut not_compared = plan.passed_over.clone();
+    not_compared.sort();
+    not_compared.dedup();
     let differences = only_local.len() + only_remote.len() + different.len();
-    let same = differences == 0;
+    let same = differences == 0 && plan.counts.passed_over == 0;
+    let unchanged = plural(plan.counts.unchanged, "file");
     let mut text = if same {
-        format!(
-            "Same contents: {} in {local} and {remote}",
-            plural(plan.counts.unchanged, "file")
-        )
+        format!("Same contents: {unchanged} in {local} and {remote}")
+    } else if differences == 0 {
+        format!("Not everything could be compared: {unchanged} the same in {local} and {remote}")
     } else {
         format!(
             "{} between {local} and {remote}",
@@ -289,6 +279,12 @@ async fn verify_folder(
             ));
         }
     }
+    for path in &not_compared {
+        text.push_str(&format!("\n  not compared: {path}"));
+    }
+    for note in &plan.notes {
+        text.push_str(&format!("\n  note: {note}"));
+    }
     let reply = Reply::new(
         json!({
             "local": plan.local_root,
@@ -299,13 +295,68 @@ async fn verify_folder(
             "onlyLocal": only_local,
             "onlyRemote": only_remote,
             "different": different,
+            "notCompared": not_compared,
             "notes": plan.notes,
         }),
         text,
     );
-    Ok(if same {
-        reply
-    } else {
-        reply.with_exit(Exit::Integrity)
+    Ok(match (differences, same) {
+        (0, true) => reply,
+        // What was compared matches, but the rest is unknown.
+        (0, false) => reply.with_exit(Exit::Partial),
+        _ => reply.with_exit(Exit::Integrity),
     })
+}
+
+/// A comparison as `rsync --checksum --delete --dry-run` makes it. Nothing is deleted, so files
+/// only on the server are listed even when a local folder could not be read.
+fn comparison_arguments(arguments: &VerifyArgs) -> String {
+    let mut words = vec![
+        "--checksum".to_string(),
+        "--delete".to_string(),
+        "--ignore-errors".to_string(),
+        "--no-times".to_string(),
+    ];
+    words.extend(
+        arguments
+            .exclude
+            .iter()
+            .map(|pattern| shell_quote(&format!("--exclude={pattern}"))),
+    );
+    if let Some(more) = &arguments.rsync {
+        words.push(more.clone());
+    }
+    words.join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::args::{Cli, Command};
+    use crate::sync::SyncDirection;
+    use clap::Parser;
+
+    #[test]
+    fn folders_are_compared_whatever_could_not_be_read() {
+        let cli = Cli::try_parse_from([
+            "poros-cli",
+            "verify",
+            "--exclude",
+            "*.log",
+            "site",
+            "/srv/site",
+        ])
+        .unwrap();
+        let Command::Verify(arguments) = cli.command else {
+            panic!("not verify");
+        };
+        let checked = crate::sync::check_options(
+            SyncOptions::default(),
+            &[&comparison_arguments(&arguments)],
+            SyncDirection::Upload,
+        );
+        assert!(checked.errors.is_empty(), "{:?}", checked.errors);
+        assert!(checked.options.delete_extraneous && checked.options.ignore_errors);
+        assert_eq!(checked.options.excludes, ["*.log"]);
+    }
 }
