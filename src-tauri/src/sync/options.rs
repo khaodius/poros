@@ -306,7 +306,7 @@ struct Notes {
 pub fn check(options: SyncOptions, layers: &[&str], direction: SyncDirection) -> OptionCheck {
     let mut options = options;
     let mut notes = Notes::default();
-    let mut filter_files_given = filter_files_given(options.filter_files);
+    let mut filter_files_given = filter_files_already_given(&options);
     for layer in layers {
         apply_arguments(&mut options, layer, &mut notes, &mut filter_files_given);
     }
@@ -891,6 +891,20 @@ fn filter_files_given(setting: FilterFiles) -> u32 {
         FilterFiles::Read => 1,
         FilterFiles::ReadAndExclude => 2,
     }
+}
+
+/// How many `-F` options `options` already stand for: the setting's, then the rules a `-F`
+/// given after other rules became, so that arguments checked on top of them count on.
+fn filter_files_already_given(options: &SyncOptions) -> u32 {
+    let read_rule = format!("dir-merge {RSYNC_FILTER_FILE}");
+    let exclude_rule = format!("- {RSYNC_FILTER_FILE}");
+    let mut given = filter_files_given(options.filter_files);
+    for rule in &options.filter_rules {
+        if (given == 0 && *rule == read_rule) || (given == 1 && *rule == exclude_rule) {
+            given += 1;
+        }
+    }
+    given
 }
 
 /// Adds what the `given`th `-F` means to rsync: the first reads `.rsync-filter` files in
@@ -1625,6 +1639,31 @@ mod tests {
         );
         assert_eq!(checked.options.filter_files, FilterFiles::Read);
         assert_eq!(checked.options.filter_rules, ["- a", "- .rsync-filter"]);
+        // A site's -F that came after a rule counts when the dialog's arguments go on top.
+        let site = check(
+            SyncOptions::default(),
+            &["--exclude=.git/ -F"],
+            SyncDirection::Upload,
+        )
+        .options;
+        assert_eq!(site.filter_rules, ["- .git/", "dir-merge .rsync-filter"]);
+        let typed = check(site, &["-F"], SyncDirection::Upload).options;
+        assert_eq!(
+            typed.filter_rules,
+            ["- .git/", "dir-merge .rsync-filter", "- .rsync-filter"]
+        );
+        // Leaving the file out by name before any -F is not one.
+        let excluded = check(
+            SyncOptions::default(),
+            &["--exclude=.rsync-filter"],
+            SyncDirection::Upload,
+        )
+        .options;
+        let typed = check(excluded, &["-F"], SyncDirection::Upload).options;
+        assert_eq!(
+            typed.filter_rules,
+            ["- .rsync-filter", "dir-merge .rsync-filter"]
+        );
         assert_eq!(
             checked.arguments,
             "-rtLF --modify-window=2 --exclude=a --exclude=.rsync-filter"
