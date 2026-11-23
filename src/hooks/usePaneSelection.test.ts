@@ -3,7 +3,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FileSource } from "../lib/fileSource";
-import type { FileEntry } from "../lib/types";
+import type { DirListing, FileEntry } from "../lib/types";
 import { usePane, type PaneController } from "./usePane";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(), Channel: class {} }));
@@ -56,18 +56,23 @@ afterEach(() => {
 });
 
 async function paneOn(source: FileSource) {
-  function Probe() {
-    latest = usePane(source, {});
+  function Probe({ results }: { results: DirListing | null }) {
+    latest = usePane(source, { results });
     return null;
   }
   root = createRoot(document.createElement("div"));
-  await act(async () => root!.render(createElement(Probe)));
+  const show = (results: DirListing | null) =>
+    act(async () => root!.render(createElement(Probe, { results })));
+  await show(null);
   return {
     get pane() {
       return latest!;
     },
     /** Runs `step` on the pane as the user would, and lets it render. */
     act: (step: (pane: PaneController) => unknown) => act(async () => void step(latest!)),
+    /** Hands the pane a search's results so far, found in the folder and below it. */
+    found: (names: string[]) =>
+      show({ path: FOLDER, parent: null, entries: names.map((name) => file(name)) }),
   };
 }
 
@@ -138,5 +143,42 @@ describe("Shift+arrow", () => {
     await view.act((pane) => pane.setFilter("notes"));
     await view.act((pane) => pane.moveCursor(1, true));
     expect(selected(view.pane)).toEqual(["c-notes.txt", "d-notes.txt"]);
+  });
+});
+
+describe("Shift+click in search results", () => {
+  /** A pane showing the results found so far in its folder. */
+  async function results(names: string[]) {
+    const view = await paneOn(folderOf(["notes.txt"]));
+    await view.found(names);
+    await view.act((pane) => pane.showResults(FOLDER));
+    expect(view.pane.showingResults).toBe(true);
+    return view;
+  }
+
+  it("selects from the row clicked before as more results arrive", async () => {
+    const view = await results(["b.txt", "c.txt", "d.txt"]);
+    await view.act((pane) => pane.selectOnly(`${FOLDER}/b.txt`));
+    await view.found(["a.txt", "b.txt", "c.txt", "d.txt"]);
+    await view.act((pane) => pane.selectRangeTo(`${FOLDER}/d.txt`));
+    expect(selected(view.pane)).toEqual(["b.txt", "c.txt", "d.txt"]);
+  });
+
+  it("selects from the cursor once the row clicked before is no longer found", async () => {
+    const view = await results(["a.txt", "b.txt", "c.txt", "d.txt", "e.txt"]);
+    await view.act((pane) => pane.selectOnly(`${FOLDER}/b.txt`));
+    await view.act((pane) => pane.stepCursor(1));
+    // Looked at again after another program moved it away.
+    await view.found(["a.txt", "c.txt", "d.txt", "e.txt"]);
+    await view.act((pane) => pane.selectRangeTo(`${FOLDER}/e.txt`));
+    expect(selected(view.pane)).toEqual(["c.txt", "d.txt", "e.txt"]);
+  });
+
+  it("selects from the cursor after Esc cleared the selection", async () => {
+    const view = await results(["a.txt", "b.txt", "c.txt", "d.txt"]);
+    await view.act((pane) => pane.selectOnly(`${FOLDER}/b.txt`));
+    await view.act((pane) => pane.clearSelection());
+    await view.act((pane) => pane.selectRangeTo(`${FOLDER}/d.txt`));
+    expect(selected(view.pane)).toEqual(["b.txt", "c.txt", "d.txt"]);
   });
 });
