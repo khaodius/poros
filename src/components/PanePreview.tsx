@@ -19,7 +19,11 @@ interface PanePreviewProps {
   onLeave: () => void;
 }
 
-/** The preview of a file pane: what is under the pane's cursor, read from where the pane is. */
+/**
+ * The preview of a file pane: what is under the pane's cursor, read from where the pane is. On
+ * search results that is the result under the cursor, read by its own path in whatever folder
+ * it was found, and Refresh is the pane's own, which searches again.
+ */
 export function PanePreview({
   pane,
   source,
@@ -39,7 +43,8 @@ export function PanePreview({
   );
   // A listing remembered from before, on show while the server is asked again or when it could
   // not be: its sizes and times decide nothing until a read compares them with the file's.
-  const remembered = pane.stale !== null;
+  // Search results are never remembered: they are as the search found them.
+  const remembered = pane.stale !== null && !pane.showingResults;
   const place = useMemo<PreviewPlace>(
     () => ({
       connection: source.key,

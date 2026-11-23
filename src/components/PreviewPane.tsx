@@ -366,7 +366,7 @@ function Failure({
         <Notice
           icon={FileX}
           title={`This ${what} is no longer there`}
-          detail="It was deleted, moved or renamed after the folder was listed."
+          detail="It was deleted, moved or renamed after it was listed."
           action={onRefresh && { label: "Refresh", onSelect: onRefresh }}
         />
       );
@@ -491,7 +491,7 @@ function FilePreview({
       </Header>
       {changed && (
         <p className="preview-note">
-          <span>This file changed after the folder was listed.</span>
+          <span>This file changed after it was listed.</span>
           <button type="button" className="link-button" onClick={onRefresh}>
             Refresh
           </button>
