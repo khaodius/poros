@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import { useLatest } from "../hooks/useLatest";
 import { Dialog } from "./Dialog";
 
 interface ConfirmDialogProps {
@@ -26,13 +27,14 @@ export function ConfirmDialog({
 }: ConfirmDialogProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const latestOnClose = useLatest(onClose);
 
   const confirm = async () => {
     setBusy(true);
     setError(null);
     try {
       await onConfirm();
-      onClose();
+      latestOnClose.current();
     } catch (caught) {
       setError((caught as { message?: string }).message ?? String(caught));
       setBusy(false);

@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { useLatest } from "../hooks/useLatest";
 import { profileGrant, profileSecret, savedFromProfile } from "../lib/connectDraft";
 import { toAppError } from "../lib/ipc";
 import { useSavedConnections } from "../state/savedConnectionsStore";
@@ -15,6 +16,7 @@ export function SaveConnectionDialog({
   const entry = useSessionStore((state) => state.sessions[sessionId]);
   const linkSaved = useSessionStore((state) => state.linkSaved);
   const save = useSavedConnections((state) => state.save);
+  const latestOnClose = useLatest(onClose);
   const [name, setName] = useState(entry?.info.label ?? "");
   const [saveSecret, setSaveSecret] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -35,7 +37,7 @@ export function SaveConnectionDialog({
         profileGrant(profile),
       );
       linkSaved(sessionId, saved.id);
-      onClose();
+      latestOnClose.current();
     } catch (caught) {
       setError(toAppError(caught).message);
       setBusy(false);
