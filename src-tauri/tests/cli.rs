@@ -829,6 +829,9 @@ fn an_empty_path_is_never_the_folder_the_connection_starts_in() {
         &["sync", "-d", "up", "--delete", "folder", ""],
         &["exec", "--cwd", "", "--", "rm", "-rf", "keep"],
     ];
+    // New folders take the server's umask, so the mode to keep is whatever it is now.
+    let (_, before) = run.json(&["stat", &run.remote("start")]);
+    assert!(before["mode"].is_string(), "{before}");
     for arguments in refused {
         let (code, value) = inside(arguments);
         assert_eq!(code, 2, "{arguments:?}: {value}");
@@ -839,7 +842,7 @@ fn an_empty_path_is_never_the_folder_the_connection_starts_in() {
     }
     assert!(!run.local("downloaded").exists());
     let (_, kept) = run.json(&["stat", &run.remote("start")]);
-    assert_eq!(kept["mode"], "0755", "{kept}");
+    assert_eq!(kept["mode"], before["mode"], "{kept}");
 
     let mut batch = run
         .command(&["batch"])
