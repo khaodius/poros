@@ -204,7 +204,8 @@ export function usePane(
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<AppError | null>(null);
   const [staleness, setStaleness] = useState<Staleness>(null);
-  const [failedPath, setFailedPath] = useState<string | null>(null);
+  /** The folder that could no longer be listed, and the one it is in, to go up to. */
+  const [failed, setFailed] = useState<{ path: string; parent: string | null } | null>(null);
   /** Rows held for the user that the listing on show no longer has. */
   const [carried, setCarried] = useState<readonly FileEntry[]>(NO_ENTRIES);
   const [history, setHistory] = useState<History>({ entries: [], index: -1 });
@@ -369,6 +370,7 @@ export function usePane(
 
   /** Takes off show a listing whose folder can no longer be listed. */
   const drop = useCallback((first: boolean) => {
+    const parent = shown.current?.parent ?? null;
     view.current += 1;
     shown.current = null;
     setListing(null);
@@ -381,8 +383,8 @@ export function usePane(
       // As if the folder had never opened, so the pane opens where it does when one cannot.
       listedPath.current = null;
       setHistory({ entries: [], index: -1 });
-    } else {
-      setFailedPath(listedPath.current);
+    } else if (listedPath.current !== null) {
+      setFailed({ path: listedPath.current, parent });
     }
   }, []);
 
@@ -416,7 +418,7 @@ export function usePane(
             view.current += 1;
             rememberedView = view.current;
             setError(null);
-            setFailedPath(null);
+            setFailed(null);
             setStaleness("refreshing");
             // The folder is on show, so a reload asked for from here on is of this folder.
             loads.current.landed(request);
@@ -446,7 +448,7 @@ export function usePane(
           }
           view.current += 1;
           setError(null);
-          setFailedPath(null);
+          setFailed(null);
           setStaleness(null);
           return true;
         } catch (caught) {
@@ -553,14 +555,16 @@ export function usePane(
     setCursorPath(null);
     setError(null);
     setStaleness(null);
-    setFailedPath(null);
+    setFailed(null);
   }, []);
 
   const isLoading = useCallback(() => loads.current.busy, []);
 
+  // A folder that could no longer be listed is left the way it would have been on show.
+  const upward = displayed ?? failed;
   const goUp = useCallback(() => {
-    if (displayed?.parent) void load(displayed.parent, "push", displayed.path);
-  }, [displayed, load]);
+    if (upward?.parent) void load(upward.parent, "push", upward.path);
+  }, [upward, load]);
 
   const travel = useCallback(
     (offset: number) => {
@@ -752,7 +756,7 @@ export function usePane(
     loading,
     error,
     stale: staleness,
-    failedPath,
+    failedPath: failed?.path ?? null,
     selection,
     cursorPath,
     sort,
@@ -760,7 +764,7 @@ export function usePane(
     showHidden,
     canGoBack: history.index > 0,
     canGoForward: history.index < history.entries.length - 1,
-    canGoUp: Boolean(displayed?.parent),
+    canGoUp: Boolean(upward?.parent),
     navigate,
     refresh,
     clear,

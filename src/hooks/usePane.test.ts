@@ -397,6 +397,18 @@ describe("a refresh that fails", () => {
     expect(view.pane.error).toBeNull();
   });
 
+  it("goes up from a folder that could no longer be listed", async () => {
+    const server = new FakeServer();
+    const view = await paneThatVisited(server);
+    await act(async () => void view.pane.navigate("/home/site"));
+    await server.fail("/home/site", gone);
+    expect(view.pane.canGoUp).toBe(true);
+    await act(async () => view.pane.goUp());
+    expect(view.pane.listing?.path).toBe("/home");
+    expect(view.pane.failedPath).toBeNull();
+    expect(view.pane.error).toBeNull();
+  });
+
   it("does so for a reload of a listing the server gave before", async () => {
     const server = new FakeServer();
     const view = await paneThatVisited(server);

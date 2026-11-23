@@ -972,7 +972,7 @@ export function FilePane({
           <ToolbarButton
             label="Refresh (F5)"
             onClick={() => void pane.refresh()}
-            disabled={!pane.listing}
+            disabled={!pane.listing && !pane.failedPath}
           >
             <RefreshCw size={15} className={pane.loading ? "spin" : ""} />
           </ToolbarButton>
