@@ -347,6 +347,9 @@ pub struct Job {
     pub attempts: u32,
     pub not_before: Option<Instant>,
     pub resume: Option<ResumePoint>,
+    /// A temporary file an attempt left that failed a check, so the next attempt starts over.
+    /// Deleted if the job leaves the queue before an attempt finishes it.
+    pub stale_partial: Option<String>,
     /// Waiting for its server to come back after the connection dropped.
     pub reconnecting: bool,
     /// When its server went out of reach, for a job that failed because the server stayed away.
@@ -540,6 +543,7 @@ pub struct Unfinished {
     pub error: Option<String>,
     pub resolution: Option<ExistsAction>,
     pub resume: Option<ResumePoint>,
+    pub stale_partial: Option<String>,
 }
 
 #[derive(Default)]
@@ -609,6 +613,7 @@ impl Queue {
                 attempts: 0,
                 not_before: None,
                 resume: None,
+                stale_partial: None,
                 reconnecting: false,
                 unreachable_since: None,
                 transferred: 0,
@@ -640,6 +645,7 @@ impl Queue {
             job.resolution = saved.resolution;
             job.transferred = saved.resume.as_ref().map_or(0, |resume| resume.offset);
             job.resume = saved.resume;
+            job.stale_partial = saved.stale_partial;
         }
         id
     }
@@ -663,6 +669,7 @@ impl Queue {
                     .as_ref()
                     .and_then(|run| run.resume_point())
                     .or_else(|| job.resume.clone()),
+                stale_partial: job.stale_partial.clone(),
             })
             .collect()
     }
@@ -837,6 +844,9 @@ impl Queue {
                 // What is at the target cannot be trusted, so the next attempt replaces it
                 // rather than resuming onto it or skipping it as already there.
                 job.resolution = Some(ExistsAction::Overwrite);
+                if let Some(plan) = run.plan.get().filter(|plan| plan.rename_to.is_some()) {
+                    job.stale_partial = Some(plan.target.clone());
+                }
             } else if let Some(resume) = run.resume_point() {
                 job.resume = Some(resume);
             }
@@ -859,6 +869,20 @@ impl Queue {
                 job.state = JobState::Done;
                 job.error = None;
                 job.resume = None;
+                // Moved into place, unless this attempt wrote through another temporary file.
+                if let Some(stale) = job.stale_partial.take() {
+                    let moved = run
+                        .as_ref()
+                        .and_then(|run| run.plan.get())
+                        .is_some_and(|plan| plan.target == stale);
+                    if !moved {
+                        self.abandoned.push(Abandoned {
+                            session_id: session_id.clone(),
+                            direction: job.spec.direction,
+                            path: stale,
+                        });
+                    }
+                }
                 if let Some(end) = run.as_ref().and_then(|run| run.end()) {
                     job.spec.size = end;
                     job.transferred = end;
@@ -1111,11 +1135,15 @@ impl Queue {
             self.dirty.remove(&id);
             self.removed.push(id);
             self.unsaved = true;
-            if let Some(partial) = job.resume.and_then(|resume| resume.partial) {
+            let partial = job.resume.and_then(|resume| resume.partial);
+            let stale = job
+                .stale_partial
+                .filter(|stale| partial.as_ref() != Some(stale));
+            for path in partial.into_iter().chain(stale) {
                 self.abandoned.push(Abandoned {
-                    session_id: job.spec.session_id,
+                    session_id: job.spec.session_id.clone(),
                     direction: job.spec.direction,
-                    path: partial,
+                    path,
                 });
             }
         }
@@ -1964,6 +1992,91 @@ mod tests {
                 path: "/remote/.big.poros-part".into(),
             }]
         );
+    }
+
+    /// Claims a job and lets its attempt fail a check after writing its temporary file.
+    fn fail_check(queue: &mut Queue, id: JobId, settings: &TransferSettings) {
+        let claim = queue.claim(Instant::now()).unwrap();
+        claim
+            .run
+            .plan
+            .set(Plan {
+                rename_to: Some("/remote/live.log".into()),
+                ..plan("/remote/.live.log.poros-part", 100)
+            })
+            .unwrap();
+        claim.run.start_pieces(Pieces::new(0, 100, 100));
+        let piece = claim.run.claim_piece().unwrap();
+        claim.run.complete_piece(piece.start);
+        claim.run.restart.store(true, Ordering::Relaxed);
+        let failed = RunOutcome::Failed(AppError::integrity("live.log changed meanwhile"));
+        assert!(matches!(queue.release(id, &failed), Release::Settle));
+        queue.settle(id, failed, settings, Instant::now());
+    }
+
+    #[test]
+    fn a_temporary_file_that_failed_its_check_is_deleted_with_its_job() {
+        let temporary_file = Abandoned {
+            session_id: "session".into(),
+            direction: Direction::Upload,
+            path: "/remote/.live.log.poros-part".into(),
+        };
+        let mut queue = Queue::new();
+        let id = queue.add(file("live.log", 100));
+        let no_retries = TransferSettings {
+            retry_attempts: 0,
+            ..settings()
+        };
+        fail_check(&mut queue, id, &no_retries);
+        assert_eq!(queue.job(id).unwrap().state, JobState::Failed);
+        assert!(queue.take_abandoned().is_empty());
+        queue.clear(&[JobState::Failed]);
+        assert_eq!(queue.take_abandoned(), vec![temporary_file.clone()]);
+
+        // Removed while it waits to try again.
+        let id = queue.add(file("live.log", 100));
+        let retrying = TransferSettings {
+            retry_delay_secs: 60,
+            ..settings()
+        };
+        fail_check(&mut queue, id, &retrying);
+        assert_eq!(queue.job(id).unwrap().state, JobState::Queued);
+        queue.remove(&[id]);
+        assert_eq!(queue.take_abandoned(), vec![temporary_file.clone()]);
+
+        // Saved with the queue and restored, it is still known.
+        let id = queue.add(file("live.log", 100));
+        fail_check(&mut queue, id, &no_retries);
+        let mut restored = Queue::new();
+        for job in queue.unfinished() {
+            restored.restore(job);
+        }
+        let ids: Vec<JobId> = restored.jobs().map(|job| job.id).collect();
+        restored.remove(&ids);
+        assert_eq!(restored.take_abandoned(), vec![temporary_file]);
+    }
+
+    #[test]
+    fn a_temporary_file_a_later_attempt_finished_is_not_deleted() {
+        let mut queue = Queue::new();
+        let id = queue.add(file("live.log", 100));
+        let retrying = TransferSettings {
+            retry_delay_secs: 0,
+            ..settings()
+        };
+        fail_check(&mut queue, id, &retrying);
+        let claim = queue.claim(Instant::now()).unwrap();
+        claim
+            .run
+            .plan
+            .set(Plan {
+                rename_to: Some("/remote/live.log".into()),
+                ..plan("/remote/.live.log.poros-part", 100)
+            })
+            .unwrap();
+        finish(&mut queue, id, RunOutcome::Completed);
+        queue.clear(&[JobState::Done]);
+        assert!(queue.take_abandoned().is_empty());
     }
 
     #[test]
