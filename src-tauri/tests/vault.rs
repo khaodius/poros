@@ -993,16 +993,19 @@ async fn renames_keep_contents_whatever_the_length_of_the_names() {
     assert!(vault.rename(&root, "Other vault").await.is_err());
 }
 
+/// Picks the stored paths a test is about.
+type PathTest = fn(&str) -> bool;
+
 /// A server whose connection drops once, at the first write or delete of a path `fails`
 /// picks. A file being written is left there empty, as an interrupted upload leaves it.
 struct CutOffServer {
     inner: Arc<dyn RemoteFileSystem>,
-    fails: fn(&str) -> bool,
+    fails: PathTest,
     cut_off: AtomicBool,
 }
 
 impl CutOffServer {
-    fn at(inner: &Arc<dyn RemoteFileSystem>, fails: fn(&str) -> bool) -> Arc<Self> {
+    fn at(inner: &Arc<dyn RemoteFileSystem>, fails: PathTest) -> Arc<Self> {
         Arc::new(Self {
             inner: inner.clone(),
             fails,
@@ -1114,11 +1117,11 @@ async fn a_rename_cut_off_part_way_leaves_the_entry_as_it_was() {
     let cleartext = contents(70_000, 4);
     let (short, long, other_long) = ("short.bin", long_name("first"), long_name("second"));
 
-    let name_file: fn(&str) -> bool = |path| path.ends_with("/name.c9s");
-    let contents_file: fn(&str) -> bool = |path| path.ends_with("/contents.c9r");
-    let plain_file: fn(&str) -> bool = |path| path.ends_with(".c9r") && !path.contains(".c9s/");
-    let shortened_node: fn(&str) -> bool = |path| path.ends_with(".c9s");
-    let cases: [(&str, &str, &str, fn(&str) -> bool); 9] = [
+    let name_file: PathTest = |path| path.ends_with("/name.c9s");
+    let contents_file: PathTest = |path| path.ends_with("/contents.c9r");
+    let plain_file: PathTest = |path| path.ends_with(".c9r") && !path.contains(".c9s/");
+    let shortened_node: PathTest = |path| path.ends_with(".c9s");
+    let cases: [(&str, &str, &str, PathTest); 9] = [
         // Each name stored in a file of its own: the new one is what is cut off.
         ("file", &long, &other_long, name_file),
         ("folder", &long, &other_long, name_file),
