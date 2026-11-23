@@ -89,19 +89,14 @@ async fn list(versioned: &dyn ObjectVersions, path: String) -> AppResult<Reply> 
     ))
 }
 
-/// What a row of the list says after the version's id.
-fn note(version: &ObjectVersion) -> String {
-    let state = match (version.kind, version.latest) {
+/// Whether a row is the current file, the marker of a delete, or neither.
+fn state(version: &ObjectVersion) -> &'static str {
+    match (version.kind, version.latest) {
         (VersionKind::Version, true) => "current",
         (VersionKind::Version, false) => "",
         (VersionKind::DeleteMarker, true) => "deleted",
         (VersionKind::DeleteMarker, false) => "delete marker",
-    };
-    [state, version.storage_class.as_deref().unwrap_or_default()]
-        .into_iter()
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join("  ")
+    }
 }
 
 fn render(history: &[ObjectVersion]) -> String {
@@ -109,25 +104,21 @@ fn render(history: &[ObjectVersion]) -> String {
         VersionKind::Version => version.size.to_string(),
         VersionKind::DeleteMarker => "-".to_string(),
     };
-    let size_width = history
-        .iter()
-        .map(|version| size_of(version).len())
-        .max()
-        .unwrap_or(0);
-    let id_width = history
-        .iter()
-        .map(|version| version.version_id.chars().count())
-        .max()
-        .unwrap_or(0);
+    let width =
+        |measure: &dyn Fn(&ObjectVersion) -> usize| history.iter().map(measure).max().unwrap_or(0);
+    let size_width = width(&|version| size_of(version).len());
+    let id_width = width(&|version| version.version_id.chars().count());
+    let state_width = width(&|version| state(version).len());
     history
         .iter()
         .map(|version| {
             format!(
-                "{}  {:>size_width$}  {:<id_width$}  {}",
+                "{}  {:>size_width$}  {:<id_width$}  {:<state_width$}  {}",
                 time_string(version.modified),
                 size_of(version),
                 version.version_id,
-                note(version)
+                state(version),
+                version.storage_class.as_deref().unwrap_or_default()
             )
             .trim_end()
             .to_string()
@@ -230,12 +221,12 @@ mod tests {
         assert_eq!(
             render(&history),
             format!(
-                "{blank}     -  marker-3  deleted\n{blank}     7  v2\n{blank}  1200  v1        GLACIER\n{blank}     0  null"
+                "{blank}     -  marker-3  deleted\n{blank}     7  v2\n{blank}  1200  v1                 GLACIER\n{blank}     0  null"
             )
         );
-        assert_eq!(note(&entry("v", VersionKind::Version, true, 1)), "current");
+        assert_eq!(state(&entry("v", VersionKind::Version, true, 1)), "current");
         assert_eq!(
-            note(&entry("m", VersionKind::DeleteMarker, false, 0)),
+            state(&entry("m", VersionKind::DeleteMarker, false, 0)),
             "delete marker"
         );
     }

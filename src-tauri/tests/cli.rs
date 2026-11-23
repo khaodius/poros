@@ -1,8 +1,9 @@
 //! End-to-end tests of `poros-cli`, run as a program the way scripts and agents run it. The
 //! tests that need a server are skipped unless `POROS_TEST_SSH_PORT` is set; the server is the
-//! one `sftp_server.rs` describes.
+//! one `sftp_server.rs` describes. Those of object versions need `POROS_TEST_S3_PORT`, an
+//! S3-compatible service on 127.0.0.1 that takes any keys and keeps versions, as moto does.
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
@@ -64,6 +65,8 @@ struct Run {
     connection: String,
     password: String,
     remote: String,
+    /// Connection options every command of the run starts with.
+    options: Vec<&'static str>,
 }
 
 impl Run {
@@ -74,6 +77,7 @@ impl Run {
             connection,
             password,
             remote,
+            options: Vec::new(),
         }
     }
 
@@ -99,12 +103,28 @@ impl Run {
         Some(run)
     }
 
+    /// A bucket of its own on the S3 test server, created empty.
+    fn s3(name: &str) -> Option<(Self, u16)> {
+        let port: u16 = std::env::var("POROS_TEST_S3_PORT").ok()?.parse().ok()?;
+        let mut run = Self::new(
+            format!("s3+http://poros-access-key@127.0.0.1:{port}"),
+            "poros-secret-key".into(),
+            format!("/poros-cli-{name}-{}", std::process::id()),
+        );
+        run.options.push("--s3-path-style");
+        run.run(&["rm", "-rf", &run.remote]);
+        let made = run.run(&["mkdir", &run.remote]);
+        assert_eq!(status(&made), 0, "{made:?}");
+        Some((run, port))
+    }
+
     fn command(&self, arguments: &[&str]) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_poros-cli"));
         for name in AMBIENT {
             command.env_remove(name);
         }
         command
+            .args(&self.options)
             .args(arguments)
             .current_dir(self.local.path())
             .env("POROS_CONFIG_DIR", self.config.path())
@@ -154,6 +174,21 @@ impl Drop for Run {
             self.run(&["rm", "-rf", &self.remote]);
         }
     }
+}
+
+/// Turns versioning on for a bucket of the S3 test server, which checks no signatures; Poros
+/// itself never changes it.
+fn enable_versioning(port: u16, bucket: &str) {
+    let body = r#"<VersioningConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Status>Enabled</Status></VersioningConfiguration>"#;
+    let request = format!(
+        "PUT /{bucket}?versioning HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    stream.write_all(request.as_bytes()).unwrap();
+    let mut answer = String::new();
+    stream.read_to_string(&mut answer).unwrap();
+    assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
 }
 
 fn write_tree(root: &Path, files: &[(&str, &[u8])]) {
@@ -440,4 +475,125 @@ fn batch_answers_every_line_in_order() {
     assert_eq!(answers[4]["exitCode"], 7);
     assert_eq!(answers[5]["exitCode"], 2);
     assert_eq!(answers[6]["error"]["kind"], "invalidInput");
+}
+
+#[test]
+fn versions_lists_restores_and_downloads_old_versions() {
+    let Some((run, port)) = Run::s3("versions") else {
+        return;
+    };
+    enable_versioning(port, run.remote.trim_start_matches('/'));
+    let file = run.remote("notes/report.txt");
+    for contents in ["one\n", "two two\n", "three three three\n"] {
+        let written = run.with_input(&["write", &file], contents.as_bytes());
+        assert_eq!(status(&written), 0, "{written:?}");
+    }
+
+    let (code, value) = run.json(&["versions", &file]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(value["versioning"], "enabled");
+    let versions = value["versions"].as_array().unwrap().clone();
+    assert_eq!(versions.len(), 3);
+    assert_eq!(versions[0]["latest"], true);
+    assert_eq!(versions[0]["kind"], "version");
+    assert_eq!(versions[0]["size"], 18);
+    assert_eq!(versions[2]["size"], 4);
+    assert!(versions[0]["modifiedIso"].is_string());
+    let id = |index: usize| versions[index]["versionId"].as_str().unwrap().to_string();
+    let (newest, second, oldest) = (id(0), id(1), id(2));
+    let listed = run.run(&["versions", &file]);
+    let text = String::from_utf8(listed.stdout).unwrap();
+    assert_eq!(text.lines().count(), 3, "{text}");
+    let first: Vec<&str> = text.lines().next().unwrap().split_whitespace().collect();
+    assert_eq!(first[3..5], [newest.as_str(), "current"], "{text}");
+    assert!(text.contains(&oldest));
+
+    // Restoring copies the old version on top, and the history keeps what it replaced.
+    let (code, value) = run.json(&["versions", &file, "--restore", &oldest]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(value["restored"], oldest.as_str());
+    assert_eq!(run.run(&["cat", &file]).stdout, b"one\n");
+    let (_, value) = run.json(&["versions", &file]);
+    let history = value["versions"].as_array().unwrap();
+    assert_eq!(history.len(), 4);
+    assert_eq!(history[1]["versionId"], newest.as_str());
+
+    // One version downloaded through the queue, to a new name and into a folder.
+    let (code, value) = run.json(&["versions", &file, "--get", &second, "old.txt"]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(value["done"], 1);
+    assert_eq!(std::fs::read(run.local("old.txt")).unwrap(), b"two two\n");
+    let (code, value) = run.json(&["versions", &file, "--get", &newest, "kept/"]);
+    assert_eq!(code, 7, "{value}");
+    assert!(value["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("--parents"));
+    let (code, value) = run.json(&["versions", &file, "--get", &newest, "kept/", "-p"]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(
+        std::fs::read(run.local("kept/report.txt")).unwrap(),
+        b"three three three\n"
+    );
+    let (code, value) = run.json(&["versions", &file, "--get", "no-such-version", "x"]);
+    assert_eq!(code, 7, "{value}");
+
+    // A delete leaves a marker, and ls --deleted shows what it hid.
+    let (code, value) = run.json(&["rm", &file]);
+    assert_eq!(code, 0, "{value}");
+    let (code, value) = run.json(&["ls", "--deleted", &run.remote("notes")]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(value["entries"].as_array().unwrap().len(), 0);
+    let deleted = value["deleted"].as_array().unwrap();
+    assert_eq!(deleted.len(), 1);
+    assert_eq!(deleted[0]["name"], "report.txt");
+    assert_eq!(deleted[0]["isDir"], false);
+    assert_eq!(deleted[0]["size"], 4);
+    let shown = run.run(&["ls", "--deleted", &run.remote("notes")]);
+    assert_eq!(
+        String::from_utf8(shown.stdout).unwrap().trim_end(),
+        "report.txt  (deleted)"
+    );
+    let (_, plain) = run.json(&["ls", &run.remote("notes")]);
+    assert!(plain.get("deleted").is_none(), "{plain}");
+    let (_, value) = run.json(&["versions", &file]);
+    assert_eq!(value["versions"][0]["kind"], "deleteMarker");
+    assert_eq!(value["versions"][0]["latest"], true);
+    let listed = run.run(&["versions", &file]);
+    let text = String::from_utf8(listed.stdout).unwrap();
+    assert!(text.lines().next().unwrap().ends_with("deleted"), "{text}");
+    // Restoring a version also brings the file back.
+    let (code, value) = run.json(&["versions", &file, "--restore", &second]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(run.run(&["cat", &file]).stdout, b"two two\n");
+}
+
+#[test]
+fn versions_of_a_bucket_without_versioning_say_so() {
+    let Some((run, _)) = Run::s3("plain") else {
+        return;
+    };
+    let file = run.remote("a.txt");
+    let written = run.with_input(&["write", &file], b"only copy");
+    assert_eq!(status(&written), 0, "{written:?}");
+    let (code, value) = run.json(&["versions", &file]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(value["versioning"], "off");
+    assert_eq!(value["versions"].as_array().unwrap().len(), 0);
+    let shown = run.run(&["versions", &file]);
+    assert_eq!(
+        String::from_utf8(shown.stdout).unwrap().trim_end(),
+        "This bucket keeps no versions"
+    );
+    let (code, value) = run.json(&["ls", "--deleted", &run.remote("")]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(value["deleted"].as_array().unwrap().len(), 0);
+
+    // A server without versions at all says so plainly.
+    let Some(sftp) = Run::online("versions") else {
+        return;
+    };
+    let (code, value) = sftp.json(&["versions", &sftp.remote("missing.txt")]);
+    assert_eq!(code, 12, "{value}");
+    assert_eq!(value["error"]["kind"], "unsupported");
 }
