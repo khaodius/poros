@@ -432,7 +432,7 @@ export const OPTION_GROUPS: OptionGroup[] = [
         label: "Include",
         flag: "--include",
         placeholder: "*/\n*.html",
-        hint: "Checked before the excludes, so these are kept even when an exclude matches.",
+        hint: "Checked before the Exclude field, so these are kept even when one of its patterns matches. Filter rules and rules typed as rsync arguments are checked first.",
       },
       {
         kind: "list",
