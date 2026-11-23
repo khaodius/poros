@@ -55,6 +55,10 @@ import type {
   SaveRequest,
   SavedConnection,
   ScheduledTask,
+  SearchRecheck,
+  SearchReport,
+  SearchRequest,
+  SearchSummary,
   SessionClosed,
   SessionInfo,
   SignedIn,
@@ -229,6 +233,19 @@ export const sync = {
   /** Applies each layer of rsync arguments over `options` in turn and checks the result. */
   checkOptions: (options: SyncOptions, layers: string[], direction: SyncDirection) =>
     call<OptionCheck>("sync_check_options", { options, arguments: layers, direction }),
+};
+
+/** Searching below a folder; what is found arrives on `onReport` as the search runs. */
+export const search = {
+  start: (request: SearchRequest, onReport: (report: SearchReport) => void) => {
+    const reports = new Channel<SearchReport>();
+    reports.onmessage = onReport;
+    return call<SearchSummary>("search_start", { request, reports });
+  },
+  cancel: (searchId: string) => call<void>("search_cancel", { searchId }),
+  /** Looks at the folders of results again, after they were renamed, moved or deleted. */
+  recheck: (location: FileLocation, paths: string[]) =>
+    call<SearchRecheck>("search_recheck", { location, paths }),
 };
 
 export const settingsStore = {
