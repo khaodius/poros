@@ -86,8 +86,15 @@ fn fixture(name: &str) -> String {
 
 /// A manager whose app known_hosts already trusts the test server.
 async fn trusted_manager(server: &Server) -> (tempfile::TempDir, SessionManager) {
+    trusted_manager_with(server, Events::default()).await
+}
+
+async fn trusted_manager_with(
+    server: &Server,
+    events: Events,
+) -> (tempfile::TempDir, SessionManager) {
     let temp_dir = tempfile::tempdir().unwrap();
-    let manager = SessionManager::new(temp_dir.path().join("known_hosts"), Events::default());
+    let manager = SessionManager::new(temp_dir.path().join("known_hosts"), events);
     let password = AuthMethod::Password {
         password: server.password.clone(),
     };
@@ -1614,6 +1621,84 @@ async fn start_proxy(kind: ProxyKind) -> (Proxy, Arc<AtomicUsize>) {
         remote_dns: true,
     };
     (proxy, carried)
+}
+
+/// A SOCKS5 proxy whose connections can all be cut at once, as when the network goes away.
+async fn start_cuttable_proxy() -> (Proxy, impl Fn()) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let relays: Arc<std::sync::Mutex<Vec<tokio::task::AbortHandle>>> = Arc::default();
+    let kept = relays.clone();
+    tokio::spawn(async move {
+        while let Ok((client, _)) = listener.accept().await {
+            let relay = tokio::spawn(async move {
+                if let Some((mut client, mut server)) =
+                    accept_tunnel(ProxyKind::Socks5, client).await
+                {
+                    let _ = tokio::io::copy_bidirectional(&mut client, &mut server).await;
+                }
+            });
+            kept.lock().unwrap().push(relay.abort_handle());
+        }
+    });
+    let proxy = Proxy {
+        kind: ProxyKind::Socks5,
+        host: "127.0.0.1".into(),
+        port,
+        username: String::new(),
+        password: String::new(),
+        remote_dns: true,
+    };
+    let cut = move || {
+        for relay in relays.lock().unwrap().drain(..) {
+            relay.abort();
+        }
+    };
+    (proxy, cut)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_connection_closed_on_purpose_is_not_reported_as_lost() {
+    let Some(server) = server() else { return };
+    let events = Events::keeping_startup_log();
+    let (_known_hosts, manager) = trusted_manager_with(&server, events.clone()).await;
+    let (proxy, cut) = start_cuttable_proxy().await;
+    let through_proxy = || routed(&server, Some(proxy.clone()), Vec::new());
+
+    let closed = manager.connect(through_proxy(), None, OWNER).await.unwrap();
+    list_home(&manager, &closed).await;
+    manager.disconnect(&closed.id).await.unwrap();
+
+    // The network goes away under a session that is still open.
+    let lost = manager.connect(through_proxy(), None, OWNER).await.unwrap();
+    list_home(&manager, &lost).await;
+    cut();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while manager.is_live(&lost.id).await {
+        assert!(
+            Instant::now() < deadline,
+            "the cut connection still looks open"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let log = events.take_startup_log();
+    let losses = |id: &str| {
+        log.iter()
+            .filter(|record| {
+                record.session_id.as_deref() == Some(id)
+                    && (record.message.starts_with("Connection lost")
+                        || record.message.starts_with("Server closed"))
+            })
+            .count()
+    };
+    assert_eq!(losses(&closed.id), 0, "{log:#?}");
+    assert!(log.iter().any(
+        |record| record.session_id.as_deref() == Some(closed.id.as_str())
+            && record.message == "Disconnected"
+    ));
+    assert_eq!(losses(&lost.id), 1, "{log:#?}");
 }
 
 async fn accept_tunnel(kind: ProxyKind, mut client: TcpStream) -> Option<(TcpStream, TcpStream)> {

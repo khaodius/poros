@@ -8,6 +8,8 @@ pub mod proxy;
 
 use std::borrow::Cow;
 use std::net::SocketAddr;
+use std::ops::{Deref, DerefMut};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -203,7 +205,33 @@ pub struct HostKeyApproval {
     pub remember: bool,
 }
 
-pub type SshHandle = Handle<ClientHandler>;
+/// An SSH connection. One closed with [`disconnect`] or let go of is not reported as lost.
+pub struct SshHandle {
+    handle: Handle<ClientHandler>,
+    /// Shared with the connection's handler, which reports how the connection ended.
+    closing: Arc<AtomicBool>,
+}
+
+impl Deref for SshHandle {
+    type Target = Handle<ClientHandler>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.handle
+    }
+}
+
+impl DerefMut for SshHandle {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.handle
+    }
+}
+
+impl Drop for SshHandle {
+    fn drop(&mut self) {
+        // The connection ends with its handle, and that is no loss either.
+        self.closing.store(true, Ordering::SeqCst);
+    }
+}
 
 pub struct Connection {
     pub handle: SshHandle,
@@ -232,6 +260,8 @@ pub struct ClientHandler {
     events: Events,
     /// The jump host this connection runs through, kept open for as long as it is needed.
     _tunnel: Option<SshHandle>,
+    /// Set when the connection is closed on purpose, so its end is not reported as a loss.
+    closing: Arc<AtomicBool>,
 }
 
 impl client::Handler for ClientHandler {
@@ -318,14 +348,10 @@ impl client::Handler for ClientHandler {
             );
             return Ok(());
         }
-        let text = match &reason {
-            client::DisconnectReason::ReceivedDisconnect(info) => {
-                format!("Server closed the connection: {}", info.message)
-            }
-            client::DisconnectReason::Error(error) => format!("Connection lost: {error}"),
-        };
-        self.log(LogLevel::Warn, text.clone());
-        self.events.session_closed(&self.session_id, text);
+        if let Some(text) = self.loss(&reason) {
+            self.log(LogLevel::Warn, text.clone());
+            self.events.session_closed(&self.session_id, text);
+        }
         match reason {
             client::DisconnectReason::ReceivedDisconnect(_) => Ok(()),
             client::DisconnectReason::Error(error) => Err(error),
@@ -336,6 +362,20 @@ impl client::Handler for ClientHandler {
 impl ClientHandler {
     fn log(&self, level: LogLevel, message: String) {
         self.events.log(level, Some(&self.session_id), message);
+    }
+
+    /// What the user is told about a connection that ended. Nothing when it was closed here:
+    /// whatever closed it says so, as `SessionManager::disconnect` does.
+    fn loss(&self, reason: &client::DisconnectReason<russh::Error>) -> Option<String> {
+        if self.closing.load(Ordering::SeqCst) {
+            return None;
+        }
+        Some(match reason {
+            client::DisconnectReason::ReceivedDisconnect(info) => {
+                format!("Server closed the connection: {}", info.message)
+            }
+            client::DisconnectReason::Error(error) => format!("Connection lost: {error}"),
+        })
     }
 }
 
@@ -533,6 +573,7 @@ impl Attempt<'_> {
         let timeout = timeout_of(self.profile);
         let rejection = Arc::new(Mutex::new(None));
         let accepted_fingerprint = Arc::new(Mutex::new(None));
+        let closing = Arc::new(AtomicBool::new(false));
         let host = hop_profile.host.trim().to_string();
         let mut config = client_config(self.profile);
         config.preferred.key = Cow::Owned(self.known_hosts.preferred_algorithms(
@@ -551,6 +592,7 @@ impl Attempt<'_> {
             accepted_fingerprint: accepted_fingerprint.clone(),
             events: events.clone(),
             _tunnel: tunnel,
+            closing: closing.clone(),
         };
 
         let handshake = client::connect_stream(Arc::new(config), transport, handler);
@@ -571,7 +613,7 @@ impl Attempt<'_> {
                 }
                 return Err(connection_error(error, hop_profile));
             }
-            Ok(Ok(handle)) => handle,
+            Ok(Ok(handle)) => SshHandle { handle, closing },
         };
 
         events.log(
@@ -667,7 +709,45 @@ fn connection_error(e: russh::Error, profile: &ConnectProfile) -> AppError {
 }
 
 pub async fn disconnect(handle: &SshHandle) {
+    // Before the message goes, so the end it brings is not taken for a loss.
+    handle.closing.store(true, Ordering::SeqCst);
     let _ = handle
         .disconnect(russh::Disconnect::ByApplication, "", "en")
         .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn handler(closing: &Arc<AtomicBool>) -> ClientHandler {
+        ClientHandler {
+            host: "example.com".into(),
+            port: 22,
+            hop: Hop::Server,
+            session_id: "session".into(),
+            known_hosts: KnownHosts::new(std::env::temp_dir().join("poros-unused"), Vec::new()),
+            approval: None,
+            rejection: Arc::default(),
+            accepted_fingerprint: Arc::default(),
+            events: Events::default(),
+            _tunnel: None,
+            closing: closing.clone(),
+        }
+    }
+
+    #[test]
+    fn a_connection_closed_on_purpose_is_not_reported_as_lost() {
+        let closing = Arc::new(AtomicBool::new(false));
+        let handler = handler(&closing);
+        // A connection that drops, with no message from the server, as russh reports it.
+        let dropped = client::DisconnectReason::Error(russh::Error::Disconnect);
+        assert_eq!(
+            handler.loss(&dropped).as_deref(),
+            Some("Connection lost: Disconnected")
+        );
+        // Closed here, the same end says nothing.
+        closing.store(true, Ordering::SeqCst);
+        assert_eq!(handler.loss(&dropped), None);
+    }
 }

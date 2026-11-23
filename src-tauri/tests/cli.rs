@@ -823,6 +823,9 @@ fn scheduled_tasks_run_now_when_due_and_never_twice_at_once() {
     let output = run.schedule(&["run", "restore"]).output().unwrap();
     assert_eq!(status(&output), 0, "{output:?}");
     assert!(String::from_utf8_lossy(&output.stdout).starts_with("Restore: 3 files downloaded"));
+    // Its connections, the transfer workers' included, are closed and not reported as lost.
+    let warnings = String::from_utf8_lossy(&output.stderr);
+    assert!(!warnings.contains("Connection lost"), "{warnings}");
     assert_eq!(
         std::fs::read(run.local("restored/latest/site/css/site.css")).unwrap(),
         [7u8; 40_000]
