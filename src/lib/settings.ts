@@ -13,6 +13,7 @@ import {
 import {
   DEFAULT_PROGRESS_BARS,
   sanitizeProgressBars,
+  storableProgressBars,
   type ProgressBarSettings,
 } from "./progressBars";
 import { DEFAULT_SYNC_OPTIONS, legacySyncOptions, sanitizeSyncOptions } from "./rsyncOptions";
@@ -487,7 +488,10 @@ export function sanitizeSettings(stored: unknown): Settings {
     appearance.rowHeight = COMPACT_ROW_HEIGHT;
   }
   appearance.rowHeight = clamp(appearance.rowHeight, ROW_HEIGHT_LIMITS.min, ROW_HEIGHT_LIMITS.max);
-  appearance.progressBars = sanitizeProgressBars(appearance.progressBars);
+  appearance.progressBars = sanitizeProgressBars(
+    appearance.progressBars,
+    asSection(storedAppearance.progressBars),
+  );
   settings.log.maxLines = clamp(settings.log.maxLines, LOG_LINE_LIMITS.min, LOG_LINE_LIMITS.max);
 
   settings.updates.skippedVersion = settings.updates.skippedVersion.trim();
@@ -504,6 +508,15 @@ export function sanitizeSettings(stored: unknown): Settings {
   }
   automation.commands = sanitizeCommands(automation.commands);
   return settings;
+}
+
+/** The settings as written to disk, with what older versions read beside the newer fields. */
+export function storableSettings(settings: Settings): Settings {
+  const appearance = settings.appearance;
+  return {
+    ...settings,
+    appearance: { ...appearance, progressBars: storableProgressBars(appearance.progressBars) },
+  };
 }
 
 /**

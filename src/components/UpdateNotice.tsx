@@ -1,5 +1,7 @@
+import type { CSSProperties } from "react";
 import { AlertCircle, CircleArrowUp, CircleCheck, X } from "lucide-react";
 import { formatSize, formatVersion } from "../lib/format";
+import { progressReach } from "../lib/progressBars";
 import {
   hideUpdateNotice,
   percentDownloaded,
@@ -139,15 +141,13 @@ function ProgressBar({ percent }: { percent: number | null }) {
   return (
     <span
       className={`progress-track ${percent === null ? "is-indeterminate" : ""}`}
+      style={percent === null ? undefined : (progressReach(percent / 100) as CSSProperties)}
       role="progressbar"
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={percent ?? undefined}
     >
-      <span
-        className="progress-fill"
-        style={percent === null ? undefined : { width: `${percent}%` }}
-      />
+      <span className="progress-fill" />
     </span>
   );
 }
