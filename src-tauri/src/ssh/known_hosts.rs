@@ -38,6 +38,8 @@ pub struct KnownHosts {
     system_files: Vec<PathBuf>,
     /// Keys trusted until Poros closes, shared by every clone.
     trusted_until_exit: Arc<Mutex<Vec<(String, PublicKey)>>>,
+    /// Held while the app's file is rewritten, so keys trusted at once all stay on record.
+    writing: Arc<Mutex<()>>,
 }
 
 impl KnownHosts {
@@ -46,6 +48,7 @@ impl KnownHosts {
             app_file,
             system_files,
             trusted_until_exit: Arc::default(),
+            writing: Arc::default(),
         }
     }
 
@@ -146,6 +149,7 @@ impl KnownHosts {
 
     /// Replaces any recorded key of the same algorithm for the host.
     pub fn trust(&self, host: &str, port: u16, key: &PublicKey) -> io::Result<()> {
+        let _writing = self.writing.lock().unwrap();
         let host_port = host_pattern(host, port);
         let existing = fs::read_to_string(&self.app_file).unwrap_or_default();
         let mut kept: Vec<&str> = existing
@@ -172,16 +176,25 @@ impl KnownHosts {
         if let Some(parent) = self.app_file.parent() {
             fs::create_dir_all(parent)?;
         }
-        let temporary = self.app_file.with_extension("tmp");
-        {
-            let mut file = fs::File::create(&temporary)?;
-            for line in &kept {
-                writeln!(file, "{line}")?;
-            }
-            file.sync_all()?;
+        // A name of its own, so another process writing at once never shares it.
+        let mut temporary = self.app_file.as_os_str().to_owned();
+        temporary.push(format!(".{}.tmp", uuid::Uuid::new_v4().simple()));
+        let temporary = PathBuf::from(temporary);
+        let written =
+            write_lines(&temporary, &kept).and_then(|()| fs::rename(&temporary, &self.app_file));
+        if written.is_err() {
+            let _ = fs::remove_file(&temporary);
         }
-        fs::rename(&temporary, &self.app_file)
+        written
     }
+}
+
+fn write_lines(path: &Path, lines: &[&str]) -> io::Result<()> {
+    let mut file = fs::File::create(path)?;
+    for line in lines {
+        writeln!(file, "{line}")?;
+    }
+    file.sync_all()
 }
 
 pub fn fingerprint(key: &PublicKey) -> String {
@@ -572,6 +585,30 @@ mod tests {
         assert_eq!(contents.lines().count(), 2, "{contents}");
         assert!(contents.contains(&format!("[h]:2222 ssh-ed25519 {KEY_B}")));
         assert!(contents.contains(&format!("other ssh-ed25519 {KEY_A}")));
+    }
+
+    #[test]
+    fn keys_trusted_at_once_both_stay_on_record() {
+        for _ in 0..20 {
+            let (_dir, known_hosts) = store("", "");
+            let start = std::sync::Barrier::new(2);
+            std::thread::scope(|scope| {
+                for (host, b64) in [("first", KEY_A), ("second", KEY_B)] {
+                    let (known_hosts, start) = (&known_hosts, &start);
+                    scope.spawn(move || {
+                        start.wait();
+                        known_hosts.trust(host, 22, &key(b64)).unwrap();
+                    });
+                }
+            });
+            for (host, b64) in [("first", KEY_A), ("second", KEY_B)] {
+                assert_eq!(
+                    known_hosts.check(host, 22, &key(b64)),
+                    HostKeyStatus::Trusted,
+                    "{host}"
+                );
+            }
+        }
     }
 
     #[test]

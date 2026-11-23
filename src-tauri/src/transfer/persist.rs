@@ -265,19 +265,17 @@ pub(super) fn save_in_background(shared: &Arc<Shared>) {
     if shared.saving.swap(true, Ordering::AcqRel) {
         return;
     }
-    let Some((saved, file)) = snapshot(shared) else {
-        shared.saving.store(false, Ordering::Release);
-        return;
-    };
-    let file = file.to_path_buf();
     let shared = shared.clone();
     crate::runtime::spawn_blocking(move || {
-        write(&file, &saved);
+        save(&shared);
         shared.saving.store(false, Ordering::Release);
     });
 }
 
+/// Saves one at a time, each from the queue as it stands once the save before it is written,
+/// so an older queue never replaces a newer one.
 pub(super) fn save(shared: &Shared) {
+    let _writing = shared.writing.lock().unwrap();
     if let Some((saved, file)) = snapshot(shared) {
         write(file, &saved);
     }

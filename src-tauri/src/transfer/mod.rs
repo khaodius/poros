@@ -328,6 +328,8 @@ pub(crate) struct Shared {
     /// Where unfinished transfers are saved between runs; unset in tests.
     queue_file: OnceLock<PathBuf>,
     saving: AtomicBool,
+    /// Held while the queue is saved, so saves are written one at a time.
+    writing: Mutex<()>,
     /// Unset in tests, where restored servers connect directly.
     route_resolver: OnceLock<RouteResolver>,
     /// Jobs writing into these folders are not saved between runs.
@@ -557,6 +559,7 @@ impl TransferManager {
             borrowed_relays: tokio::sync::Mutex::new(()),
             queue_file: OnceLock::new(),
             saving: AtomicBool::new(false),
+            writing: Mutex::new(()),
             route_resolver: OnceLock::new(),
             unsaved_folders: Mutex::new(Vec::new()),
         });
@@ -1244,6 +1247,58 @@ mod tests {
             std::fs::read_to_string(&kept[0]).unwrap(),
             "{\"servers\": [], \"jobs\": ["
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_save_at_exit_keeps_the_latest_queue_while_a_background_save_is_written() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file = temp_dir.path().join("transfers.json");
+        let events = Events::default();
+        let sessions = Arc::new(SessionManager::new(
+            temp_dir.path().join("known_hosts"),
+            events.clone(),
+        ));
+        let manager = TransferManager::new(sessions, events, TransferSettings::default());
+        manager.keep_queue_in(file.clone());
+        manager.shared.targets.lock().unwrap().insert(
+            "session".into(),
+            Arc::new(SessionTarget::new("session".into(), login(), false)),
+        );
+        let spec = |index: usize| JobSpec {
+            session_id: "session".into(),
+            source_session_id: None,
+            direction: Direction::Upload,
+            kind: JobKind::File,
+            name: format!("{index}.bin"),
+            source: format!("/local/{index}.bin"),
+            target: format!("/remote/{index}.bin"),
+            target_directory: "/remote".into(),
+            size: 10,
+            ancestors: Arc::from([]),
+            options: None,
+        };
+        // Large enough that writing the queue takes a while.
+        let mut queued = 20_000;
+        {
+            let mut queue = manager.shared.queue.lock().unwrap();
+            queue.paused = true;
+            for index in 0..queued {
+                queue.add(spec(index));
+            }
+        }
+        for _ in 0..10 {
+            persist::save_in_background(&manager.shared);
+            // Poros quits while that save is written, after one more change.
+            manager.shared.queue.lock().unwrap().add(spec(queued));
+            queued += 1;
+            persist::save(&manager.shared);
+            while manager.shared.saving.load(Ordering::Acquire) {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            let saved = crate::storage::read_json::<serde_json::Value>(&file);
+            let jobs = saved.unwrap().unwrap()["jobs"].as_array().unwrap().len();
+            assert_eq!(jobs, queued);
+        }
     }
 
     #[tokio::test]

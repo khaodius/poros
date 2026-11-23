@@ -62,10 +62,15 @@ pub fn write_text(file: &Path, text: &str) -> AppResult<()> {
     if let Some(parent) = file.parent() {
         std::fs::create_dir_all(parent).map_err(with_path)?;
     }
+    // A name of its own, so two writes at once, from two threads or two processes, never
+    // share one temporary file: each renames a whole file into place.
     let mut temporary = file.as_os_str().to_owned();
-    temporary.push(".tmp");
-    std::fs::write(&temporary, text).map_err(with_path)?;
-    std::fs::rename(&temporary, file).map_err(with_path)
+    temporary.push(format!(".{}.tmp", uuid::Uuid::new_v4().simple()));
+    let written = std::fs::write(&temporary, text).and_then(|()| std::fs::rename(&temporary, file));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    written.map_err(with_path)
 }
 
 #[cfg(test)]
@@ -84,6 +89,34 @@ pub(crate) mod tests {
                     .starts_with(prefix)
             })
             .collect()
+    }
+
+    #[test]
+    fn writes_to_one_file_at_once_leave_one_of_them_whole() {
+        let folder = tempfile::tempdir().unwrap();
+        let file = folder.path().join("transfers.json");
+        let payloads: Vec<String> = ["a", "b"]
+            .iter()
+            .map(|letter| serde_json::to_string(&vec![letter.repeat(1000); 4000]).unwrap())
+            .collect();
+        for _ in 0..20 {
+            std::thread::scope(|scope| {
+                let writers: Vec<_> = payloads
+                    .iter()
+                    .map(|payload| scope.spawn(|| write_text(&file, payload)))
+                    .collect();
+                for writer in writers {
+                    writer.join().unwrap().unwrap();
+                }
+            });
+            let written = std::fs::read_to_string(&file).unwrap();
+            assert!(payloads.contains(&written), "a mixed file was left");
+        }
+        let names: Vec<_> = std::fs::read_dir(folder.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["transfers.json"]);
     }
 
     #[test]
