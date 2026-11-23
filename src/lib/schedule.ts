@@ -11,6 +11,7 @@ import type {
   SyncOptions,
   TaskAction,
   TaskItem,
+  TaskView,
   Trigger,
 } from "./types";
 
@@ -258,6 +259,39 @@ export function withTaskItems(items: TaskItem[], added: TaskItem[]): TaskItem[] 
     if (path && !next.some((existing) => existing.path === path)) next.push({ ...item, path });
   }
   return next;
+}
+
+/** What a run of a task may have changed on the server of a saved connection. */
+export interface ServerChange {
+  connectionId: string;
+  /** The folder written into, with all inside it; null when it may be anything there. */
+  folder: string | null;
+}
+
+/**
+ * Where a task's runs change servers: the folder a synchronization or a transfer writes into,
+ * or anything for a command. A download changes this computer only.
+ */
+export function serverChanges(action: TaskAction): ServerChange[] {
+  const { connectionId } = action;
+  switch (action.type) {
+    case "command":
+      return [{ connectionId, folder: null }];
+    case "sync":
+      return action.direction === "download" ? [] : [{ connectionId, folder: action.remotePath }];
+    case "transfer":
+      return action.direction === "download" ? [] : [{ connectionId, folder: action.destination }];
+  }
+}
+
+/** The tasks in `after` with a run that finished since `before`, in Poros or in poros-cli. */
+export function finishedRuns(before: readonly TaskView[], after: readonly TaskView[]): TaskView[] {
+  return after.filter((task) => {
+    const run = task.lastRun;
+    if (!run) return false;
+    const known = before.find((previous) => previous.id === task.id)?.lastRun;
+    return !known || known.started !== run.started || known.finished !== run.finished;
+  });
 }
 
 /** What a folder pattern may hold between braces. Mirrored in `automation/schedule.rs`. */

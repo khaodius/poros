@@ -1,5 +1,6 @@
 // Opens the scheduler with a transfer task made from transfers in the queue or files in a tab.
 
+import { finishedRuns, serverChanges } from "../lib/schedule";
 import {
   downloadBlocker,
   taskFromFiles,
@@ -8,7 +9,8 @@ import {
   type TaskDraft,
 } from "../lib/scheduleDraft";
 import { isDirLike } from "../lib/sort";
-import type { FileEntry, JobSnapshot } from "../lib/types";
+import type { FileEntry, JobSnapshot, TaskView } from "../lib/types";
+import { forgetListingsWithin, forgetServerListings } from "./listings";
 import { getPane, lastActivePane } from "./paneRegistry";
 import { useSessionStore } from "./sessionStore";
 import { useSettingsStore } from "./settingsStore";
@@ -80,5 +82,29 @@ export function scheduleFiles(tabId: string, entries: FileEntry[]): void {
         exists,
       }),
     );
+  }
+}
+
+/**
+ * A task ran in the backend or in poros-cli, on sessions of its own, so the panes on its
+ * servers were not told what it changed: the listings remembered of the folders it wrote into
+ * are forgotten, and panes showing them reload.
+ */
+export function forgetWhatRunsChanged(before: readonly TaskView[], after: readonly TaskView[]) {
+  const sessions = Object.values(useSessionStore.getState().sessions);
+  for (const task of finishedRuns(before, after)) {
+    for (const change of serverChanges(task.action)) {
+      // A vault's session lists its decrypted files, which the task did not see.
+      const on = sessions.filter(
+        (entry) =>
+          !entry.info.vault &&
+          (entry.info.savedConnectionId ?? entry.profile?.savedConnectionId) ===
+            change.connectionId,
+      );
+      for (const entry of on) {
+        if (change.folder === null) forgetServerListings(entry.info.id);
+        else if (change.folder.trim()) forgetListingsWithin(entry.info.id, change.folder.trim());
+      }
+    }
   }
 }

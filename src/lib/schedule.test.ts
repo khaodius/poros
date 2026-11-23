@@ -6,11 +6,13 @@ import {
   describeTrigger,
   epochFromDateTimeInput,
   expandFolderPattern,
+  finishedRuns,
   intervalMinutes,
   isoWeek,
   minuteOfDayFrom,
   newTask,
   sameTask,
+  serverChanges,
   splitInterval,
   suggestedName,
   syncAction,
@@ -265,5 +267,42 @@ describe("transfer tasks", () => {
       "/home/me/notes.txt",
       "/home/me/other.txt",
     ]);
+  });
+});
+
+describe("what runs change", () => {
+  it("names the folders a task writes into on its servers", () => {
+    const upload = transferAction("web", "upload", { destination: "/var/www" });
+    expect(serverChanges(upload)).toEqual([{ connectionId: "web", folder: "/var/www" }]);
+    expect(serverChanges({ ...upload, direction: "relay", sourceConnectionId: "nas" })).toEqual([
+      { connectionId: "web", folder: "/var/www" },
+    ]);
+    // A download changes this computer only.
+    expect(serverChanges({ ...upload, direction: "download" })).toEqual([]);
+    const sync = syncAction({
+      connectionId: "web",
+      localPath: "/home/me/site",
+      remotePath: "/var/www/site",
+      ...DEFAULT_SETTINGS.sync,
+      direction: "both",
+    });
+    expect(serverChanges(sync)).toEqual([{ connectionId: "web", folder: "/var/www/site" }]);
+    expect(serverChanges({ type: "command", connectionId: "web", command: "make" })).toEqual([
+      { connectionId: "web", folder: null },
+    ]);
+  });
+
+  it("finds the runs that finished since the last look", () => {
+    const task = (id: string, finished: number | null) => ({
+      ...newTask(transferAction("web")),
+      id,
+      running: false,
+      lastRun:
+        finished === null ? null : { started: 100, finished, succeeded: true, message: "Done" },
+    });
+    const before = [task("a", 200), task("b", null), task("c", 300)];
+    const after = [task("a", 200), task("b", 400), task("c", 500), task("d", null)];
+    expect(finishedRuns(before, after).map((found) => found.id)).toEqual(["b", "c"]);
+    expect(finishedRuns(after, after)).toEqual([]);
   });
 });
