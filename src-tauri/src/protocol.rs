@@ -11,7 +11,7 @@ use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult, ErrorKind};
-use crate::model::DirListing;
+use crate::model::{DirListing, FileEntry};
 use crate::remote_path;
 
 /// Mirrored in `src/lib/types.ts`.
@@ -177,6 +177,16 @@ pub trait WriteStream: Send {
     async fn finish(self: Box<Self>) -> AppResult<()>;
 }
 
+/// A page of everything stored below a folder, however deep.
+#[derive(Debug, Clone, Default)]
+pub struct DeepPage {
+    /// Files, and folders somebody made by hand, with their whole paths. Folders that exist
+    /// only because something is stored in them are not listed.
+    pub entries: Vec<FileEntry>,
+    /// What asks for the next page; `None` on the last.
+    pub next: Option<String>,
+}
+
 #[async_trait]
 pub trait RemoteFileSystem: Send + Sync {
     fn protocol(&self) -> Protocol;
@@ -255,6 +265,13 @@ pub trait RemoteFileSystem: Send + Sync {
     async fn open_write(self: Arc<Self>, request: WriteRequest) -> AppResult<Box<dyn WriteStream>>;
 
     async fn close(&self) {}
+
+    /// A page of everything below `path` in one request, for services that store names
+    /// rather than folders. `None` when `path` has to be listed folder by folder, which is
+    /// always the case elsewhere.
+    async fn list_deep(&self, _path: &str, _cursor: Option<&str>) -> AppResult<Option<DeepPage>> {
+        Ok(None)
+    }
 
     /// The FTP connection behind this file system, for transfers straight between two FTP
     /// servers (FXP).

@@ -33,6 +33,7 @@ use crate::import::{
 use crate::local;
 use crate::model::{DirListing, FileEntry};
 use crate::route;
+use crate::search::{Recheck, SearchManager, SearchReport, SearchRequest, SearchSummary};
 use crate::session::{SessionInfo, SessionManager};
 use crate::settings::{Settings, SettingsStore};
 use crate::ssh::{AuthMethod, ConnectProfile, HostKeyApproval};
@@ -720,6 +721,33 @@ pub async fn editor_save(
 pub async fn editor_close(editor: State<'_, EditorManager>, document_id: String) -> AppResult<()> {
     editor.close(&document_id).await;
     Ok(())
+}
+
+/// Searches below a folder; what is found arrives on `reports` while the search runs.
+#[tauri::command]
+pub async fn search_start(
+    searches: State<'_, SearchManager>,
+    request: SearchRequest,
+    reports: Channel<SearchReport>,
+) -> AppResult<SearchSummary> {
+    let sink = Arc::new(move |report| {
+        let _ = reports.send(report);
+    });
+    searches.run(request, sink).await
+}
+
+#[tauri::command]
+pub fn search_cancel(searches: State<'_, SearchManager>, search_id: String) {
+    searches.cancel(&search_id);
+}
+
+#[tauri::command]
+pub async fn search_recheck(
+    searches: State<'_, SearchManager>,
+    location: Location,
+    paths: Vec<String>,
+) -> AppResult<Recheck> {
+    searches.recheck(&location, paths).await
 }
 
 fn terminal_sink(output: Channel<TerminalEvent>) -> Sink {
