@@ -879,14 +879,19 @@ impl Queue {
                 }
                 return self.server_answered(&session_id);
             }
-            (_, RunOutcome::Expanded(children)) => {
+            (stop, RunOutcome::Expanded(children)) => {
                 let rank = job.rank.clone();
                 let changed = changed_directory(&job.spec);
                 self.changed_directories.push(changed);
                 self.forget(id);
+                // Paused while it was being listed: what it holds waits as the folder would.
+                let paused = matches!(stop, Some(StopReason::Pause));
                 for (index, child) in children.into_iter().enumerate() {
                     let child_rank = format!("{rank}{}", rank_segment(index as u32));
-                    self.insert(child_rank, child);
+                    let child_id = self.insert(child_rank, child);
+                    if paused {
+                        self.pause(&[child_id]);
+                    }
                 }
                 return self.server_answered(&session_id);
             }
@@ -1496,6 +1501,29 @@ mod tests {
         let (_, removed, changed) = queue.take_changes();
         assert_eq!(removed, vec![folder_id]);
         assert_eq!(changed[0].path, "/remote");
+    }
+
+    #[test]
+    fn a_folder_paused_while_it_is_listed_queues_its_contents_paused() {
+        let mut queue = Queue::new();
+        let folder_id = queue.add(folder("dir"));
+        queue.claim(Instant::now()).unwrap();
+        queue.pause(&[folder_id]);
+        finish(
+            &mut queue,
+            folder_id,
+            RunOutcome::Expanded(vec![file("one", 1), folder("two")]),
+        );
+        assert!(queue.job(folder_id).is_none());
+        assert!(queue.claim(Instant::now()).is_none());
+        let children = queue.snapshots();
+        let states: Vec<JobState> = children.iter().map(|job| job.state).collect();
+        assert_eq!(states, [JobState::Paused, JobState::Paused]);
+
+        let ids: Vec<JobId> = children.iter().map(|job| job.id).collect();
+        queue.resume(&ids);
+        assert_eq!(claim_name(&mut queue).as_deref(), Some("one"));
+        assert_eq!(claim_name(&mut queue).as_deref(), Some("two"));
     }
 
     #[test]
