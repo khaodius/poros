@@ -19,6 +19,7 @@ import type { PaneController } from "../hooks/usePane";
 import { useSelectionBox, type RowRange } from "../hooks/useSelectionBox";
 import { DATE_GROUP_LABELS, type DateGroup, type EntryGroup } from "../lib/dateGroups";
 import { formatDate, formatPermissions, formatSize } from "../lib/format";
+import { cursorScroll } from "../lib/listScroll";
 import {
   COLUMN_LABELS,
   COLUMN_WIDTH_LIMITS,
@@ -518,34 +519,45 @@ export function FileList({
     rangeExtractor,
   });
 
+  // Brought into view as renaming starts, and not again when a reload moves the row.
+  const scrolledToRename = useRef<string | null>(null);
   useEffect(() => {
-    if (renamingRow >= 0) virtualizer.scrollToIndex(renamingRow, { align: "auto" });
-  }, [renamingRow, virtualizer]);
+    const started = renamingRow >= 0 && scrolledToRename.current !== renaming;
+    scrolledToRename.current = renamingRow >= 0 ? (renaming ?? null) : null;
+    if (started) virtualizer.scrollToIndex(renamingRow, { align: "auto" });
+  }, [renaming, renamingRow, virtualizer]);
 
   // A folder opens at the top, or with the cursor's row in the middle when it has one, as the
-  // folder just left does after going up or back. Collapsing or expanding a group leaves the
-  // list where it is, rather than bringing the cursor back into view.
+  // folder just left does after going up or back. Collapsing or expanding a group, or a reload
+  // that leaves the cursor where it was, leaves the list where it is.
   const scrolledPath = useRef<string | undefined>(undefined);
+  const scrolledListing = useRef(pane.listing);
+  const scrolledCursor = useRef(pane.cursorPath);
   const groupToggled = useRef(false);
   useEffect(() => {
     const opened = scrolledPath.current !== pane.listing?.path;
+    const align = cursorScroll({
+      opened,
+      reloaded: scrolledListing.current !== pane.listing,
+      cursorMoved: scrolledCursor.current !== pane.cursorPath,
+      groupToggled: groupToggled.current,
+    });
     scrolledPath.current = pane.listing?.path;
-    const toggled = groupToggled.current;
+    scrolledListing.current = pane.listing;
+    scrolledCursor.current = pane.cursorPath;
     groupToggled.current = false;
     const row = pane.cursorPath ? rowOfPath.get(pane.cursorPath) : undefined;
-    if (row !== undefined && !(toggled && !opened)) {
+    if (row !== undefined && align) {
       // The first row of a group brings its heading into view with it on the way up.
       const headingAbove =
         !opened &&
         rows[row - 1]?.kind === "group" &&
         (row - 1) * rowHeight < (scrollRef.current?.scrollTop ?? 0);
-      virtualizer.scrollToIndex(headingAbove ? row - 1 : row, {
-        align: opened ? "center" : "auto",
-      });
+      virtualizer.scrollToIndex(headingAbove ? row - 1 : row, { align });
     } else if (opened) {
       scrollRef.current?.scrollTo({ top: 0 });
     }
-  }, [pane.listing?.path, pane.cursorPath, rows, rowOfPath, rowHeight, virtualizer]);
+  }, [pane.listing, pane.cursorPath, rows, rowOfPath, rowHeight, virtualizer]);
 
   useEffect(() => {
     virtualizer.measure();
