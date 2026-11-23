@@ -10,6 +10,7 @@ import {
 } from "../lib/transfers";
 import type { ChangedDirectory, TransferUpdate } from "../lib/types";
 import { noteTransferUpdate } from "./fileFlight";
+import { forgetListing } from "./listings";
 import { panesShowing } from "./paneRegistry";
 
 const REFRESH_DELAY_MILLIS = 400;
@@ -66,10 +67,34 @@ export const useTransferStore = create<TransferState>((set, get) => ({
 }));
 
 const pendingRefreshes = new Map<string, number>();
+/** Server folders whose listing was just forgotten, and whether they changed again since. */
+const justForgotten = new Map<string, boolean>();
+
+/**
+ * Forgets the remembered listing of a server folder a transfer wrote to: at once, then once
+ * more after a burst of changes rather than for every file of it.
+ */
+function forgetChangedListing(sessionId: string, path: string): void {
+  const key = `${sessionId}\n${path}`;
+  if (justForgotten.has(key)) {
+    justForgotten.set(key, true);
+    return;
+  }
+  justForgotten.set(key, false);
+  forgetListing(sessionId, path);
+  window.setTimeout(() => {
+    const changedSince = justForgotten.get(key);
+    justForgotten.delete(key);
+    if (changedSince) forgetChangedListing(sessionId, path);
+  }, REFRESH_DELAY_MILLIS);
+}
 
 /** Panes showing a folder a transfer wrote to reload, once per burst of changes. */
 function refreshChangedPanes(changed: ChangedDirectory[]): void {
   for (const directory of changed) {
+    if (directory.side === "remote" && directory.sessionId) {
+      forgetChangedListing(directory.sessionId, directory.path);
+    }
     for (const pane of panesShowing(directory.side, directory.path, directory.sessionId)) {
       if (pendingRefreshes.has(pane.tabId)) continue;
       pendingRefreshes.set(

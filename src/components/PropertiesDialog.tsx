@@ -26,6 +26,7 @@ import type {
   OperationFailure,
   PermissionSummary,
 } from "../lib/types";
+import { forgetListing } from "../state/listings";
 import { useLogStore } from "../state/logStore";
 import { track, useOperationStore } from "../state/operationStore";
 import { useSettingsStore } from "../state/settingsStore";
@@ -196,6 +197,12 @@ export function PropertiesDialog({
     }
   };
 
+  /** What the folder's listing says of the entries changed, and of all inside them if asked. */
+  const changed = () => {
+    forgetListing(sessionId, folder, recursive ? entries.map((entry) => entry.path) : []);
+    onApplied();
+  };
+
   const apply = async (event: FormEvent) => {
     event.preventDefault();
     if (nothingToApply) {
@@ -223,12 +230,12 @@ export function PropertiesDialog({
       for (const failure of summary.failures) {
         write("error", `${failure.path}: ${failure.message}`, sessionId);
       }
-      onApplied();
+      changed();
       if (summary.failures.length > 0) setFailures(summary.failures);
       else onClose();
     } catch (caught) {
       const failure = toAppError(caught);
-      onApplied();
+      changed();
       if (failure.kind !== "cancelled") setError(failure.message);
     }
   };
