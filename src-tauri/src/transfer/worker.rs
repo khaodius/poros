@@ -422,7 +422,11 @@ pub(super) struct JobRef<'a> {
 impl JobRef<'_> {
     pub fn exists_action(&self, resolution: Option<ExistsAction>) -> ExistsAction {
         resolution
-            .or(self.spec.batch.as_ref().map(|batch| batch.exists_action))
+            .or(self
+                .spec
+                .batch
+                .as_ref()
+                .and_then(|batch| batch.exists_action))
             .or(self.shared.queue.lock().unwrap().conflict_override)
             .unwrap_or(self.settings.exists_action)
     }

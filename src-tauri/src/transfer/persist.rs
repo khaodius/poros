@@ -237,7 +237,7 @@ fn snapshot(shared: &Shared) -> Option<(SavedQueue, &Path)> {
             error: job.error,
             resolution: job
                 .resolution
-                .or(spec.batch.as_ref().map(|batch| batch.exists_action)),
+                .or(spec.batch.as_ref().and_then(|batch| batch.exists_action)),
             resume: job.resume,
             options: spec.options.as_deref().cloned(),
             label: spec.batch.as_ref().map(|batch| batch.label.clone()),
@@ -349,9 +349,9 @@ pub(super) fn restore(shared: &Shared, file: &Path) -> usize {
                 options: job.options.map(Arc::new),
                 // No one follows it any more, but a folder still hands the task's name and its
                 // way with files that exist on to what it holds.
-                batch: job.label.map(|label| {
-                    JobBatch::new(label, job.resolution.unwrap_or(ExistsAction::Overwrite))
-                }),
+                batch: job
+                    .label
+                    .map(|label| JobBatch::restored(label, job.resolution)),
             },
             state: if job.failed {
                 JobState::Failed

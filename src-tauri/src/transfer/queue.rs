@@ -91,6 +91,11 @@ impl JobSpec {
         self.session_id == session_id || self.source_session_id.as_deref() == Some(session_id)
     }
 
+    /// Queued for a caller no one is there to press Start for, such as a scheduled task.
+    pub fn runs_unattended(&self) -> bool {
+        self.batch.as_ref().is_some_and(|batch| batch.unattended)
+    }
+
     /// The file a file job writes, told apart from the files other jobs write.
     fn written_file(&self) -> Option<WrittenFile> {
         if self.kind != JobKind::File {
@@ -554,6 +559,9 @@ pub struct Queue {
     top_rank: u32,
     bottom_rank: u32,
     pub paused: bool,
+    /// The queue is paused only because transfers wait for Start, not by the user, so jobs
+    /// that run unattended still go.
+    pub held_for_start: bool,
     pub conflict_override: Option<ExistsAction>,
     pub totals: Totals,
     dirty: HashSet<JobId>,
@@ -683,9 +691,10 @@ impl Queue {
     }
 
     pub fn claim(&mut self, now: Instant) -> Option<Claim> {
-        if self.paused {
+        if self.paused && !self.held_for_start {
             return None;
         }
+        let unattended_only = self.paused;
         for &id in &self.segmented {
             let Some(job) = self.jobs.get_mut(&id) else {
                 continue;
@@ -693,6 +702,9 @@ impl Queue {
             let Some(run) = job.run.clone() else {
                 continue;
             };
+            if unattended_only && !job.spec.runs_unattended() {
+                continue;
+            }
             if job.stop.is_none() && run.wants_helper(job.workers) {
                 job.workers += 1;
                 self.dirty.insert(id);
@@ -712,7 +724,8 @@ impl Queue {
             .iter()
             .find(|(_, id)| {
                 let job = &self.jobs[id];
-                job.not_before.is_none_or(|not_before| not_before <= now)
+                (!unattended_only || job.spec.runs_unattended())
+                    && job.not_before.is_none_or(|not_before| not_before <= now)
                     && !self.server_unreachable(&job.spec.session_id, now)
                     && job
                         .spec
@@ -1281,6 +1294,7 @@ impl Queue {
     /// Pausing the queue interrupts running transfers; they continue from where they stopped.
     pub fn set_paused(&mut self, paused: bool) {
         self.paused = paused;
+        self.held_for_start = false;
         if paused {
             for job in self.jobs.values_mut() {
                 if job.state == JobState::Running && job.stop.is_none() {
@@ -1288,6 +1302,27 @@ impl Queue {
                 }
             }
         }
+    }
+
+    /// Pauses an idle queue until the user presses Start, as transfers do when they do not start
+    /// on their own. Jobs that run unattended go on, and a queue the user paused stays so.
+    pub fn hold_for_start(&mut self) {
+        let waiting_or_running = self.jobs.values().any(|job| {
+            !job.spec.runs_unattended()
+                && matches!(
+                    job.state,
+                    JobState::Queued | JobState::Running | JobState::Conflict
+                )
+        });
+        if !self.paused && !waiting_or_running {
+            self.paused = true;
+            self.held_for_start = true;
+        }
+    }
+
+    /// The user paused the queue, so nothing starts, unattended or not.
+    pub fn paused_by_user(&self) -> bool {
+        self.paused && !self.held_for_start
     }
 
     pub fn counts(&self) -> QueueCounts {
@@ -1525,9 +1560,9 @@ mod tests {
 
     #[test]
     fn a_batch_follows_its_jobs_through_folders_and_out_of_the_queue() {
-        let batch = JobBatch::new("Nightly", ExistsAction::Ask);
+        let batch = JobBatch::new("Nightly", Some(ExistsAction::Ask));
         // No one is there to answer.
-        assert_eq!(batch.exists_action, ExistsAction::Overwrite);
+        assert_eq!(batch.exists_action, Some(ExistsAction::Overwrite));
         let in_batch = |spec: JobSpec| JobSpec {
             batch: Some(batch.clone()),
             ..spec
@@ -1578,6 +1613,47 @@ mod tests {
         assert_eq!(queue.batch_tally(&batch), ended);
         // The other job was never part of it.
         assert_eq!(queue.job(other).unwrap().state, JobState::Queued);
+    }
+
+    #[test]
+    fn unattended_jobs_go_while_the_users_wait_for_start_but_not_while_paused() {
+        let task = JobBatch::new("Nightly", None);
+        let scheduled = |name: &str| JobSpec {
+            batch: Some(task.clone()),
+            ..file(name, 1)
+        };
+        let mut queue = Queue::new();
+        // Scheduled files are queued without holding an idle queue for Start.
+        queue.add(scheduled("first run"));
+        assert_eq!(claim_name(&mut queue).as_deref(), Some("first run"));
+
+        // The user queues by hand while it runs: their file waits for Start.
+        queue.hold_for_start();
+        let by_hand = queue.add(file("by hand", 1));
+        assert!(queue.paused && queue.held_for_start && !queue.paused_by_user());
+        assert_eq!(claim_name(&mut queue), None);
+        queue.add(scheduled("second run"));
+        assert_eq!(claim_name(&mut queue).as_deref(), Some("second run"));
+        assert_eq!(queue.job(by_hand).unwrap().state, JobState::Queued);
+        // Jobs brought back from the saved queue are followed by no one, and wait too.
+        queue.add(JobSpec {
+            batch: Some(JobBatch::restored("Nightly".into(), None)),
+            ..file("restored", 1)
+        });
+        assert_eq!(claim_name(&mut queue), None);
+
+        // Pausing holds back everything, and Start lets everything go.
+        queue.add(scheduled("third run"));
+        queue.set_paused(true);
+        assert!(queue.paused_by_user());
+        assert_eq!(claim_name(&mut queue), None);
+        // A queue the user paused stays paused when more is queued.
+        queue.hold_for_start();
+        assert!(queue.paused_by_user());
+        queue.set_paused(false);
+        let mut started: Vec<String> = std::iter::from_fn(|| claim_name(&mut queue)).collect();
+        started.sort();
+        assert_eq!(started, ["by hand", "restored", "third run"]);
     }
 
     #[test]

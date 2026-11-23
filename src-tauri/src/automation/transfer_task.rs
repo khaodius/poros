@@ -21,15 +21,6 @@ use crate::transfer::{BatchTally, Direction, EnqueueRequest, JobBatch, TransferI
 /// The result names the first failure and the first missing item, cut to this length.
 const MAX_REASON_CHARS: usize = 160;
 
-const QUEUE_PAUSED: &str = "The transfer queue is paused, so this run was skipped";
-
-fn skipped() -> Outcome {
-    Outcome {
-        succeeded: false,
-        message: QUEUE_PAUSED.into(),
-    }
-}
-
 pub(super) async fn run(task: &ScheduledTask, context: &TaskContext<'_>) -> AppResult<Outcome> {
     let TaskAction::Transfer {
         connection_id,
@@ -44,7 +35,7 @@ pub(super) async fn run(task: &ScheduledTask, context: &TaskContext<'_>) -> AppR
     // Checked before anything is connected: a paused queue would keep the run, and the next
     // ones behind it, waiting for as long as it stays paused.
     if context.transfers.is_paused() {
-        return Ok(skipped());
+        return Ok(runner::skipped_while_paused());
     }
     let subfolder = expand_folder_pattern(subfolder, &Local::now())?;
     let source_id = match (direction, source_connection_id) {
@@ -212,7 +203,7 @@ async fn copy(
         });
     }
 
-    let batch = JobBatch::new(task.name.clone(), *exists);
+    let batch = JobBatch::new(task.name.clone(), Some(*exists));
     let queued = context
         .transfers
         .enqueue_batch(
@@ -227,7 +218,7 @@ async fn copy(
         )
         .await?;
     if !queued {
-        return Ok(skipped());
+        return Ok(runner::skipped_while_paused());
     }
     let tally = context.transfers.watch().wait_for_batch(&batch).await;
     for failure in &tally.failures {

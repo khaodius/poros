@@ -603,9 +603,9 @@ impl TransferManager {
 
     /// Queues jobs as one batch for a caller that follows them with
     /// `TransferWatch::wait_for_batch`, such as a scheduled task. They start even when
-    /// transfers wait for Start, since no one is there to press it. A queue the user has paused
-    /// takes none of them, so the caller is not kept waiting for as long as it stays paused:
-    /// `false` then.
+    /// transfers wait for Start, since no one is there to press it, and leave the user's own
+    /// waiting jobs waiting. A queue the user has paused takes none of them, so the caller is
+    /// not kept waiting for as long as it stays paused: `false` then.
     pub async fn enqueue_batch(
         &self,
         request: EnqueueRequest,
@@ -614,7 +614,7 @@ impl TransferManager {
         let specs = self.specs_for(&request, Some(batch)).await?;
         {
             let mut queue = self.shared.queue.lock().unwrap();
-            if queue.paused {
+            if queue.paused_by_user() {
                 return Ok(false);
             }
             for spec in specs {
@@ -625,9 +625,10 @@ impl TransferManager {
         Ok(true)
     }
 
-    /// Whether the user has paused the whole queue.
+    /// Whether the user has paused the whole queue, which holds back even the jobs of a batch.
+    /// A queue that only waits for Start is not paused in this sense.
     pub fn is_paused(&self) -> bool {
-        self.shared.queue.lock().unwrap().paused
+        self.shared.queue.lock().unwrap().paused_by_user()
     }
 
     /// Leaves out of the saved queue the jobs writing into `folder`, which holds files only for
@@ -693,13 +694,24 @@ impl TransferManager {
         session_id: &str,
         files: Vec<FileTransfer>,
     ) -> AppResult<Vec<JobId>> {
+        self.enqueue_files_in(session_id, files, None).await
+    }
+
+    /// `enqueue_files` for files that may belong to a batch, which start even while transfers
+    /// wait for Start.
+    pub async fn enqueue_files_in(
+        &self,
+        session_id: &str,
+        files: Vec<FileTransfer>,
+        batch: Option<Arc<JobBatch>>,
+    ) -> AppResult<Vec<JobId>> {
         let session = self.shared.sessions.get(session_id).await?;
         self.register(&session);
         let auto_start = self.shared.settings().auto_start;
         let ids = {
             let mut queue = self.shared.queue.lock().unwrap();
-            if !auto_start && queue.counts().is_idle() {
-                queue.paused = true;
+            if !auto_start && batch.as_ref().is_none_or(|batch| !batch.unattended) {
+                queue.hold_for_start();
             }
             files
                 .into_iter()
@@ -716,7 +728,7 @@ impl TransferManager {
                         size: file.size,
                         ancestors: Arc::from([]),
                         options: file.options,
-                        batch: None,
+                        batch: batch.clone(),
                     };
                     queue.add_resolved(spec, file.resolution)
                 })
@@ -747,8 +759,8 @@ impl TransferManager {
         let auto_start = self.shared.settings().auto_start;
         {
             let mut queue = self.shared.queue.lock().unwrap();
-            if placement == Placement::Last && !auto_start && queue.counts().is_idle() {
-                queue.paused = true;
+            if placement == Placement::Last && !auto_start {
+                queue.hold_for_start();
             }
             let ids: Vec<JobId> = specs.into_iter().map(|spec| queue.add(spec)).collect();
             if placement == Placement::First {

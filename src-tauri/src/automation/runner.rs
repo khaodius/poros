@@ -20,7 +20,7 @@ use crate::session::{SessionInfo, SessionManager};
 use crate::settings::{CloudSettings, ConnectionSettings};
 use crate::ssh::HostKeyApproval;
 use crate::sync::{SyncAction, SyncChoice, SyncManager, SyncRequest, SyncRunRequest};
-use crate::transfer::TransferManager;
+use crate::transfer::{JobBatch, TransferManager};
 
 /// Sessions opened for tasks belong to no window, so closing one never disconnects them.
 const TASK_OWNER: &str = "scheduler";
@@ -28,6 +28,17 @@ const TASK_OWNER: &str = "scheduler";
 const MAX_RESULT_LINE_CHARS: usize = 200;
 /// The result of a run whose process was stopped under it.
 const CUT_SHORT: &str = "Stopped before it finished";
+const QUEUE_PAUSED: &str = "The transfer queue is paused, so this run was skipped";
+
+/// A run that would copy files while the user has paused the queue ends at once, before it
+/// changes anything: waiting would keep it, and every run after it, going for as long as the
+/// queue stays paused.
+pub(super) fn skipped_while_paused() -> Outcome {
+    Outcome {
+        succeeded: false,
+        message: QUEUE_PAUSED.into(),
+    }
+}
 
 /// What the command line adds to signing in. The app adds nothing.
 #[derive(Clone, Default)]
@@ -131,12 +142,17 @@ pub async fn perform(task: &ScheduledTask, context: &TaskContext<'_>) -> AppResu
     if let TaskAction::Transfer { .. } = action {
         return transfer_task::run(task, context).await;
     }
+    if let TaskAction::Sync { .. } = action {
+        if context.transfers.is_paused() {
+            return Ok(skipped_while_paused());
+        }
+    }
     let session = connect(context, action.connection_id(), Some("run scheduled tasks")).await?;
     let result = match action {
         TaskAction::Command {
             command, directory, ..
         } => run_command(command, directory.as_deref(), &session.id, context).await,
-        _ => synchronize(action, &session.id, context).await,
+        _ => synchronize(task, &session.id, context).await,
     };
     context.sessions.disconnect(&session.id).await?;
     result
@@ -234,7 +250,7 @@ fn with_host_key_advice(mut error: AppError, command_line: bool) -> AppError {
 }
 
 async fn synchronize(
-    action: &TaskAction,
+    task: &ScheduledTask,
     session_id: &str,
     context: &TaskContext<'_>,
 ) -> AppResult<Outcome> {
@@ -245,7 +261,7 @@ async fn synchronize(
         options,
         arguments,
         ..
-    } = action
+    } = &task.action
     else {
         return Err(AppError::invalid("Not a synchronization"));
     };
@@ -304,14 +320,18 @@ async fn synchronize(
         });
     }
 
+    // Its files carry the task's name in the transfer list and start whatever "start
+    // transfers automatically" says, since no one is there to press Start.
+    let batch = JobBatch::new(task.name.clone(), None);
     let summary = context
         .sync
-        .run(
+        .run_in_batch(
             context.transfers,
             SyncRunRequest {
                 plan_id: plan.plan_id,
                 choices,
             },
+            Some(batch),
         )
         .await?;
     if summary.dry_run {

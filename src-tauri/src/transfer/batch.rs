@@ -1,6 +1,7 @@
 //! Jobs queued together for a caller that follows them to their end with no one watching, such
 //! as one run of a scheduled task. A folder hands its batch on to what it holds, so the batch
-//! covers the whole tree however it expands.
+//! covers the whole tree however it expands. Its jobs start even while transfers wait for Start,
+//! since no one is there to press it, but never while the user has paused the queue.
 
 use std::sync::{Arc, Mutex};
 
@@ -14,9 +15,12 @@ const MAX_FAILURES_KEPT: usize = 5;
 pub struct JobBatch {
     /// Shown beside its jobs in the transfer lists: the name of the task that queued them.
     pub label: String,
-    /// What happens to a file already at the target. No one is there to answer, so a batch
-    /// queued with `Ask` overwrites.
-    pub exists_action: ExistsAction,
+    /// What happens to a file already at the target, for jobs that do not say. No one is there
+    /// to answer, so a batch queued with `Ask` overwrites.
+    pub exists_action: Option<ExistsAction>,
+    /// Someone follows the jobs, so they go while transfers wait for Start. Jobs brought back
+    /// from the saved queue keep their label but are followed by no one.
+    pub unattended: bool,
     /// The jobs that have left the queue. The ones still in it are counted by their state.
     departed: Mutex<BatchTally>,
 }
@@ -71,15 +75,25 @@ impl BatchTally {
 }
 
 impl JobBatch {
-    pub fn new(label: impl Into<String>, exists_action: ExistsAction) -> Arc<Self> {
-        Arc::new(Self {
-            label: label.into(),
-            exists_action: match exists_action {
+    pub fn new(label: impl Into<String>, exists_action: Option<ExistsAction>) -> Arc<Self> {
+        Arc::new(Self::with(label.into(), exists_action, true))
+    }
+
+    /// The batch of a job saved with the queue, brought back by the next start.
+    pub(super) fn restored(label: String, exists_action: Option<ExistsAction>) -> Arc<Self> {
+        Arc::new(Self::with(label, exists_action, false))
+    }
+
+    fn with(label: String, exists_action: Option<ExistsAction>, unattended: bool) -> Self {
+        Self {
+            label,
+            exists_action: exists_action.map(|action| match action {
                 ExistsAction::Ask => ExistsAction::Overwrite,
                 action => action,
-            },
+            }),
+            unattended,
             departed: Mutex::new(BatchTally::default()),
-        })
+        }
     }
 
     /// Notes a job leaving the queue: finished, or removed before it was.

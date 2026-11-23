@@ -2274,3 +2274,139 @@ async fn scheduled_transfers_copy_a_saved_list_to_and_from_the_server() {
     drop(transfers);
     workspace.close().await;
 }
+
+/// Gives a scheduled run a minute: one that waits for someone to press Start never ends.
+async fn within_a_minute<T>(run: impl std::future::Future<Output = T>) -> T {
+    tokio::time::timeout(Duration::from_secs(60), run)
+        .await
+        .expect("the scheduled run is still waiting")
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn scheduled_runs_go_while_transfers_wait_for_start() {
+    let Some(server) = server() else { return };
+    let workspace = TransferFixture::new(&server, "scheduled-start").await;
+    let (_store_dir, connections, connection_id) = saved_server(&server);
+    let sync = SyncManager::new(workspace.manager.clone(), Events::default());
+    let transfers = workspace.transfers(TransferSettings {
+        auto_start: false,
+        ..transfer_settings()
+    });
+    let events = Events::default();
+    let context = TaskContext {
+        sessions: &workspace.manager,
+        connections,
+        connection_settings: ConnectionSettings::default(),
+        cloud_settings: Default::default(),
+        sync: &sync,
+        transfers: &transfers,
+        events: &events,
+        sign_in: SignIn::default(),
+    };
+    let site = workspace.local.path().join("site");
+    write_small_tree(&site);
+    let mirrored = format!("{}/mirrored", workspace.remote);
+    let synchronize = scheduled(TaskAction::Sync {
+        connection_id: connection_id.clone(),
+        local_path: site.to_string_lossy().into_owned(),
+        remote_path: mirrored.clone(),
+        direction: SyncDirection::Upload,
+        options: Box::default(),
+        arguments: String::new(),
+    });
+
+    // Transfers wait for Start, and nothing else is queued.
+    let synced = within_a_minute(runner::perform(&synchronize, &context))
+        .await
+        .unwrap();
+    assert!(synced.succeeded, "{}", synced.message);
+    assert!(
+        synced.message.starts_with("3 files copied"),
+        "{}",
+        synced.message
+    );
+    assert_eq!(
+        workspace
+            .remote_bytes(&format!("{mirrored}/css/site.css"))
+            .await,
+        pattern(70_000, 6)
+    );
+    assert!(!transfers.list().stats.queue_paused);
+
+    // A file the user queues by hand waits for Start, and scheduled runs go past it.
+    let mine = workspace.local.path().join("mine.txt");
+    std::fs::write(&mine, pattern(500, 11)).unwrap();
+    workspace
+        .upload(&transfers, std::slice::from_ref(&mine), &workspace.remote)
+        .await;
+    assert!(transfers.list().stats.queue_paused);
+    std::fs::write(site.join("index.html"), pattern(5000, 12)).unwrap();
+    let again = within_a_minute(runner::perform(&synchronize, &context))
+        .await
+        .unwrap();
+    assert!(again.succeeded, "{}", again.message);
+    assert!(
+        again.message.starts_with("1 file copied"),
+        "{}",
+        again.message
+    );
+    let upload = scheduled(TaskAction::Transfer {
+        connection_id: connection_id.clone(),
+        source_connection_id: None,
+        direction: Direction::Upload,
+        items: vec![task_item(&site)],
+        destination: workspace.remote.clone(),
+        exists: ExistsAction::Overwrite,
+        subfolder: "copies".into(),
+    });
+    let uploaded = within_a_minute(runner::perform(&upload, &context))
+        .await
+        .unwrap();
+    assert!(uploaded.succeeded, "{}", uploaded.message);
+    assert_eq!(
+        remote_tree(&workspace, &format!("{}/copies/site", workspace.remote)).await,
+        sizes(read_tree(&site))
+    );
+    let list = transfers.list();
+    assert!(list.stats.queue_paused);
+    let by_hand: Vec<&JobSnapshot> = list.jobs.iter().filter(|job| job.label.is_none()).collect();
+    assert_eq!(by_hand.len(), 1, "{:#?}", list.jobs);
+    assert_eq!(by_hand[0].state, JobState::Queued);
+    assert!(list
+        .jobs
+        .iter()
+        .filter(|job| job.label.as_deref() == Some("Nightly"))
+        .all(|job| job.state == JobState::Done));
+
+    // Start sends the user's file.
+    transfers.set_paused(false);
+    wait_until_settled(&transfers).await;
+    assert_eq!(
+        workspace
+            .remote_bytes(&format!("{}/mine.txt", workspace.remote))
+            .await,
+        pattern(500, 11)
+    );
+
+    // A queue the user paused is left alone, and the synchronization changes nothing.
+    transfers.set_paused(true);
+    std::fs::write(site.join("index.html"), pattern(6000, 13)).unwrap();
+    let held = within_a_minute(runner::perform(&synchronize, &context))
+        .await
+        .unwrap();
+    assert!(!held.succeeded);
+    assert_eq!(
+        held.message,
+        "The transfer queue is paused, so this run was skipped"
+    );
+    transfers.set_paused(false);
+    assert_eq!(
+        workspace
+            .remote_bytes(&format!("{mirrored}/index.html"))
+            .await,
+        pattern(5000, 12)
+    );
+
+    drop(transfers);
+    workspace.close().await;
+}
