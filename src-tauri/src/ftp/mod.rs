@@ -37,6 +37,24 @@ const END_PROBE: Duration = Duration::from_millis(500);
 
 type ControlGuard = OwnedMutexGuard<Option<Control>>;
 
+tokio::task_local! {
+    /// Set while the requests under way must not queue for the control connection.
+    static WITHOUT_WAITING: ();
+}
+
+/// Runs `requests` so that each one takes the control connection only if nothing holds it, and
+/// answers busy otherwise instead of queueing. The preview pane reads this way: a transfer that
+/// borrows the connection keeps it for a whole file, and the preview must neither wait for it
+/// nor make it wait. Nothing is sent before the connection is taken, so a refusal leaves it as
+/// it was. A vault on the server reads through here too, as it runs in the same task.
+pub async fn without_waiting<F: std::future::Future>(requests: F) -> F::Output {
+    WITHOUT_WAITING.scope((), requests).await
+}
+
+fn connection_in_use() -> AppError {
+    AppError::new(ErrorKind::Busy, "Another request is using this connection")
+}
+
 pub struct FtpFs {
     profile: ConnectProfile,
     home: String,
@@ -124,9 +142,17 @@ impl FtpFs {
         Ok((control, home, certificate))
     }
 
-    /// The control connection, reopened if the server dropped it.
+    /// The control connection, reopened if the server dropped it. Under `without_waiting` it is
+    /// refused as busy while anything else holds it.
     async fn connection(&self) -> AppResult<ControlGuard> {
-        let mut guard = self.control.clone().lock_owned().await;
+        let mut guard = if WITHOUT_WAITING.try_with(|()| ()).is_ok() {
+            self.control
+                .clone()
+                .try_lock_owned()
+                .map_err(|_| connection_in_use())?
+        } else {
+            self.control.clone().lock_owned().await
+        };
         if let Some(control) = guard.as_mut() {
             if control.idle_for() > STALE_AFTER && control.noop().await.is_err() {
                 *guard = None;

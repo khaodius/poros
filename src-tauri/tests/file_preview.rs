@@ -216,7 +216,7 @@ async fn read(
     length: u64,
 ) -> AppResult<ReadReply> {
     previews
-        .read(request(session_id, path, offset, length), |_| false)
+        .read(OWNER, request(session_id, path, offset, length), |_| false)
         .await
 }
 
@@ -352,10 +352,10 @@ async fn a_cancelled_read_leaves_the_connection_ready_for_the_next() {
             whole.request_id = format!("cancelled-{delay_millis}");
             let reading = {
                 let (previews, whole) = (previews.clone(), whole.clone());
-                tokio::spawn(async move { previews.read(whole, |_| false).await })
+                tokio::spawn(async move { previews.read(OWNER, whole, |_| false).await })
             };
             tokio::time::sleep(Duration::from_millis(delay_millis)).await;
-            previews.cancel(&whole.request_id);
+            previews.cancel(OWNER, &whole.request_id);
             match reading.await.unwrap() {
                 // A fast server may have sent everything already.
                 Ok(reply) => assert_eq!(reply.contents.len(), large.len(), "{label}"),
@@ -503,9 +503,11 @@ async fn a_preview_does_not_wait_on_the_connection_ftp_transfers_borrow() {
         );
         let read_notes = || async {
             previews
-                .read(request(&session.id, &notes_path, 0, TEXT_PART), |files| {
-                    transfers.borrows_connection_of(files)
-                })
+                .read(
+                    OWNER,
+                    request(&session.id, &notes_path, 0, TEXT_PART),
+                    |files| transfers.borrows_connection_of(files),
+                )
                 .await
         };
 
@@ -557,4 +559,55 @@ async fn a_preview_does_not_wait_on_the_connection_ftp_transfers_borrow() {
         files.delete(std::slice::from_ref(&scratch)).await.unwrap();
         manager.disconnect(&session.id).await.unwrap();
     }
+}
+
+/// A transfer can take the FTP connection between the preview's look at the queue and its first
+/// request. The preview then answers busy at once instead of queueing behind the whole file,
+/// while previews of the same connection still take turns with each other.
+#[tokio::test]
+async fn a_preview_is_busy_at_once_while_anything_else_holds_the_ftp_connection() {
+    let Some(server) = server("POROS_TEST_FTP_PORT", Protocol::Ftp) else {
+        return;
+    };
+    let (_config, manager) = new_manager();
+    let (session, files, scratch) = open_scratch(&manager, &server, "held").await;
+    let previews = FilePreviews::new(manager.clone());
+    let held_path = remote_path::join(&scratch, "held.bin");
+    write_remote(&files, &held_path, &pattern(6 * MEBIBYTE, 8)).await;
+    let notes_path = remote_path::join(&scratch, "notes.txt");
+    write_remote(&files, &notes_path, b"Read between transfers").await;
+
+    // Held as a transfer's download holds it: for as long as the file is read.
+    let holding = files
+        .clone()
+        .open_read(&held_path, 0..6 * MEBIBYTE as u64)
+        .await
+        .unwrap();
+    let patience = Duration::from_secs(5);
+    let during = tokio::time::timeout(patience, read(&previews, &session.id, &notes_path, 0, 64))
+        .await
+        .expect("the preview waited for the connection");
+    let error = during.unwrap_err();
+    assert_eq!(error.kind, ErrorKind::Busy, "{}", error.message);
+    let listed = tokio::time::timeout(patience, previews.list(&session.id, &scratch, |_| false))
+        .await
+        .expect("the folder's summary waited for the connection");
+    assert_eq!(listed.unwrap_err().kind, ErrorKind::Busy);
+    holding.finish().await.unwrap();
+
+    // Several at once, as the thumbnails of a folder ask: one after the other, none refused.
+    let (first, second, third) = tokio::join!(
+        read(&previews, &session.id, &notes_path, 0, 64),
+        read(&previews, &session.id, &held_path, 1000, 64),
+        previews.list(&session.id, &scratch, |_| false),
+    );
+    assert_eq!(first.unwrap().contents, b"Read between transfers");
+    assert_eq!(second.unwrap().contents.len(), 64);
+    assert_eq!(third.unwrap().entries.len(), 2);
+
+    // The connection serves everyone else as before.
+    let listed = files.list_dir(&scratch).await.unwrap();
+    assert_eq!(listed.entries.len(), 2);
+    files.delete(std::slice::from_ref(&scratch)).await.unwrap();
+    manager.disconnect(&session.id).await.unwrap();
 }

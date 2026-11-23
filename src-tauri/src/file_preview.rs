@@ -1,7 +1,9 @@
 //! Reads part of a file for the preview pane: a bounded range of a file on this computer or on
 //! a server of any kind, vaults included, as raw bytes. A read never returns more than
 //! `MAX_READ_BYTES` whatever it is asked for, reads only the range it needs from the server,
-//! and stops when the page cancels it, leaving the connection ready for the next request.
+//! and stops when the page cancels it, leaving the connection ready for the next request. On
+//! FTP, where one control connection serves every request, a preview never queues behind a
+//! transfer: it takes the connection only while nothing else holds it.
 
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
@@ -10,10 +12,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
+use tokio::sync::OwnedMutexGuard;
 use tokio_util::sync::CancellationToken;
 
 use crate::editor::{self, FileLocation, FileStamp};
 use crate::error::{AppError, AppResult, ErrorKind};
+use crate::ftp;
 use crate::model::DirListing;
 use crate::protocol::RemoteFileSystem;
 use crate::session::SessionManager;
@@ -67,21 +71,31 @@ enum Slot {
     CancelledEarly(Instant),
 }
 
+/// Names a read: the window that asked for it, and the name that window gave it. Windows make
+/// up their names on their own, so one window never cancels another's read.
+type ReadKey = (String, String);
+
+/// The previews of one FTP connection wait here for each other, so that each finds the
+/// connection free and only something else holding it makes a preview busy.
+type Turn = Arc<tokio::sync::Mutex<()>>;
+
 pub struct FilePreviews {
     sessions: Arc<SessionManager>,
-    reads: Mutex<HashMap<String, Slot>>,
+    reads: Mutex<HashMap<ReadKey, Slot>>,
+    /// By connection identity.
+    turns: Mutex<HashMap<usize, Turn>>,
 }
 
 /// A read under way: forgotten once it ends.
 struct Running<'a> {
     previews: &'a FilePreviews,
-    id: String,
+    key: ReadKey,
     cancel: CancellationToken,
 }
 
 impl Drop for Running<'_> {
     fn drop(&mut self) {
-        self.previews.reads.lock().unwrap().remove(&self.id);
+        self.previews.reads.lock().unwrap().remove(&self.key);
     }
 }
 
@@ -90,19 +104,21 @@ impl FilePreviews {
         Self {
             sessions,
             reads: Mutex::new(HashMap::new()),
+            turns: Mutex::new(HashMap::new()),
         }
     }
 
-    /// Reads the range asked for. `lent` tells whether transfers are using the connection a
-    /// server's file would be read over, in which case the read is refused as busy instead of
-    /// waiting for them or making them wait.
+    /// Reads the range asked for by the window labelled `owner`. `lent` tells whether transfers
+    /// are using the connection a server's file would be read over, in which case the read is
+    /// refused as busy instead of waiting for them or making them wait.
     pub async fn read(
         &self,
+        owner: &str,
         request: ReadRequest,
         lent: impl Fn(&dyn RemoteFileSystem) -> bool,
     ) -> AppResult<ReadReply> {
         validate_request_id(&request.request_id)?;
-        let running = self.begin(&request.request_id);
+        let running = self.begin(owner, &request.request_id);
         let length = request.length.min(MAX_READ_BYTES);
         match request.location {
             FileLocation::Local { path } => {
@@ -116,12 +132,28 @@ impl FilePreviews {
             FileLocation::Remote { session_id, path } => {
                 validate_remote_path(&path)?;
                 let files = self.sessions.get(&session_id).await?.files();
-                if lent(files.as_ref()) {
-                    return Err(lent_to_transfers());
-                }
-                read_remote(files, &path, request.offset, length, &running.cancel).await
+                let range = (request.offset, length);
+                self.read_server(files, &path, range, &running.cancel, lent)
+                    .await
             }
         }
+    }
+
+    /// Reads from a server, on the terms of `read`.
+    async fn read_server(
+        &self,
+        files: Arc<dyn RemoteFileSystem>,
+        path: &str,
+        (offset, length): (u64, u64),
+        cancel: &CancellationToken,
+        lent: impl Fn(&dyn RemoteFileSystem) -> bool,
+    ) -> AppResult<ReadReply> {
+        if lent(files.as_ref()) {
+            return Err(lent_to_transfers());
+        }
+        let _turn = self.turn(files.as_ref(), Some(cancel)).await?;
+        let read = ftp::without_waiting(read_remote(files.clone(), path, offset, length, cancel));
+        busy_as_lent(read.await, files.as_ref(), &lent)
     }
 
     /// Lists a folder on a server for the summary of what it holds, on the same terms as a
@@ -137,42 +169,89 @@ impl FilePreviews {
         if lent(files.as_ref()) {
             return Err(lent_to_transfers());
         }
-        files.list_dir(path).await
+        let _turn = self.turn(files.as_ref(), None).await?;
+        let listed = ftp::without_waiting(files.list_dir(path)).await;
+        busy_as_lent(listed, files.as_ref(), &lent)
     }
 
-    /// Stops the read named `request_id`, also when it has not started yet.
-    pub fn cancel(&self, request_id: &str) {
+    /// Stops the read named `request_id` by the window labelled `owner`, also when it has not
+    /// started yet.
+    pub fn cancel(&self, owner: &str, request_id: &str) {
         if validate_request_id(request_id).is_err() {
             return;
         }
+        let key = (owner.to_string(), request_id.to_string());
         let mut reads = self.reads.lock().unwrap();
         forget_old_cancellations(&mut reads);
-        match reads.get(request_id) {
+        match reads.get(&key) {
             Some(Slot::Running(cancel)) => cancel.cancel(),
             Some(Slot::CancelledEarly(_)) => {}
             None => {
-                reads.insert(request_id.to_string(), Slot::CancelledEarly(Instant::now()));
+                reads.insert(key, Slot::CancelledEarly(Instant::now()));
             }
         }
     }
 
-    fn begin(&self, request_id: &str) -> Running<'_> {
+    fn begin(&self, owner: &str, request_id: &str) -> Running<'_> {
+        let key = (owner.to_string(), request_id.to_string());
         let cancel = CancellationToken::new();
         let mut reads = self.reads.lock().unwrap();
         forget_old_cancellations(&mut reads);
-        if let Some(Slot::CancelledEarly(_)) = reads.get(request_id) {
+        if let Some(Slot::CancelledEarly(_)) = reads.get(&key) {
             cancel.cancel();
         }
-        reads.insert(request_id.to_string(), Slot::Running(cancel.clone()));
+        reads.insert(key.clone(), Slot::Running(cancel.clone()));
         Running {
             previews: self,
-            id: request_id.to_string(),
+            key,
             cancel,
+        }
+    }
+
+    /// Waits for the other previews of an FTP connection to finish with it, or for `cancel`.
+    /// Other protocols serve requests side by side, so their previews go straight ahead.
+    async fn turn(
+        &self,
+        files: &dyn RemoteFileSystem,
+        cancel: Option<&CancellationToken>,
+    ) -> AppResult<Option<OwnedMutexGuard<()>>> {
+        if !files.transport().is_ftp() {
+            return Ok(None);
+        }
+        let turn = {
+            let mut turns = self.turns.lock().unwrap();
+            // Those of connections nobody previews from any more.
+            turns.retain(|_, turn| Arc::strong_count(turn) > 1);
+            turns
+                .entry(files.connection_identity())
+                .or_default()
+                .clone()
+        };
+        let Some(cancel) = cancel else {
+            return Ok(Some(turn.lock_owned().await));
+        };
+        // Nothing is sent while waiting here, so stopping the wait leaves nothing half done.
+        tokio::select! {
+            biased;
+            () = cancel.cancelled() => Err(AppError::cancelled()),
+            taken = turn.lock_owned() => Ok(Some(taken)),
         }
     }
 }
 
-fn forget_old_cancellations(reads: &mut HashMap<String, Slot>) {
+/// A preview refused because something holds the connection is told why when it is transfers.
+fn busy_as_lent<T>(
+    result: AppResult<T>,
+    files: &dyn RemoteFileSystem,
+    lent: impl Fn(&dyn RemoteFileSystem) -> bool,
+) -> AppResult<T> {
+    match result {
+        Err(error) if error.kind == ErrorKind::Busy && lent(files) => Err(lent_to_transfers()),
+        other => other,
+    }
+}
+
+fn forget_old_cancellations(reads: &mut HashMap<ReadKey, Slot>) {
     reads.retain(|_, slot| match slot {
         Slot::Running(_) => true,
         Slot::CancelledEarly(since) => since.elapsed() < EARLY_CANCEL_LIFETIME,
@@ -354,6 +433,8 @@ mod tests {
         }
     }
 
+    const WINDOW: &str = "main";
+
     fn never_lent(_files: &dyn RemoteFileSystem) -> bool {
         false
     }
@@ -365,7 +446,7 @@ mod tests {
         std::fs::write(&path, b"0123456789").unwrap();
 
         let start = previews
-            .read(local_request("a", &path, 0, 4), never_lent)
+            .read(WINDOW, local_request("a", &path, 0, 4), never_lent)
             .await
             .unwrap();
         assert_eq!(start.contents, b"0123");
@@ -373,19 +454,19 @@ mod tests {
         assert!(start.stamp.modified.is_some());
 
         let middle = previews
-            .read(local_request("b", &path, 3, 4), never_lent)
+            .read(WINDOW, local_request("b", &path, 3, 4), never_lent)
             .await
             .unwrap();
         assert_eq!(middle.contents, b"3456");
 
         let past_the_end = previews
-            .read(local_request("c", &path, 8, 100), never_lent)
+            .read(WINDOW, local_request("c", &path, 8, 100), never_lent)
             .await
             .unwrap();
         assert_eq!(past_the_end.contents, b"89");
 
         let beyond = previews
-            .read(local_request("d", &path, 50, 10), never_lent)
+            .read(WINDOW, local_request("d", &path, 50, 10), never_lent)
             .await
             .unwrap();
         assert!(beyond.contents.is_empty());
@@ -399,7 +480,7 @@ mod tests {
         let path = folder.path().join("empty.log");
         std::fs::write(&path, b"").unwrap();
         let reply = previews
-            .read(local_request("a", &path, 0, 1024), never_lent)
+            .read(WINDOW, local_request("a", &path, 0, 1024), never_lent)
             .await
             .unwrap();
         assert!(reply.contents.is_empty());
@@ -410,13 +491,14 @@ mod tests {
     async fn folders_missing_files_and_relative_paths_are_refused() {
         let (folder, previews) = previews();
         let directory = previews
-            .read(local_request("a", folder.path(), 0, 16), never_lent)
+            .read(WINDOW, local_request("a", folder.path(), 0, 16), never_lent)
             .await
             .unwrap_err();
         assert_eq!(directory.kind, ErrorKind::InvalidInput);
 
         let missing = previews
             .read(
+                WINDOW,
                 local_request("b", &folder.path().join("gone.png"), 0, 16),
                 never_lent,
             )
@@ -426,6 +508,7 @@ mod tests {
 
         let relative = previews
             .read(
+                WINDOW,
                 local_request("c", Path::new("notes.txt"), 0, 16),
                 never_lent,
             )
@@ -452,7 +535,7 @@ mod tests {
         file.set_len(MAX_READ_BYTES + 4096).unwrap();
         drop(file);
         let reply = previews
-            .read(local_request("a", &path, 0, u64::MAX), never_lent)
+            .read(WINDOW, local_request("a", &path, 0, u64::MAX), never_lent)
             .await
             .unwrap();
         assert_eq!(reply.contents.len() as u64, MAX_READ_BYTES);
@@ -464,30 +547,48 @@ mod tests {
         let (folder, previews) = previews();
         let path = folder.path().join("photo.jpg");
         std::fs::write(&path, vec![7u8; 4096]).unwrap();
-        previews.cancel("early");
+        previews.cancel(WINDOW, "early");
         let error = previews
-            .read(local_request("early", &path, 0, 4096), never_lent)
+            .read(WINDOW, local_request("early", &path, 0, 4096), never_lent)
             .await
             .unwrap_err();
         assert_eq!(error.kind, ErrorKind::Cancelled);
         // The same name reads again afterwards.
         let reply = previews
-            .read(local_request("early", &path, 0, 4096), never_lent)
+            .read(WINDOW, local_request("early", &path, 0, 4096), never_lent)
             .await
             .unwrap();
         assert_eq!(reply.contents.len(), 4096);
     }
 
+    #[tokio::test]
+    async fn a_window_cancels_only_its_own_reads() {
+        let (folder, previews) = previews();
+        let path = folder.path().join("photo.jpg");
+        std::fs::write(&path, vec![7u8; 4096]).unwrap();
+        // Another window gave a read of its own the same name.
+        previews.cancel("tab-window", "7");
+        let reply = previews
+            .read(WINDOW, local_request("7", &path, 0, 4096), never_lent)
+            .await
+            .unwrap();
+        assert_eq!(reply.contents.len(), 4096);
+        let theirs = previews
+            .read("tab-window", local_request("7", &path, 0, 4096), never_lent)
+            .await
+            .unwrap_err();
+        assert_eq!(theirs.kind, ErrorKind::Cancelled);
+    }
+
     #[test]
     fn cancellations_of_reads_that_never_start_are_forgotten() {
         let (_folder, previews) = previews();
-        previews.cancel("never-read");
-        if let Some(Slot::CancelledEarly(since)) =
-            previews.reads.lock().unwrap().get_mut("never-read")
-        {
+        previews.cancel(WINDOW, "never-read");
+        let key = (WINDOW.to_string(), "never-read".to_string());
+        if let Some(Slot::CancelledEarly(since)) = previews.reads.lock().unwrap().get_mut(&key) {
             *since = Instant::now() - EARLY_CANCEL_LIFETIME - Duration::from_secs(1);
         }
-        drop(previews.begin("another"));
+        drop(previews.begin(WINDOW, "another"));
         assert!(previews.reads.lock().unwrap().is_empty());
     }
 
@@ -498,11 +599,11 @@ mod tests {
         std::fs::write(&path, b"text").unwrap();
         for refused in [String::new(), "x".repeat(MAX_REQUEST_ID_BYTES + 1)] {
             let error = previews
-                .read(local_request(&refused, &path, 0, 4), never_lent)
+                .read(WINDOW, local_request(&refused, &path, 0, 4), never_lent)
                 .await
                 .unwrap_err();
             assert_eq!(error.kind, ErrorKind::InvalidInput);
-            previews.cancel(&refused);
+            previews.cancel(WINDOW, &refused);
         }
         assert!(previews.reads.lock().unwrap().is_empty());
     }
@@ -560,9 +661,13 @@ mod tests {
 
     /// A server holding one file, which sends it in small pieces and counts what it is asked.
     struct OneFile {
+        protocol: Protocol,
         contents: Vec<u8>,
         /// Sends this many bytes more than each read asks for.
         overshoot: usize,
+        stats: AtomicUsize,
+        /// Each `stat` waits for a permit, like a server slow to answer.
+        stat_gate: Option<tokio::sync::Semaphore>,
         opened: AtomicUsize,
         finished: Arc<AtomicBool>,
         /// Cancels the read after its first piece.
@@ -572,8 +677,11 @@ mod tests {
     impl OneFile {
         fn holding(contents: &[u8]) -> Self {
             Self {
+                protocol: Protocol::Sftp,
                 contents: contents.to_vec(),
                 overshoot: 0,
+                stats: AtomicUsize::new(0),
+                stat_gate: None,
                 opened: AtomicUsize::new(0),
                 finished: Arc::new(AtomicBool::new(false)),
                 cancel_after_first: None,
@@ -616,7 +724,7 @@ mod tests {
     #[async_trait]
     impl RemoteFileSystem for OneFile {
         fn protocol(&self) -> Protocol {
-            Protocol::Sftp
+            self.protocol
         }
 
         fn home(&self) -> &str {
@@ -648,6 +756,10 @@ mod tests {
         }
 
         async fn stat(&self, path: &str) -> AppResult<Option<RemoteStat>> {
+            self.stats.fetch_add(1, Ordering::SeqCst);
+            if let Some(gate) = &self.stat_gate {
+                gate.acquire().await.unwrap().forget();
+            }
             Ok(match path {
                 "/file" => Some(RemoteStat {
                     is_dir: false,
@@ -766,6 +878,72 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn previews_of_one_ftp_connection_take_turns_and_stop_waiting_when_cancelled() {
+        let (_folder, previews) = previews();
+        let mut server = OneFile::holding(b"abc");
+        server.protocol = Protocol::Ftp;
+        server.stat_gate = Some(tokio::sync::Semaphore::new(0));
+        let server = Arc::new(server);
+        let (first_cancel, second_cancel) = (CancellationToken::new(), CancellationToken::new());
+        let first =
+            previews.read_server(server.clone(), "/file", (0, 3), &first_cancel, never_lent);
+        let second =
+            previews.read_server(server.clone(), "/file", (0, 3), &second_cancel, never_lent);
+        tokio::pin!(first, second);
+
+        // The first waits for the server's answer, the second for the first.
+        assert!(futures::poll!(first.as_mut()).is_pending());
+        assert!(futures::poll!(second.as_mut()).is_pending());
+        assert_eq!(server.stats.load(Ordering::SeqCst), 1);
+
+        second_cancel.cancel();
+        assert_eq!(second.await.unwrap_err().kind, ErrorKind::Cancelled);
+        server.stat_gate.as_ref().unwrap().add_permits(1);
+        assert_eq!(first.await.unwrap().contents, b"abc");
+        // The cancelled one never asked the server anything.
+        assert_eq!(server.stats.load(Ordering::SeqCst), 1);
+        assert!(previews
+            .turns
+            .lock()
+            .unwrap()
+            .values()
+            .all(|turn| turn.try_lock().is_ok()));
+    }
+
+    #[tokio::test]
+    async fn previews_on_other_protocols_do_not_wait_for_each_other() {
+        let (_folder, previews) = previews();
+        let mut server = OneFile::holding(b"abc");
+        server.stat_gate = Some(tokio::sync::Semaphore::new(0));
+        let server = Arc::new(server);
+        let cancel = CancellationToken::new();
+        let first = previews.read_server(server.clone(), "/file", (0, 3), &cancel, never_lent);
+        let second = previews.read_server(server.clone(), "/file", (0, 3), &cancel, never_lent);
+        tokio::pin!(first, second);
+        assert!(futures::poll!(first.as_mut()).is_pending());
+        assert!(futures::poll!(second.as_mut()).is_pending());
+        assert_eq!(server.stats.load(Ordering::SeqCst), 2);
+        server.stat_gate.as_ref().unwrap().add_permits(2);
+        assert!(first.await.is_ok() && second.await.is_ok());
+    }
+
+    #[test]
+    fn a_connection_held_by_transfers_is_named_as_such() {
+        let server = OneFile::holding(b"x");
+        let held = || -> AppResult<()> {
+            Err(AppError::new(
+                ErrorKind::Busy,
+                "Another request is using this connection",
+            ))
+        };
+        let lent = busy_as_lent(held(), &server, |_| true).unwrap_err();
+        assert_eq!(lent.message, lent_to_transfers().message);
+        let other = busy_as_lent(held(), &server, never_lent).unwrap_err();
+        assert_eq!(other.message, "Another request is using this connection");
+        assert!(busy_as_lent(Ok(()), &server, |_| true).is_ok());
+    }
+
+    #[tokio::test]
     async fn a_session_that_is_gone_reads_nothing() {
         let (_folder, previews) = previews();
         let request = ReadRequest {
@@ -777,7 +955,10 @@ mod tests {
             offset: 0,
             length: 8,
         };
-        let error = previews.read(request, never_lent).await.unwrap_err();
+        let error = previews
+            .read(WINDOW, request, never_lent)
+            .await
+            .unwrap_err();
         assert_eq!(error.kind, ErrorKind::SessionNotFound);
     }
 }

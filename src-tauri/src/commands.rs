@@ -723,15 +723,19 @@ pub async fn editor_close(editor: State<'_, EditorManager>, document_id: String)
     Ok(())
 }
 
-/// Answers with the file's size and time, then the bytes read, as one binary block.
+/// Answers with the file's size and time, then the bytes read, as one binary block. A read is
+/// named within the window that asks for it.
 #[tauri::command]
 pub async fn file_preview_read(
+    window: WebviewWindow,
     previews: State<'_, FilePreviews>,
     transfers: State<'_, TransferManager>,
     request: ReadRequest,
 ) -> AppResult<tauri::ipc::Response> {
     let reply = previews
-        .read(request, |files| transfers.borrows_connection_of(files))
+        .read(window.label(), request, |files| {
+            transfers.borrows_connection_of(files)
+        })
         .await?;
     Ok(tauri::ipc::Response::new(reply.into_frame()))
 }
@@ -751,8 +755,12 @@ pub async fn file_preview_list(
 }
 
 #[tauri::command]
-pub fn file_preview_cancel(previews: State<'_, FilePreviews>, request_id: String) {
-    previews.cancel(&request_id);
+pub fn file_preview_cancel(
+    window: WebviewWindow,
+    previews: State<'_, FilePreviews>,
+    request_id: String,
+) {
+    previews.cancel(window.label(), &request_id);
 }
 
 fn terminal_sink(output: Channel<TerminalEvent>) -> Sink {
