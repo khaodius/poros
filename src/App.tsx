@@ -56,6 +56,7 @@ import type { LogRecord, StoreName } from "./lib/types";
 import { startClipboard } from "./state/clipboardStore";
 import { hitTest, useDragStore, type DragPayload } from "./state/dragStore";
 import { useLayoutStore } from "./state/layoutStore";
+import { startSharingListings } from "./state/listings";
 import { useLogStore } from "./state/logStore";
 import { activePane } from "./state/paneRegistry";
 import { askToSave, unsavedEditorTabs } from "./state/editorActions";
@@ -84,6 +85,7 @@ let starting: Promise<void> | null = null;
 function startApp(): Promise<void> {
   starting ??= (async () => {
     await useSettingsStore.getState().load();
+    startSharingListings();
     await Promise.all([
       useSavedConnections
         .getState()

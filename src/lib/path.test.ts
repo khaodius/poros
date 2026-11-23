@@ -7,6 +7,7 @@ import {
   exampleFileName,
   isWithin,
   parseHostInput,
+  remoteParent,
   samePath,
   stemLength,
 } from "./path";
@@ -124,6 +125,19 @@ describe("childPath", () => {
 
   it("keeps a backslash that ends a POSIX name", () => {
     expect(childPath("/srv/odd\\", "a.txt", "posix")).toBe("/srv/odd\\/a.txt");
+  });
+});
+
+describe("remoteParent", () => {
+  it("names the folder a server path is in", () => {
+    expect(remoteParent("/srv/www/index.html")).toBe("/srv/www");
+    expect(remoteParent("/srv/www/")).toBe("/srv");
+    expect(remoteParent("/srv")).toBe("/");
+  });
+
+  it("has none for the root, or for a path that is not absolute", () => {
+    expect(remoteParent("/")).toBeNull();
+    expect(remoteParent("notes.txt")).toBeNull();
   });
 });
 
