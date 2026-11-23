@@ -937,6 +937,9 @@ impl RemoteFileSystem for B2Fs {
         match &bucket {
             None => {
                 for bucket in self.buckets().await? {
+                    if protocol::validate_name(&bucket.bucket_name).is_err() {
+                        continue;
+                    }
                     let path = format!("/{}", bucket.bucket_name);
                     entries.push(folder_entry(&path, &bucket.bucket_name));
                 }
@@ -963,17 +966,18 @@ impl RemoteFileSystem for B2Fs {
                         let Some(name) = file.file_name.strip_prefix(&prefix) else {
                             continue;
                         };
+                        // File names may hold `.` and `..` parts, which as entries would
+                        // stand for this folder and the one above it.
                         if file.action == "folder" {
                             let name = name.trim_end_matches('/');
-                            if name.is_empty() || name.contains('/') {
+                            if protocol::validate_name(name).is_err() {
                                 continue;
                             }
                             let path = remote_path::join(&directory, name);
                             self.folders.insert(&path, "");
                             entries.push(folder_entry(&path, name));
                         } else if file.is_file()
-                            && !name.is_empty()
-                            && !name.contains('/')
+                            && protocol::validate_name(name).is_ok()
                             && name != FOLDER_MARKER
                         {
                             let path = remote_path::join(&directory, name);
@@ -1025,7 +1029,7 @@ impl RemoteFileSystem for B2Fs {
     /// B2 has no rename: files are copied to the new name, then hidden.
     async fn rename(&self, path: &str, new_name: &str) -> AppResult<String> {
         protocol::validate_name(new_name)?;
-        let path = protocol::normalize(&self.resolve(path));
+        let path = protocol::normalize_exact(&self.resolve(path))?;
         let parent = remote_path::parent(&path)
             .ok_or_else(|| AppError::invalid("Cannot rename the root folder"))?;
         let target = remote_path::join(&parent, new_name);
@@ -1067,7 +1071,7 @@ impl RemoteFileSystem for B2Fs {
     /// every version of every file in it for good.
     async fn delete(&self, paths: &[String]) -> AppResult<()> {
         let resolved: Vec<String> = paths.iter().map(|path| self.resolve(path)).collect();
-        for path in protocol::outermost(&resolved) {
+        for path in protocol::outermost(&resolved)? {
             let (Some(bucket), key) = split(&path) else {
                 return Err(AppError::invalid("Refusing to delete /"));
             };

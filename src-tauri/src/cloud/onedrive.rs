@@ -253,6 +253,10 @@ impl RemoteFileSystem for OneDriveFs {
         while let Some(url) = next.take() {
             let page: Children = self.api.json(&|http| http.get(&url)).await?;
             for item in page.value {
+                // OneDrive refuses such names, but a path could not reach one anyway.
+                if protocol::validate_name(&item.name).is_err() {
+                    continue;
+                }
                 let path = remote_path::join(&directory, &item.name);
                 if item.is_folder() {
                     self.folders.insert(&path, &item.id);
@@ -279,7 +283,7 @@ impl RemoteFileSystem for OneDriveFs {
 
     async fn rename(&self, path: &str, new_name: &str) -> AppResult<String> {
         protocol::validate_name(new_name)?;
-        let path = protocol::normalize(&self.resolve(path));
+        let path = protocol::normalize_exact(&self.resolve(path))?;
         let parent = remote_path::parent(&path)
             .ok_or_else(|| AppError::invalid("Cannot rename the root folder"))?;
         let target = remote_path::join(&parent, new_name);
@@ -297,7 +301,7 @@ impl RemoteFileSystem for OneDriveFs {
     /// Moves the items to the OneDrive recycle bin.
     async fn delete(&self, paths: &[String]) -> AppResult<()> {
         let resolved: Vec<String> = paths.iter().map(|path| self.resolve(path)).collect();
-        for path in protocol::outermost(&resolved) {
+        for path in protocol::outermost(&resolved)? {
             if path == "/" {
                 return Err(AppError::invalid("Refusing to delete /"));
             }

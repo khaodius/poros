@@ -295,6 +295,19 @@ pub fn normalize(path: &str) -> String {
     }
 }
 
+/// `normalize` for the path of an item about to be renamed or deleted, which refuses a `.` or
+/// `..` part instead of following it. No listing gives such a path, and following one would
+/// act on another folder than the one named: `/photos/2024/..` is all of `/photos`.
+pub fn normalize_exact(path: &str) -> AppResult<String> {
+    if path.split('/').any(|part| part == "." || part == "..") {
+        return Err(AppError::invalid(format!(
+            "Refusing {path}: its . or .. part stands for another folder"
+        ))
+        .with_path(path));
+    }
+    Ok(normalize(path))
+}
+
 pub fn validate_name(name: &str) -> AppResult<()> {
     if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\0') {
         Err(AppError::invalid(format!("\"{name}\" is not a valid name")))
@@ -323,9 +336,12 @@ pub fn not_a_folder(path: &str) -> AppError {
 }
 
 /// The paths in `paths` that are not inside another of them, so a folder and its contents are
-/// not deleted twice.
-pub fn outermost(paths: &[String]) -> Vec<String> {
-    let mut sorted: Vec<String> = paths.iter().map(|path| normalize(path)).collect();
+/// not deleted twice. A path with a `.` or `..` part is refused, as `normalize_exact` does.
+pub fn outermost(paths: &[String]) -> AppResult<Vec<String>> {
+    let mut sorted = paths
+        .iter()
+        .map(|path| normalize_exact(path))
+        .collect::<AppResult<Vec<String>>>()?;
     sorted.sort();
     sorted.dedup();
     let mut kept: Vec<String> = Vec::new();
@@ -340,7 +356,7 @@ pub fn outermost(paths: &[String]) -> Vec<String> {
             kept.push(path);
         }
     }
-    kept
+    Ok(kept)
 }
 
 #[cfg(test)]
@@ -372,7 +388,37 @@ mod tests {
             "/ab".to_string(),
             "/a/b/c".to_string(),
         ];
-        assert_eq!(outermost(&paths), vec!["/a".to_string(), "/ab".to_string()]);
+        assert_eq!(
+            outermost(&paths).unwrap(),
+            vec!["/a".to_string(), "/ab".to_string()]
+        );
+    }
+
+    #[test]
+    fn refuses_dot_parts_in_paths_to_rename_or_delete() {
+        assert_eq!(normalize_exact("/a//b/").unwrap(), "/a/b");
+        assert_eq!(normalize_exact("/a/.hidden/..b").unwrap(), "/a/.hidden/..b");
+        for path in ["/b/a/..", "/b/a/.", "/b/../c", "/./b", "..", "a/../../b"] {
+            let error = normalize_exact(path).unwrap_err();
+            assert_eq!(error.kind, ErrorKind::InvalidInput, "{path}");
+            assert_eq!(error.path.as_deref(), Some(path));
+        }
+        // One such path refuses the whole selection, before anything is deleted.
+        let selection = vec!["/b/keep.txt".to_string(), "/b/a/..".to_string()];
+        assert_eq!(
+            outermost(&selection).unwrap_err().kind,
+            ErrorKind::InvalidInput
+        );
+    }
+
+    #[test]
+    fn listed_names_never_stand_for_another_folder() {
+        for name in ["", ".", "..", "a/b", "../x", "a\0b"] {
+            assert!(validate_name(name).is_err(), "{name:?}");
+        }
+        for name in ["a", ".hidden", "..b", "a..", "...", "a b", "a\\b"] {
+            assert!(validate_name(name).is_ok(), "{name:?}");
+        }
     }
 
     #[test]

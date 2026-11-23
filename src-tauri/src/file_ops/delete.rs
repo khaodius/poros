@@ -12,10 +12,11 @@ use russh::{ChannelMsg, Sig};
 use tokio::sync::{Semaphore, SemaphorePermit};
 use tokio_util::sync::CancellationToken;
 
-use super::server::{runs_commands, trim_trailing_slash};
+use super::server::runs_commands;
 use super::{Channel, DeleteSummary, Method, Progress, ServerFeatures};
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::model::EntryKind;
+use crate::protocol;
 use crate::remote_path;
 use crate::rsync::shell_quote;
 use crate::session::Session;
@@ -52,10 +53,12 @@ pub async fn delete(
     progress: &Progress,
 ) -> AppResult<DeleteSummary> {
     let fs = session.sftp()?;
+    // `rm` and the SFTP fallback would follow a `..` part to the folder above.
     let paths = outermost(
         paths
             .iter()
-            .map(|path| trim_trailing_slash(&fs.resolve(path))),
+            .map(|path| protocol::normalize_exact(&fs.resolve(path)))
+            .collect::<AppResult<Vec<String>>>()?,
     );
     if paths.is_empty() {
         return Ok(DeleteSummary::default());

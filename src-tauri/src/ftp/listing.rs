@@ -2,7 +2,7 @@
 //! server offers them, otherwise `ls -l` style or DOS style LIST output.
 
 use crate::model::EntryKind;
-use crate::protocol::RemoteStat;
+use crate::protocol::{self, RemoteStat};
 use crate::timestamp::{month_number, parse_ftp_time, unix_seconds, year_of};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,7 +30,7 @@ impl RawEntry {
 pub fn parse_mlsd(text: &str) -> Vec<RawEntry> {
     text.lines()
         .filter_map(parse_mlsd_line)
-        .filter(|entry| entry.name != "." && entry.name != "..")
+        .filter(|entry| protocol::validate_name(&entry.name).is_ok())
         .collect()
 }
 
@@ -93,7 +93,7 @@ pub fn parse_mlsd_line(line: &str) -> Option<RawEntry> {
 pub fn parse_list(text: &str, now: i64) -> Vec<RawEntry> {
     text.lines()
         .filter_map(|line| parse_unix_line(line, now).or_else(|| parse_dos_line(line)))
-        .filter(|entry| entry.name != "." && entry.name != "..")
+        .filter(|entry| protocol::validate_name(&entry.name).is_ok())
         .collect()
 }
 
@@ -320,6 +320,28 @@ mod tests {
         assert_eq!(entries[1].owner.as_deref(), Some("alice"));
         assert_eq!(entries[1].group.as_deref(), Some("staff"));
         assert_eq!(entries[2].kind, EntryKind::Symlink);
+    }
+
+    /// A name with a slash, like `.` and `..`, would stand for another folder than the entry.
+    #[test]
+    fn leaves_out_names_that_reach_another_folder() {
+        let mlsd = "type=dir;modify=20241001093000; ../up\r\n\
+                    type=file;size=1;modify=20241001093000; a/b\r\n\
+                    type=file;size=1;modify=20241001093000; kept\r\n";
+        let names: Vec<String> = parse_mlsd(mlsd)
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect();
+        assert_eq!(names, ["kept"]);
+        let list = "drwxr-xr-x    2 1000     1000         4096 Oct 08 09:30 .\r\n\
+                    drwxr-xr-x    2 1000     1000         4096 Oct 08 09:30 ..\r\n\
+                    drwxr-xr-x    2 1000     1000         4096 Oct 08 09:30 ../up\r\n\
+                    -rw-r--r--    1 ftp      ftp             1 Oct 08 09:30 kept\r\n";
+        let names: Vec<String> = parse_list(list, NOW)
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect();
+        assert_eq!(names, ["kept"]);
     }
 
     #[test]

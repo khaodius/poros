@@ -377,7 +377,7 @@ impl RemoteFileSystem for WebDavFs {
                 continue;
             }
             let name = remote_path::file_name(&item.path);
-            if name.is_empty() {
+            if protocol::validate_name(name).is_err() {
                 continue;
             }
             let path = remote_path::join(&directory, name);
@@ -436,7 +436,7 @@ impl RemoteFileSystem for WebDavFs {
 
     async fn rename(&self, path: &str, new_name: &str) -> AppResult<String> {
         protocol::validate_name(new_name)?;
-        let path = protocol::normalize(&self.resolve(path));
+        let path = protocol::normalize_exact(&self.resolve(path))?;
         let parent = remote_path::parent(&path)
             .ok_or_else(|| AppError::invalid("Cannot rename the root folder"))?;
         let target = remote_path::join(&parent, new_name);
@@ -460,7 +460,7 @@ impl RemoteFileSystem for WebDavFs {
 
     async fn delete(&self, paths: &[String]) -> AppResult<()> {
         let resolved: Vec<String> = paths.iter().map(|path| self.resolve(path)).collect();
-        for path in protocol::outermost(&resolved) {
+        for path in protocol::outermost(&resolved)? {
             if path == "/" || path == self.home {
                 return Err(AppError::invalid(format!("Refusing to delete {path}")));
             }

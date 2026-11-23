@@ -382,6 +382,121 @@ async fn manages_files_and_folders() {
     }
 }
 
+/// Stores an object under a key exactly as written. A URL library folds `.` and `..` parts away
+/// before sending, which other S3 clients can be told not to do.
+async fn put_object_as_named(port: u16, bucket: &str, key: &str, contents: &[u8]) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut connection = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    let head = format!(
+        "PUT /{bucket}/{key} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
+         Content-Type: application/octet-stream\r\nContent-Length: {}\r\n\
+         Connection: close\r\n\r\n",
+        contents.len()
+    );
+    connection.write_all(head.as_bytes()).await.unwrap();
+    connection.write_all(contents).await.unwrap();
+    let mut answer = Vec::new();
+    connection.read_to_end(&mut answer).await.unwrap();
+    let answer = String::from_utf8_lossy(&answer);
+    assert!(answer.starts_with("HTTP/1.1 200"), "{key}: {answer}");
+}
+
+async fn names_in(files: &Arc<dyn RemoteFileSystem>, folder: &str) -> Vec<String> {
+    let mut names: Vec<String> = files
+        .list_dir(folder)
+        .await
+        .unwrap()
+        .entries
+        .into_iter()
+        .map(|entry| entry.name)
+        .collect();
+    names.sort();
+    names
+}
+
+async fn assert_all_there(files: &Arc<dyn RemoteFileSystem>, paths: &[&String], after: &str) {
+    for path in paths {
+        assert!(
+            matches!(files.stat(path).await, Ok(Some(_))),
+            "{path} is gone after {after}"
+        );
+    }
+}
+
+/// Another client can store keys with `.` and `..` parts. Listed as folders of those names,
+/// they once led deleting or renaming one to the folder above it, up to the whole bucket.
+#[tokio::test]
+async fn keys_with_dot_parts_never_reach_the_folders_around_them() {
+    let Some(server) = server("POROS_TEST_S3_PORT", Protocol::S3) else {
+        return;
+    };
+    let (_config, manager) = new_manager();
+    let (session, files, bucket) = open_scratch(&manager, &server, "dot-keys").await;
+    let bucket_name = remote_path::file_name(&bucket).to_string();
+    let top = remote_path::join(&bucket, "top.txt");
+    let folder = remote_path::join(&bucket, "a");
+    let kept = remote_path::join(&folder, "keep.txt");
+    let nested = remote_path::join(&folder, "b");
+    let nested_kept = remote_path::join(&nested, "deep.txt");
+    write_remote(&files, &top, b"top", None).await;
+    write_remote(&files, &kept, b"keep", None).await;
+    write_remote(&files, &nested_kept, b"deep", None).await;
+    for key in ["a/../x", "a/./y", "a/b/../z", "a/b/./w"] {
+        put_object_as_named(server.port, &bucket_name, key, b"odd").await;
+    }
+    let kept_files = [&top, &kept, &nested_kept];
+
+    // What the entries would be called, were they listed: each stands for a folder that is
+    // not the one it is listed in.
+    let parent_entry = remote_path::join(&folder, "..");
+    let own_entry = remote_path::join(&folder, ".");
+    let nested_parent_entry = remote_path::join(&nested, "..");
+
+    let deleted_parent = files.delete(std::slice::from_ref(&parent_entry)).await;
+    assert_all_there(&files, &kept_files, "deleting the .. entry").await;
+    assert_eq!(deleted_parent.unwrap_err().kind, ErrorKind::InvalidInput);
+
+    let deleted_own = files.delete(std::slice::from_ref(&own_entry)).await;
+    assert_all_there(&files, &kept_files, "deleting the . entry").await;
+    assert_eq!(deleted_own.unwrap_err().kind, ErrorKind::InvalidInput);
+
+    // A refused path takes the rest of the selection with it.
+    let deleted_mixed = files
+        .delete(&[kept.clone(), nested_parent_entry.clone()])
+        .await;
+    assert_all_there(
+        &files,
+        &kept_files,
+        "deleting a file together with a .. entry",
+    )
+    .await;
+    assert_eq!(deleted_mixed.unwrap_err().kind, ErrorKind::InvalidInput);
+
+    let renamed = files.rename(&nested_parent_entry, "moved").await;
+    assert_all_there(&files, &kept_files, "renaming the .. entry").await;
+    assert_eq!(renamed.unwrap_err().kind, ErrorKind::InvalidInput);
+    assert!(files
+        .stat(&remote_path::join(&bucket, "moved"))
+        .await
+        .unwrap()
+        .is_none());
+
+    assert_eq!(names_in(&files, &folder).await, ["b", "keep.txt"]);
+    assert_eq!(names_in(&files, &nested).await, ["deep.txt"]);
+    assert_eq!(names_in(&files, &bucket).await, ["a", "top.txt"]);
+
+    // Deleting the folder itself still takes the odd keys under it along.
+    files.delete(std::slice::from_ref(&folder)).await.unwrap();
+    assert_eq!(names_in(&files, &bucket).await, ["top.txt"]);
+    assert!(files.stat(&top).await.unwrap().is_some());
+
+    files.delete(std::slice::from_ref(&bucket)).await.unwrap();
+    assert!(files.stat(&bucket).await.unwrap().is_none());
+    manager.disconnect(&session.id).await.unwrap();
+}
+
 fn write_tree(root: &Path) {
     std::fs::create_dir_all(root.join("nested/deeper")).unwrap();
     std::fs::create_dir_all(root.join("empty folder")).unwrap();

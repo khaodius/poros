@@ -830,6 +830,9 @@ impl RemoteFileSystem for S3Fs {
         match &bucket {
             None => {
                 for bucket in self.list_buckets().await? {
+                    if protocol::validate_name(&bucket.name).is_err() {
+                        continue;
+                    }
                     let path = format!("/{}", bucket.name);
                     let created = bucket
                         .creation_date
@@ -849,9 +852,13 @@ impl RemoteFileSystem for S3Fs {
                         .list_page(bucket, &prefix, false, token.as_deref(), PAGE_SIZE)
                         .await?;
                     for folder in &page.common_prefixes {
-                        let name = folder.prefix[prefix.len().min(folder.prefix.len())..]
-                            .trim_end_matches('/');
-                        if name.is_empty() || name.contains('/') {
+                        let Some(name) = folder.prefix.strip_prefix(&prefix) else {
+                            continue;
+                        };
+                        let name = name.trim_end_matches('/');
+                        // Keys may hold `.` and `..` parts, which as folders would stand for
+                        // this folder and the one above it.
+                        if protocol::validate_name(name).is_err() {
                             continue;
                         }
                         let path = remote_path::join(&directory, name);
@@ -863,7 +870,7 @@ impl RemoteFileSystem for S3Fs {
                             continue;
                         };
                         // The folder's own marker, or a name no path can reach.
-                        if name.is_empty() || name.contains('/') {
+                        if protocol::validate_name(name).is_err() {
                             continue;
                         }
                         let path = remote_path::join(&directory, name);
@@ -951,7 +958,7 @@ impl RemoteFileSystem for S3Fs {
     /// S3 has no rename: objects are copied to the new name, then deleted.
     async fn rename(&self, path: &str, new_name: &str) -> AppResult<String> {
         protocol::validate_name(new_name)?;
-        let path = protocol::normalize(&self.resolve(path));
+        let path = protocol::normalize_exact(&self.resolve(path))?;
         let parent = remote_path::parent(&path)
             .ok_or_else(|| AppError::invalid("Cannot rename the root folder"))?;
         let target = remote_path::join(&parent, new_name);
@@ -989,7 +996,7 @@ impl RemoteFileSystem for S3Fs {
     /// Deleting a bucket empties it first.
     async fn delete(&self, paths: &[String]) -> AppResult<()> {
         let resolved: Vec<String> = paths.iter().map(|path| self.resolve(path)).collect();
-        for path in protocol::outermost(&resolved) {
+        for path in protocol::outermost(&resolved)? {
             let (Some(bucket), key) = split(&path) else {
                 return Err(AppError::invalid("Refusing to delete /"));
             };
