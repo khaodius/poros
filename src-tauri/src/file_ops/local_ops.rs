@@ -142,6 +142,14 @@ impl Work<'_> {
         let Some(destination) = destination else {
             return Ok(None);
         };
+        if let Destination::Replace(existing) = &destination {
+            if same_file(source, existing) {
+                return Err(
+                    AppError::invalid(format!("{name} would be replaced with itself"))
+                        .with_path(display(source)),
+                );
+            }
+        }
         self.progress.working_on(&display(source));
         match mode {
             Mode::Move => self.move_to(source, kind, &destination)?,
@@ -394,6 +402,15 @@ fn destination(
     }
 }
 
+/// Whether `source` is the file at `existing` once links are followed, as a link to it, or
+/// the file reached through a linked folder, is.
+fn same_file(source: &Path, existing: &Path) -> bool {
+    match (fs::canonicalize(source), fs::canonicalize(existing)) {
+        (Ok(source), Ok(existing)) => source == existing,
+        _ => false,
+    }
+}
+
 /// Whether `directory` is `folder` or inside it, as spelled or once links are followed.
 fn is_inside(directory: &Path, folder: &Path) -> bool {
     if directory.starts_with(folder) {
@@ -598,6 +615,44 @@ mod tests {
             );
             assert!(root.join("photos/a.jpg").exists());
             assert_eq!(fs::read_dir(root.join("photos/inside")).unwrap().count(), 0);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_is_not_replaced_with_itself_through_a_link() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let root = temp_dir.path();
+        fs::create_dir_all(root.join("real")).unwrap();
+        fs::create_dir_all(root.join("links")).unwrap();
+        fs::write(root.join("real/notes.txt"), b"notes").unwrap();
+        std::os::unix::fs::symlink("real", root.join("alias")).unwrap();
+        std::os::unix::fs::symlink("../real/notes.txt", root.join("links/notes.txt")).unwrap();
+        for source in ["alias/notes.txt", "links/notes.txt"] {
+            for mode in [Mode::Move, Mode::Copy] {
+                let summary = run(&request(
+                    mode,
+                    &[&root.join(source)],
+                    &root.join("real"),
+                    Conflict::Replace,
+                ));
+                let messages: Vec<&str> = summary
+                    .failures
+                    .iter()
+                    .map(|failure| failure.message.as_str())
+                    .collect();
+                assert_eq!(
+                    messages,
+                    ["notes.txt would be replaced with itself"],
+                    "{source} {mode:?}"
+                );
+                let kept = root.join("real/notes.txt");
+                assert!(
+                    kept.symlink_metadata().unwrap().is_file(),
+                    "{source} {mode:?}"
+                );
+                assert_eq!(fs::read(&kept).unwrap(), b"notes");
+            }
         }
     }
 

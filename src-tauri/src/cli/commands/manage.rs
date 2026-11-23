@@ -163,6 +163,12 @@ pub async fn place(context: &Context, arguments: &PlaceArgs, moving: bool) -> Ap
     let destination = operand(connected, destination)?;
     let found = files.stat(&destination).await?;
     let verb = if moving { "Moved" } else { "Copied" };
+    let replaces_itself = match (found, &sources[..], arguments.conflict) {
+        (Some(stat), [source], Conflict::Replace) if !stat.is_dir => {
+            same_file(&*files, source, &destination).await
+        }
+        _ => false,
+    };
 
     if let (Some(stat), true) = (found, sources.len() > 1) {
         if !stat.is_dir {
@@ -180,7 +186,7 @@ pub async fn place(context: &Context, arguments: &PlaceArgs, moving: bool) -> Ap
                     format!("Skipped: {destination} exists"),
                 ))
             }
-            Conflict::Replace if sources[0] == destination => {
+            Conflict::Replace if replaces_itself => {
                 return Err(AppError::invalid(format!(
                     "{destination} would be replaced with itself"
                 ))
@@ -312,6 +318,22 @@ pub async fn place(context: &Context, arguments: &PlaceArgs, moving: bool) -> Ap
         text,
     )
     .with_failures(failed, sources.len(), Exit::Failure))
+}
+
+/// Whether two paths name one file, as spelled or once links are followed: a link to a file,
+/// or the file reached through a linked folder. Where the server cannot follow links, as on
+/// FTP, the spelling decides.
+async fn same_file(files: &dyn RemoteFileSystem, first: &str, second: &str) -> bool {
+    if first == second {
+        return true;
+    }
+    match (
+        files.canonicalize(first).await,
+        files.canonicalize(second).await,
+    ) {
+        (Ok(first), Ok(second)) => first == second,
+        _ => false,
+    }
 }
 
 fn split(path: &str) -> AppResult<(String, Option<String>)> {

@@ -1022,3 +1022,50 @@ fn a_link_that_leads_nowhere_still_takes_its_name() {
     }
     assert_eq!(run.read("one.txt").as_deref(), Some("one\n"));
 }
+
+#[test]
+fn a_file_is_never_replaced_with_itself_through_a_link() {
+    let Some(run) = Run::online("itself") else {
+        return;
+    };
+    let (code, _) = run.json(&["mkdir", &run.remote("real")]);
+    assert_eq!(code, 0);
+    run.write("target.txt", "target\n");
+    run.write("real/notes.txt", "notes\n");
+    for (link, leads_to) in [("link.txt", "target.txt"), ("alias", "real")] {
+        let (code, value) = run.json(&[
+            "exec",
+            "--cwd",
+            &run.remote(""),
+            "--",
+            "ln",
+            "-s",
+            leads_to,
+            link,
+        ]);
+        assert_eq!(code, 0, "{value}");
+    }
+    // A link onto the file it leads to, and one file through a linked folder, given as the
+    // file or as the folder it is in.
+    for command in ["mv", "cp"] {
+        for (source, destination) in [
+            ("link.txt", "target.txt"),
+            ("alias/notes.txt", "real/notes.txt"),
+            ("alias/notes.txt", "real"),
+        ] {
+            let (code, value) = run.json(&[
+                command,
+                "--conflict",
+                "replace",
+                &run.remote(source),
+                &run.remote(destination),
+            ]);
+            assert_eq!(code, 2, "{command} {source} {destination}: {value}");
+            assert_eq!(value["error"]["kind"], "invalidInput", "{value}");
+            assert_eq!(run.read("target.txt").as_deref(), Some("target\n"));
+            assert_eq!(run.read("real/notes.txt").as_deref(), Some("notes\n"));
+            assert_eq!(run.names(""), ["alias", "link.txt", "real", "target.txt"]);
+            assert_eq!(run.names("real"), ["notes.txt"]);
+        }
+    }
+}

@@ -242,12 +242,32 @@ impl<'a> Work<'a> {
         let Some(destination) = destination else {
             return Ok(None);
         };
+        if let Destination::Replace(existing) = &destination {
+            if self.same_file(source, existing).await {
+                return Err(
+                    AppError::invalid(format!("{name} would be replaced with itself"))
+                        .with_path(source),
+                );
+            }
+        }
         self.progress.working_on(source);
         match request.mode {
             Mode::Move => self.move_to(source, stat, &destination).await?,
             Mode::Copy => self.copy_to(source, stat, &destination, true).await?,
         }
         Ok(Some(destination.path().to_string()))
+    }
+
+    /// Whether `source` is the file at `existing` once links are followed, as a link to it, or
+    /// the file reached through a linked folder, is. When the server cannot tell, they differ.
+    async fn same_file(&self, source: &str, existing: &str) -> bool {
+        match (
+            self.fs.canonicalize(source).await,
+            self.fs.canonicalize(existing).await,
+        ) {
+            (Ok(source), Ok(existing)) => source == existing,
+            _ => false,
+        }
     }
 
     /// Whether the target folder is the folder `source` or inside it, as spelled or once links
