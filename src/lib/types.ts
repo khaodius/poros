@@ -243,6 +243,10 @@ export interface TransferStats {
   uploadSpeed: number;
   downloadSpeed: number;
   queuePaused: boolean;
+  /** Paused only until the user presses Start; the files of scheduled runs go on. */
+  heldForStart: boolean;
+  /** Files of scheduled runs are going or waiting their turn. */
+  unattendedRunning: boolean;
 }
 
 export interface ChangedDirectory {

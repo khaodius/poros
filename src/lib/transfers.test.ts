@@ -9,6 +9,7 @@ import {
   missesUpdates,
   replayOnList,
   secondsRemaining,
+  showsPaused,
   VIEW_STATES,
 } from "./transfers";
 import type { JobSnapshot, TransferUpdate } from "./types";
@@ -109,6 +110,15 @@ describe("transfer snapshots", () => {
       false,
     );
     expect(isSettled({ ...EMPTY_STATS, counts: { ...EMPTY_STATS.counts, failed: 3 } })).toBe(true);
+  });
+
+  it("shows a queue that waits for Start as going while scheduled files go", () => {
+    expect(showsPaused(EMPTY_STATS)).toBe(false);
+    const held = { ...EMPTY_STATS, queuePaused: true, heldForStart: true };
+    expect(showsPaused(held)).toBe(true);
+    expect(showsPaused({ ...held, unattendedRunning: true })).toBe(false);
+    // Paused by the user, it stops scheduled files too.
+    expect(showsPaused({ ...held, heldForStart: false, unattendedRunning: true })).toBe(true);
   });
 
   it("estimates the time left", () => {

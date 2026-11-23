@@ -14,6 +14,7 @@ use super::batch::{BatchTally, JobBatch};
 use super::conflict::ExistsAction;
 use super::options::JobOptions;
 use super::pieces::Pieces;
+use super::TransferStats;
 use crate::error::AppError;
 use crate::settings::TransferSettings;
 use crate::sftp::RemoteStat;
@@ -1346,6 +1347,21 @@ impl Queue {
         self.paused && !self.held_for_start
     }
 
+    /// How the queue stands, for the transfer lists. Speeds are left for the caller to add.
+    pub fn stats(&self) -> TransferStats {
+        TransferStats {
+            counts: self.counts(),
+            remaining_bytes: self.remaining_bytes(),
+            queue_paused: self.paused,
+            held_for_start: self.paused && self.held_for_start,
+            unattended_running: self.jobs.values().any(|job| {
+                job.spec.runs_unattended()
+                    && matches!(job.state, JobState::Queued | JobState::Running)
+            }),
+            ..TransferStats::default()
+        }
+    }
+
     pub fn counts(&self) -> QueueCounts {
         let mut counts = QueueCounts::default();
         for job in self.jobs.values() {
@@ -1685,6 +1701,8 @@ mod tests {
         // Scheduled files are queued without holding an idle queue for Start.
         queue.add(scheduled("first run"));
         assert_eq!(claim_name(&mut queue).as_deref(), Some("first run"));
+        let stats = queue.stats();
+        assert!(!stats.queue_paused && !stats.held_for_start && stats.unattended_running);
 
         // The user queues by hand while it runs: their file waits for Start.
         queue.hold_for_start();
@@ -1694,6 +1712,23 @@ mod tests {
         queue.add(scheduled("second run"));
         assert_eq!(claim_name(&mut queue).as_deref(), Some("second run"));
         assert_eq!(queue.job(by_hand).unwrap().state, JobState::Queued);
+        // The lists say the queue waits for Start while scheduled files go on, so it is shown
+        // as going, with Pause.
+        let stats = queue.stats();
+        assert!(stats.queue_paused && stats.held_for_start && stats.unattended_running);
+        assert_eq!((stats.counts.running, stats.counts.queued), (2, 1));
+        // When they are through, only the user's file is left, waiting for Start.
+        let running: Vec<JobId> = queue
+            .jobs
+            .values()
+            .filter(|job| job.state == JobState::Running)
+            .map(|job| job.id)
+            .collect();
+        for id in running {
+            finish(&mut queue, id, RunOutcome::Completed);
+        }
+        let stats = queue.stats();
+        assert!(stats.queue_paused && stats.held_for_start && !stats.unattended_running);
         // Jobs brought back from the saved queue are followed by no one, and wait too.
         queue.add(JobSpec {
             batch: Some(JobBatch::restored("Nightly".into(), None)),
@@ -1706,6 +1741,8 @@ mod tests {
         queue.set_paused(true);
         assert!(queue.paused_by_user());
         assert_eq!(claim_name(&mut queue), None);
+        let stats = queue.stats();
+        assert!(stats.queue_paused && !stats.held_for_start && stats.unattended_running);
         // A queue the user paused stays paused when more is queued.
         queue.hold_for_start();
         assert!(queue.paused_by_user());

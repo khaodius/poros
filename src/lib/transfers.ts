@@ -15,6 +15,8 @@ export const EMPTY_STATS: TransferStats = {
   uploadSpeed: 0,
   downloadSpeed: 0,
   queuePaused: false,
+  heldForStart: false,
+  unattendedRunning: false,
 };
 
 export const EMPTY_SNAPSHOT: TransferSnapshot = {
@@ -111,6 +113,14 @@ export function jobProgress(job: JobSnapshot): number {
 }
 
 /** Seconds until the queue drains at the current speed, or null when it is not moving. */
+/**
+ * Whether the queue is paused as the user sees it. One that only waits for Start while files of
+ * scheduled runs go on is not: Pause stops them.
+ */
+export function showsPaused(stats: TransferStats): boolean {
+  return stats.queuePaused && !(stats.heldForStart && stats.unattendedRunning);
+}
+
 export function secondsRemaining(stats: TransferStats): number | null {
   const speed = stats.uploadSpeed + stats.downloadSpeed;
   if (speed <= 0 || stats.remainingBytes <= 0) return null;

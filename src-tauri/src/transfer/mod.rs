@@ -103,6 +103,12 @@ pub struct TransferStats {
     pub upload_speed: u64,
     pub download_speed: u64,
     pub queue_paused: bool,
+    /// Paused only until the user presses Start, as transfers that do not start on their own
+    /// are; the files of scheduled runs go on.
+    pub held_for_start: bool,
+    /// Files of scheduled runs are going or waiting their turn, which they do even while the
+    /// queue waits for Start.
+    pub unattended_running: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -775,12 +781,7 @@ impl TransferManager {
         TransferList {
             sequence: queue.sequence,
             jobs: queue.snapshots(),
-            stats: TransferStats {
-                counts: queue.counts(),
-                remaining_bytes: queue.remaining_bytes(),
-                queue_paused: queue.paused,
-                ..Default::default()
-            },
+            stats: queue.stats(),
         }
     }
 
@@ -965,18 +966,15 @@ async fn report_progress(shared: Weak<Shared>) {
             let mut queue = shared.queue.lock().unwrap();
             queue.sample_progress(now);
             let (jobs, removed, changed_directories) = queue.take_changes();
-            let counts = queue.counts();
-            if counts.is_idle() {
+            let stats = TransferStats {
+                upload_speed: per_second(uploaded - oldest_uploaded),
+                download_speed: per_second(downloaded - oldest_downloaded),
+                ..queue.stats()
+            };
+            if stats.counts.is_idle() {
                 queue.conflict_override = None;
                 queue.forget_outages();
             }
-            let stats = TransferStats {
-                counts,
-                remaining_bytes: queue.remaining_bytes(),
-                upload_speed: per_second(uploaded - oldest_uploaded),
-                download_speed: per_second(downloaded - oldest_downloaded),
-                queue_paused: queue.paused,
-            };
             if stats.counts.is_idle() {
                 let mut targets = shared.targets.lock().unwrap();
                 targets.retain(|session_id, _| queue.has_session_jobs(session_id));

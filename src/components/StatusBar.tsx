@@ -1,7 +1,7 @@
 import { ArrowDown, ArrowUp, CircleArrowUp } from "lucide-react";
 import { formatDuration, formatSize, formatSpeed, formatVersion, pluralize } from "../lib/format";
 import { findGroup } from "../lib/layout";
-import { secondsRemaining } from "../lib/transfers";
+import { secondsRemaining, showsPaused } from "../lib/transfers";
 import { useLayoutStore } from "../state/layoutStore";
 import { serverEntry, useSessionStore } from "../state/sessionStore";
 import { useSettingsStore } from "../state/settingsStore";
@@ -106,7 +106,7 @@ export function StatusBar() {
             {pluralize(pending, "transfer")} left
             {stats.remainingBytes > 0 && `, ${formatSize(stats.remainingBytes)}`}
             {remaining !== null && `, about ${formatDuration(remaining)}`}
-            {stats.queuePaused && " (paused)"}
+            {showsPaused(stats) && " (paused)"}
           </span>
         )}
         <span className="status-item status-speed" title="Upload speed">
