@@ -30,6 +30,7 @@ import type { FileView } from "../lib/previewLoad";
 import {
   HEX_BYTES,
   capsOf,
+  firstStep,
   selectionKey,
   summarize,
   type Caps,
@@ -416,7 +417,8 @@ function FilePreview({
     mode,
     storage: place.storage,
     inVault: place.inVault,
-    eager: anyway,
+    // What needs no read, as an empty file or a picture over the cap, shows without asking.
+    eager: anyway || firstStep(entry, caps, anyway).step === "show",
     load: (signal) => readFileView(place, entry, caps, anyway, signal),
   });
   const view = state.status === "ready" ? state.result : null;
