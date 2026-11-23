@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { FolderOpen, Plus, Trash2 } from "lucide-react";
 import {
   FILE_PLACEHOLDER,
@@ -13,7 +13,7 @@ import {
   type ExternalProgram,
   type Settings,
 } from "../lib/settings";
-import { pickProgram } from "../state/externalEditStore";
+import { pickProgram, takeProgramSettingsAsk } from "../state/externalEditStore";
 import { saveSettingsSection } from "../state/settingsStore";
 import { CommitInput, NumberSetting, SettingGroup, SwitchSetting } from "./settingsFields";
 
@@ -26,9 +26,17 @@ const COMMAND_EXAMPLE =
 export function ExternalEditorSettings({ settings }: { settings: Settings }) {
   const editing = settings.editing;
   const set = (change: Partial<EditingSettings>) => void saveSettingsSection("editing", change);
+  const noteRef = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (!takeProgramSettingsAsk()) return;
+    // The settings dialog shows itself after its contents mount, so the group scrolls then.
+    requestAnimationFrame(() => {
+      noteRef.current?.closest(".setting-group")?.scrollIntoView({ block: "start" });
+    });
+  }, []);
   return (
     <SettingGroup title="Open with">
-      <p className="setting-note">
+      <p ref={noteRef} className="setting-note">
         Open (Ctrl+Enter) uses the program set up for a file's kind, else the system's own. A server
         file opens from a copy on this computer, which is uploaded each time the program saves it.
       </p>

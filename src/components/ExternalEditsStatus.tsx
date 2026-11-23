@@ -20,10 +20,9 @@ import { formatDate, formatSize, formatTime } from "../lib/format";
 import { external } from "../lib/ipc";
 import type { DateFormat } from "../lib/settings";
 import type { ExternalEdit, ExternalLeftover } from "../lib/types";
-import { editAction, useExternalEditStore } from "../state/externalEditStore";
+import { editAction, openProgramSettings, useExternalEditStore } from "../state/externalEditStore";
 import { useSessionStore } from "../state/sessionStore";
 import { useSettingsStore } from "../state/settingsStore";
-import { useUiStore } from "../state/uiStore";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { FileIcon } from "./FileIcon";
 import { ProgressBar } from "./ProgressBar";
@@ -80,7 +79,6 @@ function EditsPopover({ edits, leftovers, onClose }: EditsPopoverProps) {
   const popoverRef = useRef<HTMLElement>(null);
   const [confirming, setConfirming] = useState<Confirmation | null>(null);
   const uploadOnSave = useSettingsStore((state) => state.settings.editing.uploadOnSave);
-  const openDialog = useUiStore((state) => state.open);
 
   // A dialog opened from the list keeps it open behind it.
   const asking = confirming !== null;
@@ -139,7 +137,7 @@ function EditsPopover({ edits, leftovers, onClose }: EditsPopoverProps) {
           aria-label="Settings for opening files"
           onClick={() => {
             onClose();
-            openDialog({ kind: "settings", section: "interface" });
+            openProgramSettings();
           }}
         >
           <Settings2 size={14} />
@@ -293,10 +291,11 @@ function EditRow({ edit, onStop }: { edit: ExternalEdit; onStop: () => void }) {
   );
 }
 
-/** Today's uploads by the time, older ones by the date. */
+/** Today's uploads by the minute, older ones by the date. */
 function formatUploadTime(epochMillis: number, dateFormat: DateFormat): string {
   const today = new Date().toDateString() === new Date(epochMillis).toDateString();
-  return today ? `at ${formatTime(epochMillis)}` : formatDate(epochMillis / 1000, dateFormat);
+  const minute = formatTime(epochMillis).slice(0, "hh:mm".length);
+  return today ? `at ${minute}` : formatDate(epochMillis / 1000, dateFormat);
 }
 
 interface LeftoverListProps {

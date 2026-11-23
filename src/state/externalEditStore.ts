@@ -14,6 +14,7 @@ import type {
 import { openInEditor } from "./editorActions";
 import { useSettingsStore } from "./settingsStore";
 import { useToastStore } from "./toastStore";
+import { useUiStore } from "./uiStore";
 
 /** A file to open, on this computer or on the server of a session. */
 export type OpenTarget = DocumentLocation & { name: string };
@@ -139,6 +140,21 @@ export async function pickProgram(): Promise<string | null> {
     return null;
   });
   return typeof chosen === "string" ? chosen : null;
+}
+
+let programSettingsAsked = false;
+
+/** Opens the settings at the programs files open in. */
+export function openProgramSettings(): void {
+  programSettingsAsked = true;
+  useUiStore.getState().open({ kind: "settings", section: "interface" });
+}
+
+/** Whether the settings were opened for their programs, which is told once. */
+export function takeProgramSettingsAsk(): boolean {
+  const asked = programSettingsAsked;
+  programSettingsAsked = false;
+  return asked;
 }
 
 /** Opens a file the way the user picked. */

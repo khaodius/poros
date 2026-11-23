@@ -543,13 +543,18 @@ function sanitizeCommands(stored: unknown[]): ServerCommand[] {
 
 /** Keeps each program that has a command, with its fields as strings. The backend tidies the rest. */
 function sanitizePrograms(stored: unknown[]): ExternalProgram[] {
-  return stored.flatMap((value) => {
+  const ids = new Set<string>();
+  return stored.flatMap((value, index) => {
     const program = asSection(value);
     if (typeof program.command !== "string" || program.command.trim() === "") return [];
     const text = (field: unknown) => (typeof field === "string" ? field : "");
+    // Open with names a program by its id, so each gets one of its own, as the backend gives it.
+    const storedId = text(program.id);
+    const id = storedId && !ids.has(storedId) ? storedId : `program-${index + 1}`;
+    ids.add(id);
     return [
       {
-        id: text(program.id),
+        id,
         name: text(program.name),
         command: program.command,
         arguments: text(program.arguments),

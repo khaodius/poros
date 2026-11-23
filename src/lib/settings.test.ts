@@ -41,6 +41,8 @@ describe("sanitizeSettings", () => {
           },
           { id: "empty", name: "No command", command: " " },
           { id: "odd", command: "code", arguments: 7 },
+          { id: "gimp", command: "kate" },
+          { command: "nano" },
           "not a program",
         ],
       },
@@ -51,10 +53,19 @@ describe("sanitizeSettings", () => {
     ).toBe("open");
     expect(settings.editing.uploadOnSave).toBe(false);
     expect(settings.editing.keepMinutes).toBe(10);
-    expect(settings.editing.programs).toEqual([
-      { id: "gimp", name: "GIMP", command: "gimp", arguments: "{file}", patterns: ["*.psd"] },
-      { id: "odd", name: "", command: "code", arguments: "", patterns: [] },
-    ]);
+    const [gimp, code, kate, nano] = settings.editing.programs;
+    expect(settings.editing.programs).toHaveLength(4);
+    expect(gimp).toEqual({
+      id: "gimp",
+      name: "GIMP",
+      command: "gimp",
+      arguments: "{file}",
+      patterns: ["*.psd"],
+    });
+    expect(code).toEqual({ id: "odd", name: "", command: "code", arguments: "", patterns: [] });
+    // A repeated id and a missing one are replaced as the backend replaces them.
+    expect(kate).toMatchObject({ id: "program-4", command: "kate" });
+    expect(nano).toMatchObject({ id: "program-5", command: "nano" });
   });
 
   it("keeps the cloud apps and the FXP switch", () => {

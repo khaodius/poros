@@ -3,11 +3,11 @@ import { programFor, programLabel } from "../lib/externalEditor";
 import {
   openFile,
   openFileWith,
+  openProgramSettings,
   openWithDefault,
   type OpenTarget,
 } from "../state/externalEditStore";
 import { useSettingsStore } from "../state/settingsStore";
-import { useUiStore } from "../state/uiStore";
 import type { MenuItem } from "./ContextMenu";
 
 /** Open and the Open with submenu for a file: its program, the programs set up, and others. */
@@ -49,7 +49,7 @@ export function openMenuItems(target: OpenTarget, nearGroupId?: string): MenuIte
         {
           label: "Set up programs...",
           icon: <Settings2 size={14} />,
-          onSelect: () => useUiStore.getState().open({ kind: "settings", section: "interface" }),
+          onSelect: openProgramSettings,
         },
       ],
     },
