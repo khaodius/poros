@@ -1220,6 +1220,27 @@ impl Queue {
         }
     }
 
+    /// Takes the jobs of `batch` that have ended off the queue. How the batch went stays as it
+    /// was.
+    pub fn clear_batch(&mut self, batch: &Arc<JobBatch>) {
+        let ids: Vec<JobId> = self
+            .jobs
+            .values()
+            .filter(|job| {
+                job.is_finished()
+                    && job
+                        .spec
+                        .batch
+                        .as_ref()
+                        .is_some_and(|other| Arc::ptr_eq(other, batch))
+            })
+            .map(|job| job.id)
+            .collect();
+        for id in ids {
+            self.forget(id);
+        }
+    }
+
     pub fn session_job_ids(&self, session_id: &str) -> Vec<JobId> {
         self.jobs
             .values()
@@ -1613,6 +1634,44 @@ mod tests {
         assert_eq!(queue.batch_tally(&batch), ended);
         // The other job was never part of it.
         assert_eq!(queue.job(other).unwrap().state, JobState::Queued);
+    }
+
+    #[test]
+    fn a_batch_that_has_been_counted_leaves_the_queue_without_its_neighbours() {
+        let batch = JobBatch::new("Nightly", None);
+        let in_batch = |name: &str| JobSpec {
+            batch: Some(batch.clone()),
+            ..file(name, 10)
+        };
+        let mut queue = Queue::new();
+        let failing = queue.add(in_batch("one"));
+        let skipped = queue.add(in_batch("two"));
+        let running = queue.add(in_batch("three"));
+        let others = JobBatch::new("Weekly", None);
+        let other = queue.add(JobSpec {
+            batch: Some(others.clone()),
+            ..file("weekly", 1)
+        });
+        let by_hand = queue.add(file("by hand", 1));
+        for _ in 0..3 {
+            queue.claim(Instant::now()).unwrap();
+        }
+        let denied = AppError::new(ErrorKind::PermissionDenied, "denied");
+        finish(&mut queue, failing, RunOutcome::Failed(denied));
+        finish(&mut queue, skipped, RunOutcome::Skipped("is there".into()));
+        let other_claim = queue.claim(Instant::now()).unwrap();
+        assert_eq!(other_claim.id, other);
+        let gone = AppError::new(ErrorKind::PermissionDenied, "gone");
+        finish(&mut queue, other, RunOutcome::Failed(gone));
+        let counted = queue.batch_tally(&batch);
+
+        queue.clear_batch(&batch);
+        assert!(queue.job(failing).is_none() && queue.job(skipped).is_none());
+        assert_eq!(queue.batch_tally(&batch), counted);
+        // A job that still runs stays until it ends; other batches and hand-queued files stay.
+        assert_eq!(queue.job(running).unwrap().state, JobState::Running);
+        assert_eq!(queue.job(other).unwrap().state, JobState::Failed);
+        assert_eq!(queue.job(by_hand).unwrap().state, JobState::Queued);
     }
 
     #[test]

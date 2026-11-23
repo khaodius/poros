@@ -224,6 +224,7 @@ async fn copy(
         return Ok(runner::skipped_while_paused());
     }
     let tally = context.transfers.watch().wait_for_batch(&batch).await;
+    context.done_with(&batch);
     for failure in &tally.failures {
         context.events.log(
             LogLevel::Error,
@@ -343,6 +344,7 @@ mod tests {
             transfers: &transfers,
             events: &events,
             sign_in: Default::default(),
+            keep_ended_jobs: true,
         };
         let mut task = super::super::task::tests::task(super::super::schedule::Trigger::Every {
             minutes: 60,

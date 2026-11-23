@@ -67,6 +67,19 @@ pub struct TaskContext<'a> {
     pub transfers: &'a TransferManager,
     pub events: &'a Events,
     pub sign_in: SignIn,
+    /// A run's files stay in the transfer list once the run has counted them, for the user to
+    /// see. False for a queue no one sees, as the daemon's, which would otherwise keep every
+    /// failure for as long as it lives.
+    pub keep_ended_jobs: bool,
+}
+
+impl TaskContext<'_> {
+    /// Takes a run's files off the queue once it has counted them, when no one will look.
+    pub(super) fn done_with(&self, batch: &Arc<JobBatch>) {
+        if !self.keep_ended_jobs {
+            self.transfers.clear_batch(batch);
+        }
+    }
 }
 
 /// A run under way. Dropped before it ends, as when its process is interrupted, it is written
@@ -331,7 +344,7 @@ async fn synchronize(
                 plan_id: plan.plan_id,
                 choices,
             },
-            Some(batch),
+            Some(batch.clone()),
         )
         .await?;
     if summary.dry_run {
@@ -350,6 +363,7 @@ async fn synchronize(
         .finished(&summary.run_id)
         .await
         .unwrap_or_default();
+    context.done_with(&batch);
     let failures = summary.failures.len().max(report.failures.len()) as u64;
     let mut message = format!(
         "{} copied ({})",

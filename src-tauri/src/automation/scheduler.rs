@@ -121,6 +121,8 @@ async fn execute(inner: Arc<Inner>, app: AppHandle, claim: Claim) {
         transfers: transfers.inner(),
         events: &inner.events,
         sign_in: SignIn::default(),
+        // Shown in the transfer list.
+        keep_ended_jobs: true,
     };
     // How it went is logged and written to the task there.
     let _ = runner::run_claimed(&inner.board, claim, &context).await;

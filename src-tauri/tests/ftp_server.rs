@@ -1658,6 +1658,7 @@ async fn scheduled_transfers_upload_to_ftp_and_copy_between_servers() {
         transfers: &transfers,
         events: &events,
         sign_in: SignIn::default(),
+        keep_ended_jobs: true,
     };
 
     // Up to the first server, into a folder named from the day.

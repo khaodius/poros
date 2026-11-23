@@ -844,6 +844,11 @@ impl TransferManager {
         self.update_queue(|queue| queue.clear(states));
     }
 
+    /// Takes the jobs of `batch` that have ended off the queue, once it has been counted.
+    pub fn clear_batch(&self, batch: &Arc<JobBatch>) {
+        self.update_queue(|queue| queue.clear_batch(batch));
+    }
+
     pub fn move_to(&self, ids: &[JobId], to_top: bool) {
         self.update_queue(|queue| queue.move_to(ids, to_top));
     }

@@ -2021,6 +2021,7 @@ async fn scheduled_tasks_connect_on_their_own() {
         transfers: &transfers,
         events: &events,
         sign_in: SignIn::default(),
+        keep_ended_jobs: true,
     };
 
     let local = workspace.local.path().join("backup");
@@ -2128,6 +2129,7 @@ async fn scheduled_transfers_copy_a_saved_list_to_and_from_the_server() {
         transfers: &transfers,
         events: &events,
         sign_in: SignIn::default(),
+        keep_ended_jobs: true,
     };
 
     let site = workspace.local.path().join("site");
@@ -2187,6 +2189,25 @@ async fn scheduled_transfers_copy_a_saved_list_to_and_from_the_server() {
         again.message,
         format!("0 files uploaded (0 B) to {dated}, 4 skipped")
     );
+    // A queue no one sees, as the daemon's, lets a run's files go once it has counted them,
+    // the skipped and failed ones too.
+    let listed = transfers.list().jobs.len();
+    let unseen = TaskContext {
+        sessions: &workspace.manager,
+        connections: context.connections.clone(),
+        connection_settings: ConnectionSettings::default(),
+        cloud_settings: Default::default(),
+        sync: &sync,
+        transfers: &transfers,
+        events: &events,
+        sign_in: SignIn::default(),
+        keep_ended_jobs: false,
+    };
+    let unseen = runner::perform(&upload(ExistsAction::Skip, items.clone()), &unseen)
+        .await
+        .unwrap();
+    assert_eq!(unseen.message, again.message);
+    assert_eq!(transfers.list().jobs.len(), listed);
 
     // An item that is gone is said, and the others still go.
     let mut with_missing = items.clone();
@@ -2302,6 +2323,7 @@ async fn scheduled_runs_go_while_transfers_wait_for_start() {
         transfers: &transfers,
         events: &events,
         sign_in: SignIn::default(),
+        keep_ended_jobs: true,
     };
     let site = workspace.local.path().join("site");
     write_small_tree(&site);

@@ -251,10 +251,12 @@ struct Runner {
     sync: SyncManager,
     transfers: TransferManager,
     sign_in: SignIn,
+    keep_completed: bool,
 }
 
 impl Runner {
-    /// `keep_completed` keeps finished files in the queue, for progress; a daemon lets them go.
+    /// `keep_completed` keeps finished files in the queue, for progress; a daemon lets them go,
+    /// and a run's failures too once it has counted them.
     fn new(context: &Context, keep_completed: bool) -> AppResult<Self> {
         let given_for = match context.options.connection.as_deref().map(str::trim) {
             None | Some("") => None,
@@ -296,6 +298,7 @@ impl Runner {
                 command_line: true,
                 timeout_secs: options.timeout,
             },
+            keep_completed,
         })
     }
 
@@ -313,6 +316,7 @@ impl Runner {
             transfers: &self.transfers,
             events: &context.events,
             sign_in: self.sign_in.clone(),
+            keep_ended_jobs: self.keep_completed,
         }
     }
 
