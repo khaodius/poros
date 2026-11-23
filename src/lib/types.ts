@@ -1089,6 +1089,11 @@ export interface SearchReport {
   current: string;
   /** Folders that could not be read since the last report. */
   unreadable: OperationFailure[];
+  /**
+   * The start folder as its listing names it, once, when not as asked for: a link to a folder,
+   * `/var` that is `/private/var`, a short name on Windows. Results are below this name.
+   */
+  start?: string;
 }
 
 export type SearchEngine = "find" | "walker";

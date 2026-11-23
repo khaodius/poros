@@ -359,7 +359,9 @@ export function dropAction(
   }
   if (source.tabId === destination.tabId && target.folder === null) return null;
   const style = pathStyleOf(origin);
-  const sourceFolder = source.path();
+  // Each entry is where its path says: search results come from many folders, not only the
+  // one the source pane stands for.
+  const inFolder = (entry: FileEntry) => samePath(folderOf(entry, style), folder, style);
   const destinationOrigin = paneOrigin(destination);
   const sameFiles = sameFilesystem(origin, destinationOrigin);
   if (sharesFolders(origin, destinationOrigin)) {
@@ -379,20 +381,20 @@ export function dropAction(
           : "Moving on this server needs SFTP",
       };
     }
-    if (sameFiles && sourceFolder && samePath(folder, sourceFolder, style)) return null;
+    if (sameFiles && entries.every(inFolder)) return null;
+    if (sameFiles && entries.some(inFolder)) {
+      return { kind: "blocked", reason: "Some of these are in that folder already" };
+    }
     return { kind: "transfer", direction: "relay", folder };
   }
   // As in Windows Explorer, dragging to another drive copies.
+  const drive = (path: string) => breadcrumbs(path, style)[0]?.path ?? "";
   const otherDrive =
     style === "windows" &&
-    !!sourceFolder &&
-    !samePath(
-      breadcrumbs(folder, style)[0]?.path ?? "",
-      breadcrumbs(sourceFolder, style)[0]?.path ?? "",
-      style,
-    );
+    entries.some((entry) => !samePath(drive(folder), drive(entry.path), style));
   const mode = copy || otherDrive ? "copy" : "move";
-  if (mode === "move" && sourceFolder && samePath(folder, sourceFolder, style)) return null;
+  // Those already there stay where they are; the others move.
+  if (mode === "move" && entries.every(inFolder)) return null;
   return { kind: "place", mode, source, target: destination, folder };
 }
 

@@ -115,6 +115,37 @@ describe("dropAction", () => {
     });
   });
 
+  it("moves search results into the folder their search started in", () => {
+    // The pane with the results stands for /srv, where the search started; what it found is
+    // further down.
+    pane("results", "remote", "/srv", "s1");
+    pane("root", "remote", "/srv", "s1");
+    const deep = [entry("/srv/logs/old/app.log"), entry("/srv/www/error.log")];
+    expect(dropAction("results", deep, onPane("root", null), false)).toMatchObject({
+      kind: "place",
+      mode: "move",
+      folder: "/srv",
+    });
+    // Some already there: the others still move.
+    const mixed = [entry("/srv/top.log"), entry("/srv/logs/app.log")];
+    expect(dropAction("results", mixed, onPane("root", null), false)).toMatchObject({
+      kind: "place",
+      mode: "move",
+    });
+    // All already there: nothing to do.
+    expect(dropAction("results", [entry("/srv/top.log")], onPane("root", null), false)).toBeNull();
+    // A server reached other than over SFTP copies through the queue, but never onto itself.
+    pane("ftp-results", "remote", "/srv", "f1", "ftp");
+    pane("ftp-root", "remote", "/srv", "f1", "ftp");
+    expect(dropAction("ftp-results", deep, onPane("ftp-root", null), false)).toMatchObject({
+      kind: "transfer",
+      direction: "relay",
+    });
+    expect(
+      dropAction("ftp-results", [entry("/srv/top.log")], onPane("ftp-root", null), false),
+    ).toBeNull();
+  });
+
   it("keeps folders out of themselves", () => {
     pane("server", "remote", "/srv", "s1");
     pane("inside", "remote", "/srv/www/assets", "s1");

@@ -180,11 +180,21 @@ async fn walk_until_done(
         };
         match listed {
             Listed::Deep(Ok(Some(page))) => {
-                if seen.insert(folder.path.clone()) {
-                    output.visit(&folder.path);
+                // Entries are below the folder as the service names it, which can be written
+                // otherwise than the one asked for.
+                let listed = Folder {
+                    path: page.folder,
+                    depth: folder.depth,
+                    links_followed: folder.links_followed,
+                };
+                if seen.insert(listed.path.clone()) {
+                    if folder.depth == 1 && listed.path != folder.path {
+                        output.started_in(&listed.path);
+                    }
+                    output.visit(&listed.path);
                 }
                 for entry in page.entries {
-                    offer_deep(entry, &folder, criteria, &mut seen, output);
+                    offer_deep(entry, &listed, criteria, &mut seen, output);
                 }
                 if let Some(cursor) = page.next {
                     reading.push(read(folders, folder, true, Some(cursor)));
@@ -192,6 +202,12 @@ async fn walk_until_done(
             }
             Listed::Deep(Ok(None)) => reading.push(read(folders, folder, false, None)),
             Listed::Folder(Ok(listing)) => {
+                // A listing names the folder by its real path: this computer resolves links
+                // and short names, and servers tidy paths. What is found is below that name,
+                // which the page needs to tell where each find is.
+                if folder.depth == 1 && listing.path != folder.path {
+                    output.started_in(&listing.path);
+                }
                 if !seen.insert(listing.path.clone()) {
                     continue;
                 }
@@ -272,6 +288,11 @@ fn offer_deep(
     {
         return;
     }
+    // Folders count as looked at as listing folder by folder would go into them: above the
+    // last level, and hidden ones only when asked.
+    let enters = |depth: u32, name: &str| {
+        depth < criteria.depth_limit() && (criteria.enter_hidden || !name.starts_with('.'))
+    };
     let mut path = start.path.trim_end_matches('/').to_string();
     for (level, name) in names[..names.len() - 1].iter().enumerate() {
         let depth = start.depth + level as u32;
@@ -280,25 +301,31 @@ fn offer_deep(
         }
         path.push('/');
         path.push_str(name);
+        let entered = enters(depth, name);
         if seen.insert(path.clone()) {
-            output.visit(&path);
+            if entered {
+                output.visit(&path);
+            }
             let folder = folder_entry(&path, name);
             if criteria.matches(&folder) {
                 output.offer(folder);
             }
         }
-        if name.starts_with('.') && !criteria.enter_hidden {
+        if !entered {
             return;
         }
     }
-    if start.depth + (names.len() - 1) as u32 > criteria.depth_limit() {
+    let depth = start.depth + (names.len() - 1) as u32;
+    if depth > criteria.depth_limit() {
         return;
     }
     if entry.kind == EntryKind::Dir {
         if !seen.insert(entry.path.clone()) {
             return;
         }
-        output.visit(&entry.path);
+        if enters(depth, &entry.name) {
+            output.visit(&entry.path);
+        }
     }
     if criteria.matches(&entry) {
         output.offer(entry);
@@ -331,11 +358,52 @@ mod tests {
     use crate::search::{KindFilter, SearchReport, SearchRequest, SearchSink};
 
     struct Found {
-        /// Paths relative to the start folder, sorted.
+        /// Paths relative to the start folder, sorted, with `/` between names.
         paths: Vec<String>,
+        /// The paths as reported.
+        reported: Vec<String>,
+        /// The start folder as its listing named it, when not as asked for.
+        start: Option<String>,
         folders: u64,
         unreadable: Vec<String>,
         full: bool,
+    }
+
+    /// `path` with `/` between names and without the `\\?\` that `canonicalize` puts in
+    /// front on Windows.
+    fn plain(path: &str) -> String {
+        let path = match path.strip_prefix(r"\\?\UNC\") {
+            Some(rest) => format!(r"\\{rest}"),
+            None => path.strip_prefix(r"\\?\").unwrap_or(path).to_string(),
+        };
+        path.replace('\\', "/")
+    }
+
+    /// A path as the system compares it: on Windows, the letters in either case.
+    fn comparable(path: &str) -> String {
+        if cfg!(windows) {
+            plain(path).to_ascii_lowercase()
+        } else {
+            plain(path)
+        }
+    }
+
+    /// `path` below the first of `roots` that holds it, with `/` between names.
+    fn relative_to(path: &str, roots: &[String]) -> String {
+        let shown = plain(path);
+        let compared = comparable(path);
+        for root in roots {
+            let root = comparable(root);
+            let root = root.trim_end_matches('/');
+            if compared == root {
+                return ".".to_string();
+            }
+            // ASCII case changes keep lengths, so the place found in one holds in the other.
+            if compared.starts_with(root) && compared[root.len()..].starts_with('/') {
+                return shown[root.len() + 1..].to_string();
+            }
+        }
+        shown
     }
 
     async fn search_with(root: &Path, request: SearchRequest, cancel: &CancellationToken) -> Found {
@@ -349,22 +417,35 @@ mod tests {
             .await
             .unwrap();
         output.report();
-        let canonical = fs::canonicalize(root).unwrap();
         let reports = reports.lock().unwrap();
-        let mut paths: Vec<String> = reports
+        let reported_start = reports.iter().find_map(|report| report.start.clone());
+        // The name the listing gave, then the real path (`/private/var` for `/var` on macOS, a
+        // long name for a short one on Windows), then the folder as asked for.
+        let roots: Vec<String> = reported_start
+            .iter()
+            .cloned()
+            .chain([
+                fs::canonicalize(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned(),
+                start,
+            ])
+            .collect();
+        let reported: Vec<String> = reports
             .iter()
             .flat_map(|report| &report.entries)
-            .map(|entry| {
-                Path::new(&entry.path)
-                    .strip_prefix(&canonical)
-                    .unwrap_or(Path::new(&entry.path))
-                    .to_string_lossy()
-                    .replace('\\', "/")
-            })
+            .map(|entry| entry.path.clone())
+            .collect();
+        let mut paths: Vec<String> = reported
+            .iter()
+            .map(|path| relative_to(path, &roots))
             .collect();
         paths.sort();
         Found {
             paths,
+            reported,
+            start: reported_start,
             folders: output.folders,
             unreadable: reports
                 .iter()
@@ -536,6 +617,39 @@ mod tests {
         let found = search(root.path(), request("needle")).await;
         assert_eq!(found.paths.len(), 1);
         assert_eq!(found.folders, 151);
+    }
+
+    #[tokio::test]
+    async fn a_start_folder_named_another_way_is_reported_as_listed() {
+        let root = tree();
+        let listed = local::list_dir(&root.path().to_string_lossy())
+            .unwrap()
+            .path;
+        // The same folder the long way round, as a link to it, `/var` on macOS or a short
+        // name on Windows would be.
+        let roundabout = root.path().join("logs").join("..");
+        let found = search(&roundabout, request("*.log")).await;
+        assert_eq!(found.start.as_deref(), Some(listed.as_str()));
+        let inside = format!("{listed}{}", std::path::MAIN_SEPARATOR);
+        assert!(
+            found.reported.iter().all(|path| path.starts_with(&inside)),
+            "{:?} are not all in {inside}",
+            found.reported
+        );
+        assert_eq!(
+            found.paths,
+            [
+                "logs/.hidden.log",
+                "logs/app.log",
+                "logs/old/deep/deeper/trace.LOG",
+                "top.log"
+            ]
+        );
+
+        // Asked for by the name its listing gives it, the folder is not named again.
+        let direct = search(Path::new(&listed), request("*.log")).await;
+        assert_eq!(direct.start, None);
+        assert_eq!(direct.paths, found.paths);
     }
 
     #[tokio::test]

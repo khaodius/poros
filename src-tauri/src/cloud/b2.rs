@@ -973,6 +973,7 @@ impl RemoteFileSystem for B2Fs {
             .filter_map(|file| deep_entry(&bucket, &prefix, file))
             .collect();
         Ok(Some(DeepPage {
+            folder: directory,
             entries,
             next: page.next_file_name,
         }))

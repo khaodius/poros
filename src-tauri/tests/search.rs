@@ -317,7 +317,9 @@ impl Scratch {
             self.label
         );
         assert_eq!(summary.found as usize, paths.len(), "{}", self.label);
+        let start = reports.iter().find_map(|report| report.start.clone());
         Found {
+            start,
             paths: found,
             entries,
             unreadable: reports
@@ -354,6 +356,8 @@ struct Found {
     entries: Vec<FileEntry>,
     unreadable: Vec<Failure>,
     summary: SearchSummary,
+    /// The start folder as its listing named it, when not as asked for.
+    start: Option<String>,
 }
 
 impl Found {
@@ -402,6 +406,10 @@ async fn names_kinds_sizes_and_depth_narrow_a_search_on_every_server() {
                     "logs/archive/deep/trace.LOG"
                 ]),
                 "{label}: hidden folders are skipped, hidden files in other folders are not"
+            );
+            assert_eq!(
+                logs.summary.folders, 5,
+                "{label}: the start folder, logs, archive, deep and empty; not .cache"
             );
             let app_log = logs.entry("app.log");
             assert_eq!(app_log.kind, EntryKind::File, "{label}");
@@ -536,6 +544,7 @@ async fn names_kinds_sizes_and_depth_narrow_a_search_on_every_server() {
                 )
                 .await;
             assert_eq!(top.paths, set(&["report.log", "logs"]), "{label}");
+            assert_eq!(top.summary.folders, 1, "{label}: the start folder alone");
 
             let two_levels = scratch
                 .search(
@@ -550,6 +559,10 @@ async fn names_kinds_sizes_and_depth_narrow_a_search_on_every_server() {
                 two_levels.paths,
                 set(&["report.log", "logs", "logs/app.log", "logs/.hidden.log"]),
                 "{label}"
+            );
+            assert_eq!(
+                two_levels.summary.folders, 3,
+                "{label}: the start folder, logs and empty"
             );
 
             let below = scratch
@@ -850,6 +863,36 @@ async fn links_hostile_names_and_unreadable_folders_over_sftp() {
             assert_eq!(following.summary.outcome, Outcome::Finished, "{label}");
         }
 
+        // Searched through a link, the results are below the folder's real path, which the
+        // search names so that the page can tell where each result is.
+        fs.make_symlink(&scratch.path("to-logs"), &scratch.path("logs"))
+            .await
+            .unwrap();
+        for (engines, engine) in engines_for(&server) {
+            let label = format!("{} ({engine:?})", server.label);
+            let searches = scratch.searches(engines);
+            let through = scratch
+                .search(
+                    &searches,
+                    SearchRequest {
+                        folder: scratch.path("to-logs"),
+                        ..scratch.request("app")
+                    },
+                )
+                .await;
+            assert_eq!(through.summary.engine, engine, "{label}");
+            assert_eq!(
+                through.start.as_deref(),
+                Some(scratch.path("logs").as_str()),
+                "{label}"
+            );
+            assert_eq!(
+                through.paths,
+                set(&["logs/app.log", "logs/archive/app.log.1"]),
+                "{label}"
+            );
+        }
+
         assert!(
             fs.lstat_entry(&scratch.path("pwned"))
                 .await
@@ -903,6 +946,42 @@ async fn a_start_folder_that_is_not_there_is_an_error_on_every_server() {
         }
         scratch.remove().await;
     }
+}
+
+/// S3 lists everything below a folder at once, by the folder's tidied name: a start folder
+/// written another way finds the same, and is reported by that name.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_start_folder_written_another_way_finds_the_same_on_s3() {
+    let Some(server) = server("POROS_TEST_S3_PORT", Protocol::S3) else {
+        return;
+    };
+    let scratch = Scratch::open(&server, "written").await.with_tree().await;
+    let searches = scratch.searches(Engines::Automatic);
+    let plain = scratch.search(&searches, scratch.request("log")).await;
+    assert_eq!(
+        plain.paths,
+        set(&[
+            "logs",
+            "logs/.hidden.log",
+            "logs/app.log",
+            "logs/archive/app.log.1",
+            "logs/archive/deep/trace.LOG",
+            "report.log",
+        ])
+    );
+    assert_eq!(plain.start, None);
+    let roundabout = scratch
+        .search(
+            &searches,
+            SearchRequest {
+                folder: format!("{}/", scratch.root),
+                ..scratch.request("log")
+            },
+        )
+        .await;
+    assert_eq!(roundabout.paths, plain.paths);
+    assert_eq!(roundabout.start.as_deref(), Some(scratch.root.as_str()));
+    scratch.remove().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

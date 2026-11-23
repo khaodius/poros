@@ -730,10 +730,15 @@ pub async fn search_start(
     request: SearchRequest,
     reports: Channel<SearchReport>,
 ) -> AppResult<SearchSummary> {
+    // A report that cannot be sent means the page that asked is gone: the search stops.
+    let page_gone = tokio_util::sync::CancellationToken::new();
+    let gone = page_gone.clone();
     let sink = Arc::new(move |report| {
-        let _ = reports.send(report);
+        if reports.send(report).is_err() {
+            gone.cancel();
+        }
     });
-    searches.run(request, sink).await
+    searches.run_until(request, sink, page_gone).await
 }
 
 #[tauri::command]

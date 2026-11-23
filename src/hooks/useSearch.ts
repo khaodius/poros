@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { firstDayOfWeek } from "../lib/dateGroups";
 import { search, toAppError } from "../lib/ipc";
-import { applyRecheck, buildSearchRequest, type SearchForm } from "../lib/search";
+import { applyRecheck, buildSearchRequest, mergeReports, type SearchForm } from "../lib/search";
 import type {
   AppError,
   FileEntry,
@@ -59,10 +59,7 @@ export function useSearch(location: FileLocation): SearchController {
   const [view, setView] = useState<SearchView | null>(null);
   const running = useRef<string | null>(null);
   // Finds and progress waiting to be shown, so batches that come close together show at once.
-  const pending = useRef<{ entries: FileEntry[]; report: SearchReport | null }>({
-    entries: [],
-    report: null,
-  });
+  const pending = useRef<SearchReport | null>(null);
   const showTimer = useRef(0);
   const locationRef = useRef(location);
   useEffect(() => {
@@ -72,17 +69,19 @@ export function useSearch(location: FileLocation): SearchController {
   const showPending = useCallback((searchId: string) => {
     window.clearTimeout(showTimer.current);
     showTimer.current = 0;
-    const { entries, report } = pending.current;
-    pending.current = { entries: [], report: null };
-    if (!report && entries.length === 0) return;
+    const report = pending.current;
+    pending.current = null;
+    if (!report) return;
     setView((current) => {
       if (!current || current.id !== searchId) return current;
-      const unreadable = report?.unreadable ?? [];
+      const { entries, unreadable } = report;
       return {
         ...current,
+        // Results are below the start folder as its listing names it.
+        root: report.start ?? current.root,
         entries: entries.length > 0 ? [...current.entries, ...entries] : current.entries,
-        folders: report?.folders ?? current.folders,
-        current: report?.current ?? current.current,
+        folders: report.folders,
+        current: report.current,
         unreadable:
           unreadable.length > 0 ? [...current.unreadable, ...unreadable] : current.unreadable,
         unreadableCount: current.unreadableCount + unreadable.length,
@@ -95,7 +94,7 @@ export function useSearch(location: FileLocation): SearchController {
     running.current = null;
     window.clearTimeout(showTimer.current);
     showTimer.current = 0;
-    pending.current = { entries: [], report: null };
+    pending.current = null;
     if (searchId) void search.cancel(searchId).catch(() => undefined);
   }, []);
 
@@ -127,13 +126,7 @@ export function useSearch(location: FileLocation): SearchController {
       });
       const onReport = (report: SearchReport) => {
         if (running.current !== searchId) return;
-        // Reports carry what is new since the one before; progress is as of the latest.
-        const waiting = pending.current;
-        waiting.entries.push(...report.entries);
-        waiting.report = {
-          ...report,
-          unreadable: [...(waiting.report?.unreadable ?? []), ...report.unreadable],
-        };
+        pending.current = mergeReports(pending.current, report);
         if (!showTimer.current) {
           showTimer.current = window.setTimeout(() => showPending(searchId), SHOW_INTERVAL_MILLIS);
         }

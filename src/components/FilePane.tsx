@@ -68,6 +68,7 @@ import {
   dateNarrows,
   defaultSearchForm,
   folderOf,
+  recheckAfterChange,
   recheckTargets,
   relativeFolder,
   sharedFolder,
@@ -111,7 +112,11 @@ import {
 } from "../state/settingsStore";
 import { openTerminal } from "../state/terminalActions";
 import { useToastStore } from "../state/toastStore";
-import { transferFromPane, transferToOtherSide } from "../state/transferActions";
+import {
+  sayWhereResultsDropWent,
+  transferFromPane,
+  transferToOtherSide,
+} from "../state/transferActions";
 import { useUiStore } from "../state/uiStore";
 import { requestLockVault, vaultHandover } from "../state/vaultActions";
 import { workspaceChanged } from "../state/workspace";
@@ -351,6 +356,7 @@ export function FilePane({
         clear: () => paneRef.current.clear(),
         selected: () => paneRef.current.selectedEntries(),
         entries: () => paneRef.current.listing?.entries ?? [],
+        showsResults: () => paneRef.current.showingResults,
         visible: false,
         activatedAt: 0,
       }),
@@ -515,14 +521,15 @@ export function FilePane({
 
   /**
    * After results were renamed, moved or deleted: they are looked at again, with `added` paths
-   * they go by now, and other panes showing their folders reload.
+   * they go by now and the results inside changed folders, and other panes showing their
+   * folders reload.
    */
   const resultsChanged = async (entries: FileEntry[], added: string[] = [], focus?: string) => {
     const origin = paneOrigin(side);
     for (const folder of new Set(entries.map((entry) => folderOf(entry, style)))) {
       refreshFolder(origin, folder);
     }
-    await search.recheck([...entries.map((entry) => entry.path), ...added]);
+    await search.recheck(recheckAfterChange(searchView?.entries ?? [], entries, added, style));
     if (focus) pane.selectOnly(focus);
   };
 
@@ -673,6 +680,14 @@ export function FilePane({
           landing,
         }).then((done) => {
           if (done && inResults && action.mode === "move") void resultsChanged(entries);
+          const shown = getPane(target.tabId);
+          if (done && target.folder === null && shown) {
+            sayWhereResultsDropWent(
+              shown,
+              action.mode === "move" ? "Moved" : "Copied",
+              action.folder,
+            );
+          }
         });
       }
     };

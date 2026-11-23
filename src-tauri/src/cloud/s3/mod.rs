@@ -870,6 +870,7 @@ impl RemoteFileSystem for S3Fs {
             .filter_map(|object| deep_entry(&bucket, &prefix, object))
             .collect();
         Ok(Some(DeepPage {
+            folder: directory,
             entries,
             next: page.next_continuation_token.filter(|_| page.is_truncated),
         }))

@@ -38,8 +38,11 @@ const ENTRY_RECORD: &str = r"-printf 'E\0%y\0%Y\0%s\0%T@\0%m\0%u\0%g\0%p\0'";
 /// entry is a link is asked separately.
 const FOLLOWED_ENTRY_RECORD: &str =
     r"\( -xtype l -printf 'E\0l\0' -o -printf 'E\0%y\0' \) -printf '%y\0%s\0%T@\0%m\0%u\0%g\0%p\0'";
-/// One record per folder looked at, so the search can show where it is.
-const FOLDER_RECORD: &str = r"\( -type d -printf 'D\0%p\0' -o -true \)";
+/// One record per folder, with its depth, so the search can show where it is. Only those
+/// find goes into are counted, as listing folders counts them: not the last level.
+const FOLDER_RECORD: &str = r"\( -type d -printf 'D\0%d\0%p\0' -o -true \)";
+/// The same, leaving out the hidden folders find does not go into.
+const VISIBLE_FOLDER_RECORD: &str = r"\( -type d ! -name '.*' -printf 'D\0%d\0%p\0' -o -true \)";
 const SKIP_HIDDEN: &str = r"\( ! -name '.*' -o -prune \)";
 
 /// Why the server's `find` gave no answer.
@@ -70,9 +73,15 @@ pub(super) async fn is_usable(session: &Session) -> bool {
 
 /// Has `find` describe `/` with every test and format the search uses.
 fn probe_command() -> String {
-    in_shell(&format!(
+    in_shell(&probe_script())
+}
+
+/// The probe holds no name, nor a backslash before a quote or another backslash, so every
+/// login shell reads its quoting as `sh` does.
+fn probe_script() -> String {
+    format!(
         r"find / -maxdepth 0 -mindepth 0 \( -iname x -o -newermt @0 -o -size +0c -o -xtype l -o -true \) {ENTRY_RECORD}"
-    ))
+    )
 }
 
 fn probe_passed(output: &[u8]) -> bool {
@@ -83,17 +92,23 @@ fn probe_passed(output: &[u8]) -> bool {
     ) && parser.is_empty()
 }
 
-/// Runs in `sh` whatever the account's own shell is, in the C locale so that names are bytes
-/// and messages are in English.
+/// What the account's login shell is asked to run for a search: `sh`, reading the search from
+/// standard input. Nothing of the search is in it, so a login shell that quotes otherwise than
+/// `sh` (fish reads `\'` inside single quotes) never parses a name. Only `sh` does, quoted for
+/// `sh` alone.
+pub(super) const SEARCH_SHELL: &str = "sh -s";
+
+/// The C locale, so that names are bytes and messages are in English.
+const C_LOCALE: &str = "LC_ALL=C; export LC_ALL;";
+
+/// Runs `script` in `sh` whatever the account's own shell is. Only for scripts that hold no
+/// name or pattern: the script is quoted once more for the login shell.
 fn in_shell(script: &str) -> String {
-    format!(
-        "sh -c {}",
-        shell_quote(&format!("LC_ALL=C; export LC_ALL; {script}"))
-    )
+    format!("sh -c {}", shell_quote(&format!("{C_LOCALE} {script}")))
 }
 
-/// The command that searches below `root`, an absolute path. The first record describes
-/// `root` itself, to tell whether commands see the same folder as SFTP does.
+/// The script [`SEARCH_SHELL`] reads to search below `root`, an absolute path. The first
+/// record describes `root` itself, to tell whether commands see the same folder as SFTP does.
 pub(super) fn command(root: &str, criteria: &Criteria) -> String {
     let root = shell_quote(root);
     let mut search = vec!["find".to_string()];
@@ -103,8 +118,10 @@ pub(super) fn command(root: &str, criteria: &Criteria) -> String {
     }
     search.push(root.clone());
     search.push(format!("-mindepth 1 -maxdepth {}", criteria.depth_limit()));
-    search.push(FOLDER_RECORD.to_string());
-    if !criteria.enter_hidden {
+    if criteria.enter_hidden {
+        search.push(FOLDER_RECORD.to_string());
+    } else {
+        search.push(VISIBLE_FOLDER_RECORD.to_string());
         search.push(SKIP_HIDDEN.to_string());
     }
     if let Some(pattern) = criteria.name.find_pattern() {
@@ -135,10 +152,10 @@ pub(super) fn command(root: &str, criteria: &Criteria) -> String {
         }
         .to_string(),
     );
-    in_shell(&format!(
-        "find {root} -maxdepth 0 {ENTRY_RECORD}; {}",
+    format!(
+        "{C_LOCALE} find {root} -maxdepth 0 {ENTRY_RECORD}; {}\n",
         search.join(" ")
-    ))
+    )
 }
 
 /// Tests that let through at least everything the size and date limits allow; find compares
@@ -166,8 +183,11 @@ fn size_and_date_tests(criteria: &Criteria) -> Vec<String> {
 
 #[derive(Debug, Clone)]
 pub(super) enum Record {
-    /// A folder `find` is looking at.
-    Folder(String),
+    /// A folder `find` is looking at, and how far below the start folder it is.
+    Folder {
+        path: String,
+        depth: u32,
+    },
     Entry(FileEntry),
 }
 
@@ -218,7 +238,7 @@ impl Parser {
             return Ok(None);
         };
         let wanted = match tag {
-            b"D" => 1,
+            b"D" => 2,
             b"E" => ENTRY_FIELDS,
             _ => return Err(Malformed),
         };
@@ -231,7 +251,10 @@ impl Parser {
         }
         let length = tag.len() + 1 + fields.iter().map(|field| field.len() + 1).sum::<usize>();
         let record = match tag {
-            b"D" => Record::Folder(self.path(fields[0])?),
+            b"D" => Record::Folder {
+                depth: text(fields[0])?.parse().map_err(|_| Malformed)?,
+                path: self.path(fields[1])?,
+            },
             _ => Record::Entry(self.entry(&fields)?),
         };
         Ok(Some((record, length)))
@@ -384,7 +407,11 @@ pub(super) async fn search(
         .await
         .map_err(|_| Stop::Unusable)?;
     channel
-        .exec(true, command(&root, criteria))
+        .exec(true, SEARCH_SHELL)
+        .await
+        .map_err(|_| Stop::Unusable)?;
+    channel
+        .data(command(&root, criteria).as_bytes())
         .await
         .map_err(|_| Stop::Unusable)?;
     let _ = channel.eof().await;
@@ -421,6 +448,13 @@ pub(super) async fn search(
                                     || entry.modified == seen_over_sftp.modified) =>
                         {
                             root_seen = true;
+                            // Asked for through a link, the folder is searched by its real
+                            // path, which is what the results are below.
+                            if root != folder {
+                                output.started_in(&root);
+                            }
+                            // Counted as listing folders counts it.
+                            output.visit(&root);
                         }
                         // Commands run in another folder than the one SFTP shows.
                         Some(_) => {
@@ -433,7 +467,10 @@ pub(super) async fn search(
                 let mut candidates = Vec::new();
                 for record in records {
                     match record {
-                        Record::Folder(path) => output.visit(&path),
+                        Record::Folder { path, depth } if depth < criteria.depth_limit() => {
+                            output.visit(&path);
+                        }
+                        Record::Folder { .. } => {}
                         Record::Entry(entry) if criteria.matches_name_and_kind(&entry) => {
                             candidates.push(entry);
                         }
@@ -601,13 +638,10 @@ mod tests {
         words
     }
 
-    /// The script `sh -c` is given, and the words of its last command, the search itself.
-    fn search_words(command: &str) -> Vec<String> {
-        let outer = shell_words(command);
-        assert_eq!(&outer[..2], ["sh", "-c"]);
-        assert_eq!(outer.len(), 3, "the script is one word: {outer:?}");
-        let script = &outer[2];
+    /// The words of the script's last command, the search itself.
+    fn search_words(script: &str) -> Vec<String> {
         assert!(script.starts_with("LC_ALL=C; export LC_ALL; find "));
+        let script = script.strip_suffix('\n').expect("a whole line");
         let search = script.rsplit_once("; find ").expect("two find commands").1;
         shell_words(&format!("find {search}"))
     }
@@ -687,6 +721,29 @@ mod tests {
         }
     }
 
+    /// A login shell that quotes otherwise than `sh` gets nothing of the search to read: fish
+    /// takes `\'` inside single quotes as a quote, so a folder named like this one would run a
+    /// command were it quoted for `sh` and handed to fish.
+    #[test]
+    fn a_name_fish_would_misread_never_reaches_the_login_shell() {
+        let folder = r"/srv/x\';touch /tmp/pwned;'";
+        let pattern = r"y\';touch /tmp/pwned;'";
+        let criteria = criteria(SearchRequest {
+            case_sensitive: true,
+            hidden: true,
+            ..request(pattern)
+        });
+        assert_eq!(SEARCH_SHELL, "sh -s");
+        let words = search_words(&command(folder, &criteria));
+        assert_eq!(words[1], folder, "the folder is one argument");
+        let name = words.iter().position(|word| word == "-name").unwrap();
+        assert_eq!(words[name + 1], criteria.name.find_pattern().unwrap());
+        assert!(!words.iter().any(|word| word == "touch"));
+        // The probe still goes through the login shell, holding nothing fish reads otherwise.
+        let probe = probe_script();
+        assert!(!probe.contains(r"\'") && !probe.contains(r"\\"), "{probe}");
+    }
+
     #[test]
     fn regular_expressions_are_matched_here() {
         let words = search_words(&command(
@@ -751,7 +808,7 @@ mod tests {
             .into_iter()
             .filter_map(|record| match record {
                 Record::Entry(entry) => Some(entry),
-                Record::Folder(_) => None,
+                Record::Folder { .. } => None,
             })
             .collect()
     }
@@ -769,7 +826,7 @@ mod tests {
             "staff",
             "/srv/data/report.pdf",
         ]);
-        output.extend(record(&["D", "/srv/data/.cache"]));
+        output.extend(record(&["D", "1", "/srv/data/.cache"]));
         output.extend(record(&[
             "E",
             "d",
@@ -817,7 +874,10 @@ mod tests {
         let mut parser = Parser::new("/srv/data");
         let records = parser.push(&output).unwrap();
         assert!(parser.is_empty());
-        assert!(matches!(&records[1], Record::Folder(path) if path == "/srv/data/.cache"));
+        assert!(matches!(
+            &records[1],
+            Record::Folder { path, depth: 1 } if path == "/srv/data/.cache"
+        ));
         let entries = entries(records);
         assert_eq!(entries.len(), 5);
 
@@ -886,7 +946,7 @@ mod tests {
     fn output_can_arrive_in_pieces_of_any_size() {
         let mut output = Vec::new();
         for index in 0..20 {
-            output.extend(record(&["D", &format!("/srv/folder {index}")]));
+            output.extend(record(&["D", "1", &format!("/srv/folder {index}")]));
             output.extend(record(&[
                 "E",
                 "f",

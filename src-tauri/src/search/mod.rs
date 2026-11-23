@@ -88,6 +88,11 @@ pub struct SearchReport {
     pub current: String,
     /// Folders that could not be read since the last report.
     pub unreadable: Vec<Failure>,
+    /// The start folder as its listing names it, once, when that differs from the folder asked
+    /// for: a link to a folder, `/var` that is `/private/var`, or a short or differently cased
+    /// name on Windows. Results are below this name, not the one asked for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start: Option<String>,
 }
 
 pub type SearchSink = Arc<dyn Fn(SearchReport) + Send + Sync>;
@@ -166,8 +171,20 @@ impl SearchManager {
     /// Searches until everything was looked at, the search is stopped with [`Self::cancel`],
     /// or the most results allowed were found. Finds are handed to `sink` as they come.
     pub async fn run(&self, request: SearchRequest, sink: SearchSink) -> AppResult<SearchSummary> {
+        self.run_until(request, sink, CancellationToken::new())
+            .await
+    }
+
+    /// The same, also stopping when `stop` is cancelled, such as when nobody is left to tell
+    /// what is found.
+    pub async fn run_until(
+        &self,
+        request: SearchRequest,
+        sink: SearchSink,
+        stop: CancellationToken,
+    ) -> AppResult<SearchSummary> {
         let criteria = Criteria::from_request(&request)?;
-        let running = self.begin(&request.search_id)?;
+        let running = self.begin(&request.search_id, &stop)?;
         let mut output = Output::new(&sink, criteria.limit);
         let engine = self
             .search(&request, &criteria, &running.cancel, &mut output)
@@ -196,7 +213,7 @@ impl SearchManager {
         }
     }
 
-    fn begin(&self, search_id: &str) -> AppResult<Running<'_>> {
+    fn begin(&self, search_id: &str, stop: &CancellationToken) -> AppResult<Running<'_>> {
         if search_id.is_empty() || search_id.len() > MAX_ID_LENGTH {
             return Err(AppError::invalid("A search needs a short name of its own"));
         }
@@ -204,7 +221,7 @@ impl SearchManager {
         if running.contains_key(search_id) {
             return Err(AppError::invalid("That search is already running"));
         }
-        let cancel = CancellationToken::new();
+        let cancel = stop.child_token();
         running.insert(search_id.to_string(), cancel.clone());
         Ok(Running {
             manager: self,
@@ -415,6 +432,12 @@ impl<'a> Output<'a> {
         self.changed = true;
     }
 
+    /// Notes the name the start folder's listing gives it, when not the one asked for.
+    fn started_in(&mut self, folder: &str) {
+        self.pending.start = Some(folder.to_string());
+        self.changed = true;
+    }
+
     fn unreadable(&mut self, failure: Failure) {
         self.unreadable_count += 1;
         if self.unreadable_count <= MAX_UNREADABLE_LISTED {
@@ -438,6 +461,7 @@ impl<'a> Output<'a> {
             folders: self.folders,
             current: self.pending.current.clone(),
             unreadable: std::mem::take(&mut self.pending.unreadable),
+            start: self.pending.start.take(),
         };
         (self.sink)(report);
         self.changed = false;
@@ -504,14 +528,19 @@ mod tests {
             std::env::temp_dir().join("poros-search-test-known-hosts"),
             crate::events::Events::default(),
         )));
-        let running = manager.begin("one").unwrap();
-        assert!(manager.begin("one").is_err());
-        assert!(manager.begin("").is_err());
+        let stop = CancellationToken::new();
+        let running = manager.begin("one", &stop).unwrap();
+        assert!(manager.begin("one", &stop).is_err());
+        assert!(manager.begin("", &stop).is_err());
         manager.cancel("one");
         assert!(running.cancel.is_cancelled());
         drop(running);
         manager.cancel("one");
-        assert!(manager.begin("one").is_ok());
+        let again = manager.begin("one", &stop).unwrap();
+        assert!(!again.cancel.is_cancelled());
+        // Nobody left to tell what is found stops it too.
+        stop.cancel();
+        assert!(again.cancel.is_cancelled());
     }
 
     #[test]

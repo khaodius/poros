@@ -536,8 +536,9 @@ function UnreadableDialog({
         not in the results.
       </p>
       <ul className="search-failures">
-        {failures.map((failure) => (
-          <li key={failure.path}>
+        {/* find can name one folder twice, so the place in the list tells them apart. */}
+        {failures.map((failure, index) => (
+          <li key={index}>
             <span className="search-failure-path" title={failure.path}>
               {failure.path}
             </span>

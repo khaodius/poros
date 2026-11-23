@@ -3,12 +3,14 @@
 
 import type { PathStyle } from "./fileSource";
 import { isWithin, normalizedPath, samePath } from "./path";
+import { isDirLike } from "./sort";
 import type {
   FileEntry,
   FileLocation,
   SearchKind,
   SearchPatternKind,
   SearchRecheck,
+  SearchReport,
   SearchRequest,
 } from "./types";
 
@@ -337,10 +339,9 @@ export function relativeFolder(root: string, entry: FileEntry, style: PathStyle)
   const folder = folderOf(entry, style);
   if (samePath(folder, root, style)) return ".";
   if (!isWithin(folder, root, style)) return folder;
-  const separator = style === "windows" ? "\\" : "/";
-  const outer = normalizedPath(root, style);
-  const skip = outer.endsWith(separator) ? outer.length : outer.length + 1;
-  return folder.slice(skip);
+  // Measured on the root as written, not as compared: lower case can be longer, as İ is.
+  const outer = root.replace(style === "windows" ? /[\\/]+$/ : /\/+$/, "");
+  return folder.slice(outer.length + 1);
 }
 
 /** The folder every entry is in, when they share one. */
@@ -368,6 +369,51 @@ export function recheckTargets(
       : entries.filter((entry) => samePath(folderOf(entry, style), root, style));
   const paths = new Set([...extra, ...wanted.map((entry) => entry.path)]);
   return [...paths].slice(0, MAX_RECHECKED_PATHS);
+}
+
+/**
+ * The paths to look at again after `changed` results were renamed, moved or deleted: theirs,
+ * the `added` paths they go by now, and every result inside a changed folder, whose path went
+ * with it.
+ */
+export function recheckAfterChange(
+  results: readonly FileEntry[],
+  changed: readonly FileEntry[],
+  added: readonly string[],
+  style: PathStyle,
+): string[] {
+  const folders = changed.filter(isDirLike).map((entry) => entry.path);
+  const inside = results
+    .filter((result) =>
+      folders.some(
+        (folder) => isWithin(result.path, folder, style) && !samePath(result.path, folder, style),
+      ),
+    )
+    .map((result) => result.path);
+  const paths = new Set([...changed.map((entry) => entry.path), ...added, ...inside]);
+  return [...paths].slice(0, MAX_RECHECKED_PATHS);
+}
+
+/**
+ * Whether a pane's list shows hidden items: as the eye toggle says for a folder, and always
+ * for search results, which hold only what the search chose to find.
+ */
+export function showsHiddenItems(showHidden: boolean, showingResults: boolean): boolean {
+  return showHidden || showingResults;
+}
+
+/**
+ * Two reports of a running search as one, to show at once: what each found and could not read,
+ * progress as of the later, and the start folder's name from whichever gave it.
+ */
+export function mergeReports(earlier: SearchReport | null, later: SearchReport): SearchReport {
+  if (!earlier) return later;
+  return {
+    ...later,
+    entries: [...earlier.entries, ...later.entries],
+    unreadable: [...earlier.unreadable, ...later.unreadable],
+    start: later.start ?? earlier.start,
+  };
 }
 
 /**

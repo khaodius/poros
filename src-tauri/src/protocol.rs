@@ -180,6 +180,8 @@ pub trait WriteStream: Send {
 /// A page of everything stored below a folder, however deep.
 #[derive(Debug, Clone, Default)]
 pub struct DeepPage {
+    /// The folder listed, as the paths of its entries begin: tidied, and `~` resolved.
+    pub folder: String,
     /// Files, and folders somebody made by hand, with their whole paths. Folders that exist
     /// only because something is stored in them are not listed.
     pub entries: Vec<FileEntry>,

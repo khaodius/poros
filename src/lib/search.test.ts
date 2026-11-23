@@ -12,14 +12,18 @@ import {
   describeSearch,
   describeSize,
   folderOf,
+  mergeReports,
   parseSizeText,
+  recheckAfterChange,
   recheckTargets,
   relativeFolder,
   rememberSearch,
   sharedFolder,
+  showsHiddenItems,
   sizeRange,
   type SearchForm,
 } from "./search";
+import { filterEntries } from "./sort";
 import type { FileEntry } from "./types";
 
 function entry(path: string, overrides: Partial<FileEntry> = {}): FileEntry {
@@ -254,6 +258,19 @@ describe("folders of results", () => {
     expect(relativeFolder("/srv", entry("/elsewhere/a"), "posix")).toBe("/elsewhere");
     expect(relativeFolder("C:\\Data", entry("C:\\data\\Logs\\a.txt"), "windows")).toBe("Logs");
     expect(relativeFolder("C:\\", entry("C:\\Logs\\a.txt"), "windows")).toBe("Logs");
+    // İ is two characters in lower case; the cut is made where the root ends as written.
+    expect(relativeFolder("C:\\İzmir", entry("C:\\İzmir\\Logs\\a.txt"), "windows")).toBe("Logs");
+    expect(relativeFolder("C:\\İzmir\\", entry("C:\\İzmir\\a.txt"), "windows")).toBe(".");
+  });
+
+  it("show every result, hidden ones too, whatever the eye toggle says", () => {
+    const found = [entry("/srv/.env", { hidden: true }), entry("/srv/app/.env", { hidden: true })];
+    const shown = (showHidden: boolean, showingResults: boolean) =>
+      filterEntries(found, { showHidden: showsHiddenItems(showHidden, showingResults), query: "" });
+    expect(shown(false, true)).toHaveLength(2);
+    expect(shown(true, true)).toHaveLength(2);
+    // A folder's listing still hides them until asked.
+    expect(shown(false, false)).toHaveLength(0);
   });
 
   it("are shared only when every result is in one", () => {
@@ -292,6 +309,35 @@ describe("looking at results again", () => {
     expect(recheckTargets(entries, "/srv", "posix")).toHaveLength(MAX_RECHECKED_PATHS);
   });
 
+  it("after a change, asks about what is inside a changed folder too", () => {
+    const logs = entry("/srv/site/logs", { kind: "dir" });
+    const results = [
+      logs,
+      entry("/srv/site/logs/app.log"),
+      entry("/srv/site/logs/old/app.log.1"),
+      entry("/srv/site/logs.txt"),
+      entry("/srv/other/app.log"),
+    ];
+    expect(recheckAfterChange(results, [logs], ["/srv/site/journal"], "posix")).toEqual([
+      "/srv/site/logs",
+      "/srv/site/journal",
+      "/srv/site/logs/app.log",
+      "/srv/site/logs/old/app.log.1",
+    ]);
+    // A file changed alone is the only one asked about.
+    expect(recheckAfterChange(results, [results[3]], [], "posix")).toEqual(["/srv/site/logs.txt"]);
+    // On Windows, a folder holds what is below it in either case and with either separator.
+    const windowsFolder = entry("C:\\Site\\Logs", { kind: "dir" });
+    expect(
+      recheckAfterChange(
+        [windowsFolder, entry("c:/site/logs/app.log")],
+        [windowsFolder],
+        [],
+        "windows",
+      ),
+    ).toEqual(["C:\\Site\\Logs", "c:/site/logs/app.log"]);
+  });
+
   it("updates what changed, drops what went and adds what was renamed", () => {
     const entries = [entry("/srv/a"), entry("/srv/b"), entry("/srv/c")];
     const result = applyRecheck(
@@ -307,5 +353,34 @@ describe("looking at results again", () => {
       ["/srv/c", 1],
       ["/srv/renamed", 1],
     ]);
+  });
+});
+
+describe("reports of a running search", () => {
+  it("show together, keeping the start folder's name from the first", () => {
+    const first = {
+      entries: [entry("C:\\Users\\me\\Logs\\a.log")],
+      folders: 2,
+      current: "C:\\Users\\me\\Logs",
+      unreadable: [{ path: "C:\\Users\\me\\Locked", message: "Access is denied" }],
+      start: "C:\\Users\\me",
+    };
+    const second = {
+      entries: [entry("C:\\Users\\me\\Logs\\Old\\b.log")],
+      folders: 5,
+      current: "C:\\Users\\me\\Logs\\Old",
+      unreadable: [],
+    };
+    const merged = mergeReports(mergeReports(null, first), second);
+    expect(merged.entries.map((item) => item.name)).toEqual(["a.log", "b.log"]);
+    expect(merged.folders).toBe(5);
+    expect(merged.current).toBe("C:\\Users\\me\\Logs\\Old");
+    expect(merged.unreadable).toHaveLength(1);
+    expect(merged.start).toBe("C:\\Users\\me");
+    // Results then show where they are below that name, not the short one asked for.
+    expect(relativeFolder(merged.start ?? "", merged.entries[1], "windows")).toBe("Logs\\Old");
+    expect(relativeFolder("C:\\Users\\ME~1", merged.entries[1], "windows")).toBe(
+      "C:\\Users\\me\\Logs\\Old",
+    );
   });
 });

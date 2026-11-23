@@ -9,6 +9,7 @@ import {
   type EntryGroup,
 } from "../lib/dateGroups";
 import { toAppError } from "../lib/ipc";
+import { showsHiddenItems } from "../lib/search";
 import { ListingLoads } from "../lib/listingLoads";
 import { filterEntries, isDirLike, sortEntries, type SortKey, type SortSpec } from "../lib/sort";
 import type { AppError, DirListing, FileEntry } from "../lib/types";
@@ -183,14 +184,15 @@ export function usePane(
     hasResults.current = results !== null;
   });
 
+  const showsHidden = showsHiddenItems(showHidden, showingResults);
   const sortedEntries = useMemo(
     () =>
       sortEntries(
-        filterEntries(listing?.entries ?? [], { showHidden, query: filter }),
+        filterEntries(listing?.entries ?? [], { showHidden: showsHidden, query: filter }),
         sort,
         foldersFirst,
       ),
-    [listing, showHidden, filter, sort, foldersFirst],
+    [listing, showsHidden, filter, sort, foldersFirst],
   );
   // As in Explorer, the groups run the other way only while sorting oldest first by date.
   const newestFirst = sort.key !== "modified" || sort.direction === -1;
@@ -213,8 +215,8 @@ export function usePane(
     [groups, collapsedGroups, sortedEntries],
   );
   const hiddenCount = useMemo(
-    () => (showHidden ? 0 : (listing?.entries.filter((entry) => entry.hidden).length ?? 0)),
-    [listing, showHidden],
+    () => (showsHidden ? 0 : (listing?.entries.filter((entry) => entry.hidden).length ?? 0)),
+    [listing, showsHidden],
   );
 
   const load = useCallback(
