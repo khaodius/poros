@@ -4,7 +4,9 @@
 //! one command beats a round trip per file. When neither works, data is read and written back
 //! over SFTP in memory.
 
+use std::collections::HashSet;
 use std::future::Future;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use futures::future::BoxFuture;
@@ -90,6 +92,9 @@ pub struct Work<'a> {
     progress: &'a Progress,
     /// Whether the server runs shell commands, once asked.
     runs_commands: OnceCell<bool>,
+    /// Paths the top-level items have taken in the target folder. Items are placed several at
+    /// a time, so a name found free is free for this item only once it is in here.
+    claimed: Mutex<HashSet<String>>,
 }
 
 /// The folder items go into, as given and with links followed.
@@ -112,7 +117,13 @@ impl<'a> Work<'a> {
             cancel,
             progress,
             runs_commands: OnceCell::new(),
+            claimed: Mutex::new(HashSet::new()),
         })
+    }
+
+    /// Takes `path` for one item; false when another item already has it.
+    fn claim(&self, path: &str) -> bool {
+        self.claimed.lock().unwrap().insert(path.to_string())
     }
 
     pub async fn move_or_copy(&self, request: &MoveCopyRequest) -> AppResult<OperationSummary> {
@@ -139,11 +150,13 @@ impl<'a> Work<'a> {
         let results = stream::iter(request.sources.iter().cloned())
             .map(|source| {
                 let source = trim_trailing_slash(&self.fs.resolve(&source));
+                let name = remote_path::file_name(&source);
+                // Claimed in the order the items are given, so of two items with one name the
+                // first keeps it.
+                let name_is_ours = self.claim(&remote_path::join(&directory, name));
                 let target = &target;
                 async move {
-                    let result = self
-                        .place(&source, target, request.mode, request.conflict)
-                        .await;
+                    let result = self.place(&source, target, name_is_ours, request).await;
                     (source, result)
                 }
             })
@@ -170,12 +183,13 @@ impl<'a> Work<'a> {
     }
 
     /// Moves or copies one item into the target folder; `None` when it was skipped.
+    /// `name_is_ours` is false when another item of the operation goes to its name.
     async fn place(
         &self,
         source: &str,
         target: &Target<'_>,
-        mode: Mode,
-        conflict: Conflict,
+        name_is_ours: bool,
+        request: &MoveCopyRequest,
     ) -> AppResult<Option<String>> {
         self.check_cancelled()?;
         let directory = target.directory;
@@ -184,19 +198,36 @@ impl<'a> Work<'a> {
             AppError::new(ErrorKind::NotFound, format!("{name} no longer exists")).with_path(source)
         })?;
         if stat.kind == EntryKind::Dir && self.goes_into_itself(source, target).await {
-            let verb = if mode == Mode::Move { "move" } else { "copy" };
+            let verb = if request.mode == Mode::Move {
+                "move"
+            } else {
+                "copy"
+            };
             return Err(AppError::invalid(format!(
                 "Cannot {verb} the folder {name} into itself"
             )));
         }
         let in_place = remote_path::parent(source).as_deref() == Some(directory);
-        let destination = match (mode, in_place) {
+        let destination = match (request.mode, in_place) {
             (Mode::Move, true) => return Ok(None),
             (Mode::Copy, true) => Some(Destination::Fresh(
                 self.free_name(directory, &name, stat.kind).await?,
             )),
+            _ if !name_is_ours => match request.conflict {
+                Conflict::Skip => None,
+                Conflict::KeepBoth => Some(Destination::Fresh(
+                    self.free_name(directory, &name, stat.kind).await?,
+                )),
+                Conflict::Replace => {
+                    return Err(AppError::new(
+                        ErrorKind::AlreadyExists,
+                        format!("Another item named {name} goes there too"),
+                    )
+                    .with_path(source))
+                }
+            },
             _ => {
-                self.destination(directory, &name, stat.kind, conflict)
+                self.destination(directory, &name, stat.kind, request.conflict)
                     .await?
             }
         };
@@ -204,7 +235,7 @@ impl<'a> Work<'a> {
             return Ok(None);
         };
         self.progress.working_on(source);
-        match mode {
+        match request.mode {
             Mode::Move => self.move_to(source, stat, &destination).await?,
             Mode::Copy => self.copy_to(source, stat, &destination, true).await?,
         }
@@ -249,11 +280,15 @@ impl<'a> Work<'a> {
         }
     }
 
+    /// A numbered name in `directory` that nothing has and no other item of this operation took.
     async fn free_name(&self, directory: &str, name: &str, kind: EntryKind) -> AppResult<String> {
         for candidate in names::numbered(name, kind == EntryKind::Dir).take(MAX_FREE_NAME_ATTEMPTS)
         {
             let path = remote_path::join(directory, &candidate);
-            if self.fs.lstat_entry(&path).await?.is_none() {
+            if self.claimed.lock().unwrap().contains(&path) {
+                continue;
+            }
+            if self.fs.lstat_entry(&path).await?.is_none() && self.claim(&path) {
                 return Ok(path);
             }
         }
