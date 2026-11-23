@@ -1,8 +1,10 @@
-//! End-to-end tests of the speed limit schedule against a real SSH server, with the clock the
-//! schedule reads set by the test instead of waited on. Skipped unless `POROS_TEST_SSH_PORT`
-//! is set; the server is the one `sftp_server.rs` describes.
+//! End-to-end tests of the speed limit schedule against real servers, with the clock the
+//! schedule reads set by the test instead of waited on. The SFTP tests need
+//! `POROS_TEST_SSH_PORT` (the server `sftp_server.rs` describes) and the FTP one
+//! `POROS_TEST_FTP_PORT` (the one `ftp_server.rs` describes); each is skipped without it.
 
 use std::future::Future;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -23,25 +25,40 @@ const MEBIBYTE: u64 = 1024 * 1024;
 const LIMIT_KIB: u32 = 512;
 const LIMIT_BYTES: f64 = 512.0 * 1024.0;
 const EVERY_DAY: [u8; 7] = [0, 1, 2, 3, 4, 5, 6];
+/// What the requests one worker keeps in flight hold, at the request size of the settings.
+const IN_FLIGHT_BYTES: u64 = 4 * 32 * 1024;
 
 struct Server {
+    protocol: Protocol,
     port: u16,
     user: String,
     password: String,
 }
 
-fn server() -> Option<Server> {
-    let port = std::env::var("POROS_TEST_SSH_PORT").ok()?.parse().ok()?;
+fn server(protocol: Protocol) -> Option<Server> {
+    let (port, user, password) = match protocol {
+        Protocol::Sftp => (
+            "POROS_TEST_SSH_PORT",
+            "POROS_TEST_SSH_USER",
+            "POROS_TEST_SSH_PASSWORD",
+        ),
+        _ => (
+            "POROS_TEST_FTP_PORT",
+            "POROS_TEST_FTP_USER",
+            "POROS_TEST_FTP_PASSWORD",
+        ),
+    };
     Some(Server {
-        port,
-        user: std::env::var("POROS_TEST_SSH_USER").unwrap_or_else(|_| "poros".into()),
-        password: std::env::var("POROS_TEST_SSH_PASSWORD").unwrap_or_else(|_| "poros-pass".into()),
+        protocol,
+        port: std::env::var(port).ok()?.parse().ok()?,
+        user: std::env::var(user).unwrap_or_else(|_| "poros".into()),
+        password: std::env::var(password).unwrap_or_else(|_| "poros-pass".into()),
     })
 }
 
 fn profile(server: &Server) -> ConnectProfile {
     ConnectProfile {
-        protocol: Protocol::Sftp,
+        protocol: server.protocol,
         host: "127.0.0.1".into(),
         port: server.port,
         username: server.user.clone(),
@@ -64,7 +81,7 @@ fn profile(server: &Server) -> ConnectProfile {
     }
 }
 
-/// A session to the test server, trusting its host key the first time.
+/// A session to the test server, trusting its host key or certificate the first time.
 async fn connect(server: &Server, sessions: &SessionManager) -> SessionInfo {
     match sessions.connect(profile(server), None, OWNER).await {
         Ok(session) => session,
@@ -205,6 +222,44 @@ impl Fixture {
             .unwrap();
     }
 
+    /// Puts a file of `size` bytes in the scratch folder, with no schedule in the way.
+    async fn put(&self, name: &str, size: u64) {
+        let transfers = self.transfers(TransferSettings {
+            exists_action: ExistsAction::Overwrite,
+            ..TransferSettings::default()
+        });
+        self.upload(&transfers, name, size).await;
+        let list = wait_until_done(&transfers).await;
+        assert_eq!(
+            list.jobs[0].state,
+            JobState::Done,
+            "{:?}",
+            list.jobs[0].error
+        );
+    }
+
+    /// Queues the download of a file of the scratch folder into a local folder of its own.
+    async fn download(&self, transfers: &TransferManager, name: &str, size: u64) -> PathBuf {
+        let downloads = self.local.path().join("downloads");
+        std::fs::create_dir_all(&downloads).unwrap();
+        transfers
+            .enqueue(EnqueueRequest {
+                session_id: self.session.id.clone(),
+                source_session_id: None,
+                direction: Direction::Download,
+                target_directory: downloads.to_string_lossy().into_owned(),
+                items: vec![TransferItem {
+                    path: format!("{}/{name}", self.remote),
+                    name: name.into(),
+                    is_dir: false,
+                    size,
+                }],
+            })
+            .await
+            .unwrap();
+        downloads.join(name)
+    }
+
     async fn remote_size(&self, name: &str) -> Option<u64> {
         let files = self.sessions.get(&self.session.id).await.unwrap().files();
         let listing = files.list_dir(&self.remote).await.unwrap();
@@ -227,12 +282,14 @@ impl Fixture {
 
 /// Runs a test with a fixture and removes its folder on the server afterwards, also when the
 /// test fails.
-async fn with_fixture<Body, Run>(name: &str, body: Body)
+async fn with_fixture<Body, Run>(protocol: Protocol, name: &str, body: Body)
 where
     Body: FnOnce(Arc<Fixture>) -> Run,
     Run: Future<Output = ()> + Send + 'static,
 {
-    let Some(server) = server() else { return };
+    let Some(server) = server(protocol) else {
+        return;
+    };
     let fixture = Arc::new(Fixture::new(&server, name).await);
     let outcome = tokio::spawn(body(fixture.clone())).await;
     fixture.close().await;
@@ -271,7 +328,7 @@ async fn wait_until_done(transfers: &TransferManager) -> TransferList {
 
 #[tokio::test]
 async fn a_rule_limits_a_running_upload_until_the_clock_passes_its_end() {
-    with_fixture("limited", |fixture| async move {
+    with_fixture(Protocol::Sftp, "limited", |fixture| async move {
         fixture.set_clock(monday(10, 0, 0));
         let limit = RateLimit::limited(LIMIT_KIB);
         let transfers =
@@ -335,7 +392,7 @@ async fn a_rule_limits_a_running_upload_until_the_clock_passes_its_end() {
 
 #[tokio::test]
 async fn a_paused_window_holds_an_upload_and_lets_it_continue_where_it_stopped() {
-    with_fixture("paused", |fixture| async move {
+    with_fixture(Protocol::Sftp, "paused", |fixture| async move {
         fixture.set_clock(monday(11, 59, 30));
         let quiet_hour = rule(
             "Quiet hour",
@@ -376,6 +433,16 @@ async fn a_paused_window_holds_an_upload_and_lets_it_continue_where_it_stopped()
         assert_eq!(limits.pause_ends.download, None);
         let id = held.jobs[0].id;
         let kept = held.jobs[0].transferred;
+        // What was sent stays on the server, under the temporary name, while the window lasts.
+        let partial = format!("{}/.paused.bin.poros-part", fixture.remote);
+        let session = fixture.sessions.get(&fixture.session.id).await.unwrap();
+        let sent = session
+            .sftp()
+            .unwrap()
+            .read_range(&partial, 0, kept as u32)
+            .await
+            .unwrap();
+        assert!(sent[..] == pattern(size, size)[..kept as usize]);
         assert!((MEBIBYTE..size).contains(&kept), "{kept} bytes when held");
 
         // A queue that only waits for the schedule has not finished, and nothing moves.
@@ -400,7 +467,6 @@ async fn a_paused_window_holds_an_upload_and_lets_it_continue_where_it_stopped()
 
         // The window ends: the upload goes on from what the server already has.
         fixture.set_clock(monday(13, 0, 0));
-        let released_at = Instant::now();
         let mut least_after_release = u64::MAX;
         let list = wait_for("the upload to finish", || {
             let list = transfers.list();
@@ -411,8 +477,6 @@ async fn a_paused_window_holds_an_upload_and_lets_it_continue_where_it_stopped()
             (list.stats.counts.queued == 0 && list.stats.counts.running == 0).then_some(list)
         })
         .await;
-        let took = released_at.elapsed().as_secs_f64();
-        eprintln!("held at {kept}, least after release {least_after_release}, took {took}");
         assert_eq!(
             list.jobs[0].state,
             JobState::Done,
@@ -420,8 +484,10 @@ async fn a_paused_window_holds_an_upload_and_lets_it_continue_where_it_stopped()
             list.jobs[0].error
         );
         assert_eq!(list.jobs[0].attempts, 0);
+        // It continues from what the server has, short of at most the requests in flight.
+        assert!(least_after_release < size);
         assert!(
-            least_after_release >= kept / 2,
+            kept.saturating_sub(least_after_release) <= IN_FLIGHT_BYTES,
             "continued from {least_after_release} after being held at {kept}"
         );
         assert_eq!(list.stats.limits.rule, None);
@@ -433,7 +499,7 @@ async fn a_paused_window_holds_an_upload_and_lets_it_continue_where_it_stopped()
 
 #[tokio::test]
 async fn ignoring_the_schedule_lets_a_held_upload_go() {
-    with_fixture("ignored", |fixture| async move {
+    with_fixture(Protocol::Sftp, "ignored", |fixture| async move {
         fixture.set_clock(monday(12, 30, 0));
         let quiet_hour = rule("Quiet hour", (12, 13), RateLimit::PAUSED, RateLimit::PAUSED);
         let transfers = fixture.transfers(scheduled(vec![quiet_hour]));
@@ -466,6 +532,85 @@ async fn ignoring_the_schedule_lets_a_held_upload_go() {
         })
         .await;
         assert_eq!(limits.rule, None);
+    })
+    .await;
+}
+
+/// The streamed path every protocol but SFTP takes, through a download from an FTP server.
+#[tokio::test]
+async fn a_download_over_ftp_is_slowed_then_held_and_continues() {
+    with_fixture(Protocol::Ftp, "ftp", |fixture| async move {
+        let size = 4 * MEBIBYTE;
+        fixture.put("streamed.bin", size).await;
+        fixture.set_clock(monday(11, 0, 0));
+        let limit = RateLimit::limited(LIMIT_KIB);
+        let transfers = fixture.transfers(scheduled(vec![
+            rule("Work hours", (9, 12), RateLimit::UNLIMITED, limit),
+            rule(
+                "Quiet hour",
+                (12, 13),
+                RateLimit::UNLIMITED,
+                RateLimit::PAUSED,
+            ),
+        ]));
+        let target = fixture.download(&transfers, "streamed.bin", size).await;
+        let moving_from = wait_for("the download to move", || {
+            let transferred = only_job(&transfers).transferred;
+            (transferred > 0).then_some(transferred)
+        })
+        .await;
+        let measured_from = Instant::now();
+        tokio::time::sleep(Duration::from_millis(2000)).await;
+        let job = only_job(&transfers);
+        let limited_rate =
+            (job.transferred - moving_from) as f64 / measured_from.elapsed().as_secs_f64();
+        assert!(
+            (0.5 * LIMIT_BYTES..=1.5 * LIMIT_BYTES).contains(&limited_rate),
+            "{limited_rate} bytes per second under a limit of {LIMIT_BYTES}"
+        );
+
+        // Noon: downloads wait for the schedule, keeping what they have.
+        fixture.set_clock(monday(12, 0, 0));
+        let held = wait_for("the download to wait for the schedule", || {
+            let list = transfers.list();
+            let waiting = list.jobs[0].state == JobState::Queued && list.stats.counts.running == 0;
+            waiting.then_some(list)
+        })
+        .await;
+        assert!(held.stats.limits.download.is_paused());
+        assert_eq!(
+            held.stats.limits.pause_ends.download,
+            Some(monday(13, 0, 0).timestamp())
+        );
+        let kept = held.jobs[0].transferred;
+        assert!((MEBIBYTE..size).contains(&kept), "{kept} bytes when held");
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+        assert_eq!(only_job(&transfers).transferred, kept);
+
+        // One o'clock: no rule, no limit, and the download goes on from where it was.
+        fixture.set_clock(monday(13, 0, 0));
+        let mut least_after_release = u64::MAX;
+        let list = wait_for("the download to finish", || {
+            let list = transfers.list();
+            let job = &list.jobs[0];
+            if job.state == JobState::Running {
+                least_after_release = least_after_release.min(job.transferred);
+            }
+            (list.stats.counts.queued == 0 && list.stats.counts.running == 0).then_some(list)
+        })
+        .await;
+        assert_eq!(
+            list.jobs[0].state,
+            JobState::Done,
+            "{:?}",
+            list.jobs[0].error
+        );
+        assert_eq!(list.jobs[0].attempts, 0);
+        assert!(
+            kept.saturating_sub(least_after_release) <= 256 * 1024,
+            "continued from {least_after_release} after being held at {kept}"
+        );
+        assert!(std::fs::read(&target).unwrap() == pattern(size, size));
     })
     .await;
 }
