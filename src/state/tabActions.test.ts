@@ -5,7 +5,14 @@ import { closeEditorTab } from "./editorActions";
 import { useUnsavedStore } from "./editorRegistry";
 import { useLayoutStore } from "./layoutStore";
 import { useSessionStore } from "./sessionStore";
-import { adoptHandoff, familyOf, requestCloseTab, type TabHandoff } from "./tabActions";
+import {
+  adoptHandoff,
+  closeRemoteTab,
+  familyOf,
+  requestCloseTab,
+  requestCloseTabs,
+  type TabHandoff,
+} from "./tabActions";
 import { useUiStore } from "./uiStore";
 import { requestLockVault } from "./vaultActions";
 
@@ -110,45 +117,43 @@ describe("a tab handed over from another window", () => {
   });
 });
 
-describe("closing what the files in the editor are saved through", () => {
-  const on = (protocol: Protocol, info: SessionInfo): SessionInfo => ({ ...info, protocol });
-  const page = (id: string, sessionId: string): PaneTab => ({
-    id,
-    kind: "editor",
-    documentId: `document-${id}`,
-    name: `${id}.html`,
-    path: `/srv/www/${id}.html`,
-    origin: "deploy@web.example.com",
-    sessionId,
+const on = (protocol: Protocol, info: SessionInfo): SessionInfo => ({ ...info, protocol });
+const page = (id: string, sessionId: string): PaneTab => ({
+  id,
+  kind: "editor",
+  documentId: `document-${id}`,
+  name: `${id}.html`,
+  path: `/srv/www/${id}.html`,
+  origin: "deploy@web.example.com",
+  sessionId,
+});
+
+function know(...infos: SessionInfo[]) {
+  useSessionStore.setState({
+    sessions: Object.fromEntries(
+      infos.map((info) => [info.id, { info, profile: null, status: "connected" as const }]),
+    ),
   });
+}
 
-  function know(...infos: SessionInfo[]) {
-    useSessionStore.setState({
-      sessions: Object.fromEntries(
-        infos.map((info) => [info.id, { info, profile: null, status: "connected" as const }]),
-      ),
-    });
-  }
+function open(...tabs: PaneTab[]) {
+  useLayoutStore.getState().setRoot(group(tabs));
+  for (const tab of tabs) useUnsavedStore.getState().mark(tab.id, tab.kind === "editor");
+}
 
-  function open(...tabs: PaneTab[]) {
-    useLayoutStore.getState().setRoot(group(tabs));
-    for (const tab of tabs) useUnsavedStore.getState().mark(tab.id, tab.kind === "editor");
-  }
+const tabIds = () =>
+  allTabs(useLayoutStore.getState().root).flatMap((tab) => (tab.kind === "welcome" ? [] : tab.id));
+const disconnected = () =>
+  invoke.mock.calls.flatMap(([command, args]) =>
+    command === "disconnect" ? [(args as { sessionId: string }).sessionId] : [],
+  );
+/** What "Don't save" does: the files' tabs close, then the question does. */
+const discard = (...editorTabIds: string[]) => {
+  editorTabIds.forEach(closeEditorTab);
+  useUiStore.getState().close();
+};
 
-  const tabIds = () =>
-    allTabs(useLayoutStore.getState().root).flatMap((tab) =>
-      tab.kind === "welcome" ? [] : tab.id,
-    );
-  const disconnected = () =>
-    invoke.mock.calls.flatMap(([command, args]) =>
-      command === "disconnect" ? [(args as { sessionId: string }).sessionId] : [],
-    );
-  /** What "Don't save" does: the files' tabs close, then the question does. */
-  const discard = (...editorTabIds: string[]) => {
-    editorTabIds.forEach(closeEditorTab);
-    useUiStore.getState().close();
-  };
-
+describe("closing what the files in the editor are saved through", () => {
   beforeEach(() => {
     useUiStore.setState({ dialog: null });
     invoke.mockImplementation(async (command: string) =>
@@ -217,5 +222,80 @@ describe("closing what the files in the editor are saved through", () => {
     expect(allTabs(useLayoutStore.getState().root)).toEqual([
       { id: "secret", kind: "remote", sessionId: "s1", path: "/srv/private" },
     ]);
+  });
+});
+
+describe("closing the other tabs", () => {
+  beforeEach(() => {
+    useUiStore.setState({ dialog: null });
+    invoke.mockImplementation(async (command: string) =>
+      command === "transfer_session_jobs" ? 2 : undefined,
+    );
+  });
+
+  /** Lets the closing go on to its next question. */
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+  const asked = () => useUiStore.getState().dialog;
+  /** What "Keep transferring" does: the server's tab closes, then the question does. */
+  const keepTransferring = (tabId: string, sessionId: string) => {
+    closeRemoteTab(tabId, sessionId);
+    useUiStore.getState().close();
+  };
+
+  it("asks about each server with transfers in turn", async () => {
+    know(on("ftp", server("f1")), on("ftp", server("f2")));
+    open(
+      { id: "first", kind: "remote", sessionId: "f1", path: "/srv" },
+      { id: "second", kind: "remote", sessionId: "f2", path: "/srv" },
+    );
+    const closing = requestCloseTabs(["first", "second"]);
+    await settle();
+
+    expect(asked()).toMatchObject({ kind: "closeTab", tabId: "first", pendingTransfers: 2 });
+    keepTransferring("first", "f1");
+    await settle();
+    expect(asked()).toMatchObject({ kind: "closeTab", tabId: "second" });
+    keepTransferring("second", "f2");
+    await closing;
+    expect(tabIds()).toEqual([]);
+    expect(disconnected()).toEqual(["f1", "f2"]);
+  });
+
+  it("stops at the first tab the user keeps", async () => {
+    know(on("ftp", server("f1")), on("ftp", server("f2")));
+    open(
+      { id: "first", kind: "remote", sessionId: "f1", path: "/srv" },
+      { id: "second", kind: "remote", sessionId: "f2", path: "/srv" },
+    );
+    const closing = requestCloseTabs(["first", "second"]);
+    await settle();
+    useUiStore.getState().close();
+    await closing;
+
+    expect(asked()).toBeNull();
+    expect(tabIds()).toEqual(["first", "second"]);
+    expect(disconnected()).toEqual([]);
+  });
+
+  it("asks about every unsaved file in one question before the servers", async () => {
+    know(on("ftp", server("f1")));
+    open(
+      page("index", "f1"),
+      { id: "files", kind: "remote", sessionId: "f1", path: "/srv" },
+      page("about", "f1"),
+    );
+    const closing = requestCloseTabs(["index", "files", "about"]);
+
+    expect(asked()).toEqual({
+      kind: "unsavedChanges",
+      tabIds: ["index", "about"],
+      closeWindow: false,
+    });
+    discard("index", "about");
+    await settle();
+    expect(asked()).toMatchObject({ kind: "closeTab", tabId: "files" });
+    keepTransferring("files", "f1");
+    await closing;
+    expect(tabIds()).toEqual([]);
   });
 });
