@@ -95,6 +95,25 @@ describe("sortEntries", () => {
     ]);
   });
 
+  it("sorts search results by the folder they are in, then by name", () => {
+    const found = [
+      entry("b.log", { path: "/var/www/logs/b.log" }),
+      entry("a.log", { path: "/var/www/logs/archive/a.log" }),
+      entry("c.log", { path: "/var/www/html/c.log" }),
+      entry("a.log", { path: "/var/www/logs/a.log" }),
+    ];
+    const paths = (sorted: FileEntry[]) => sorted.map((item) => item.path);
+    expect(paths(sortEntries(found, { key: "folder", direction: 1 }))).toEqual([
+      "/var/www/html/c.log",
+      "/var/www/logs/a.log",
+      "/var/www/logs/b.log",
+      "/var/www/logs/archive/a.log",
+    ]);
+    expect(paths(sortEntries(found, { key: "folder", direction: -1 }))[0]).toBe(
+      "/var/www/logs/archive/a.log",
+    );
+  });
+
   it("does not mutate its input", () => {
     const original = names(entries);
     sortEntries(entries, { key: "size", direction: -1 });

@@ -24,7 +24,7 @@ use crate::error::{AppError, AppResult, ErrorKind};
 use crate::events::Events;
 use crate::model::{DirListing, EntryKind, FileEntry};
 use crate::protocol::{
-    self, Capabilities, Protocol, ReadStream, RemoteFileSystem, RemoteStat, WriteRequest,
+    self, Capabilities, DeepPage, Protocol, ReadStream, RemoteFileSystem, RemoteStat, WriteRequest,
     WriteStream,
 };
 use crate::remote_path;
@@ -800,6 +800,35 @@ fn service_error(status: StatusCode, error: xml::ErrorBody, path: &str) -> AppEr
     AppError::new(kind, message).with_path(path)
 }
 
+/// An object in a listing of everything below `prefix`: a file, or the marker of a folder
+/// somebody made by hand, whose key ends in a slash.
+fn deep_entry(bucket: &str, prefix: &str, object: &xml::Object) -> Option<FileEntry> {
+    let below = object.key.strip_prefix(prefix)?;
+    let (below, kind) = match below.strip_suffix('/') {
+        Some(folder) => (folder, EntryKind::Dir),
+        None => (below, EntryKind::File),
+    };
+    // The folder's own marker, or a name no path can reach.
+    if below.split('/').any(str::is_empty) {
+        return None;
+    }
+    let name = remote_path::file_name(below);
+    let path = format!("/{bucket}/{prefix}{below}");
+    Some(match kind {
+        EntryKind::Dir => folder_entry(&path, name, None),
+        _ => super::entry(
+            &path,
+            name,
+            EntryKind::File,
+            object.size,
+            object
+                .last_modified
+                .as_deref()
+                .and_then(timestamp::parse_rfc3339),
+        ),
+    })
+}
+
 fn folder_entry(path: &str, name: &str, modified: Option<i64>) -> FileEntry {
     super::entry(path, name, EntryKind::Dir, 0, modified)
 }
@@ -830,6 +859,30 @@ impl RemoteFileSystem for S3Fs {
             None if key.is_empty() => Err(no_such_bucket(bucket.as_deref().unwrap_or_default())),
             None => Err(super::not_found(&path)),
         }
+    }
+
+    async fn list_deep(&self, path: &str, cursor: Option<&str>) -> AppResult<Option<DeepPage>> {
+        let directory = protocol::normalize(&self.resolve(path));
+        let (Some(bucket), key) = split(&directory) else {
+            return Ok(None);
+        };
+        let prefix = match key.as_str() {
+            "" => String::new(),
+            key => format!("{key}/"),
+        };
+        let page = self
+            .list_page(&bucket, &prefix, true, cursor, PAGE_SIZE)
+            .await?;
+        let entries = page
+            .contents
+            .iter()
+            .filter_map(|object| deep_entry(&bucket, &prefix, object))
+            .collect();
+        Ok(Some(DeepPage {
+            folder: directory,
+            entries,
+            next: page.next_continuation_token.filter(|_| page.is_truncated),
+        }))
     }
 
     async fn list_dir(&self, path: &str) -> AppResult<DirListing> {
@@ -1240,6 +1293,40 @@ impl UploadTarget for S3Upload {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_listing_of_everything_names_files_and_folders_made_by_hand() {
+        let object = |key: &str| xml::Object {
+            key: key.to_string(),
+            last_modified: Some("2024-03-01T10:00:00.000Z".to_string()),
+            size: 42,
+        };
+        let entry = |key: &str| deep_entry("media", "photos/", &object(key));
+
+        let file = entry("photos/2024/cats/tom.jpg").unwrap();
+        assert_eq!(file.path, "/media/photos/2024/cats/tom.jpg");
+        assert_eq!(file.name, "tom.jpg");
+        assert_eq!(file.kind, EntryKind::File);
+        assert_eq!(file.size, 42);
+        assert_eq!(
+            file.modified,
+            timestamp::parse_rfc3339("2024-03-01T10:00:00.000Z")
+        );
+
+        let folder = entry("photos/2024/empty/").unwrap();
+        assert_eq!(folder.path, "/media/photos/2024/empty");
+        assert_eq!(folder.name, "empty");
+        assert_eq!(folder.kind, EntryKind::Dir);
+        assert_eq!(folder.size, 0);
+
+        assert!(entry("photos/").is_none(), "the folder's own marker");
+        assert!(entry("photos//nameless").is_none());
+        assert!(entry("photos/a//b").is_none());
+        assert!(entry("elsewhere/x").is_none());
+        let at_top = deep_entry("media", "", &object(".hidden")).unwrap();
+        assert_eq!(at_top.path, "/media/.hidden");
+        assert!(at_top.hidden);
+    }
 
     fn profile(host: &str, port: u16) -> ConnectProfile {
         serde_json::from_value(serde_json::json!({

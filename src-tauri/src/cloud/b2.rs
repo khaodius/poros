@@ -24,7 +24,7 @@ use super::{FolderCache, HttpReader};
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::model::{DirListing, EntryKind, FileEntry};
 use crate::protocol::{
-    self, Capabilities, Protocol, ReadStream, RemoteFileSystem, RemoteStat, WriteRequest,
+    self, Capabilities, DeepPage, Protocol, ReadStream, RemoteFileSystem, RemoteStat, WriteRequest,
     WriteStream,
 };
 use crate::remote_path;
@@ -898,6 +898,29 @@ fn service_error(status: StatusCode, error: ErrorBody, path: &str) -> AppError {
     AppError::new(kind, message).with_path(path)
 }
 
+/// A file in a listing of everything below `prefix`, or the folder its marker file keeps.
+fn deep_entry(bucket: &str, prefix: &str, file: &B2File) -> Option<FileEntry> {
+    let below = file.file_name.strip_prefix(prefix)?;
+    // A name no path can reach.
+    if below.split('/').any(str::is_empty) {
+        return None;
+    }
+    let name = remote_path::file_name(below);
+    if name == FOLDER_MARKER {
+        let folder = below.strip_suffix(FOLDER_MARKER)?.strip_suffix('/')?;
+        let path = format!("/{bucket}/{prefix}{folder}");
+        return Some(folder_entry(&path, remote_path::file_name(folder)));
+    }
+    let path = format!("/{bucket}/{prefix}{below}");
+    Some(super::entry(
+        &path,
+        name,
+        EntryKind::File,
+        file.content_length,
+        file.modified(),
+    ))
+}
+
 fn folder_entry(path: &str, name: &str) -> FileEntry {
     super::entry(path, name, EntryKind::Dir, 0, None)
 }
@@ -928,6 +951,32 @@ impl RemoteFileSystem for B2Fs {
             None if key.is_empty() => Err(no_such_bucket(bucket.as_deref().unwrap_or_default())),
             None => Err(super::not_found(&path)),
         }
+    }
+
+    async fn list_deep(&self, path: &str, cursor: Option<&str>) -> AppResult<Option<DeepPage>> {
+        let directory = protocol::normalize(&self.resolve(path));
+        let (Some(bucket), key) = split(&directory) else {
+            return Ok(None);
+        };
+        let bucket_id = self.existing_bucket(&bucket).await?;
+        let prefix = match key.as_str() {
+            "" => String::new(),
+            key => format!("{key}/"),
+        };
+        let page = self
+            .list_page(&bucket_id, &prefix, false, cursor, PAGE_SIZE, &directory)
+            .await?;
+        let entries = page
+            .files
+            .iter()
+            .filter(|file| file.is_file())
+            .filter_map(|file| deep_entry(&bucket, &prefix, file))
+            .collect();
+        Ok(Some(DeepPage {
+            folder: directory,
+            entries,
+            next: page.next_file_name,
+        }))
     }
 
     async fn list_dir(&self, path: &str) -> AppResult<DirListing> {
@@ -1306,6 +1355,34 @@ impl UploadTarget for B2Upload {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_listing_of_everything_names_files_and_kept_folders() {
+        let list: FileList = serde_json::from_str(
+            r#"{"files":[
+                {"action":"upload","contentLength":2048,"fileId":"4_z1","fileInfo":{"src_last_modified_millis":"1700000000123"},"fileName":"photos/2024/cats/tom.jpg","uploadTimestamp":1710000000000},
+                {"action":"upload","contentLength":0,"fileId":"4_z2","fileInfo":{},"fileName":"photos/2024/empty/.bzEmpty","uploadTimestamp":1710000000000},
+                {"action":"upload","contentLength":0,"fileId":"4_z3","fileInfo":{},"fileName":"photos/.bzEmpty","uploadTimestamp":1710000000000},
+                {"action":"upload","contentLength":1,"fileId":"4_z4","fileInfo":{},"fileName":"photos//nameless","uploadTimestamp":1710000000000},
+                {"action":"upload","contentLength":1,"fileId":"4_z5","fileInfo":{},"fileName":"elsewhere/x","uploadTimestamp":1710000000000}
+            ],"nextFileName":null}"#,
+        )
+        .unwrap();
+        let entries: Vec<FileEntry> = list
+            .files
+            .iter()
+            .filter_map(|file| deep_entry("media", "photos/", file))
+            .collect();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].path, "/media/photos/2024/cats/tom.jpg");
+        assert_eq!(entries[0].name, "tom.jpg");
+        assert_eq!(entries[0].kind, EntryKind::File);
+        assert_eq!(entries[0].size, 2048);
+        assert_eq!(entries[0].modified, Some(1_700_000_000));
+        assert_eq!(entries[1].path, "/media/photos/2024/empty");
+        assert_eq!(entries[1].name, "empty");
+        assert_eq!(entries[1].kind, EntryKind::Dir);
+    }
 
     #[test]
     fn reads_the_authorization() {
