@@ -370,7 +370,8 @@ async fn rename_in_place(
 
 /// Puts `source` in the place of the file `target` with renames alone, since these protocols
 /// never rename over a file. The old one is moved aside first, and deleted only once the new
-/// one is in place, or put back when the rename fails.
+/// one is in place, or put back when the rename fails. When it cannot be put back, the error
+/// says where it is.
 async fn replace_by_renaming(
     files: &dyn RemoteFileSystem,
     source: &str,
@@ -380,9 +381,12 @@ async fn replace_by_renaming(
     let aside = files.rename(target, &names::temporary(name)).await?;
     let placed = match files.rename(source, name).await {
         Ok(placed) => placed,
-        Err(error) => {
+        Err(mut error) => {
             if let Err(problem) = files.rename(&aside, name).await {
-                log::warn!("{target} is left as {aside}: {}", problem.message);
+                error.message.push_str(&format!(
+                    "; the old {name} could not be put back ({}) and is now {aside}",
+                    problem.message
+                ));
             }
             return Err(error);
         }
@@ -585,7 +589,139 @@ async fn permissions(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+    use std::ops::Range;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    use async_trait::async_trait;
+
     use super::*;
+    use crate::model::DirListing;
+    use crate::protocol::{Capabilities, ReadStream, RemoteStat, WriteRequest, WriteStream};
+
+    /// Files by path on a server that never renames over a file, whose renames can be made to
+    /// fail one by one.
+    struct Renames {
+        files: Mutex<BTreeMap<String, String>>,
+        calls: AtomicUsize,
+        /// Which renames fail, counted from 0.
+        failing: Vec<usize>,
+    }
+
+    impl Renames {
+        fn new(files: &[(&str, &str)], failing: &[usize]) -> Self {
+            Self {
+                files: Mutex::new(
+                    files
+                        .iter()
+                        .map(|(path, contents)| (path.to_string(), contents.to_string()))
+                        .collect(),
+                ),
+                calls: AtomicUsize::new(0),
+                failing: failing.to_vec(),
+            }
+        }
+
+        fn files(&self) -> BTreeMap<String, String> {
+            self.files.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl RemoteFileSystem for Renames {
+        fn protocol(&self) -> Protocol {
+            Protocol::Ftp
+        }
+
+        fn home(&self) -> &str {
+            "/"
+        }
+
+        fn capabilities(&self) -> Capabilities {
+            Capabilities::default()
+        }
+
+        async fn canonicalize(&self, path: &str) -> AppResult<String> {
+            Ok(protocol::normalize(path))
+        }
+
+        async fn list_dir(&self, _path: &str) -> AppResult<DirListing> {
+            unimplemented!()
+        }
+
+        async fn make_dir(&self, _parent: &str, _name: &str) -> AppResult<String> {
+            unimplemented!()
+        }
+
+        async fn rename(&self, path: &str, new_name: &str) -> AppResult<String> {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
+            if self.failing.contains(&call) {
+                return Err(AppError::new(
+                    ErrorKind::PermissionDenied,
+                    "Permission denied",
+                ));
+            }
+            let renamed = remote_path::join(&remote_path::parent(path).unwrap(), new_name);
+            let mut files = self.files.lock().unwrap();
+            if files.contains_key(&renamed) {
+                return Err(protocol::already_exists(&renamed));
+            }
+            let contents = files.remove(path).ok_or_else(|| super::missing(path))?;
+            files.insert(renamed.clone(), contents);
+            Ok(renamed)
+        }
+
+        async fn delete(&self, paths: &[String]) -> AppResult<()> {
+            let mut files = self.files.lock().unwrap();
+            for path in paths {
+                files.remove(path);
+            }
+            Ok(())
+        }
+
+        async fn stat(&self, path: &str) -> AppResult<Option<RemoteStat>> {
+            Ok(self
+                .files
+                .lock()
+                .unwrap()
+                .get(path)
+                .map(|contents| RemoteStat {
+                    is_dir: false,
+                    size: contents.len() as u64,
+                    modified: None,
+                    permissions: None,
+                }))
+        }
+
+        async fn ensure_dir(&self, _path: &str) -> AppResult<()> {
+            unimplemented!()
+        }
+
+        async fn set_attributes(
+            &self,
+            _path: &str,
+            _modified: Option<i64>,
+            _permissions: Option<u32>,
+        ) -> AppResult<()> {
+            unimplemented!()
+        }
+
+        async fn open_read(
+            self: Arc<Self>,
+            _path: &str,
+            _range: Range<u64>,
+        ) -> AppResult<Box<dyn ReadStream>> {
+            unimplemented!()
+        }
+
+        async fn open_write(
+            self: Arc<Self>,
+            _request: WriteRequest,
+        ) -> AppResult<Box<dyn WriteStream>> {
+            unimplemented!()
+        }
+    }
 
     fn apply(text: &str, mode: u32) -> (u32, u32) {
         let (files, folders) = parse_mode_change(text).unwrap();
@@ -607,5 +743,66 @@ mod tests {
         assert!(parse_mode_change("u*x").is_err());
         assert!(parse_mode_change("z+x").is_err());
         assert!(parse_mode_change("u+q").is_err());
+    }
+
+    const BEFORE: [(&str, &str); 2] = [("/f/draft.txt", "new"), ("/f/notes.txt", "old")];
+
+    #[tokio::test]
+    async fn the_new_file_takes_the_old_ones_place() {
+        let files = Renames::new(&BEFORE, &[]);
+        let placed = replace_by_renaming(&files, "/f/draft.txt", "/f/notes.txt")
+            .await
+            .unwrap();
+        assert_eq!(placed, "/f/notes.txt");
+        assert_eq!(
+            files.files(),
+            BTreeMap::from([("/f/notes.txt".to_string(), "new".to_string())])
+        );
+    }
+
+    #[tokio::test]
+    async fn the_old_file_is_put_back_when_the_new_one_cannot_take_its_place() {
+        // The second rename, of the new file onto the name, fails.
+        let files = Renames::new(&BEFORE, &[1]);
+        let error = replace_by_renaming(&files, "/f/draft.txt", "/f/notes.txt")
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind, ErrorKind::PermissionDenied);
+        assert_eq!(error.message, "Permission denied");
+        assert_eq!(
+            files.files(),
+            BEFORE
+                .iter()
+                .map(|(path, contents)| (path.to_string(), contents.to_string()))
+                .collect()
+        );
+    }
+
+    #[tokio::test]
+    async fn the_error_says_where_the_old_file_is_when_it_cannot_be_put_back() {
+        // Moving the old file aside works; placing the new one and putting the old one back
+        // both fail.
+        let files = Renames::new(&BEFORE, &[1, 2]);
+        let error = replace_by_renaming(&files, "/f/draft.txt", "/f/notes.txt")
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind, ErrorKind::PermissionDenied);
+        let left = files.files();
+        let aside: Vec<&String> = left
+            .keys()
+            .filter(|path| path.starts_with("/f/.notes.txt.poros-"))
+            .collect();
+        assert_eq!(aside.len(), 1, "{left:?}");
+        assert_eq!(left[aside[0]], "old");
+        assert_eq!(left["/f/draft.txt"], "new");
+        assert!(!left.contains_key("/f/notes.txt"));
+        assert_eq!(
+            error.message,
+            format!(
+                "Permission denied; the old notes.txt could not be put back (Permission denied) \
+                 and is now {}",
+                aside[0]
+            )
+        );
     }
 }
