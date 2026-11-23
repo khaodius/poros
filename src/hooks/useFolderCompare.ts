@@ -12,7 +12,13 @@ import {
 } from "../lib/folderCompare";
 import type { FolderCompareSettings } from "../lib/settings";
 import { isDirLike } from "../lib/sort";
-import { paneKey, snapshotOf, type DeepState, type PaneSnapshot } from "../state/folderCompare";
+import {
+  comparedListing,
+  paneKey,
+  snapshotOf,
+  type DeepState,
+  type PaneSnapshot,
+} from "../state/folderCompare";
 import {
   WINDOW_LABEL,
   connectFolderCompare,
@@ -135,7 +141,9 @@ export function useFolderCompare({
   });
 
   const comparing = pairId !== undefined;
-  const listing = pane.listing;
+  // The folder's listing, also while search results are on show in front of it: the results
+  // arrive in batches, and none of them is a folder to compare.
+  const listing = comparedListing(pane);
   const outdated = pane.stale === "outdated";
   const showingResults = pane.showingResults;
   const snapshot = useMemo<PaneSnapshot | null>(

@@ -105,7 +105,10 @@ interface Load {
 const NOT_STARTED: Load = { shown: false, answered: Promise.resolve(false) };
 
 export interface PaneController {
+  /** What the pane shows: the folder's listing, or the results while they are on show. */
   listing: DirListing | null;
+  /** The folder's listing, which stays behind the results while they are on show. */
+  folder: DirListing | null;
   /** The entries on show, in the order shown; none from collapsed groups. */
   visibleEntries: FileEntry[];
   /** Entries the filter and the hidden files setting let through, collapsed groups included. */
@@ -864,6 +867,7 @@ export function usePane(
 
   return {
     listing: displayed,
+    folder: folderDisplayed,
     visibleEntries,
     entryCount: sortedEntries.length,
     groups,

@@ -66,6 +66,7 @@ export interface PaneSnapshot {
 
 /** What a file pane shows, as `snapshotOf` reads it. */
 export interface ShownFolder {
+  /** The folder's listing, as `comparedListing` gives it. */
   listing: Pick<DirListing, "path" | "parent" | "entries"> | null;
   location: FileLocation;
   pathStyle: PathStyle;
@@ -79,6 +80,18 @@ export interface ShownFolder {
   outdated: boolean;
   /** Search results are on show in place of the folder, whose listing stays behind them. */
   showingResults: boolean;
+}
+
+/**
+ * The listing a compared pane is compared by: its folder's, which stays behind search results
+ * while they are on show. The results come from many folders and are not compared.
+ */
+export function comparedListing(pane: {
+  listing: DirListing | null;
+  folder: DirListing | null;
+  showingResults: boolean;
+}): DirListing | null {
+  return pane.showingResults ? pane.folder : pane.listing;
 }
 
 /**

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { CompareEntry } from "../lib/folderCompare";
 import { DEFAULT_SETTINGS, type FolderCompareSettings } from "../lib/settings";
 import type {
+  DirListing,
   FileEntry,
   FolderCompareRequest,
   FolderComparison,
@@ -9,6 +10,7 @@ import type {
   SessionInfo,
 } from "../lib/types";
 import {
+  comparedListing,
   createFolderCompare,
   isCompareMessage,
   moveBetween,
@@ -356,9 +358,53 @@ describe("what a pane gives the comparison", () => {
     });
   });
 
-  it("pauses while a pane shows search results, and marks the rows again once they close", async () => {
-    expect(snapshotOf(shown({ showingResults: true }))?.showingResults).toBe(true);
+  it("compares the folder behind search results, and pauses while they are on show", async () => {
+    const entry = (path: string, kind: FileEntry["kind"], size: number, modified: number) => ({
+      ...row,
+      name: path.slice(path.lastIndexOf("/") + 1),
+      path,
+      kind,
+      size,
+      modified,
+    });
+    const folder: DirListing = {
+      path: "/var/www",
+      parent: "/var",
+      entries: [
+        entry("/var/www/docs", "dir", 0, 0),
+        entry("/var/www/same.txt", "file", 10, 101),
+        entry("/var/www/edited.txt", "file", 10, 100),
+      ],
+    };
+    // As a pane shows them: found in and below the folder, under its path and with no parent.
+    const results: DirListing = {
+      path: "/var/www",
+      parent: null,
+      entries: [entry("/var/www/docs/api/readme.md", "file", 3, 5)],
+    };
+    const right = (showingResults: boolean) =>
+      snapshotOf(
+        shown({
+          listing: comparedListing({
+            listing: showingResults ? results : folder,
+            folder,
+            showingResults,
+          }),
+          location: { kind: "local" },
+          info: undefined,
+          showingResults,
+        }),
+      );
+    expect(right(true)).toEqual({ ...right(false), showingResults: true });
+    expect(right(true)).toMatchObject({ path: "/var/www", parent: "/var" });
+    expect(right(true)?.entries.map((item) => item.name)).toEqual([
+      "docs",
+      "same.txt",
+      "edited.txt",
+    ]);
+
     const { main, pairId, state } = await comparedPair();
+    main.compare.publish("right", right(false));
     const started = main.compare.startDeep("left");
     main.finish({
       folders: [summary("docs", { identical: 1, newerLeft: 1 })],
@@ -368,14 +414,15 @@ describe("what a pane gives the comparison", () => {
     });
     await started;
     expect(state().comparisons[pairId]?.left.get("docs")?.state).toBe("differsInside");
-    // Results are not the folder: neither pane's rows are marked, as their names are not the
-    // folder's rows. The folder stays behind them, so nothing found below it is dropped.
-    main.compare.publish("right", listed("/var/www", THERE, { showingResults: true }));
+    // Results open: neither pane is marked, and what was found below the folder is kept.
+    main.compare.publish("right", right(true));
     expect(state().comparisons[pairId]).toBeNull();
     expect(state().deep[pairId]).toMatchObject({ status: "done" });
     void main.compare.startDeep("left");
     expect(main.requests).toHaveLength(1);
-    main.compare.publish("right", listed("/var/www", THERE));
+    // Results closed: the marks are back, the ones from below the folder too.
+    main.compare.publish("right", right(false));
+    expect(state().deep[pairId]).toMatchObject({ status: "done" });
     expect(states(state().comparisons[pairId]?.left)).toEqual({
       docs: "differsInside",
       "same.txt": "identical",
