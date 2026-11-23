@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
+use super::batch::{BatchTally, JobBatch};
 use super::conflict::ExistsAction;
 use super::options::JobOptions;
 use super::pieces::Pieces;
@@ -80,6 +81,9 @@ pub struct JobSpec {
     pub ancestors: Arc<[String]>,
     /// What a synchronization asks of the file beyond the transfer settings.
     pub options: Option<Arc<JobOptions>>,
+    /// The jobs it was queued with for a caller that follows them all, such as a scheduled
+    /// task.
+    pub batch: Option<Arc<JobBatch>>,
 }
 
 impl JobSpec {
@@ -394,6 +398,7 @@ impl Job {
             delta_bytes: self.delta_bytes,
             direct: self.direct,
             reconnecting: self.reconnecting,
+            label: self.spec.batch.as_ref().map(|batch| batch.label.clone()),
         }
     }
 }
@@ -429,6 +434,9 @@ pub struct JobSnapshot {
     pub direct: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub reconnecting: bool,
+    /// What queued the job when it was not the user: a scheduled task's name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
@@ -878,6 +886,8 @@ impl Queue {
                 let rank = job.rank.clone();
                 let changed = changed_directory(&job.spec);
                 self.changed_directories.push(changed);
+                // Its children stand for it in its batch from here on.
+                job.spec.batch = None;
                 self.forget(id);
                 for (index, child) in children.into_iter().enumerate() {
                     let child_rank = format!("{rank}{}", rank_segment(index as u32));
@@ -1097,6 +1107,9 @@ impl Queue {
 
     fn forget(&mut self, id: JobId) {
         if let Some(job) = self.jobs.remove(&id) {
+            if let Some(batch) = &job.spec.batch {
+                batch.departs(&job);
+            }
             self.pending.remove(&job.rank);
             self.dirty.remove(&id);
             self.removed.push(id);
@@ -1339,6 +1352,22 @@ impl Queue {
         }
     }
 
+    /// How the jobs of `batch` stand: the ones that left the queue, and the ones still in it
+    /// by the state they are in.
+    pub fn batch_tally(&self, batch: &Arc<JobBatch>) -> BatchTally {
+        let mut tally = batch.departed();
+        let in_batch = |job: &&Job| {
+            job.spec
+                .batch
+                .as_ref()
+                .is_some_and(|other| Arc::ptr_eq(other, batch))
+        };
+        for job in self.jobs.values().filter(in_batch) {
+            tally.count(job);
+        }
+        tally
+    }
+
     pub fn snapshots(&self) -> Vec<JobSnapshot> {
         let mut snapshots: Vec<JobSnapshot> = self.jobs.values().map(Job::snapshot).collect();
         snapshots.sort_by(|left, right| left.rank.cmp(&right.rank));
@@ -1424,6 +1453,7 @@ mod tests {
             size,
             ancestors: Arc::from([]),
             options: None,
+            batch: None,
         }
     }
 
@@ -1491,6 +1521,63 @@ mod tests {
         let (_, removed, changed) = queue.take_changes();
         assert_eq!(removed, vec![folder_id]);
         assert_eq!(changed[0].path, "/remote");
+    }
+
+    #[test]
+    fn a_batch_follows_its_jobs_through_folders_and_out_of_the_queue() {
+        let batch = JobBatch::new("Nightly", ExistsAction::Ask);
+        // No one is there to answer.
+        assert_eq!(batch.exists_action, ExistsAction::Overwrite);
+        let in_batch = |spec: JobSpec| JobSpec {
+            batch: Some(batch.clone()),
+            ..spec
+        };
+        let mut queue = Queue::new();
+        let folder_id = queue.add(in_batch(folder("dir")));
+        let other = queue.add(file("someone else's", 5));
+        assert_eq!(queue.batch_tally(&batch).unfinished, 1);
+        let labels: Vec<Option<String>> =
+            queue.snapshots().into_iter().map(|job| job.label).collect();
+        assert_eq!(labels, [Some("Nightly".to_string()), None]);
+
+        // The folder lists, and what it held stands for it from then on.
+        queue.claim(Instant::now()).unwrap();
+        let children = ["one", "two", "three", "four"].map(|name| in_batch(file(name, 10)));
+        finish(
+            &mut queue,
+            folder_id,
+            RunOutcome::Expanded(children.to_vec()),
+        );
+        let listed = queue.batch_tally(&batch);
+        assert_eq!((listed.unfinished, listed.done, listed.removed), (4, 0, 0));
+
+        let ids: Vec<JobId> = (0..4)
+            .map(|_| queue.claim(Instant::now()).unwrap().id)
+            .collect();
+        finish(&mut queue, ids[0], RunOutcome::Completed);
+        let denied = AppError::new(ErrorKind::PermissionDenied, "denied");
+        finish(&mut queue, ids[1], RunOutcome::Failed(denied));
+        finish(&mut queue, ids[2], RunOutcome::Skipped("is there".into()));
+        // Taken off the queue while it runs.
+        queue.remove(&[ids[3]]);
+        finish(&mut queue, ids[3], RunOutcome::Stopped);
+        let ended = BatchTally {
+            done: 1,
+            skipped: 1,
+            failed: 1,
+            removed: 1,
+            unfinished: 0,
+            bytes: 10,
+            failures: vec!["/local/two: denied".into()],
+        };
+        assert_eq!(queue.batch_tally(&batch), ended);
+        assert!(!ended.is_clean());
+
+        // Clearing the list afterwards changes nothing about how the batch ended.
+        queue.clear(&[JobState::Done, JobState::Skipped, JobState::Failed]);
+        assert_eq!(queue.batch_tally(&batch), ended);
+        // The other job was never part of it.
+        assert_eq!(queue.job(other).unwrap().state, JobState::Queued);
     }
 
     #[test]

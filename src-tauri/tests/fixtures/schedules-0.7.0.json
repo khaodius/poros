@@ -1,0 +1,138 @@
+[
+  {
+    "id": "5d0f6a0e-1b0c-4a55-9d3f-2f6f0a4f7c11",
+    "name": "Nightly site upload",
+    "enabled": true,
+    "trigger": {
+      "type": "daily",
+      "minuteOfDay": 120,
+      "weekdays": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ]
+    },
+    "action": {
+      "type": "sync",
+      "connectionId": "b7c1f2de-8a43-4a0b-9a57-0d1c6e2f9a01",
+      "localPath": "/home/me/site",
+      "remotePath": "/var/www/site",
+      "direction": "upload",
+      "compare": "sizeAndTime",
+      "timeToleranceSecs": 2,
+      "skipNewerOnTarget": false,
+      "ignoreExisting": false,
+      "deleteExtraneous": true,
+      "excludes": [
+        "*.tmp",
+        ".git/"
+      ],
+      "existingOnly": false,
+      "minSize": null,
+      "maxSize": null,
+      "recursive": true,
+      "dirs": false,
+      "mkpath": false,
+      "pruneEmptyDirs": false,
+      "wholeFile": false,
+      "inplace": false,
+      "append": "off",
+      "blockSize": null,
+      "removeSourceFiles": false,
+      "fsync": false,
+      "rsyncPath": "",
+      "deleteTiming": "during",
+      "deleteExcluded": false,
+      "maxDelete": 500,
+      "force": false,
+      "ignoreErrors": false,
+      "filterRules": [],
+      "includes": [],
+      "includeFrom": [],
+      "excludeFrom": [],
+      "filesFrom": "",
+      "from0": false,
+      "filterFiles": "off",
+      "cvsExclude": false,
+      "times": true,
+      "omitDirTimes": false,
+      "perms": false,
+      "executability": false,
+      "chmod": "",
+      "owner": false,
+      "group": false,
+      "chown": "",
+      "numericIds": false,
+      "links": "follow",
+      "safeLinks": false,
+      "copyUnsafeLinks": false,
+      "copyDirlinks": false,
+      "keepDirlinks": false,
+      "bwlimitKib": 0,
+      "compress": false,
+      "backup": false,
+      "backupDir": "",
+      "backupSuffix": "",
+      "dryRun": false,
+      "itemize": false,
+      "verbose": false,
+      "stats": false,
+      "logFile": "",
+      "arguments": "--delete-after"
+    },
+    "runMissed": true,
+    "nextRun": 1795485600,
+    "lastRun": {
+      "started": 1795399200,
+      "finished": 1795399231,
+      "succeeded": true,
+      "message": "12 files copied (3.4 MB)"
+    }
+  },
+  {
+    "id": "c2a9e6b4-3f7d-4d21-8e0a-6b5f4c3d2e10",
+    "name": "Rotate logs",
+    "enabled": false,
+    "trigger": {
+      "type": "every",
+      "minutes": 360,
+      "start": 1790000000
+    },
+    "action": {
+      "type": "command",
+      "connectionId": "b7c1f2de-8a43-4a0b-9a57-0d1c6e2f9a01",
+      "command": "logrotate -f /etc/logrotate.d/site",
+      "directory": "/var/log"
+    },
+    "runMissed": false,
+    "nextRun": 1795420800,
+    "lastRun": {
+      "started": 1795377600,
+      "finished": 1795377602,
+      "succeeded": false,
+      "message": "Command exited with status 1: error: skipping \"/var/log/site.log\""
+    }
+  },
+  {
+    "id": "0e8b7a55-6c1d-4f3e-b2a9-91d4c7e5f602",
+    "name": "Announce the move",
+    "enabled": true,
+    "trigger": {
+      "type": "once",
+      "at": 1795500000
+    },
+    "action": {
+      "type": "command",
+      "connectionId": "b7c1f2de-8a43-4a0b-9a57-0d1c6e2f9a01",
+      "command": "wall 'Moving to the new server tonight'",
+      "directory": null
+    },
+    "runMissed": true,
+    "nextRun": 1795500000,
+    "lastRun": null
+  }
+]

@@ -3,6 +3,7 @@
 //! a large file to move separate parts of it at once. SFTP has a pipelined path of its own;
 //! other protocols, and copies between two servers, stream through `RemoteFileSystem`.
 
+mod batch;
 mod conflict;
 mod copy;
 mod delta;
@@ -26,6 +27,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
+pub use batch::{BatchTally, JobBatch};
 pub use conflict::ExistsAction;
 pub use options::{Backup, JobOptions};
 use queue::Totals;
@@ -461,6 +463,18 @@ impl TransferWatch {
         }
     }
 
+    /// Waits until every job of `batch` has finished or left the queue, folders and all they
+    /// held included, and says how they ended.
+    pub async fn wait_for_batch(&self, batch: &Arc<JobBatch>) -> BatchTally {
+        loop {
+            let tally = self.shared.queue.lock().unwrap().batch_tally(batch);
+            if tally.unfinished == 0 || self.shared.stopping.load(Ordering::Relaxed) {
+                return tally;
+            }
+            tokio::time::sleep(TICK).await;
+        }
+    }
+
     /// How the downloads into `folder` and below it stand.
     pub fn downloads_into(&self, folder: &Path) -> FolderProgress {
         let queue = self.shared.queue.lock().unwrap();
@@ -574,7 +588,7 @@ impl TransferManager {
     }
 
     pub async fn enqueue(&self, request: EnqueueRequest) -> AppResult<usize> {
-        let specs = self.specs_for(&request).await?;
+        let specs = self.specs_for(&request, None).await?;
         self.add_jobs(specs, Placement::Last);
         Ok(request.items.len())
     }
@@ -582,9 +596,38 @@ impl TransferManager {
     /// Queues jobs ahead of everything else, starting them even when transfers wait for Start:
     /// a drag out of Poros waits on them.
     pub async fn enqueue_first(&self, request: EnqueueRequest) -> AppResult<()> {
-        let specs = self.specs_for(&request).await?;
+        let specs = self.specs_for(&request, None).await?;
         self.add_jobs(specs, Placement::First);
         Ok(())
+    }
+
+    /// Queues jobs as one batch for a caller that follows them with
+    /// `TransferWatch::wait_for_batch`, such as a scheduled task. They start even when
+    /// transfers wait for Start, since no one is there to press it. A queue the user has paused
+    /// takes none of them, so the caller is not kept waiting for as long as it stays paused:
+    /// `false` then.
+    pub async fn enqueue_batch(
+        &self,
+        request: EnqueueRequest,
+        batch: Arc<JobBatch>,
+    ) -> AppResult<bool> {
+        let specs = self.specs_for(&request, Some(batch)).await?;
+        {
+            let mut queue = self.shared.queue.lock().unwrap();
+            if queue.paused {
+                return Ok(false);
+            }
+            for spec in specs {
+                queue.add(spec);
+            }
+        }
+        self.shared.work.notify_waiters();
+        Ok(true)
+    }
+
+    /// Whether the user has paused the whole queue.
+    pub fn is_paused(&self) -> bool {
+        self.shared.queue.lock().unwrap().paused
     }
 
     /// Leaves out of the saved queue the jobs writing into `folder`, which holds files only for
@@ -593,7 +636,11 @@ impl TransferManager {
         self.shared.unsaved_folders.lock().unwrap().push(folder);
     }
 
-    async fn specs_for(&self, request: &EnqueueRequest) -> AppResult<Vec<JobSpec>> {
+    async fn specs_for(
+        &self,
+        request: &EnqueueRequest,
+        batch: Option<Arc<JobBatch>>,
+    ) -> AppResult<Vec<JobSpec>> {
         let session = self.shared.sessions.get(&request.session_id).await?;
         let source_session = match (request.direction, &request.source_session_id) {
             (Direction::Relay, Some(source_id)) => Some(self.shared.sessions.get(source_id).await?),
@@ -630,6 +677,7 @@ impl TransferManager {
                 size: if item.is_dir { 0 } else { item.size },
                 ancestors: Arc::from([]),
                 options: None,
+                batch: batch.clone(),
             });
         }
         if let Some(source_session) = &source_session {
@@ -668,6 +716,7 @@ impl TransferManager {
                         size: file.size,
                         ancestors: Arc::from([]),
                         options: file.options,
+                        batch: None,
                     };
                     queue.add_resolved(spec, file.resolution)
                 })

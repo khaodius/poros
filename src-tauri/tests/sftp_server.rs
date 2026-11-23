@@ -10,7 +10,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use poros_lib::automation::remote_command::{self, OutputStream};
-use poros_lib::automation::scheduler::{self, TaskAction, TaskContext};
+use poros_lib::automation::runner::{self, SignIn, TaskContext};
+use poros_lib::automation::schedule::Trigger;
+use poros_lib::automation::task::{ScheduledTask, TaskAction, TaskItem};
 use poros_lib::connections::{AuthType, ConnectionStore, SavedConnection, SecretStore};
 use poros_lib::error::{AppResult, ErrorKind};
 use poros_lib::events::Events;
@@ -1950,10 +1952,26 @@ impl SecretStore for NoSecrets {
     }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn scheduled_tasks_connect_on_their_own() {
-    let Some(server) = server() else { return };
-    let workspace = TransferFixture::new(&server, "scheduled").await;
+/// A task as the scheduler would hand it over for a run.
+fn scheduled(action: TaskAction) -> ScheduledTask {
+    ScheduledTask {
+        id: "task".into(),
+        name: "Nightly".into(),
+        enabled: true,
+        trigger: Trigger::Every {
+            minutes: 60,
+            start: 0,
+        },
+        action,
+        run_missed: true,
+        next_run: None,
+        last_run: None,
+    }
+}
+
+/// The test server as a saved connection that signs in with a key, so a task can open it with
+/// nothing from a keychain.
+fn saved_server(server: &Server) -> (tempfile::TempDir, Arc<ConnectionStore>, String) {
     let store_dir = tempfile::tempdir().unwrap();
     let connections = Arc::new(ConnectionStore::new(
         store_dir.path().join("connections.json"),
@@ -1983,6 +2001,14 @@ async fn scheduled_tasks_connect_on_their_own() {
             None,
         )
         .unwrap();
+    (store_dir, connections, saved.id)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn scheduled_tasks_connect_on_their_own() {
+    let Some(server) = server() else { return };
+    let workspace = TransferFixture::new(&server, "scheduled").await;
+    let (_store_dir, connections, connection_id) = saved_server(&server);
     let sync = SyncManager::new(workspace.manager.clone(), Events::default());
     let transfers = workspace.transfers(transfer_settings());
     let events = Events::default();
@@ -1990,48 +2016,261 @@ async fn scheduled_tasks_connect_on_their_own() {
         sessions: &workspace.manager,
         connections,
         connection_settings: ConnectionSettings::default(),
+        cloud_settings: Default::default(),
         sync: &sync,
         transfers: &transfers,
         events: &events,
+        sign_in: SignIn::default(),
     };
 
     let local = workspace.local.path().join("backup");
     write_tree(&local);
-    let upload = TaskAction::Sync {
-        connection_id: saved.id.clone(),
+    let upload = scheduled(TaskAction::Sync {
+        connection_id: connection_id.clone(),
         local_path: local.to_string_lossy().into_owned(),
         remote_path: workspace.remote.clone(),
         direction: SyncDirection::Upload,
         options: Box::default(),
         arguments: String::new(),
-    };
-    let first = scheduler::perform(&upload, &context).await.unwrap();
+    });
+    let first = runner::perform(&upload, &context).await.unwrap();
     assert!(first.succeeded, "{}", first.message);
     assert!(
         first.message.starts_with("5 files copied"),
         "{}",
         first.message
     );
-    let again = scheduler::perform(&upload, &context).await.unwrap();
+    let again = runner::perform(&upload, &context).await.unwrap();
     assert_eq!(again.message, "The folders already match");
 
-    let command = TaskAction::Command {
-        connection_id: saved.id.clone(),
+    let command = scheduled(TaskAction::Command {
+        connection_id: connection_id.clone(),
         command: "ls | wc -l; echo done-$((1 + 1))".into(),
         directory: Some(workspace.remote.clone()),
-    };
-    let ran = scheduler::perform(&command, &context).await.unwrap();
+    });
+    let ran = runner::perform(&command, &context).await.unwrap();
     assert!(ran.succeeded);
     assert_eq!(ran.message, "Command finished: done-2");
 
-    let failing = TaskAction::Command {
-        connection_id: saved.id,
+    let failing = scheduled(TaskAction::Command {
+        connection_id,
         command: "echo nope >&2; exit 1".into(),
         directory: None,
-    };
-    let failed = scheduler::perform(&failing, &context).await.unwrap();
+    });
+    let failed = runner::perform(&failing, &context).await.unwrap();
     assert!(!failed.succeeded);
     assert_eq!(failed.message, "Command exited with status 1: nope");
+    drop(transfers);
+    workspace.close().await;
+}
+
+/// A few small files in folders, one of them empty.
+fn write_small_tree(root: &Path) {
+    std::fs::create_dir_all(root.join("css/themes")).unwrap();
+    std::fs::create_dir_all(root.join("empty folder")).unwrap();
+    std::fs::write(root.join("index.html"), pattern(4000, 5)).unwrap();
+    std::fs::write(root.join("css/site.css"), pattern(70_000, 6)).unwrap();
+    std::fs::write(root.join("css/themes/dark mode.css"), pattern(900, 7)).unwrap();
+}
+
+/// Every file and folder under `root` on the server, relative to it, with file sizes.
+async fn remote_tree(workspace: &TransferFixture, root: &str) -> Vec<(String, Option<u64>)> {
+    let files = workspace
+        .manager
+        .get(&workspace.session.id)
+        .await
+        .unwrap()
+        .files();
+    let mut items = Vec::new();
+    let mut pending = vec![root.to_string()];
+    while let Some(folder) = pending.pop() {
+        for entry in files.list_dir(&folder).await.unwrap().entries {
+            let relative = entry.path[root.len() + 1..].to_string();
+            if entry.kind == EntryKind::Dir {
+                items.push((relative, None));
+                pending.push(entry.path);
+            } else {
+                items.push((relative, Some(entry.size)));
+            }
+        }
+    }
+    items.sort();
+    items
+}
+
+fn sizes(tree: Vec<(String, Option<Vec<u8>>)>) -> Vec<(String, Option<u64>)> {
+    tree.into_iter()
+        .map(|(path, contents)| (path, contents.map(|contents| contents.len() as u64)))
+        .collect()
+}
+
+fn task_item(path: &Path) -> TaskItem {
+    TaskItem {
+        path: path.to_string_lossy().into_owned(),
+        is_dir: path.is_dir(),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn scheduled_transfers_copy_a_saved_list_to_and_from_the_server() {
+    let Some(server) = server() else { return };
+    let workspace = TransferFixture::new(&server, "scheduled-transfer").await;
+    let (_store_dir, connections, connection_id) = saved_server(&server);
+    let sync = SyncManager::new(workspace.manager.clone(), Events::default());
+    let transfers = workspace.transfers(transfer_settings());
+    let events = Events::keeping_startup_log();
+    let context = TaskContext {
+        sessions: &workspace.manager,
+        connections,
+        connection_settings: ConnectionSettings::default(),
+        cloud_settings: Default::default(),
+        sync: &sync,
+        transfers: &transfers,
+        events: &events,
+        sign_in: SignIn::default(),
+    };
+
+    let site = workspace.local.path().join("site");
+    write_small_tree(&site);
+    let notes = workspace.local.path().join("notes.txt");
+    std::fs::write(&notes, pattern(2000, 9)).unwrap();
+    let upload = |exists: ExistsAction, items: Vec<TaskItem>| {
+        scheduled(TaskAction::Transfer {
+            connection_id: connection_id.clone(),
+            source_connection_id: None,
+            direction: Direction::Upload,
+            items,
+            destination: workspace.remote.clone(),
+            exists,
+            subfolder: "backup-{date}".into(),
+        })
+    };
+    let items = vec![task_item(&site), task_item(&notes)];
+    let dated = format!(
+        "{}/backup-{}",
+        workspace.remote,
+        chrono::Local::now().format("%Y-%m-%d")
+    );
+
+    let first = runner::perform(&upload(ExistsAction::Overwrite, items.clone()), &context)
+        .await
+        .unwrap();
+    assert!(first.succeeded, "{}", first.message);
+    assert_eq!(
+        first.message,
+        format!("4 files uploaded (75.1 KB) to {dated}")
+    );
+    assert_eq!(
+        remote_tree(&workspace, &format!("{dated}/site")).await,
+        sizes(read_tree(&site))
+    );
+    assert_eq!(
+        workspace.remote_bytes(&format!("{dated}/notes.txt")).await,
+        pattern(2000, 9)
+    );
+    // Its files are in the transfer list like any others, under the task's name.
+    let jobs = transfers.list().jobs;
+    assert_eq!(jobs.len(), 4, "{jobs:#?}");
+    assert!(jobs
+        .iter()
+        .all(|job| job.label.as_deref() == Some("Nightly") && job.state == JobState::Done));
+    // The run signed in for itself, and out again when its files were through.
+    assert_ne!(jobs[0].session_id, workspace.session.id);
+    assert!(!workspace.manager.is_live(&jobs[0].session_id).await);
+
+    // The same day again: what is there is passed over, as the task says.
+    let again = runner::perform(&upload(ExistsAction::Skip, items.clone()), &context)
+        .await
+        .unwrap();
+    assert!(again.succeeded, "{}", again.message);
+    assert_eq!(
+        again.message,
+        format!("0 files uploaded (0 B) to {dated}, 4 skipped")
+    );
+
+    // An item that is gone is said, and the others still go.
+    let mut with_missing = items.clone();
+    with_missing.push(TaskItem {
+        path: workspace
+            .local
+            .path()
+            .join("gone.txt")
+            .to_string_lossy()
+            .into_owned(),
+        is_dir: false,
+    });
+    let partial = runner::perform(&upload(ExistsAction::Overwrite, with_missing), &context)
+        .await
+        .unwrap();
+    assert!(!partial.succeeded);
+    assert!(
+        partial.message.starts_with("4 files uploaded")
+            && partial.message.contains("1 item not found")
+            && partial.message.contains("gone.txt"),
+        "{}",
+        partial.message
+    );
+    assert!(log_messages(&events)
+        .iter()
+        .any(|line| line.contains("gone.txt is not there any more")));
+
+    // Back from the server into a folder that is made for it.
+    let restored = workspace.local.path().join("restored/today");
+    let download = scheduled(TaskAction::Transfer {
+        connection_id: connection_id.clone(),
+        source_connection_id: None,
+        direction: Direction::Download,
+        items: vec![
+            TaskItem {
+                path: format!("{dated}/site"),
+                is_dir: true,
+            },
+            TaskItem {
+                path: format!("{dated}/notes.txt"),
+                is_dir: false,
+            },
+        ],
+        destination: workspace
+            .local
+            .path()
+            .join("restored")
+            .to_string_lossy()
+            .into_owned(),
+        exists: ExistsAction::Overwrite,
+        subfolder: "today".into(),
+    });
+    let fetched = runner::perform(&download, &context).await.unwrap();
+    assert!(fetched.succeeded, "{}", fetched.message);
+    assert!(
+        fetched
+            .message
+            .starts_with("4 files downloaded (75.1 KB) to "),
+        "{}",
+        fetched.message
+    );
+    assert_eq!(read_tree(&restored.join("site")), read_tree(&site));
+    assert_eq!(
+        std::fs::read(restored.join("notes.txt")).unwrap(),
+        pattern(2000, 9)
+    );
+
+    // A queue the user paused is left alone: the run says so and copies nothing.
+    transfers.set_paused(true);
+    std::fs::write(&notes, pattern(3000, 10)).unwrap();
+    let held = runner::perform(&upload(ExistsAction::Overwrite, items), &context)
+        .await
+        .unwrap();
+    assert!(!held.succeeded);
+    assert_eq!(
+        held.message,
+        "The transfer queue is paused, so this run was skipped"
+    );
+    transfers.set_paused(false);
+    assert_eq!(
+        workspace.remote_bytes(&format!("{dated}/notes.txt")).await,
+        pattern(2000, 9)
+    );
+
     drop(transfers);
     workspace.close().await;
 }
