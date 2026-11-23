@@ -104,6 +104,7 @@ export function TransferView({
   const jobs = useViewJobs(view);
   const bars = useSettingsStore((state) => state.settings.appearance.progressBars);
   const limits = useTransferStore((state) => state.snapshot.stats.limits);
+  const queuePaused = useTransferStore((state) => state.snapshot.stats.queuePaused);
   const now = new Date(useMinute());
   const jobsRef = useRef(jobs);
   useLayoutEffect(() => {
@@ -301,7 +302,7 @@ export function TransferView({
                 key={job.id}
                 job={job}
                 bars={bars}
-                scheduleWaitText={scheduleWait(job, limits, now)}
+                scheduleWaitText={scheduleWait(job, { limits, queuePaused }, now)}
                 top={item.start}
                 selected={selection.has(job.id)}
                 onClick={handleRowClick}

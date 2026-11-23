@@ -217,6 +217,7 @@ impl LimitSchedule {
                 .chars()
                 .take(MAX_NAME_CHARS)
                 .collect();
+            rule.name.truncate(rule.name.trim_end().len());
             rule.days.retain(|day| *day < DAYS_PER_WEEK);
             rule.days.sort_unstable();
             rule.days.dedup();
@@ -225,11 +226,20 @@ impl LimitSchedule {
             rule.upload.sanitize();
             rule.download.sanitize();
             let mut id: String = rule.id.trim().chars().take(MAX_ID_CHARS).collect();
+            id.truncate(id.trim_end().len());
             if id.is_empty() {
                 id = format!("rule-{}", index + 1);
             }
-            if seen.contains(&id) {
-                id = format!("{id}-{}", index + 1);
+            let base = id.clone();
+            let mut number = index + 1;
+            while seen.contains(&id) {
+                let suffix = format!("-{number}");
+                id = base
+                    .chars()
+                    .take(MAX_ID_CHARS - suffix.len())
+                    .chain(suffix.chars())
+                    .collect();
+                number += 1;
             }
             seen.push(id.clone());
             rule.id = id;
@@ -1004,6 +1014,54 @@ mod tests {
         let mut many = schedule(vec![LimitRule::default(); MAX_RULES + 5]);
         many.sanitize();
         assert_eq!(many.rules.len(), MAX_RULES);
+    }
+
+    #[test]
+    fn every_rule_gets_an_id_no_other_rule_has_and_keeps_it() {
+        let longest = "x".repeat(MAX_ID_CHARS);
+        let cut_at_a_space = format!("{} y", "y".repeat(MAX_ID_CHARS - 1));
+        let ids: [&str; 8] = [
+            "a",
+            "a-3",
+            "a",
+            "rule-5",
+            "",
+            &longest,
+            &longest,
+            &cut_at_a_space,
+        ];
+        let mut stored = schedule(
+            ids.iter()
+                .map(|id| LimitRule {
+                    id: id.to_string(),
+                    name: format!("{} z", "n".repeat(MAX_NAME_CHARS - 1)),
+                    ..LimitRule::default()
+                })
+                .collect(),
+        );
+        stored.sanitize();
+        let sanitized: Vec<&str> = stored.rules.iter().map(|rule| rule.id.as_str()).collect();
+        let longest_again = format!("{}-7", "x".repeat(MAX_ID_CHARS - 2));
+        let without_the_space = "y".repeat(MAX_ID_CHARS - 1);
+        assert_eq!(
+            sanitized,
+            [
+                "a",
+                "a-3",
+                "a-4",
+                "rule-5",
+                "rule-5-5",
+                longest.as_str(),
+                longest_again.as_str(),
+                without_the_space.as_str(),
+            ]
+        );
+        // A name cut just after a space loses the space, so the next pass leaves it alone.
+        assert_eq!(stored.rules[0].name, "n".repeat(MAX_NAME_CHARS - 1));
+
+        let again = stored.clone();
+        stored.sanitize();
+        assert_eq!(stored, again);
     }
 
     #[test]

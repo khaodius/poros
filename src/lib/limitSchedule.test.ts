@@ -135,6 +135,29 @@ describe("sanitizeLimitSchedule", () => {
     expect(many.rules).toHaveLength(MAX_RULES);
   });
 
+  it("gives every rule an id no other rule has, which it keeps, as the backend does", () => {
+    const longest = "x".repeat(64);
+    const cutAtASpace = `${"y".repeat(63)} y`;
+    const ids = ["a", "a-3", "a", "rule-5", "", longest, longest, cutAtASpace];
+    const stored = sanitizeLimitSchedule({
+      enabled: true,
+      rules: ids.map((id) => ({ id, name: `${"n".repeat(59)} z` })),
+    });
+    expect(stored.rules.map((rule) => rule.id)).toEqual([
+      "a",
+      "a-3",
+      "a-4",
+      "rule-5",
+      "rule-5-5",
+      longest,
+      `${"x".repeat(62)}-7`,
+      "y".repeat(63),
+    ]);
+    // A name cut just after a space loses the space, so the next pass leaves it alone.
+    expect(stored.rules[0].name).toBe("n".repeat(59));
+    expect(sanitizeLimitSchedule(stored)).toEqual(stored);
+  });
+
   it("reads anything else as a schedule switched off with no rules", () => {
     for (const stored of [undefined, null, "on", [], { enabled: "yes", rules: {} }]) {
       expect(sanitizeLimitSchedule(stored)).toEqual({ enabled: false, rules: [] });
@@ -260,16 +283,21 @@ describe("what the windows show", () => {
       pauseEnds: { upload: at(23, 13), download: null, relay: at(23, 13) },
     });
     const job = { state: "queued", direction: "upload" } as const;
-    expect(scheduleWait(job, quietHour, now)).toBe(
+    const running = { limits: quietHour, queuePaused: false };
+    expect(scheduleWait(job, running, now)).toBe(
       "Waiting for the speed limit schedule until 13:00",
     );
-    expect(scheduleWait({ ...job, direction: "relay" }, quietHour, now)).toBe(
+    expect(scheduleWait({ ...job, direction: "relay" }, running, now)).toBe(
       "Waiting for the speed limit schedule until 13:00",
     );
-    expect(scheduleWait({ ...job, direction: "download" }, quietHour, now)).toBeNull();
-    expect(scheduleWait({ ...job, state: "paused" }, quietHour, now)).toBeNull();
+    expect(scheduleWait({ ...job, direction: "download" }, running, now)).toBeNull();
+    expect(scheduleWait({ ...job, state: "paused" }, running, now)).toBeNull();
     const endless = { ...quietHour, pauseEnds: { upload: null, download: null, relay: null } };
-    expect(scheduleWait(job, endless, now)).toBe("Waiting for the speed limit schedule");
+    expect(scheduleWait(job, { ...running, limits: endless }, now)).toBe(
+      "Waiting for the speed limit schedule",
+    );
+    // A paused queue waits for Start queue, so the end of the window is not promised.
+    expect(scheduleWait(job, { ...running, queuePaused: true }, now)).toBeNull();
   });
 
   it("names the limits a rule sets in the status bar", () => {

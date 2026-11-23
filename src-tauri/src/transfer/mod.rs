@@ -787,7 +787,7 @@ impl TransferManager {
     }
 
     pub fn set_paused(&self, paused: bool) {
-        self.update_queue(|queue| queue.set_paused(paused));
+        self.update_queue(|queue| queue.set_paused(paused, Instant::now()));
     }
 
     pub fn pause(&self, ids: &[JobId]) {

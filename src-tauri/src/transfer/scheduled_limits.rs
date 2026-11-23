@@ -4,6 +4,7 @@
 //! settings always has, so nothing restarts when a rule begins or ends.
 
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use chrono::{DateTime, FixedOffset, Local, NaiveDateTime, TimeZone};
 use serde::Serialize;
@@ -179,10 +180,11 @@ pub(super) fn apply(shared: &Shared) {
     let (upload_rate, download_rate) = limiter_rates(limits, ordinary);
     shared.upload_limiter.set_rate(upload_rate);
     shared.download_limiter.set_rate(download_rate);
-    let held_changed = shared.queue.lock().unwrap().set_held(Held {
+    let held = Held {
         upload: limits.upload.is_paused(),
         download: limits.download.is_paused(),
-    });
+    };
+    let held_changed = shared.queue.lock().unwrap().set_held(held, Instant::now());
     drop(state);
 
     if held_changed {

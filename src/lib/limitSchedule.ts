@@ -11,6 +11,7 @@ import type {
   LimitSchedule,
   LimitStatus,
   RateLimit,
+  TransferStats,
 } from "./types";
 
 export const MAX_RULES = 50;
@@ -242,13 +243,17 @@ export function holds(limits: LimitStatus, direction: Direction): boolean {
   }
 }
 
-/** For a queued job the schedule holds: what it waits for, and until when if that is known. */
+/**
+ * For a queued job the schedule holds: what it waits for, and until when if that is known.
+ * `null` while the whole queue is paused, as nothing continues then until the queue is started.
+ */
 export function scheduleWait(
   job: Pick<JobSnapshot, "state" | "direction">,
-  limits: LimitStatus,
+  stats: Pick<TransferStats, "limits" | "queuePaused">,
   now: Date,
 ): string | null {
-  if (job.state !== "queued" || !holds(limits, job.direction)) return null;
+  const { limits } = stats;
+  if (stats.queuePaused || job.state !== "queued" || !holds(limits, job.direction)) return null;
   const end = limits.pauseEnds[job.direction];
   return end === null
     ? "Waiting for the speed limit schedule"
@@ -322,7 +327,7 @@ function oneLine(value: unknown, limit: number): string {
       return code > 0x1f && (code < 0x7f || code > 0x9f);
     })
     .join("");
-  return [...printable.trim()].slice(0, limit).join("");
+  return [...printable.trim()].slice(0, limit).join("").trimEnd();
 }
 
 /**
@@ -339,9 +344,15 @@ export function sanitizeLimitSchedule(stored: unknown): LimitSchedule {
       const rule = asObject(value);
       const days = Array.isArray(rule.days) ? rule.days : [];
       let id =
-        typeof rule.id === "string" ? [...rule.id.trim()].slice(0, MAX_ID_CHARS).join("") : "";
+        typeof rule.id === "string"
+          ? [...rule.id.trim()].slice(0, MAX_ID_CHARS).join("").trimEnd()
+          : "";
       if (!id) id = `rule-${index + 1}`;
-      if (seen.has(id)) id = `${id}-${index + 1}`;
+      const base = [...id];
+      for (let number = index + 1; seen.has(id); number += 1) {
+        const suffix = `-${number}`;
+        id = base.slice(0, MAX_ID_CHARS - suffix.length).join("") + suffix;
+      }
       seen.add(id);
       return {
         id,
