@@ -970,6 +970,67 @@ async fn a_failed_upload_keeps_the_working_copy_and_can_be_tried_again() {
 }
 
 #[tokio::test]
+async fn a_save_after_a_failed_upload_is_asked_about_again() {
+    let Some(profile) = sftp_profile() else {
+        return;
+    };
+    let editing = EditingSettings {
+        upload_on_save: false,
+        ..EditingSettings::default()
+    };
+    let bench = Bench::start_with(&profile, "asked-again", editing, quick_pace(), true).await;
+    let path = bench.put("draft.txt", b"as it was on the server\n").await;
+    let opened = bench.open(&path, "nothing").await;
+    let edit = bench.wait_watching(&opened.id, 0).await;
+
+    // The user lets a save go, and it fails: a folder has taken the file's place.
+    bench
+        .files
+        .delete(std::slice::from_ref(&path))
+        .await
+        .unwrap();
+    bench
+        .files
+        .make_dir(&bench.folder, "draft.txt")
+        .await
+        .unwrap();
+    std::fs::write(&edit.local_path, "the save the user let go\n").unwrap();
+    bench
+        .wait(&opened.id, "the held save", |edit| {
+            edit.state == EditState::Changed
+        })
+        .await;
+    bench.external.upload(&opened.id).unwrap();
+    bench
+        .wait(&opened.id, "the failure", |edit| {
+            edit.state == EditState::Failed
+        })
+        .await;
+
+    // With the way clear again, a later save is not what the user let go, so it waits for them.
+    bench
+        .files
+        .delete(std::slice::from_ref(&path))
+        .await
+        .unwrap();
+    write_through(&bench.files, &path, b"as it was on the server\n").await;
+    std::fs::write(&edit.local_path, "a save nobody has seen yet\n").unwrap();
+    bench
+        .wait(&opened.id, "the later save held", |edit| {
+            edit.state == EditState::Changed
+        })
+        .await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(bench.edit(&opened.id).unwrap().state, EditState::Changed);
+    assert_eq!(bench.read(&path).await, b"as it was on the server\n");
+
+    bench.external.upload(&opened.id).unwrap();
+    bench.wait_watching(&opened.id, 1).await;
+    assert_eq!(bench.read(&path).await, b"a save nobody has seen yet\n");
+    bench.finish().await;
+}
+
+#[tokio::test]
 async fn vault_files_are_edited_as_plain_copies_and_wiped_when_the_vault_locks() {
     let Some(profile) = sftp_profile() else {
         return;

@@ -371,10 +371,10 @@ impl Follower {
     /// The working copy has come to rest with content the server does not have.
     async fn saved(&mut self, phase: Phase, content: Fingerprint) {
         match phase {
-            Phase::Watching => self.new_save(content).await,
+            Phase::Watching => self.new_save(content, None).await,
             Phase::Changed { content: held } => {
                 if held != content {
-                    self.new_save(content).await;
+                    self.new_save(content, None).await;
                 } else if self.upload_requested() {
                     self.begin_upload(content, None).await;
                 }
@@ -401,7 +401,11 @@ impl Follower {
                 retry_at,
                 ..
             } => {
-                if waiting != content || Instant::now() >= retry_at || self.upload_requested() {
+                if waiting != content {
+                    // Not the content that was let go: it is asked about like any new save.
+                    let answer = self.take_answer();
+                    self.new_save(content, answer).await;
+                } else if Instant::now() >= retry_at || self.upload_requested() {
                     let answer = self.take_answer();
                     self.begin_upload(content, answer).await;
                 }
@@ -415,7 +419,9 @@ impl Follower {
         }
     }
 
-    async fn new_save(&mut self, content: Fingerprint) {
+    /// Content not seen before: held until the user asks for it to go, unless every save goes.
+    /// `answer` is what the user said about the server's copy, should the upload go now.
+    async fn new_save(&mut self, content: Fingerprint, answer: Option<Resolution>) {
         let asks = !self.inner.settings.lock().unwrap().upload_on_save;
         let held = {
             let mut core = self.edit.core.lock().unwrap();
@@ -434,12 +440,12 @@ impl Follower {
                 name,
             }));
         } else {
-            self.begin_upload(content, None).await;
+            self.begin_upload(content, answer).await;
         }
     }
 
-    /// A failed upload goes again when the user says so, when the file is saved once more, or
-    /// when its job is tried again from the transfer queue.
+    /// A failed upload goes again when the user says so, or when its job is tried again from the
+    /// transfer queue. A save after it is a new save, asked about when saves wait to be asked for.
     async fn after_failure(
         &mut self,
         job: Option<JobId>,
@@ -464,11 +470,16 @@ impl Follower {
                 }
             }
         }
-        if failed != content || self.upload_requested() {
+        let requested = self.upload_requested();
+        if failed != content || requested {
             if let Some(job) = job {
                 self.inner.files.remove(&[job]);
             }
-            self.begin_upload(content, None).await;
+            if requested {
+                self.begin_upload(content, None).await;
+            } else {
+                self.new_save(content, None).await;
+            }
         }
     }
 
