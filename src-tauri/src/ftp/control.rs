@@ -623,10 +623,19 @@ impl Control {
             _ => return Err(reply_error(&reply)),
         };
         let ip = passive_ip(*offered.ip(), self.peer.ip());
-        Ok(PreparedData::Passive(
-            self.connect_data(SocketAddr::new(ip, offered.port()))
-                .await?,
-        ))
+        let mut connected = self.connect_data(SocketAddr::new(ip, offered.port())).await;
+        if ip != IpAddr::V4(*offered.ip()) {
+            // The address the server named may be the one that works, so the error says it.
+            connected = connected.map_err(|mut error| {
+                error.message = format!(
+                    "{}; the server named {} for the data connection, and Poros used the server's own address",
+                    error.message,
+                    offered.ip()
+                );
+                error
+            });
+        }
+        Ok(PreparedData::Passive(connected?))
     }
 
     async fn connect_data(&self, address: SocketAddr) -> AppResult<TcpStream> {
@@ -1384,6 +1393,40 @@ mod tests {
                 passive_ip(address(offered), peer(server)),
                 peer(expected),
                 "{offered} named by {server}"
+            );
+        }
+    }
+
+    /// The address a server names but Poros does not follow may be the one that works, so a
+    /// data connection that fails says which it was.
+    #[tokio::test]
+    async fn a_failed_data_connection_names_the_passive_address_not_followed() {
+        for (named, mentioned) in [(Some(Ipv4Addr::new(10, 0, 0, 7)), true), (None, false)] {
+            let server = FakeServer::start(Behavior {
+                refuses_extended_passive: true,
+                passive_address: named,
+                closes_passive_port: true,
+                ..Behavior::default()
+            })
+            .await;
+            server.put_file("/notes.txt", b"abc");
+            let (mut control, _) =
+                Control::connect(&server.profile(), None, "fake", &Events::default())
+                    .await
+                    .unwrap();
+            let Err(error) = control.retrieve("/notes.txt", 0).await else {
+                panic!("a data connection opened to a port nothing listens on");
+            };
+            let message = &error.message;
+            assert_eq!(error.kind, ErrorKind::Connection, "{message}");
+            assert!(
+                message.starts_with("Could not open a data connection to 127.0.0.1:"),
+                "{message}"
+            );
+            assert_eq!(
+                message.contains("the server named 10.0.0.7 for the data connection"),
+                mentioned,
+                "{message}"
             );
         }
     }

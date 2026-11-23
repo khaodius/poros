@@ -25,6 +25,8 @@ pub struct Behavior {
     /// The address `PASV` replies name instead of the server's own. The server still listens
     /// on its own.
     pub passive_address: Option<Ipv4Addr>,
+    /// Stops listening on the port a `PASV` reply names before the client can connect.
+    pub closes_passive_port: bool,
     /// Bytes of made-up entries that every folder listing carries besides the files.
     pub listing_padding: usize,
     /// A command the server takes this long to answer.
@@ -211,6 +213,9 @@ impl Session {
                 }
                 "PASV" => {
                     let port = self.listen().await?;
+                    if self.behavior.closes_passive_port {
+                        self.data = None;
+                    }
                     let named = self.behavior.passive_address.unwrap_or(Ipv4Addr::LOCALHOST);
                     let [first, second, third, fourth] = named.octets();
                     let reply = format!(
