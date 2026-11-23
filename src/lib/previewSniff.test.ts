@@ -4,6 +4,7 @@ import {
   drawingSize,
   extensionOf,
   hasSvgRoot,
+  imageDimensions,
   nameHint,
   sniff,
   withoutCutCharacter,
@@ -11,9 +12,9 @@ import {
 
 const encoder = new TextEncoder();
 
-function bytes(...parts: (number[] | string)[]): Uint8Array {
+function bytes(...parts: (number[] | string | Uint8Array)[]): Uint8Array {
   return Uint8Array.from(
-    parts.flatMap((part) => (typeof part === "string" ? [...encoder.encode(part)] : part)),
+    parts.flatMap((part) => (typeof part === "string" ? [...encoder.encode(part)] : [...part])),
   );
 }
 
@@ -287,6 +288,120 @@ describe("drawingSize", () => {
   it("reads a drawing kept as UTF-16", () => {
     const text = '<svg width="32" height="48"/>';
     expect(drawingSize(bytes([0xff, 0xfe], utf16(text)))).toEqual({ width: 32, height: 48 });
+  });
+});
+
+/** `value` in `length` bytes, the least significant first unless `bigEndian`. */
+function number(value: number, length: number, bigEndian = false): number[] {
+  const parts = Array.from({ length }, (_, index) => Math.floor(value / 256 ** index) % 256);
+  return bigEndian ? parts.reverse() : parts;
+}
+
+/** An ISO media box: its size, its type, then what it holds. */
+function box(type: string, ...contents: number[][]): number[] {
+  const body = contents.flat();
+  return [...number(8 + body.length, 4, true), ...encoder.encode(type), ...body];
+}
+
+describe("imageDimensions", () => {
+  it("reads a PNG's size from its header", () => {
+    const header = bytes(PNG, number(20_000, 4, true), number(30_000, 4, true), [8, 6, 0, 0, 0]);
+    expect(imageDimensions(header, "png")).toEqual({ width: 20_000, height: 30_000 });
+    expect(imageDimensions(PNG, "png")).toBeNull();
+  });
+
+  it("reads a GIF's screen, grown to a first frame that reaches past it", () => {
+    const screen = bytes("GIF89a", number(10, 2), number(10, 2), [0x80, 0, 0]);
+    const colors = new Array(6).fill(0);
+    const control = [0x21, 0xf9, 4, 0, 0, 0, 0, 0];
+    const frame = [
+      0x2c,
+      ...number(5, 2),
+      ...number(0, 2),
+      ...number(40_000, 2),
+      ...number(8, 2),
+      0,
+    ];
+    expect(imageDimensions(bytes(screen, colors), "gif")).toEqual({ width: 10, height: 10 });
+    expect(imageDimensions(bytes(screen, colors, control, frame), "gif")).toEqual({
+      width: 40_005,
+      height: 10,
+    });
+  });
+
+  it("reads a bitmap's size, stored from the top or from the bottom", () => {
+    const info = (width: number, height: number) =>
+      bytes("BM", new Array(12).fill(0), number(40, 4), number(width, 4), number(height, 4));
+    expect(imageDimensions(info(640, 480), "bmp")).toEqual({ width: 640, height: 480 });
+    expect(imageDimensions(info(640, 2 ** 32 - 480), "bmp")).toEqual({ width: 640, height: 480 });
+    const core = bytes("BM", new Array(12).fill(0), number(12, 4), number(64, 2), number(32, 2));
+    expect(imageDimensions(bytes(core, [0, 0, 0, 0]), "bmp")).toEqual({ width: 64, height: 32 });
+  });
+
+  it("reads each kind of WebP", () => {
+    const riff = (chunk: string, ...data: number[][]) =>
+      bytes("RIFF", [0, 0, 0, 0], "WEBP", chunk, [0, 0, 0, 0], ...data, new Array(8).fill(0));
+    const lossy = riff("VP8 ", [0, 0, 0, 0x9d, 0x01, 0x2a], number(16_000, 2), number(9000, 2));
+    expect(imageDimensions(lossy, "webp")).toEqual({ width: 16_000, height: 9000 });
+    const bits = (1000 - 1) | ((700 - 1) << 14);
+    const lossless = riff("VP8L", [0x2f], number(bits, 4));
+    expect(imageDimensions(lossless, "webp")).toEqual({ width: 1000, height: 700 });
+    const extended = riff("VP8X", [0, 0, 0, 0], number(16_383, 3), number(16_383, 3));
+    expect(imageDimensions(extended, "webp")).toEqual({ width: 16_384, height: 16_384 });
+  });
+
+  it("reads a JPEG's frame header, past the segments before it", () => {
+    const frame = (marker: number) =>
+      bytes(JPEG, new Array(9).fill(0), [0xff, marker, 0, 17, 8], number(3000, 2, true), [
+        ...number(4000, 2, true),
+        3,
+      ]);
+    expect(imageDimensions(frame(0xc0), "jpeg")).toEqual({ width: 4000, height: 3000 });
+    // Progressive.
+    expect(imageDimensions(frame(0xc2), "jpeg")).toEqual({ width: 4000, height: 3000 });
+    // Huffman tables are not a frame.
+    expect(imageDimensions(frame(0xc4), "jpeg")).toBeNull();
+    const scanFirst = bytes(JPEG, new Array(9).fill(0), [0xff, 0xda, 0, 8]);
+    expect(imageDimensions(scanFirst, "jpeg")).toBeNull();
+  });
+
+  it("reads an icon's largest picture, believing a PNG inside it over the directory", () => {
+    expect(imageDimensions(ICO, "ico")).toEqual({ width: 16, height: 16 });
+    const inner = bytes(PNG, number(50_000, 4, true), number(50_000, 4, true));
+    const icon = bytes([0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 32, 0], number(inner.length, 4), [
+      ...number(22, 4),
+    ]);
+    expect(imageDimensions(bytes(icon, [...inner]), "ico")).toEqual({
+      width: 50_000,
+      height: 50_000,
+    });
+  });
+
+  it("reads the largest image an AVIF file's properties give", () => {
+    const ispe = (width: number, height: number) =>
+      box("ispe", [0, 0, 0, 0], number(width, 4, true), number(height, 4, true));
+    const meta = box(
+      "meta",
+      [0, 0, 0, 0],
+      box("iprp", box("ipco", ispe(512, 512), ispe(30_000, 30_000))),
+    );
+    const file = bytes(box("ftyp", [...encoder.encode("avif")], [0, 0, 0, 0]), meta);
+    expect(imageDimensions(file, "avif")).toEqual({ width: 30_000, height: 30_000 });
+    // After the picture's data, as some files have it.
+    const late = bytes(
+      box("ftyp", [...encoder.encode("avif")]),
+      box("mdat", new Array(64).fill(7)),
+      meta,
+    );
+    expect(imageDimensions(late, "avif")).toEqual({ width: 30_000, height: 30_000 });
+    expect(imageDimensions(AVIF, "avif")).toBeNull();
+  });
+
+  it("says nothing of a drawing, nor of a header cut short", () => {
+    expect(imageDimensions(bytes(SVG), "svg")).toBeNull();
+    expect(imageDimensions(JPEG, "jpeg")).toBeNull();
+    expect(imageDimensions(WEBP, "webp")).toBeNull();
+    expect(imageDimensions(bytes("BM"), "bmp")).toBeNull();
   });
 });
 

@@ -92,6 +92,8 @@ function uint32(bytes: Uint8Array, offset: number): number {
   return (uint16(bytes, offset) | (uint16(bytes, offset + 2) << 16)) >>> 0;
 }
 
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+
 /** The header sizes a bitmap's second header can have. Two letters alone would be too little. */
 const BITMAP_HEADER_SIZES = new Set([12, 40, 52, 56, 64, 108, 124]);
 
@@ -135,7 +137,7 @@ function uint32BigEndian(bytes: Uint8Array, offset: number): number {
 const HEIF_BRANDS = new Set(["heic", "heix", "hevc", "hevx", "heim", "heis", "mif1", "msf1"]);
 
 function imageBySignature(bytes: Uint8Array): ImageFormat | null {
-  if (startsWith(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return "png";
+  if (startsWith(bytes, PNG_SIGNATURE)) return "png";
   if (startsWith(bytes, [0xff, 0xd8, 0xff])) return "jpeg";
   if (hasAscii(bytes, "GIF87a") || hasAscii(bytes, "GIF89a")) return "gif";
   if (hasAscii(bytes, "RIFF") && hasAscii(bytes, "WEBP", 8)) return "webp";
@@ -348,7 +350,8 @@ function pixels(value: string | null): number | null {
   return length > 0 && Number.isFinite(length) ? length : null;
 }
 
-export interface DrawingSize {
+/** A picture's width and height, in pixels. */
+export interface ImageSize {
   width: number;
   height: number;
 }
@@ -357,7 +360,7 @@ export interface DrawingSize {
  * The size a drawing gives itself in its `width` and `height`, completed or replaced by its
  * `viewBox`. Null when it says nothing usable: it then takes whatever size it is shown at.
  */
-export function drawingSize(bytes: Uint8Array): DrawingSize | null {
+export function drawingSize(bytes: Uint8Array): ImageSize | null {
   const encoding = detectTextEncoding(bytes.subarray(0, SVG_HEAD_BYTES), false) ?? "utf8";
   const tag = svgRootTag(headText(bytes, encoding));
   if (!tag) return null;
@@ -375,6 +378,187 @@ export function drawingSize(bytes: Uint8Array): DrawingSize | null {
   if (width) return { width: round(width), height: round((width * boxHeight) / boxWidth) };
   if (height) return { width: round((height * boxWidth) / boxHeight), height: round(height) };
   return { width: round(boxWidth), height: round(boxHeight) };
+}
+
+function uint16BigEndian(bytes: Uint8Array, offset: number): number {
+  return (bytes[offset] << 8) | bytes[offset + 1];
+}
+
+function uint24(bytes: Uint8Array, offset: number): number {
+  return bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16);
+}
+
+function int32(bytes: Uint8Array, offset: number): number {
+  return uint32(bytes, offset) | 0;
+}
+
+function sized(width: number, height: number): ImageSize | null {
+  return width > 0 && height > 0 ? { width, height } : null;
+}
+
+function larger(first: ImageSize | null, second: ImageSize | null): ImageSize | null {
+  if (!first || !second) return first ?? second;
+  return second.width * second.height > first.width * first.height ? second : first;
+}
+
+function pngSize(bytes: Uint8Array): ImageSize | null {
+  if (bytes.length < 24 || !hasAscii(bytes, "IHDR", 12)) return null;
+  return sized(uint32BigEndian(bytes, 16), uint32BigEndian(bytes, 20));
+}
+
+/** The screen a GIF gives, grown to its first frame where that reaches past it. */
+function gifSize(bytes: Uint8Array): ImageSize | null {
+  if (bytes.length < 13) return null;
+  let width = uint16(bytes, 6);
+  let height = uint16(bytes, 8);
+  const colorTable = bytes[10] & 0x80 ? 3 * 2 ** ((bytes[10] & 0x07) + 1) : 0;
+  let offset = 13 + colorTable;
+  // Extensions come before the first frame: a label, then blocks led by their length.
+  while (bytes[offset] === 0x21) {
+    offset += 2;
+    while (offset < bytes.length && bytes[offset] !== 0) offset += bytes[offset] + 1;
+    offset += 1;
+  }
+  if (bytes[offset] === 0x2c && offset + 9 <= bytes.length) {
+    width = Math.max(width, uint16(bytes, offset + 1) + uint16(bytes, offset + 5));
+    height = Math.max(height, uint16(bytes, offset + 3) + uint16(bytes, offset + 7));
+  }
+  return sized(width, height);
+}
+
+function bmpSize(bytes: Uint8Array): ImageSize | null {
+  if (bytes.length < 26) return null;
+  // The oldest header has 16-bit sizes; the others signed 32-bit ones, the height negative
+  // for rows stored from the top.
+  if (uint32(bytes, 14) === 12) return sized(uint16(bytes, 18), uint16(bytes, 20));
+  return sized(Math.abs(int32(bytes, 18)), Math.abs(int32(bytes, 22)));
+}
+
+function webpSize(bytes: Uint8Array): ImageSize | null {
+  if (bytes.length < 30) return null;
+  if (hasAscii(bytes, "VP8 ", 12)) {
+    // A frame tag of three bytes, then a start code, then 14 bits of each size.
+    if (!startsWith(bytes, [0x9d, 0x01, 0x2a], 23)) return null;
+    return sized(uint16(bytes, 26) & 0x3fff, uint16(bytes, 28) & 0x3fff);
+  }
+  if (hasAscii(bytes, "VP8L", 12)) {
+    if (bytes[20] !== 0x2f) return null;
+    const bits = uint32(bytes, 21);
+    return sized((bits & 0x3fff) + 1, ((bits >>> 14) & 0x3fff) + 1);
+  }
+  // The canvas of an extended file, which every frame is drawn on.
+  if (hasAscii(bytes, "VP8X", 12)) return sized(uint24(bytes, 24) + 1, uint24(bytes, 27) + 1);
+  return null;
+}
+
+/** The size in a JPEG's frame header, which comes before the first scan. */
+function jpegSize(bytes: Uint8Array): ImageSize | null {
+  let offset = 2;
+  while (offset + 4 <= bytes.length) {
+    if (bytes[offset] !== 0xff) return null;
+    const marker = bytes[offset + 1];
+    if (marker === 0xff) {
+      offset += 1;
+      continue;
+    }
+    // Markers without a length after them.
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+      offset += 2;
+      continue;
+    }
+    // The end of the picture, or its first scan: no frame header came before.
+    if (marker === 0xd9 || marker === 0xda) return null;
+    // Every start of frame but the tables that share its numbers.
+    const isFrame = marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker);
+    if (isFrame) {
+      if (offset + 9 > bytes.length) return null;
+      return sized(uint16BigEndian(bytes, offset + 7), uint16BigEndian(bytes, offset + 5));
+    }
+    const length = uint16BigEndian(bytes, offset + 2);
+    if (length < 2) return null;
+    offset += 2 + length;
+  }
+  return null;
+}
+
+/** The largest picture in an icon file, by its directory or by its own header if that says more. */
+function iconSize(bytes: Uint8Array): ImageSize | null {
+  let largest: ImageSize | null = null;
+  const count = uint16(bytes, 4);
+  for (let index = 0; index < count && 6 + 16 * (index + 1) <= bytes.length; index++) {
+    const entry = 6 + 16 * index;
+    // A size of 0 in the directory stands for 256.
+    const listed = sized(bytes[entry] || 256, bytes[entry + 1] || 256);
+    const inner = bytes.subarray(Math.min(bytes.length, uint32(bytes, entry + 12)));
+    let own: ImageSize | null = null;
+    if (startsWith(inner, PNG_SIGNATURE)) own = pngSize(inner);
+    else if (inner.length >= 12 && uint32(inner, 0) >= 40) {
+      // A bitmap's height here counts its transparency mask too.
+      own = sized(Math.abs(int32(inner, 4)), Math.abs(int32(inner, 8)));
+    }
+    largest = larger(largest, larger(listed, own));
+  }
+  return largest;
+}
+
+/**
+ * The largest image an AVIF file holds, by the `ispe` property each image has in the file's
+ * `meta` box: the picture itself, a grid's tiles and any thumbnail.
+ */
+function avifSize(bytes: Uint8Array): ImageSize | null {
+  let offset = 0;
+  while (offset + 8 <= bytes.length) {
+    let size = uint32BigEndian(bytes, offset);
+    let header = 8;
+    if (size === 1) {
+      if (offset + 16 > bytes.length) return null;
+      size = uint32BigEndian(bytes, offset + 8) * 2 ** 32 + uint32BigEndian(bytes, offset + 12);
+      header = 16;
+    } else if (size === 0) {
+      size = bytes.length - offset;
+    }
+    if (size < header) return null;
+    if (hasAscii(bytes, "meta", offset + 4)) {
+      const meta = bytes.subarray(offset, Math.min(bytes.length, offset + size));
+      let largest: ImageSize | null = null;
+      for (let at = 0; at + 16 <= meta.length; at++) {
+        if (!hasAscii(meta, "ispe", at)) continue;
+        largest = larger(
+          largest,
+          sized(uint32BigEndian(meta, at + 8), uint32BigEndian(meta, at + 12)),
+        );
+      }
+      return largest;
+    }
+    offset += size;
+  }
+  return null;
+}
+
+/**
+ * How many pixels wide and high a picture is, read from its header without decoding it, so a
+ * picture too large to decode safely is never handed to the web view. Null where the header does
+ * not say, and for drawings, which are drawn at the size they are shown at.
+ */
+export function imageDimensions(bytes: Uint8Array, format: ImageFormat): ImageSize | null {
+  switch (format) {
+    case "png":
+      return pngSize(bytes);
+    case "gif":
+      return gifSize(bytes);
+    case "bmp":
+      return bmpSize(bytes);
+    case "webp":
+      return webpSize(bytes);
+    case "jpeg":
+      return jpegSize(bytes);
+    case "ico":
+      return iconSize(bytes);
+    case "avif":
+      return avifSize(bytes);
+    case "svg":
+      return null;
+  }
 }
 
 function headText(bytes: Uint8Array, encoding: TextEncoding): string {

@@ -5,8 +5,10 @@ import {
   capsOf,
   changedSinceListed,
   firstStep,
+  fitsThumbnail,
   listsExactTimes,
   nextStep,
+  paneStorage,
   problemOf,
   selectionKey,
   storageKind,
@@ -40,6 +42,16 @@ function entry(name: string, size: number, more: Partial<FileEntry> = {}): FileE
 function png(length: number): Uint8Array {
   const bytes = new Uint8Array(length);
   bytes.set(PNG_START);
+  return bytes;
+}
+
+/** A PNG whose header says it is `width` by `height` pixels. */
+function pngOf(width: number, height: number, length = 64): Uint8Array {
+  const bytes = png(length);
+  bytes.set([0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52], 8);
+  const header = new DataView(bytes.buffer);
+  header.setUint32(16, width);
+  header.setUint32(20, height);
   return bytes;
 }
 
@@ -95,9 +107,41 @@ describe("subjectOf", () => {
   });
 });
 
+describe("paneStorage", () => {
+  it("counts a session not known here yet as one whose reads are paid for", () => {
+    expect(paneStorage(false, undefined)).toBe("local");
+    expect(paneStorage(true, undefined)).toBe("metered");
+    expect(paneStorage(true, "sftp")).toBe("server");
+    expect(paneStorage(true, "s3")).toBe("metered");
+  });
+});
+
 describe("firstStep", () => {
-  it("reads nothing of a file listed as empty", () => {
+  it("reads nothing of a file this computer lists as empty", () => {
     expect(firstStep(entry("empty.log", 0), caps, false)).toEqual({ step: "show", view: "empty" });
+  });
+
+  it("reads a file a server lists as 0 bytes, which may be a size it does not know", () => {
+    for (const sizes of ["listed", "remembered"] as const) {
+      expect(firstStep(entry("Budget", 0), caps, false, sizes)).toEqual({
+        step: "read",
+        length: caps.textBytes,
+      });
+    }
+  });
+
+  it("decides nothing by the size of a remembered listing, which the file may have outgrown", () => {
+    const listedLarge = entry("scan.png", 40 * MEBIBYTE);
+    expect(firstStep(listedLarge, caps, false, "remembered")).toEqual({
+      step: "read",
+      length: SIGNATURE_BYTES,
+    });
+    expect(firstStep(entry("photo.jpg", 3 * MEBIBYTE), caps, false, "remembered")).toEqual({
+      step: "read",
+      length: 3 * MEBIBYTE,
+    });
+    // A server's own size for a picture still decides.
+    expect(firstStep(listedLarge, caps, false, "listed")).toMatchObject({ view: "tooLarge" });
   });
 
   it("reads a picture whole, a text as far as it is shown, anything else by its signature", () => {
@@ -123,6 +167,7 @@ describe("firstStep", () => {
       step: "show",
       view: "tooLarge",
       canLoad: true,
+      dimensions: null,
     });
     expect(firstStep(large, caps, true)).toEqual({ step: "read", length: 40 * MEBIBYTE });
     expect(firstStep(entry("scan.png", caps.imageBytes), caps, false).step).toBe("read");
@@ -132,6 +177,7 @@ describe("firstStep", () => {
       step: "show",
       view: "tooLarge",
       canLoad: false,
+      dimensions: null,
     });
   });
 
@@ -160,10 +206,39 @@ describe("nextStep", () => {
       step: "show",
       view: "tooLarge",
       canLoad: true,
+      dimensions: null,
     });
     expect(nextStep("photo.zip", png(SIGNATURE_BYTES), 40 * MEBIBYTE, caps, true)).toEqual({
       step: "read",
       length: 40 * MEBIBYTE,
+    });
+  });
+
+  it("does not show a picture with more pixels than decode safely, small as its file may be", () => {
+    // 48 megapixels: shown when asked for.
+    const large = pngOf(8000, 6000);
+    expect(nextStep("pano.png", large, large.length, caps, false)).toEqual({
+      step: "show",
+      view: "tooLarge",
+      canLoad: true,
+      dimensions: { width: 8000, height: 6000 },
+    });
+    expect(nextStep("pano.png", large, large.length, caps, true)).toEqual({
+      step: "show",
+      view: "image",
+      format: "png",
+    });
+    // 400 megapixels: never, whatever the user asks for.
+    const bomb = pngOf(20_000, 20_000);
+    expect(nextStep("tiny.png", bomb, bomb.length, caps, true)).toEqual({
+      step: "show",
+      view: "tooLarge",
+      canLoad: false,
+      dimensions: { width: 20_000, height: 20_000 },
+    });
+    const camera = pngOf(6000, 4000);
+    expect(nextStep("camera.png", camera, camera.length, caps, false)).toMatchObject({
+      view: "image",
     });
   });
 
@@ -236,6 +311,15 @@ describe("nextStep", () => {
   });
 });
 
+describe("fitsThumbnail", () => {
+  it("draws pictures up to 25 megapixels, and those whose header does not say", () => {
+    expect(fitsThumbnail(pngOf(6000, 4000), "png")).toBe(true);
+    expect(fitsThumbnail(pngOf(6000, 5000), "png")).toBe(false);
+    expect(fitsThumbnail(png(64), "png")).toBe(true);
+    expect(fitsThumbnail(encoder.encode("<svg width='99999' height='99999'/>"), "svg")).toBe(true);
+  });
+});
+
 describe("changedSinceListed", () => {
   const listed = entry("report.txt", 1000, { modified: 1_700_000_000 });
 
@@ -258,6 +342,23 @@ describe("changedSinceListed", () => {
   it("says nothing of a link, which is listed with its own size", () => {
     const link = entry("latest", 12, { kind: "symlink", linkTarget: "file" });
     expect(changedSinceListed(link, { size: 9000, modified: 1 }, true)).toBe(false);
+  });
+
+  it("takes a server's 0 for no size at all, but a remembered listing's sizes at their word", () => {
+    const unsized = entry("Budget", 0, { modified: 1_700_000_000 });
+    const now = { size: 5000, modified: 1_700_000_000_000 };
+    expect(changedSinceListed(unsized, now, true, "listed")).toBe(false);
+    expect(changedSinceListed(unsized, now, true, "exact")).toBe(true);
+    expect(changedSinceListed(unsized, now, true, "remembered")).toBe(true);
+    const remembered = entry("report.txt", 1000, { modified: 1_700_000_000 });
+    expect(
+      changedSinceListed(
+        remembered,
+        { size: 1000, modified: 1_700_000_500_000 },
+        true,
+        "remembered",
+      ),
+    ).toBe(true);
   });
 });
 

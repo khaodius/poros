@@ -6,6 +6,7 @@ import type { ConnectProfile, HostKeyApproval, SessionInfo, VaultInfo } from "..
 import { serverSessionId, vaultSessions } from "../lib/vaults";
 import { useLayoutStore } from "./layoutStore";
 import { getPane } from "./paneRegistry";
+import { forgetSessionPreviews } from "./previewReads";
 import { useSettingsStore } from "./settingsStore";
 
 export interface SessionEntry {
@@ -98,6 +99,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const info = await remote.reconnect(sessionId, approval);
     await remote.disconnect(sessionId).catch(() => undefined);
     forgetRemoteSource(sessionId);
+    forgetSessionPreviews(sessionId);
     // In one step with the sessions, so no tab is left showing a session that is gone.
     moveTabs(sessionId, info.id);
     const reattached = vaultSessions(get().sessions, sessionId);
@@ -145,7 +147,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   release: (sessionId) => {
     const vaultIds = vaultSessions(get().sessions, sessionId).map((vault) => vault.id);
     const leaving = [sessionId, ...vaultIds];
-    leaving.forEach(forgetRemoteSource);
+    for (const id of leaving) {
+      forgetRemoteSource(id);
+      forgetSessionPreviews(id);
+    }
     set((state) => {
       const sessions = { ...state.sessions };
       for (const id of leaving) delete sessions[id];
@@ -161,7 +166,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       return { sessions: { ...state.sessions, [sessionId]: { ...entry, info } } };
     }),
 
-  markLost: (sessionId, reason) =>
+  markLost: (sessionId, reason) => {
+    // What was read is read again over the next session.
+    forgetSessionPreviews(sessionId);
     set((state) => {
       const entry = state.sessions[sessionId];
       if (!entry) return state;
@@ -171,7 +178,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           [sessionId]: { ...entry, status: "lost", lostReason: reason },
         },
       };
-    }),
+    });
+  },
 }));
 
 /**

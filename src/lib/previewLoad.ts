@@ -8,9 +8,10 @@ import {
   firstStep,
   nextStep,
   type Caps,
+  type ListedSizes,
 } from "./previewPlan";
 import { PreviewCancelled } from "./previewScheduler";
-import type { ImageFormat } from "./previewSniff";
+import type { ImageFormat, ImageSize } from "./previewSniff";
 import { decodeText, withoutCutLine } from "./previewText";
 import type { AppError, FileEntry, FileStamp, PreviewRead, TextEncoding } from "./types";
 
@@ -29,7 +30,8 @@ export type FileView =
       changed: boolean;
     }
   | { view: "binary"; description: string | null; head: Uint8Array; changed: boolean }
-  | { view: "tooLarge"; canLoad: boolean; size: number };
+  /** Over the cap in bytes, or with `dimensions` over the cap in pixels. */
+  | { view: "tooLarge"; canLoad: boolean; size: number; dimensions: ImageSize | null };
 
 export interface LoadOptions {
   /** Reads up to `length` bytes from the start of the file. */
@@ -39,6 +41,8 @@ export interface LoadOptions {
   loadAnyway: boolean;
   /** The listing's times can be compared with the file's. */
   exactTimes: boolean;
+  /** How far the listed size can be believed before the file is read. */
+  sizes?: ListedSizes;
 }
 
 /** What a view keeps in memory, for the cache's bounds. */
@@ -57,10 +61,10 @@ export function viewWeight(view: FileView): number {
 
 export async function loadFileView(
   entry: FileEntry,
-  { read, caps, loadAnyway, exactTimes }: LoadOptions,
+  { read, caps, loadAnyway, exactTimes, sizes = "exact" }: LoadOptions,
   signal: AbortSignal,
 ): Promise<FileView> {
-  let step = firstStep(entry, caps, loadAnyway);
+  let step = firstStep(entry, caps, loadAnyway, sizes);
   let bytes: Uint8Array = new Uint8Array(0);
   let stamp: FileStamp | null = null;
   for (let reads = 0; step.step === "read"; reads++) {
@@ -73,13 +77,13 @@ export async function loadFileView(
     ({ bytes, stamp } = reply);
     step = nextStep(entry.name, bytes, stamp.size, caps, loadAnyway);
   }
-  const changed = stamp !== null && changedSinceListed(entry, stamp, exactTimes);
+  const changed = stamp !== null && changedSinceListed(entry, stamp, exactTimes, sizes);
   const size = stamp?.size ?? entry.size;
   switch (step.view) {
     case "empty":
       return { view: "empty" };
     case "tooLarge":
-      return { view: "tooLarge", canLoad: step.canLoad, size };
+      return { view: "tooLarge", canLoad: step.canLoad, size, dimensions: step.dimensions };
     case "image":
       return { view: "image", format: step.format, bytes, changed };
     case "binary":

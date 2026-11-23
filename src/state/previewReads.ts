@@ -1,11 +1,12 @@
 // What the preview panes of this window read, and keep of it: file previews and thumbnails in
 // bounded caches, and the few thumbnail requests that run at a time.
 
+import { remoteSourceKey } from "../lib/fileSource";
 import { filePreview, local, toAppError } from "../lib/ipc";
-import { BoundedCache, previewKey } from "../lib/previewCache";
+import { BoundedCache, connectionPrefix, previewKey } from "../lib/previewCache";
 import { fitWithin } from "../lib/previewLayout";
 import { loadFileView, viewWeight, type FileView } from "../lib/previewLoad";
-import { listsOwnSize, type Caps } from "../lib/previewPlan";
+import { fitsThumbnail, listsOwnSize, type Caps, type ListedSizes } from "../lib/previewPlan";
 import { PreviewCancelled, RequestQueue } from "../lib/previewScheduler";
 import type { StorageKind } from "../lib/previewSettings";
 import { IMAGE_MIME_TYPES, sniff, type ImageFormat } from "../lib/previewSniff";
@@ -29,6 +30,11 @@ export interface PreviewPlace {
   /** The listing's times can be compared with a file's own. */
   exactTimes: boolean;
   inVault: boolean;
+  /**
+   * How far the pane's listing can be believed before a file is read. Nothing kept from before
+   * is shown for a remembered listing: only a read tells whether a file is still as it was.
+   */
+  sizes: ListedSizes;
 }
 
 export function locationOf(place: PreviewPlace, path: string): DocumentLocation {
@@ -37,7 +43,10 @@ export function locationOf(place: PreviewPlace, path: string): DocumentLocation 
     : { side: "local", path };
 }
 
-/** Told apart from the reads of other windows, which the backend keeps in one list. */
+/**
+ * The backend names a read by its window and this name. The random part tells the reads of this
+ * page from those it made before the window was reloaded, which may still be remembered there.
+ */
 const WINDOW_READS = Math.random().toString(36).slice(2, 10);
 let readCount = 0;
 
@@ -63,6 +72,14 @@ export async function readStart(
 
 const fileViews = new BoundedCache<FileView>({ maxEntries: 48, maxWeight: 64 * MEBIBYTE });
 
+/** How often each connection's previews were forgotten: a read that ends after that keeps
+ * nothing of what it read. */
+const forgetCounts = new Map<string, number>();
+
+function forgetCount(connection: string): number {
+  return forgetCounts.get(connection) ?? 0;
+}
+
 function viewKey(place: PreviewPlace, entry: FileEntry, caps: Caps, loadAnyway: boolean): string {
   return previewKey(place.connection, entry, `${caps.imageBytes}:${caps.textBytes}:${loadAnyway}`);
 }
@@ -73,6 +90,7 @@ export function cachedFileView(
   caps: Caps,
   loadAnyway: boolean,
 ): FileView | undefined {
+  if (place.sizes === "remembered") return undefined;
   return fileViews.get(viewKey(place, entry, caps, loadAnyway));
 }
 
@@ -86,6 +104,7 @@ export async function readFileView(
   signal: AbortSignal,
 ): Promise<FileView> {
   const location = locationOf(place, entry.path);
+  const since = forgetCount(place.connection);
   const view = await loadFileView(
     entry,
     {
@@ -93,11 +112,14 @@ export async function readFileView(
       caps,
       loadAnyway,
       exactTimes: place.exactTimes,
+      sizes: place.sizes,
     },
     signal,
   );
   const changed = "changed" in view && view.changed;
-  if (!changed) fileViews.set(viewKey(place, entry, caps, loadAnyway), view, viewWeight(view));
+  if (!changed && forgetCount(place.connection) === since) {
+    fileViews.set(viewKey(place, entry, caps, loadAnyway), view, viewWeight(view));
+  }
   return view;
 }
 
@@ -109,6 +131,7 @@ interface KeptListing {
 const folderListings = new BoundedCache<KeptListing>({ maxEntries: 24, maxWeight: 50_000 });
 
 export function cachedFolder(place: PreviewPlace, folder: FileEntry): DirListing | undefined {
+  if (place.sizes === "remembered") return undefined;
   const kept = folderListings.get(previewKey(place.connection, folder));
   if (!kept || Date.now() - kept.listedAt > LISTING_LIFETIME_MILLIS) return undefined;
   return kept.listing;
@@ -117,9 +140,11 @@ export function cachedFolder(place: PreviewPlace, folder: FileEntry): DirListing
 /** Lists a folder for its summary. A server's folder is not listed while transfers use the
  * connection. */
 export async function listFolder(place: PreviewPlace, folder: FileEntry): Promise<DirListing> {
+  const since = forgetCount(place.connection);
   const listing = place.sessionId
     ? await filePreview.list(place.sessionId, folder.path)
     : await local.list(folder.path);
+  if (forgetCount(place.connection) !== since) return listing;
   folderListings.set(
     previewKey(place.connection, folder),
     { listing, listedAt: Date.now() },
@@ -153,6 +178,7 @@ export function cachedThumbnail(
   entry: FileEntry,
   box: number,
 ): Thumbnail | undefined {
+  if (place.sizes === "remembered") return undefined;
   return thumbnails.get(thumbnailKey(place, entry, box));
 }
 
@@ -257,6 +283,7 @@ export function requestThumbnail(
 ): Promise<Thumbnail> {
   const key = thumbnailKey(place, entry, box);
   return thumbnailRequests.request(key, async (signal) => {
+    const since = forgetCount(place.connection);
     const length = listsOwnSize(entry) ? Math.min(entry.size, caps.imageBytes) : caps.imageBytes;
     const read = await readStart(locationOf(place, entry.path), length, signal);
     const sniffed = sniff(read.bytes, entry.name, true);
@@ -265,8 +292,13 @@ export function requestThumbnail(
       thumbnail: { url: null, width: 0, height: 0 },
       weight: 1,
     };
-    if (whole && sniffed.kind === "image") {
+    // One with more pixels than decode safely, a few at a time, stays a plain icon.
+    if (whole && sniffed.kind === "image" && fitsThumbnail(read.bytes, sniffed.format)) {
       drawn = await drawThumbnail(read.bytes, sniffed.format, box).catch(() => drawn);
+    }
+    if (forgetCount(place.connection) !== since) {
+      if (drawn.thumbnail.url) URL.revokeObjectURL(drawn.thumbnail.url);
+      throw new PreviewCancelled();
     }
     thumbnails.set(key, drawn.thumbnail, drawn.weight);
     return drawn.thumbnail;
@@ -276,4 +308,19 @@ export function requestThumbnail(
 /** Drops a thumbnail that is no longer on show from the line, or stops its read. */
 export function cancelThumbnail(place: PreviewPlace, entry: FileEntry, box: number): void {
   thumbnailRequests.cancel(thumbnailKey(place, entry, box));
+}
+
+/**
+ * Forgets everything the previews read over a session, as it closes or its vault is locked: a
+ * vault's files are kept here decrypted, and nothing of them may stay once the vault is locked.
+ * Thumbnails still on their way are stopped, and their pictures let go.
+ */
+export function forgetSessionPreviews(sessionId: string): void {
+  const connection = remoteSourceKey(sessionId);
+  forgetCounts.set(connection, forgetCount(connection) + 1);
+  const prefix = connectionPrefix(connection);
+  thumbnailRequests.cancelMatching((key) => key.startsWith(prefix));
+  fileViews.deletePrefixed(prefix);
+  folderListings.deletePrefixed(prefix);
+  thumbnails.deletePrefixed(prefix);
 }

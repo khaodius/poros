@@ -117,8 +117,13 @@ export class RequestQueue {
 
   /** Cancels every request but those named. */
   keepOnly(keys: ReadonlySet<string>): void {
+    this.cancelMatching((key) => !keys.has(key));
+  }
+
+  /** Cancels every request whose key `matches` picks. */
+  cancelMatching(matches: (key: string) => boolean): void {
     for (const key of [...this.requests.keys()]) {
-      if (!keys.has(key)) this.cancel(key);
+      if (matches(key)) this.cancel(key);
     }
   }
 

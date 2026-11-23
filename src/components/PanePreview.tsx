@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import type { PaneController } from "../hooks/usePane";
 import type { FileSource } from "../lib/fileSource";
-import { listsExactTimes, storageKind, subjectOf } from "../lib/previewPlan";
+import { listsExactTimes, paneStorage, subjectOf } from "../lib/previewPlan";
 import type { DateFormat } from "../lib/settings";
 import type { FileEntry } from "../lib/types";
 import type { PreviewPlace } from "../state/previewReads";
@@ -41,10 +41,11 @@ export function PanePreview({
     () => ({
       connection: source.key,
       sessionId: remoteSession,
-      // A session not known here is treated as a server's until it is.
-      storage: remoteSession ? storageKind(protocol ?? "sftp") : "local",
-      exactTimes: listsExactTimes(protocol),
+      storage: paneStorage(remoteSession !== undefined, protocol),
+      // Not compared with the files' until the session is known here.
+      exactTimes: remoteSession ? protocol !== undefined && listsExactTimes(protocol) : true,
       inVault,
+      sizes: remoteSession ? "listed" : "exact",
     }),
     [source.key, remoteSession, protocol, inVault],
   );

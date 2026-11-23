@@ -466,7 +466,6 @@ function isTab(value: unknown): value is PaneTab {
   const tab = value as Record<string, unknown>;
   if (typeof tab.id !== "string") return false;
   if (tab.path !== undefined && typeof tab.path !== "string") return false;
-  if (tab.preview !== undefined && typeof tab.preview !== "boolean") return false;
   switch (tab.kind) {
     case "remote":
       return isString(tab.sessionId) && isRestore(tab.restore, true);
@@ -489,6 +488,19 @@ function isTab(value: unknown): value is PaneTab {
   }
 }
 
+/**
+ * A preview flag that is neither yes nor no, as a hand-edited file may hold, reads as none: the
+ * preview is only a view of the pane, so the tab is kept without it.
+ */
+function withReadablePreview(tab: PaneTab): PaneTab {
+  if (!("preview" in tab) || tab.preview === undefined || typeof tab.preview === "boolean") {
+    return tab;
+  }
+  const kept: Record<string, unknown> = { ...tab };
+  delete kept.preview;
+  return kept as PaneTab;
+}
+
 /** Checks a layout read from storage or handed over by another window. */
 export function parseLayout(value: unknown): LayoutNode | null {
   if (!value || typeof value !== "object") return null;
@@ -496,7 +508,7 @@ export function parseLayout(value: unknown): LayoutNode | null {
   if (typeof node.id !== "string") return null;
   if (node.type === "group") {
     if (!Array.isArray(node.tabs) || !node.tabs.every(isTab)) return null;
-    const tabs = node.tabs as PaneTab[];
+    const tabs = (node.tabs as PaneTab[]).map(withReadablePreview);
     const activeTabId = typeof node.activeTabId === "string" ? node.activeTabId : null;
     return normalize(withTabs({ type: "group", id: node.id, tabs, activeTabId }, tabs));
   }

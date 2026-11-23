@@ -423,9 +423,27 @@ describe("a pane's preview", () => {
     expect(tabs.map((tab) => "preview" in tab && tab.preview)).toEqual([true, true, false]);
   });
 
-  it("is not read from a layout that stores anything but yes or no for it", () => {
-    const stored = { type: "group", id: "g", tabs: [{ id: "a", kind: "local", preview: "yes" }] };
-    expect(parseLayout(stored)).toBeNull();
+  it("is read as closed from a layout that stores anything but yes or no, keeping the tabs", () => {
+    const stored = {
+      type: "group",
+      id: "g",
+      tabs: [
+        { id: "a", kind: "local", path: "/home/deploy", preview: "yes" },
+        { id: "b", kind: "local", preview: 1 },
+      ],
+      activeTabId: "b",
+    };
+    const parsed = parseLayout(stored);
+    expect(parsed).toMatchObject({
+      type: "group",
+      activeTabId: "b",
+      tabs: [
+        { id: "a", kind: "local", path: "/home/deploy" },
+        { id: "b", kind: "local" },
+      ],
+    });
+    const tabs = parsed?.type === "group" ? parsed.tabs : [];
+    expect(tabs.some((tab) => "preview" in tab)).toBe(false);
     const open = { type: "group", id: "g", tabs: [{ id: "a", kind: "local", preview: true }] };
     expect(parseLayout(open)).toMatchObject({ tabs: [{ id: "a", preview: true }] });
   });

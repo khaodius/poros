@@ -68,6 +68,13 @@ export class BoundedCache<Value> {
     this.onEvict?.(kept.value);
   }
 
+  /** Drops every entry whose key starts with `prefix`. */
+  deletePrefixed(prefix: string): void {
+    for (const key of [...this.entries.keys()]) {
+      if (key.startsWith(prefix)) this.delete(key);
+    }
+  }
+
   clear(): void {
     for (const key of [...this.entries.keys()]) this.delete(key);
   }
@@ -86,4 +93,9 @@ export interface ListedFile {
  */
 export function previewKey(connection: string, file: ListedFile, variant = ""): string {
   return JSON.stringify([connection, file.path, file.size, file.modified, variant]);
+}
+
+/** How every key `previewKey` makes for `connection` starts, and no key of another one does. */
+export function connectionPrefix(connection: string): string {
+  return `${JSON.stringify([connection]).slice(0, -1)},`;
 }

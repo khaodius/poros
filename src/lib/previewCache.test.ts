@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BoundedCache, previewKey } from "./previewCache";
+import { BoundedCache, connectionPrefix, previewKey } from "./previewCache";
 
 describe("BoundedCache", () => {
   it("keeps no more entries than its bound, letting the least recently used go", () => {
@@ -72,6 +72,24 @@ describe("BoundedCache", () => {
     expect(cache.weight).toBe(0);
     expect(cache.get("b")).toBeUndefined();
   });
+
+  it("drops the entries of one connection only, releasing each", () => {
+    const evicted: string[] = [];
+    const cache = new BoundedCache<string>({ maxEntries: 10, maxWeight: 100 }, (value) =>
+      evicted.push(value),
+    );
+    const file = { path: "/vault/diary.txt", size: 10, modified: 1 };
+    cache.set(previewKey("remote:vault", file), "cleartext", 4);
+    cache.set(previewKey("remote:vault", file, "thumbnail:96"), "thumbnail", 2);
+    // One session's id may start with another's.
+    cache.set(previewKey("remote:vault2", file), "other session", 3);
+    cache.set(previewKey("local", file), "this computer", 1);
+    cache.deletePrefixed(connectionPrefix("remote:vault"));
+    expect(evicted).toEqual(["cleartext", "thumbnail"]);
+    expect(cache.size).toBe(2);
+    expect(cache.weight).toBe(4);
+    expect(cache.get(previewKey("remote:vault2", file))).toBe("other session");
+  });
 });
 
 describe("previewKey", () => {
@@ -95,5 +113,14 @@ describe("previewKey", () => {
     const first = previewKey("local", { path: "/a\n1", size: 2, modified: 3 });
     const second = previewKey("local", { path: "/a", size: 1, modified: 2 }, "3");
     expect(first).not.toBe(second);
+  });
+
+  it("starts with its connection's prefix, which no other connection's keys start with", () => {
+    for (const connection of ["local", "remote:a", 'remote:"quoted"', "remote:a\\b"]) {
+      expect(previewKey(connection, file).startsWith(connectionPrefix(connection))).toBe(true);
+      expect(previewKey(`${connection}x`, file).startsWith(connectionPrefix(connection))).toBe(
+        false,
+      );
+    }
   });
 });

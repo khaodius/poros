@@ -128,6 +128,45 @@ describe("loadFileView", () => {
     expect(asDocument.read.mock.calls.map(([length]) => length)).toEqual([SIGNATURE_BYTES, 2000]);
   });
 
+  it("reads a file a server lists as 0 bytes, and goes by the size it has now", async () => {
+    const contents = encoder.encode("A document the server measures only when it is read");
+    const { read, options } = server(contents);
+    const view = await loadFileView(entry("Budget", 0), options({ sizes: "listed" }), never);
+    expect(view).toMatchObject({ view: "text", partial: false, changed: false });
+    expect(read).toHaveBeenCalledTimes(1);
+    const empty = server(new Uint8Array(0));
+    expect(
+      await loadFileView(entry("empty.log", 0), empty.options({ sizes: "listed" }), never),
+    ).toEqual({ view: "empty" });
+    expect(empty.read).toHaveBeenCalledTimes(1);
+  });
+
+  it("checks a remembered listing against the file as it is now", async () => {
+    // Listed as a small picture; the file has since grown past the cap.
+    const contents = png(20 * MEBIBYTE);
+    const { read, options } = server(contents);
+    const view = await loadFileView(
+      entry("photo.png", 70_000),
+      options({ sizes: "remembered" }),
+      never,
+    );
+    expect(view).toEqual({
+      view: "tooLarge",
+      canLoad: true,
+      size: contents.length,
+      dimensions: null,
+    });
+    expect(read.mock.calls.map(([length]) => length)).toEqual([70_000]);
+    // Listed with the size it still has, but changed since.
+    const later = server(encoder.encode("0123456789"), (LISTED_AT + 60) * 1000);
+    const text = await loadFileView(
+      entry("notes.txt", 10),
+      later.options({ sizes: "remembered" }),
+      never,
+    );
+    expect(text).toMatchObject({ view: "text", changed: true });
+  });
+
   it("does not fetch a picture over the cap until asked to", async () => {
     const contents = png(20 * MEBIBYTE);
     const { read, options } = server(contents);
@@ -136,6 +175,7 @@ describe("loadFileView", () => {
       view: "tooLarge",
       canLoad: true,
       size: contents.length,
+      dimensions: null,
     });
     expect(read).not.toHaveBeenCalled();
     const loaded = await loadFileView(large, options({ loadAnyway: true }), never);
@@ -230,6 +270,6 @@ describe("viewWeight", () => {
       }),
     ).toBe(8);
     expect(viewWeight({ view: "empty" })).toBe(1);
-    expect(viewWeight({ view: "tooLarge", canLoad: true, size: 9e9 })).toBe(1);
+    expect(viewWeight({ view: "tooLarge", canLoad: true, size: 9e9, dimensions: null })).toBe(1);
   });
 });

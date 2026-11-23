@@ -43,13 +43,18 @@ export const localSource: FileSource = {
 
 const remoteSources = new Map<string, FileSource>();
 
+/** The key of a session's source, which tells its files from those of other connections. */
+export function remoteSourceKey(sessionId: string): string {
+  return `remote:${sessionId}`;
+}
+
 /** One source per session, so a pane keeps its place when the session's details change. */
 export function remoteSource(session: SessionInfo): FileSource {
   const existing = remoteSources.get(session.id);
   if (existing) return existing;
   const id = session.id;
   const source: FileSource = {
-    key: `remote:${id}`,
+    key: remoteSourceKey(id),
     kind: "remote",
     label: session.label,
     pathStyle: "posix",

@@ -29,8 +29,10 @@ import { formatDate, formatPermissions, formatSize, pluralize } from "../lib/for
 import type { FileView } from "../lib/previewLoad";
 import {
   HEX_BYTES,
+  MAX_SHOWN_PIXELS,
   capsOf,
   firstStep,
+  listsOwnSize,
   selectionKey,
   summarize,
   type Caps,
@@ -107,8 +109,14 @@ export function PreviewPane({
   let content: ReactNode;
   switch (subject.kind) {
     case "file":
+      // Another version of the file starts afresh: "Load anyway" and its size were for this one.
       content = (
-        <FilePreview key={subject.entry.path} entry={subject.entry} {...shared} {...handlers} />
+        <FilePreview
+          key={JSON.stringify([subject.entry.path, subject.entry.size, subject.entry.modified])}
+          entry={subject.entry}
+          {...shared}
+          {...handlers}
+        />
       );
       break;
     case "folder":
@@ -195,7 +203,7 @@ export function PreviewPane({
   return (
     <aside
       className="preview"
-      // Reached with Tab from the file list, never by itself.
+      // Reached from the file list with Ctrl+Shift+P, never by itself.
       tabIndex={0}
       aria-label="Preview"
       onKeyDown={handleKeyDown}
@@ -279,6 +287,23 @@ function Details({ rows }: { rows: Row[] }) {
 /** A size inside a sentence, which never breaks between the number and its unit. */
 function sizeInText(bytes: number): string {
   return formatSize(bytes).replace(" ", "\u00a0");
+}
+
+function dimensionsText({ width, height }: { width: number; height: number }): string {
+  return `${width} × ${height}`;
+}
+
+/** Why a picture is not shown: its file's size, or the pixels its header says it has. */
+function tooLargeText(view: Extract<FileView, { view: "tooLarge" }>, caps: Caps): string {
+  if (view.dimensions) {
+    const pixels = `${dimensionsText(view.dimensions).replace(/ /g, "\u00a0")}\u00a0pixels`;
+    return view.canLoad
+      ? `This picture is ${pixels}. Pictures up to ${MAX_SHOWN_PIXELS / 1_000_000}\u00a0megapixels show by themselves.`
+      : `This picture is ${pixels}, more than a preview can show.`;
+  }
+  return view.canLoad
+    ? `This picture is ${sizeInText(view.size)}. Pictures up to ${sizeInText(caps.imageBytes)} load by themselves.`
+    : `This picture is ${sizeInText(view.size)}, more than a preview can load.`;
 }
 
 function sizeText(bytes: number): string {
@@ -411,14 +436,16 @@ function FilePreview({
     caps.textBytes,
     anyway,
   ]);
+  /** Listed by a server as 0 bytes, which may be a size it does not know: read when asked. */
+  const unsized = place.sizes === "listed" && listsOwnSize(entry) && entry.size === 0;
   const { state, show } = useRestedLoad<FileView>({
     key,
     cached: cachedFileView(place, entry, caps, anyway),
-    mode,
+    mode: unsized ? "click" : mode,
     storage: place.storage,
     inVault: place.inVault,
     // What needs no read, as an empty file or a picture over the cap, shows without asking.
-    eager: anyway || firstStep(entry, caps, anyway).step === "show",
+    eager: anyway || firstStep(entry, caps, anyway, place.sizes).step === "show",
     load: (signal) => readFileView(place, entry, caps, anyway, signal),
   });
   const view = state.status === "ready" ? state.result : null;
@@ -426,7 +453,9 @@ function FilePreview({
 
   const rows = entryRows(entry, dateFormat, kindOf(view));
   if (view?.view === "image" && pictureSize && pictureSize.width > 0 && broken !== view.bytes) {
-    rows.splice(1, 0, ["Dimensions", `${pictureSize.width} × ${pictureSize.height}`]);
+    rows.splice(1, 0, ["Dimensions", dimensionsText(pictureSize)]);
+  } else if (view?.view === "tooLarge" && view.dimensions) {
+    rows.splice(1, 0, ["Dimensions", dimensionsText(view.dimensions)]);
   }
 
   return (
@@ -456,6 +485,8 @@ function FilePreview({
         state={state}
         entry={entry}
         caps={caps}
+        unsized={unsized}
+        onServer={place.storage !== "local"}
         broken={broken}
         onShow={show}
         onLoadAnyway={() => setAnyway(true)}
@@ -482,6 +513,9 @@ interface FileBodyProps {
   state: Rested<FileView>;
   entry: FileEntry;
   caps: Caps;
+  /** Listed as 0 bytes by a server, which may not know its size. */
+  unsized: boolean;
+  onServer: boolean;
   broken: Uint8Array | null;
   onShow: () => void;
   onLoadAnyway: () => void;
@@ -494,6 +528,8 @@ function FileBody({
   state,
   entry,
   caps,
+  unsized,
+  onServer,
   broken,
   onShow,
   onLoadAnyway,
@@ -507,6 +543,16 @@ function FileBody({
     case "loading":
       return <Loading />;
     case "manual":
+      if (unsized) {
+        return (
+          <Notice
+            icon={FileQuestion}
+            title="Listed as 0 bytes"
+            detail="Some servers list no size for a file they make themselves, so it may not be empty. Reading it shows what is in it."
+            action={{ label: "Show preview", onSelect: onShow }}
+          />
+        );
+      }
       return (
         <Notice
           icon={Eye}
@@ -521,17 +567,19 @@ function FileBody({
   const view = state.result;
   switch (view.view) {
     case "empty":
-      return <Notice icon={FileCheck} title="Empty file" detail="There is nothing in it." />;
+      return (
+        <Notice
+          icon={FileCheck}
+          title="Empty file"
+          detail={onServer ? "The server says there is nothing in it." : "There is nothing in it."}
+        />
+      );
     case "tooLarge":
       return (
         <Notice
           icon={Scaling}
           title="Too large to preview"
-          detail={
-            view.canLoad
-              ? `This picture is ${sizeInText(view.size)}. Pictures up to ${sizeInText(caps.imageBytes)} load by themselves.`
-              : `This picture is ${sizeInText(view.size)}, more than a preview can load.`
-          }
+          detail={tooLargeText(view, caps)}
           action={view.canLoad ? { label: "Load anyway", onSelect: onLoadAnyway } : undefined}
         />
       );
