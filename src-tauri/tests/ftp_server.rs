@@ -1173,6 +1173,20 @@ async fn ftps_asks_about_the_certificate() {
         );
         files.delete(std::slice::from_ref(&remote)).await.unwrap();
         manager.disconnect(&info.id).await.unwrap();
+
+        // Pinned to another certificate, as poros-cli --host-key does, the one on record is
+        // refused, and so is an approval of it.
+        manager
+            .certificates
+            .pin("127.0.0.1", server.port, "SHA256:not-it");
+        for approval in [None, Some(HostKeyApproval::of(&certificate, true))] {
+            let error = manager
+                .connect(profile(&server, &server.password), approval, OWNER)
+                .await
+                .unwrap_err();
+            assert_eq!(error.kind, ErrorKind::HostKeyChanged, "{}", error.message);
+            assert_eq!(error.host_key.unwrap().fingerprint, certificate.fingerprint);
+        }
     }
 }
 

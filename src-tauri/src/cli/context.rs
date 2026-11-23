@@ -12,7 +12,7 @@ use super::target;
 use crate::connections::{ConnectionStore, Keychain, SecretScope, SecretStore};
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::events::Events;
-use crate::protocol::{self, RemoteFileSystem};
+use crate::protocol::{self, Protocol, RemoteFileSystem};
 use crate::route::MAX_JUMP_HOSTS;
 use crate::session::{Session, SessionInfo, SessionManager};
 use crate::settings::Settings;
@@ -167,15 +167,26 @@ impl Context {
             let store = self.store.clone();
             tokio::task::spawn_blocking(move || target::plan(&options, &settings, &store)).await??
         };
-        // Every attempt is for the same server, signing in another way.
-        let mut approval = plan
+        // Every attempt is for the same server, signing in another way. `--host-key` names the
+        // only key it is accepted with; jump hosts on the way are not covered by it.
+        let pinned = plan
             .attempts
             .first()
-            .zip(self.options.host_key.as_ref())
-            .map(|(profile, fingerprint)| HostKeyApproval {
-                remember: self.options.save_host_key,
-                ..HostKeyApproval::for_server(profile, fingerprint.trim())
+            .zip(self.options.host_key.as_deref().map(str::trim))
+            .map(|(profile, fingerprint)| {
+                let (host, port) = profile.server_address();
+                match profile.protocol {
+                    Protocol::Sftp => self.sessions.known_hosts.pin(&host, port, fingerprint),
+                    _ => self.sessions.certificates.pin(&host, port, fingerprint),
+                }
+                HostKeyApproval {
+                    host,
+                    port,
+                    fingerprint: fingerprint.to_string(),
+                    remember: self.options.save_host_key,
+                }
             });
+        let mut approval = pinned.clone();
         let mut last_error = None;
         for profile in plan.attempts {
             let method = describe_method(&profile.auth);
@@ -190,25 +201,42 @@ impl Context {
                 {
                     Err(error)
                         if tries > 0
-                            && error.kind == ErrorKind::HostKeyUnknown
-                            && self.options.trust_new_host =>
+                            && matches!(
+                                error.kind,
+                                ErrorKind::HostKeyUnknown | ErrorKind::HostKeyChanged
+                            ) =>
                     {
                         let Some(offered) = &error.host_key else {
                             break Err(error);
                         };
+                        let (host, port) = (offered.host.as_str(), offered.port);
                         if approval.as_ref().is_some_and(|approved| {
-                            approved.accepts(&offered.host, offered.port, &offered.fingerprint)
+                            approved.accepts(host, port, &offered.fingerprint)
                         }) {
                             break Err(error);
                         }
-                        log::info!(
-                            "Trusting the new key of {}:{} ({} {})",
-                            offered.host,
-                            offered.port,
-                            offered.algorithm,
-                            offered.fingerprint
-                        );
-                        approval = Some(HostKeyApproval::of(offered, self.options.save_host_key));
+                        let next = match &pinned {
+                            // The pinned key alone gets the server in. A jump host's approval
+                            // took its place for the attempt that stopped here.
+                            Some(pin) if pin.names(host, port) => pin
+                                .accepts(host, port, &offered.fingerprint)
+                                .then(|| pin.clone()),
+                            _ if self.options.trust_new_host
+                                && error.kind == ErrorKind::HostKeyUnknown =>
+                            {
+                                log::info!(
+                                    "Trusting the new key of {host}:{port} ({} {})",
+                                    offered.algorithm,
+                                    offered.fingerprint
+                                );
+                                Some(HostKeyApproval::of(offered, self.options.save_host_key))
+                            }
+                            _ => None,
+                        };
+                        match next {
+                            Some(next) => approval = Some(next),
+                            None => break Err(error),
+                        }
                     }
                     result => break result,
                 }

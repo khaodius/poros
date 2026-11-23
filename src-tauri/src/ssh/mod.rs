@@ -238,12 +238,15 @@ impl HostKeyApproval {
         }
     }
 
+    /// Whether this is an answer about the server at `host` and `port`.
+    pub fn names(&self, host: &str, port: u16) -> bool {
+        self.port == port && self.host.trim().eq_ignore_ascii_case(host.trim())
+    }
+
     /// Whether this answers the question about the key with `fingerprint` that the server at
     /// `host` and `port` shows.
     pub fn accepts(&self, host: &str, port: u16, fingerprint: &str) -> bool {
-        self.port == port
-            && self.host.trim().eq_ignore_ascii_case(host.trim())
-            && self.fingerprint == fingerprint
+        self.names(host, port) && self.fingerprint == fingerprint
     }
 }
 
@@ -303,6 +306,24 @@ impl client::Handler for ClientHandler {
                     info.host, info.port, info.algorithm, info.fingerprint
                 ),
             ));
+            return Ok(false);
+        }
+        let pinned = self.known_hosts.pinned(&self.host, self.port);
+        if pinned.is_some_and(|pinned| pinned != info.fingerprint) {
+            // The only key to accept this server with was given, which outweighs known_hosts
+            // and any approval.
+            let kind = match status {
+                HostKeyStatus::Unknown => ErrorKind::HostKeyUnknown,
+                _ => ErrorKind::HostKeyChanged,
+            };
+            let message = format!(
+                "The host key for {}:{} is not the one given to connect with ({} {}).",
+                info.host, info.port, info.algorithm, info.fingerprint
+            );
+            *self.rejection.lock().unwrap() = Some(AppError {
+                message,
+                ..AppError::host_key(kind, info)
+            });
             return Ok(false);
         }
         if status == HostKeyStatus::Trusted {
@@ -743,27 +764,31 @@ mod tests {
 
     /// Shows `SERVER_KEY` to the handler of the hop at `host`, port 22, with nothing on record.
     async fn show_key(hop: Hop, host: &str, approval: Option<HostKeyApproval>) -> Checked {
-        show_key_with(hop, host, approval, "").await
+        show_key_with(hop, host, approval, "", |_| {}).await
     }
 
-    /// `show_key` with `system_lines` in the system known_hosts file.
+    /// `show_key` with `system_lines` in the system known_hosts file, and `prepare` run on the
+    /// known hosts first.
     async fn show_key_with(
         hop: Hop,
         host: &str,
         approval: Option<HostKeyApproval>,
         system_lines: &str,
+        prepare: impl FnOnce(&KnownHosts),
     ) -> Checked {
         let temp_dir = tempfile::tempdir().unwrap();
         let app_file = temp_dir.path().join("known_hosts");
         let system_file = temp_dir.path().join("system_known_hosts");
         std::fs::write(&system_file, system_lines).unwrap();
+        let known_hosts = KnownHosts::new(app_file.clone(), vec![system_file]);
+        prepare(&known_hosts);
         let rejection = Arc::new(Mutex::new(None));
         let mut handler = ClientHandler {
             host: host.to_string(),
             port: 22,
             hop,
             session_id: "test".to_string(),
-            known_hosts: KnownHosts::new(app_file.clone(), vec![system_file]),
+            known_hosts,
             approval,
             rejection: rejection.clone(),
             accepted_fingerprint: Arc::default(),
@@ -839,8 +864,8 @@ mod tests {
     async fn no_approval_lets_a_revoked_key_in() {
         let revoked = format!("@revoked * ssh-ed25519 {SERVER_KEY}\n");
         for hop in [Hop::Server, Hop::JumpHost] {
-            let asked =
-                show_key_with(hop, "target", Some(approval_for("target", true)), &revoked).await;
+            let approval = Some(approval_for("target", true));
+            let asked = show_key_with(hop, "target", approval, &revoked, |_| {}).await;
             assert!(!asked.accepted);
             assert_eq!(asked.recorded, "", "a revoked key is never saved");
             let rejection = asked.rejection.expect("the refusal says why");
@@ -853,6 +878,37 @@ mod tests {
             // Nothing to approve: the page does not ask about it.
             assert!(rejection.host_key.is_none());
         }
+    }
+
+    #[tokio::test]
+    async fn a_pinned_key_outweighs_known_hosts_and_approvals() {
+        let on_record = format!("target ssh-ed25519 {SERVER_KEY}\n");
+        let pin_another = |known_hosts: &KnownHosts| known_hosts.pin("target", 22, "SHA256:not-it");
+
+        let asked = show_key_with(Hop::Server, "target", None, &on_record, pin_another).await;
+        assert!(!asked.accepted, "on record, but not the pinned key");
+        assert_eq!(asked.rejection.unwrap().kind, ErrorKind::HostKeyChanged);
+
+        let approval = Some(approval_for("target", true));
+        let asked = show_key_with(Hop::Server, "target", approval, "", pin_another).await;
+        assert!(!asked.accepted, "approved, but not the pinned key");
+        let rejection = asked.rejection.unwrap();
+        assert_eq!(rejection.kind, ErrorKind::HostKeyUnknown);
+        assert!(rejection.host_key.is_some());
+        assert_eq!(asked.recorded, "");
+
+        // The pin is the server's: a jump host on the way is asked about as before.
+        let approval = Some(approval_for("bastion", false));
+        let asked = show_key_with(Hop::JumpHost, "bastion", approval, "", pin_another).await;
+        assert!(asked.accepted);
+
+        let key = russh::keys::parse_public_key_base64(SERVER_KEY).unwrap();
+        let pin_this = |known_hosts: &KnownHosts| known_hosts.pin("target", 22, &fingerprint(&key));
+        let asked = show_key_with(Hop::Server, "target", None, &on_record, pin_this).await;
+        assert!(asked.accepted);
+        let asked = show_key_with(Hop::Server, "target", None, "", pin_this).await;
+        assert!(!asked.accepted, "a pin alone is no approval");
+        assert_eq!(asked.rejection.unwrap().kind, ErrorKind::HostKeyUnknown);
     }
 
     #[test]

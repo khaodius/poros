@@ -41,6 +41,9 @@ pub struct KnownHosts {
     system_files: Vec<PathBuf>,
     /// Keys trusted until Poros closes, shared by every clone.
     trusted_until_exit: Arc<Mutex<Vec<(String, PublicKey)>>>,
+    /// Fingerprints of the only keys some hosts are accepted with until Poros closes, shared by
+    /// every clone.
+    pinned: Arc<Mutex<Vec<(String, String)>>>,
 }
 
 impl KnownHosts {
@@ -49,6 +52,7 @@ impl KnownHosts {
             app_file,
             system_files,
             trusted_until_exit: Arc::default(),
+            pinned: Arc::default(),
         }
     }
 
@@ -150,6 +154,27 @@ impl KnownHosts {
             .lock()
             .unwrap()
             .push((host_pattern(host, port), key.clone()));
+    }
+
+    /// From now on the host is accepted only with the key `fingerprint` names, whatever the files
+    /// say or the user approves, as `poros-cli --host-key` asks.
+    pub fn pin(&self, host: &str, port: u16, fingerprint: &str) {
+        self.pinned
+            .lock()
+            .unwrap()
+            .push((host_pattern(host, port), fingerprint.to_string()));
+    }
+
+    /// The fingerprint of the only key the host is accepted with, if it was pinned to one.
+    pub fn pinned(&self, host: &str, port: u16) -> Option<String> {
+        let host_port = host_pattern(host, port);
+        self.pinned
+            .lock()
+            .unwrap()
+            .iter()
+            .rev()
+            .find(|(pinned_host, _)| *pinned_host == host_port)
+            .map(|(_, fingerprint)| fingerprint.clone())
     }
 
     /// Replaces any recorded key of the same algorithm for the host.

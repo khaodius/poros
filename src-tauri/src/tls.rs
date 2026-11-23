@@ -55,6 +55,9 @@ pub fn fingerprint(certificate: &CertificateDer<'_>) -> String {
 pub struct TrustedCertificates {
     file: PathBuf,
     lock: Arc<Mutex<()>>,
+    /// Fingerprints of the only certificates some servers are accepted with until Poros closes,
+    /// shared by every clone.
+    pinned: Arc<Mutex<Vec<(String, String)>>>,
 }
 
 impl TrustedCertificates {
@@ -62,7 +65,28 @@ impl TrustedCertificates {
         Self {
             file,
             lock: Arc::new(Mutex::new(())),
+            pinned: Arc::default(),
         }
+    }
+
+    /// From now on the server is accepted only with the certificate `fingerprint` names, even
+    /// one the system or the file trusts, as `poros-cli --host-key` asks.
+    pub fn pin(&self, host: &str, port: u16, fingerprint: &str) {
+        self.pinned
+            .lock()
+            .unwrap()
+            .push((Self::key(host, port), fingerprint.to_string()));
+    }
+
+    fn pinned(&self, host: &str, port: u16) -> Option<String> {
+        let key = Self::key(host, port);
+        self.pinned
+            .lock()
+            .unwrap()
+            .iter()
+            .rev()
+            .find(|(host_port, _)| *host_port == key)
+            .map(|(_, fingerprint)| fingerprint.clone())
     }
 
     fn key(host: &str, port: u16) -> String {
@@ -150,6 +174,25 @@ impl ServerCertVerifier for ApprovingVerifier {
             ocsp_response,
             now,
         );
+        let pinned = self.trusted.pinned(&self.host, self.port);
+        if pinned.is_some_and(|pinned| pinned != fingerprint) {
+            let trusted = platform.is_ok() || self.trusted.get(&self.host, self.port).is_some();
+            let kind = match trusted {
+                true => ErrorKind::HostKeyChanged,
+                false => ErrorKind::HostKeyUnknown,
+            };
+            let info = HostKeyInfo {
+                host: self.host.clone(),
+                port: self.port,
+                algorithm: CERTIFICATE_ALGORITHM.to_string(),
+                fingerprint,
+                certificate_problem: Some("It is not the one given to connect with.".into()),
+            };
+            self.outcome.lock().unwrap().rejected = Some(AppError::host_key(kind, info));
+            return Err(rustls::Error::InvalidCertificate(
+                rustls::CertificateError::ApplicationVerificationFailure,
+            ));
+        }
         let problem = match platform {
             Ok(verified) => {
                 self.outcome.lock().unwrap().accepted = Some(fingerprint);

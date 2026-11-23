@@ -217,6 +217,76 @@ fn host_keys_are_refused_until_trusted() {
     assert_eq!(fresh.json(&["info"]).0, 0);
 }
 
+/// `--host-key` pins the server asked for. `--trust-new-host`, there for new jump hosts, never
+/// stands in for the pin, and a key on record does not outweigh it.
+#[test]
+fn a_host_key_pin_is_never_replaced() {
+    let Some(run) = Run::online("pinned") else {
+        return;
+    };
+    let (code, value) = run.json(&["info"]);
+    assert_eq!(code, 0, "{value}");
+    let fingerprint = value["hostKeyFingerprint"].as_str().unwrap().to_string();
+
+    let fresh = Run::new(run.connection.clone(), run.password.clone(), String::new());
+    let (code, value) = fresh.json(&[
+        "--host-key",
+        "SHA256:not-it",
+        "--trust-new-host",
+        "--save-host-key",
+        "info",
+    ]);
+    assert_eq!(code, 5, "{value}");
+    assert_eq!(
+        value["error"]["hostKey"]["fingerprint"],
+        fingerprint.as_str()
+    );
+    assert_eq!(fresh.json(&["info"]).0, 5, "nothing was remembered");
+
+    // On record, but not the key asked for.
+    let (code, value) = run.json(&["--host-key", "SHA256:not-it", "info"]);
+    assert_eq!(code, 6, "{value}");
+    assert_eq!(value["error"]["kind"], "hostKeyChanged");
+    assert_eq!(run.json(&["--host-key", &fingerprint, "info"]).0, 0);
+
+    // Through a jump host that is new, which --trust-new-host accepts, to the pinned server.
+    let jumping = Run::new(run.connection.clone(), run.password.clone(), String::new());
+    let port: u16 = std::env::var("POROS_TEST_SSH_PORT")
+        .unwrap()
+        .parse()
+        .unwrap();
+    let bastion = serde_json::json!([{
+        "id": "bastion",
+        "name": "bastion",
+        "host": "localhost",
+        "port": port,
+        "username": std::env::var("POROS_TEST_SSH_USER").unwrap_or_else(|_| "poros".into()),
+        "authType": "publicKey",
+        "keyPath": fixture("openssh-ed25519"),
+    }]);
+    std::fs::write(
+        jumping.config.path().join("connections.json"),
+        bastion.to_string(),
+    )
+    .unwrap();
+    let through = |pin: &str| {
+        jumping.json(&[
+            "-J",
+            "bastion",
+            "--host-key",
+            pin,
+            "--trust-new-host",
+            "info",
+        ])
+    };
+    let (code, value) = through("SHA256:not-it");
+    assert_eq!(code, 5, "{value}");
+    assert_eq!(value["error"]["hostKey"]["host"], "127.0.0.1");
+    let (code, value) = through(&fingerprint);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(value["hostKeyFingerprint"], fingerprint.as_str());
+}
+
 #[test]
 fn sign_in_failures_exit_with_the_auth_status() {
     let Some(run) = Run::online("auth") else {
