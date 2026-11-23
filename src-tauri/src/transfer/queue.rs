@@ -93,10 +93,9 @@ impl JobSpec {
             return None;
         }
         Some(match self.direction {
-            // Local file systems may ignore case, so names that differ only in case are one file.
             Direction::Download => WrittenFile {
                 session_id: None,
-                path: self.target.to_lowercase(),
+                path: local_file(&self.target),
             },
             Direction::Upload | Direction::Relay => WrittenFile {
                 session_id: Some(self.session_id.clone()),
@@ -104,6 +103,31 @@ impl JobSpec {
             },
         })
     }
+}
+
+/// Local file systems may ignore case, so names that differ only in case are one file. So, on
+/// Windows, are names that differ only in the dots and spaces that end them.
+fn local_file(target: &str) -> String {
+    if cfg!(windows) {
+        as_windows_opens(target).to_lowercase()
+    } else {
+        target.to_lowercase()
+    }
+}
+
+/// `path` as Windows opens it, each name without the dots and spaces that end it: `report.`
+/// and `report ` are both `report`. Paths starting `\\?\` are opened as written.
+fn as_windows_opens(path: &str) -> String {
+    if path.starts_with(r"\\?\") {
+        return path.to_string();
+    }
+    path.split(['\\', '/'])
+        .map(|name| match name {
+            "." | ".." => name,
+            _ => name.trim_end_matches(['.', ' ']),
+        })
+        .collect::<Vec<_>>()
+        .join("\\")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -1997,6 +2021,55 @@ mod tests {
             .map(|claim| claim.id)
             .collect();
         assert_eq!(claimed, [second, local_second]);
+    }
+
+    #[test]
+    fn windows_opens_names_without_the_dots_and_spaces_that_end_them() {
+        for (path, opened) in [
+            (r"C:\Downloads\report.", r"C:\Downloads\report"),
+            (r"C:\Downloads\report . .", r"C:\Downloads\report"),
+            (
+                r"C:\Downloads\draft.\report.txt",
+                r"C:\Downloads\draft\report.txt",
+            ),
+            (r"C:/Downloads/report ", r"C:\Downloads\report"),
+            (r"\\server\share\report.", r"\\server\share\report"),
+            (r"..\notes\.\report", r"..\notes\.\report"),
+            (r"\\?\C:\Downloads\report.", r"\\?\C:\Downloads\report."),
+        ] {
+            assert_eq!(as_windows_opens(path), opened, "{path}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn downloads_onto_names_windows_opens_as_one_take_turns() {
+        let mut queue = Queue::new();
+        let mut download = file("report", 1);
+        download.direction = Direction::Download;
+        download.target = r"C:\Downloads\report".into();
+        let first = queue.add(download.clone());
+        download.target = r"C:\Downloads\report.".into();
+        let second = queue.add(download.clone());
+        download.target = r"C:\Downloads\REPORT ".into();
+        let third = queue.add(download);
+
+        assert_eq!(
+            queue.claim(Instant::now()).map(|claim| claim.id),
+            Some(first)
+        );
+        assert!(queue.claim(Instant::now()).is_none());
+        finish(&mut queue, first, RunOutcome::Completed);
+        assert_eq!(
+            queue.claim(Instant::now()).map(|claim| claim.id),
+            Some(second)
+        );
+        assert!(queue.claim(Instant::now()).is_none());
+        finish(&mut queue, second, RunOutcome::Completed);
+        assert_eq!(
+            queue.claim(Instant::now()).map(|claim| claim.id),
+            Some(third)
+        );
     }
 
     #[test]
