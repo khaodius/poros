@@ -4,7 +4,7 @@
 
 use serde_json::json;
 
-use super::{each, expand, make_dirs, missing, operand, refuse_dots, same_name};
+use super::{distinct, each, expand, make_dirs, missing, operand, refuse_dots, same_name};
 use crate::cli::args::{ChmodArgs, ChownArgs, Conflict, MakeDirArgs, PlaceArgs, RemoveArgs};
 use crate::cli::context::{Connected, Context};
 use crate::cli::exit::Exit;
@@ -155,7 +155,7 @@ pub async fn place(context: &Context, arguments: &PlaceArgs, moving: bool) -> Ap
     if moving {
         refuse_dots(sources)?;
     }
-    let sources = expand(connected, sources).await?;
+    let sources = distinct(expand(connected, sources).await?);
     let mut source_stats = Vec::with_capacity(sources.len());
     for source in &sources {
         source_stats.push(files.stat(source).await?.ok_or_else(|| missing(source))?);

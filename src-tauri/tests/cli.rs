@@ -1069,3 +1069,47 @@ fn a_file_is_never_replaced_with_itself_through_a_link() {
         }
     }
 }
+
+#[test]
+fn a_source_named_twice_is_placed_once() {
+    let Some(run) = Run::online("twice") else {
+        return;
+    };
+    for folder in ["copied", "moved", "sent"] {
+        let (code, _) = run.json(&["mkdir", &run.remote(folder)]);
+        assert_eq!(code, 0);
+    }
+    run.write("p1.txt", "one\n");
+    run.write("p2.txt", "two\n");
+    let (code, value) = run.json(&[
+        "cp",
+        &run.remote("p*.txt"),
+        &run.remote("p1.txt"),
+        &run.remote("copied"),
+    ]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(value["placed"].as_array().unwrap().len(), 2, "{value}");
+    assert_eq!(run.names("copied"), ["p1.txt", "p2.txt"]);
+    let (code, value) = run.json(&[
+        "mv",
+        &run.remote("p1.txt"),
+        &run.remote("p1.txt"),
+        &run.remote("moved"),
+    ]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(run.names("moved"), ["p1.txt"]);
+    assert_eq!(run.read("moved/p1.txt").as_deref(), Some("one\n"));
+
+    write_tree(run.local.path(), &[("local.txt", b"local\n")]);
+    std::fs::create_dir(run.local("downloaded")).unwrap();
+    let (code, value) = run.json(&["put", "local.txt", "./local.txt", &run.remote("sent")]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(run.names("sent"), ["local.txt"]);
+    let two = run.remote("p2.txt");
+    let (code, value) = run.json(&["get", &two, &two, "downloaded"]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(
+        std::fs::read_to_string(run.local("downloaded/p2.txt")).unwrap(),
+        "two\n"
+    );
+}

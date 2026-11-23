@@ -5,7 +5,7 @@ mod manage;
 mod sync;
 mod transfer;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::path::{Component, Path, PathBuf};
 
@@ -118,6 +118,15 @@ fn same_name<'a>(
         }
     }
     None
+}
+
+/// Each path once, where it is first named, as `cp` copies a source named twice only once.
+fn distinct(paths: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    paths
+        .into_iter()
+        .filter(|path| seen.insert(path.clone()))
+        .collect()
 }
 
 /// Creates `path` and the folders above it that are missing; returns whether it made any.
@@ -301,6 +310,12 @@ mod tests {
         );
         assert!(same_name(named(&["/in/a/report.csv", "/in/a/report"]), "/archive").is_none());
         assert!(same_name(named(&["/only.txt"]), "/archive").is_none());
+    }
+
+    #[test]
+    fn paths_named_twice_are_kept_once() {
+        let named = ["/in/p1.txt", "/in/p2.txt", "/in/p1.txt"].map(String::from);
+        assert_eq!(distinct(named.to_vec()), ["/in/p1.txt", "/in/p2.txt"]);
     }
 
     #[test]

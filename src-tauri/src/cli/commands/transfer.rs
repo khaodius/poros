@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{absolute_local, expand, make_dirs, missing, operand, same_name};
+use super::{absolute_local, distinct, expand, make_dirs, missing, operand, same_name};
 use crate::cli::args::TransferArgs;
 use crate::cli::context::Context;
 use crate::cli::output::Reply;
@@ -69,7 +69,14 @@ pub async fn upload(context: &Context, arguments: &TransferArgs) -> AppResult<Re
         .ok_or_else(|| AppError::invalid("Name what to upload and where"))?;
     let mut items = Vec::with_capacity(sources.len());
     for source in sources {
-        items.push(local_item(source)?);
+        let item = local_item(source)?;
+        // A file named twice is sent once.
+        if !items
+            .iter()
+            .any(|kept: &TransferItem| kept.path == item.path)
+        {
+            items.push(item);
+        }
     }
     let connected = context.connected().await?;
     let files = connected.files();
@@ -119,7 +126,7 @@ pub async fn download(context: &Context, arguments: &TransferArgs) -> AppResult<
     let connected = context.connected().await?;
     let files = connected.files();
     let mut items = Vec::new();
-    for source in expand(connected, sources).await? {
+    for source in distinct(expand(connected, sources).await?) {
         let stat = files.stat(&source).await?.ok_or_else(|| missing(&source))?;
         let name = remote_path::file_name(&source).to_string();
         if name.is_empty() || name == "/" {
