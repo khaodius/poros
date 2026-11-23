@@ -4,7 +4,7 @@
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
@@ -36,8 +36,9 @@ macro_rules! unless_stalled {
 pub struct StallGuardedSession {
     session: RawSftpSession,
     activity: Activity,
-    /// When a request last timed out.
-    stalled_at: Mutex<Option<Instant>>,
+    /// How far the connection had moved when a request last timed out; `u64::MAX` before one
+    /// did. A plain number keeps every connection small.
+    stalled_at: AtomicU64,
 }
 
 impl StallGuardedSession {
@@ -45,7 +46,7 @@ impl StallGuardedSession {
         Self {
             session,
             activity,
-            stalled_at: Mutex::new(None),
+            stalled_at: AtomicU64::new(u64::MAX),
         }
     }
 
@@ -66,10 +67,15 @@ impl StallGuardedSession {
             biased;
             result = request => result,
             () = self.activity.stalled(started) => {
-                *self.stalled_at.lock().unwrap() = Some(Instant::now());
+                self.note_stall();
                 Err(SftpError::Timeout)
             }
         }
+    }
+
+    fn note_stall(&self) {
+        self.stalled_at
+            .store(self.activity.progress(), Ordering::Relaxed);
     }
 
     /// Sends requests the server is rightly slow to answer, such as flushing a large file to a
@@ -83,8 +89,8 @@ impl StallGuardedSession {
     where
         F: Future<Output = T>,
     {
-        let stalled_at = *self.stalled_at.lock().unwrap();
-        if stalled_at.is_some_and(|at| !self.activity.moved_since(at)) {
+        let stalled_at = self.stalled_at.load(Ordering::Relaxed);
+        if stalled_at != u64::MAX && !self.activity.moved_since(stalled_at) {
             return Err(SftpError::Timeout);
         }
         let started = Instant::now();
@@ -92,7 +98,7 @@ impl StallGuardedSession {
             biased;
             replies = requests(&self.session) => Ok(replies),
             () = self.activity.stalled_for(started, limit) => {
-                *self.stalled_at.lock().unwrap() = Some(Instant::now());
+                self.note_stall();
                 Err(SftpError::Timeout)
             }
         }

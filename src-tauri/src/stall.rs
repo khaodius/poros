@@ -35,9 +35,14 @@ impl Activity {
         self.origin + Duration::from_millis(self.last_progress.load(Ordering::Relaxed))
     }
 
-    /// Whether any bytes moved after `instant`.
-    pub fn moved_since(&self, instant: Instant) -> bool {
-        self.last_progress() > instant
+    /// How far the connection has moved, for `moved_since` to tell later whether it moved again.
+    pub fn progress(&self) -> u64 {
+        self.last_progress.load(Ordering::Relaxed)
+    }
+
+    /// Whether any bytes moved after `progress` was read.
+    pub fn moved_since(&self, progress: u64) -> bool {
+        self.progress() > progress
     }
 
     /// Completes once nothing has moved for the limit, counting from `since` when that is
