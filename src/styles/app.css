@@ -6243,25 +6243,12 @@ textarea::placeholder {
   cursor: zoom-out;
 }
 
-.preview-image.is-fitted .preview-image-toggle {
-  flex: 0 1 auto;
-  max-width: 100%;
-  max-height: 100%;
-  min-width: 0;
-  min-height: 0;
-}
-
+/* Sized by the component, which measures the space it is fitted in. */
 .preview-image img {
   display: block;
   background: repeating-conic-gradient(var(--surface-pressed) 0% 25%, var(--surface-raised) 0% 50%)
     0 0 / 16px 16px;
   box-shadow: 0 0 0 1px var(--border);
-}
-
-.preview-image.is-fitted img {
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
 }
 
 .preview-notice {
@@ -6370,10 +6357,26 @@ textarea::placeholder {
 }
 
 .preview-details dd {
+  min-width: 0;
   margin: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+/* Below a list the preview is short, so its details run on in lines and leave it the room. */
+.preview-split.is-below .preview-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 16px;
+  max-height: 30%;
+}
+
+.preview-split.is-below .preview-details > div {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .preview-binary {
@@ -6385,19 +6388,20 @@ textarea::placeholder {
   text-align: center;
 }
 
+/* Small enough for a row to fit a preview at its default width beside a file list. */
 .preview-hex {
   width: max-content;
   margin: 0 auto;
-  padding: 0 12px 16px;
+  padding: 0 10px 16px;
   font-family: var(--font-mono);
-  font-size: var(--font-size-small);
-  line-height: 1.6;
+  font-size: var(--font-size-tiny);
+  line-height: 1.7;
   white-space: pre;
 }
 
 .preview-hex-row {
   display: flex;
-  gap: 14px;
+  gap: 10px;
 }
 
 .preview-hex-offset {

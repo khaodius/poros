@@ -275,6 +275,11 @@ function Details({ rows }: { rows: Row[] }) {
   );
 }
 
+/** A size inside a sentence, which never breaks between the number and its unit. */
+function sizeInText(bytes: number): string {
+  return formatSize(bytes).replace(" ", "\u00a0");
+}
+
 function sizeText(bytes: number): string {
   const size = formatSize(bytes);
   return bytes < 1024 ? size : `${size} (${bytes.toLocaleString()} bytes)`;
@@ -459,7 +464,7 @@ function FilePreview({
       {view?.view === "text" && view.partial && (
         <p className="preview-note">
           <span>
-            Only the beginning is shown: {formatSize(caps.textBytes)} of {formatSize(view.size)}.
+            Only the beginning is shown: {sizeInText(caps.textBytes)} of {sizeInText(view.size)}.
           </span>
           <button type="button" className="link-button" onClick={() => onOpenInEditor(entry)}>
             Open in editor
@@ -522,8 +527,8 @@ function FileBody({
           title="Too large to preview"
           detail={
             view.canLoad
-              ? `This picture is ${formatSize(view.size)}. Pictures up to ${formatSize(caps.imageBytes)} load by themselves.`
-              : `This picture is ${formatSize(view.size)}, more than a preview can load.`
+              ? `This picture is ${sizeInText(view.size)}. Pictures up to ${sizeInText(caps.imageBytes)} load by themselves.`
+              : `This picture is ${sizeInText(view.size)}, more than a preview can load.`
           }
           action={view.canLoad ? { label: "Load anyway", onSelect: onLoadAnyway } : undefined}
         />

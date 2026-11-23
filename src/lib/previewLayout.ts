@@ -43,6 +43,25 @@ export function storePreviewShare(share: number): void {
   }
 }
 
+/**
+ * The size a picture `width` by `height` is shown at to fit a space `room` across, keeping its
+ * shape. Only a drawing, which scales without losing detail, may `grow` past its own size.
+ */
+export function fitInside(
+  width: number,
+  height: number,
+  room: { width: number; height: number },
+  grow: boolean,
+) {
+  if (width <= 0 || height <= 0 || room.width <= 0 || room.height <= 0) return null;
+  const fits = Math.min(room.width / width, room.height / height);
+  const scale = grow ? fits : Math.min(1, fits);
+  return {
+    width: Math.max(1, Math.floor(width * scale)),
+    height: Math.max(1, Math.floor(height * scale)),
+  };
+}
+
 /** The size a picture `width` by `height` is drawn at to fit in a square `box` wide. */
 export function fitWithin(width: number, height: number, box: number) {
   const longest = Math.max(width, height);

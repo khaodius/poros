@@ -55,11 +55,11 @@ describe("hexRows", () => {
     ]);
     expect(hexRows(bytes, 256)).toEqual([
       {
-        offset: "00000000",
+        offset: "0000",
         bytes: ["89", "50", "4e", "47", "0d", "0a", "1a", "0a"],
         characters: ".PNG....",
       },
-      { offset: "00000008", bytes: ["00", "7f", "41"], characters: "..A" },
+      { offset: "0008", bytes: ["00", "7f", "41"], characters: "..A" },
     ]);
     expect(hexRows(bytes, 256, 16)).toHaveLength(1);
   });
@@ -67,7 +67,13 @@ describe("hexRows", () => {
   it("shows no more than the limit", () => {
     const rows = hexRows(new Uint8Array(1000), 256);
     expect(rows).toHaveLength(32);
-    expect(rows[31].offset).toBe("000000f8");
+    expect(rows[31].offset).toBe("00f8");
     expect(hexRows(new Uint8Array(0), 256)).toEqual([]);
+  });
+
+  it("gives every offset as many digits as the last one needs", () => {
+    const rows = hexRows(new Uint8Array(0x12345), 0x12345, 0x1000);
+    expect(rows[0].offset).toBe("00000");
+    expect(rows[rows.length - 1].offset).toBe("12000");
   });
 });

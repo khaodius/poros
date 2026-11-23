@@ -311,10 +311,10 @@ function endOf(text: string, closing: string): number {
 }
 
 /**
- * Whether the first element of an XML text is `<svg>`, after any byte order mark, XML
- * declaration, comments and document type.
+ * The start tag of the first element of an XML text when that element is `<svg>`, after any
+ * byte order mark, XML declaration, comments and document type; null for any other text.
  */
-export function hasSvgRoot(text: string): boolean {
+function svgRootTag(text: string): string | null {
   let rest = text.replace(/^\uFEFF/, "").trimStart();
   for (;;) {
     let end: number;
@@ -323,10 +323,58 @@ export function hasSvgRoot(text: string): boolean {
     else if (/^<!DOCTYPE/i.test(rest)) end = doctypeEnd(rest) + 1;
     else break;
     // Cut before it closed: what follows is not known.
-    if (end <= 0) return false;
+    if (end <= 0) return null;
     rest = rest.slice(end).trimStart();
   }
-  return /^<(?:[A-Za-z_][\w.-]*:)?svg[\s/>]/.test(rest);
+  if (!/^<(?:[A-Za-z_][\w.-]*:)?svg[\s/>]/.test(rest)) return null;
+  const close = rest.indexOf(">");
+  return close < 0 ? rest : rest.slice(0, close + 1);
+}
+
+export function hasSvgRoot(text: string): boolean {
+  return svgRootTag(text) !== null;
+}
+
+/** An attribute's value in a start tag. A name only counts after a space, not inside another. */
+function attribute(tag: string, name: string): string | null {
+  const match = new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`).exec(tag);
+  return match ? (match[1] ?? match[2]) : null;
+}
+
+/** A length in pixels, which is what a number without a unit is too; null for any other unit. */
+function pixels(value: string | null): number | null {
+  const match = value === null ? null : /^\s*([0-9]*\.?[0-9]+)\s*(px)?\s*$/.exec(value);
+  const length = match ? Number(match[1]) : NaN;
+  return length > 0 && Number.isFinite(length) ? length : null;
+}
+
+export interface DrawingSize {
+  width: number;
+  height: number;
+}
+
+/**
+ * The size a drawing gives itself in its `width` and `height`, completed or replaced by its
+ * `viewBox`. Null when it says nothing usable: it then takes whatever size it is shown at.
+ */
+export function drawingSize(bytes: Uint8Array): DrawingSize | null {
+  const encoding = detectTextEncoding(bytes.subarray(0, SVG_HEAD_BYTES), false) ?? "utf8";
+  const tag = svgRootTag(headText(bytes, encoding));
+  if (!tag) return null;
+  const width = pixels(attribute(tag, "width"));
+  const height = pixels(attribute(tag, "height"));
+  const box = (attribute(tag, "viewBox") ?? "")
+    .trim()
+    .split(/[\s,]+/)
+    .map(Number);
+  const [boxWidth, boxHeight] = box.length === 4 ? box.slice(2) : [NaN, NaN];
+  const hasBox = boxWidth > 0 && boxHeight > 0 && Number.isFinite(boxWidth + boxHeight);
+  const round = (length: number) => Math.max(1, Math.round(length));
+  if (width && height) return { width: round(width), height: round(height) };
+  if (!hasBox) return null;
+  if (width) return { width: round(width), height: round((width * boxHeight) / boxWidth) };
+  if (height) return { width: round((height * boxWidth) / boxHeight), height: round(height) };
+  return { width: round(boxWidth), height: round(boxHeight) };
 }
 
 function headText(bytes: Uint8Array, encoding: TextEncoding): string {

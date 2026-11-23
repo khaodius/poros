@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   detectTextEncoding,
+  drawingSize,
   extensionOf,
   hasSvgRoot,
   nameHint,
@@ -245,6 +246,47 @@ describe("hasSvgRoot", () => {
     expect(hasSvgRoot("<p><svg></svg></p>")).toBe(false);
     expect(hasSvgRoot("<?xml version")).toBe(false);
     expect(hasSvgRoot("")).toBe(false);
+  });
+});
+
+describe("drawingSize", () => {
+  const drawing = (attributes: string, prolog = "") =>
+    bytes(`${prolog}<svg xmlns="http://www.w3.org/2000/svg" ${attributes}><path/></svg>`);
+
+  it("takes the size a drawing gives itself, in pixels", () => {
+    expect(drawingSize(drawing('width="640" height="480"'))).toEqual({ width: 640, height: 480 });
+    expect(drawingSize(drawing("width='24px' height='16.4px'"))).toEqual({ width: 24, height: 16 });
+    const declared = drawing('height="90" width="120"', '<?xml version="1.0"?>\n<!-- logo -->\n');
+    expect(drawingSize(declared)).toEqual({ width: 120, height: 90 });
+  });
+
+  it("falls back on the view box, keeping its shape", () => {
+    expect(drawingSize(drawing('viewBox="0 0 1024 512"'))).toEqual({ width: 1024, height: 512 });
+    expect(drawingSize(drawing('viewBox="-5,-5,20,10" width="100"'))).toEqual({
+      width: 100,
+      height: 50,
+    });
+    expect(drawingSize(drawing('viewBox="0 0 20 10" height="100%"'))).toEqual({
+      width: 20,
+      height: 10,
+    });
+    // Attributes of the shapes inside, and ones whose names only end the same, do not count.
+    const strokes = bytes(
+      '<svg data-width="5" stroke-width="2" viewBox="0 0 30 40"><rect width="9" height="9"/></svg>',
+    );
+    expect(drawingSize(strokes)).toEqual({ width: 30, height: 40 });
+  });
+
+  it("knows no size where the drawing gives none it can use", () => {
+    expect(drawingSize(drawing(""))).toBeNull();
+    expect(drawingSize(drawing('width="10em" height="2in"'))).toBeNull();
+    expect(drawingSize(drawing('viewBox="0 0 0 10"'))).toBeNull();
+    expect(drawingSize(bytes("<html><svg width='5' height='5'/></html>"))).toBeNull();
+  });
+
+  it("reads a drawing kept as UTF-16", () => {
+    const text = '<svg width="32" height="48"/>';
+    expect(drawingSize(bytes([0xff, 0xfe], utf16(text)))).toEqual({ width: 32, height: 48 });
   });
 });
 

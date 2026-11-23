@@ -77,14 +77,18 @@ export interface HexRow {
 /** Few enough bytes in a row for a row to fit a preview beside a file list. */
 export const HEX_BYTES_PER_ROW = 8;
 
+/** Offsets have at least this many digits, and only as many more as the last one needs. */
+const MIN_OFFSET_DIGITS = 4;
+
 /** The first `limit` bytes in rows, as a hex viewer shows them. */
 export function hexRows(bytes: Uint8Array, limit: number, perRow = HEX_BYTES_PER_ROW): HexRow[] {
   const shown = bytes.subarray(0, limit);
+  const digits = Math.max(MIN_OFFSET_DIGITS, Math.max(0, shown.length - 1).toString(16).length);
   const rows: HexRow[] = [];
   for (let start = 0; start < shown.length; start += perRow) {
     const row = [...shown.subarray(start, start + perRow)];
     rows.push({
-      offset: start.toString(16).padStart(8, "0"),
+      offset: start.toString(16).padStart(digits, "0"),
       bytes: row.map((byte) => byte.toString(16).padStart(2, "0")),
       characters: row
         .map((byte) => (byte >= 0x20 && byte < 0x7f ? String.fromCharCode(byte) : "."))
