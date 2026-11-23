@@ -6616,6 +6616,17 @@ textarea::placeholder {
   overflow-wrap: anywhere;
 }
 
+.share-batch-where {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.share-batch-where .share-batch-place {
+  color: var(--text-faint);
+  font-size: var(--font-size-small);
+}
+
 .share-batch-label,
 .share-batch-note {
   grid-column: 1 / -1;

@@ -33,8 +33,13 @@ import { FileIcon } from "./FileIcon";
 
 interface ShareDialogProps {
   sessionId: string;
-  /** The folder the entries are in. */
+  /** The folder the entries are in, or the one a search for them started in. */
   folder: string;
+  /**
+   * Where each entry is, for entries from several folders such as search results: relative to
+   * `folder`, and `.` for an entry in it.
+   */
+  folderOf?: (entry: FileEntry) => string;
   entries: FileEntry[];
   sharing: ShareCapabilities;
   /** The service's name, such as Google Drive. */
@@ -91,6 +96,7 @@ function useNow(tickMs: number): number {
 export function ShareDialog({
   sessionId,
   folder,
+  folderOf,
   entries,
   sharing,
   service,
@@ -111,6 +117,12 @@ export function ShareDialog({
   const bodyRef = useRef<HTMLDivElement>(null);
   const single = entries.length === 1 ? entries[0] : null;
   const nowMillis = useNow(CLOCK_TICK_MS);
+
+  // An entry in `folder` itself needs no line of its own: the subject names that folder.
+  const placeOf = (entry: FileEntry) => {
+    const place = folderOf?.(entry);
+    return place && place !== "." ? place : undefined;
+  };
 
   const update = (index: number, change: (item: ItemLinks) => ItemLinks) =>
     setItems((current) => replaceAt(current, index, change));
@@ -407,6 +419,7 @@ export function ShareDialog({
                   <BatchRow
                     key={item.entry.path}
                     item={item}
+                    place={placeOf(item.entry)}
                     busy={busy}
                     fresh={isNew}
                     label={
@@ -652,6 +665,8 @@ function LinkRow({ link, statement, fresh, onRemove, onError }: LinkRowProps) {
 
 interface BatchRowProps {
   item: ItemLinks;
+  /** The folder the item is in, among items from several folders. */
+  place?: string;
   busy: boolean;
   /** Made by the last Create. */
   fresh: boolean;
@@ -664,14 +679,21 @@ interface BatchRowProps {
  * One item of several shared at once: its name, and its newest link or why it has none, with
  * what that link does when it is not what the statement above says, and the service's notes.
  */
-function BatchRow({ item, busy, fresh, label, onError }: BatchRowProps) {
+function BatchRow({ item, busy, fresh, label, place, onError }: BatchRowProps) {
   const link = item.links[0];
   const status = item.loading ? "Checking..." : busy ? "Making the link..." : "No link yet";
   return (
     <li className={`share-batch-row ${fresh ? "is-new" : ""}`}>
-      <span className="share-batch-name" title={item.entry.name}>
+      <span className="share-batch-name" title={item.entry.path}>
         <FileIcon entry={item.entry} />
-        <span>{item.entry.name}</span>
+        {place ? (
+          <span className="share-batch-where">
+            <span>{item.entry.name}</span>
+            <span className="share-batch-place">{place}</span>
+          </span>
+        ) : (
+          <span>{item.entry.name}</span>
+        )}
       </span>
       {link ? (
         <span className="share-batch-link">
