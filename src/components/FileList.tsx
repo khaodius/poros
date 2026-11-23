@@ -346,7 +346,7 @@ const stopAtField = (event: SyntheticEvent) => event.stopPropagation();
  * The new name, typed in place of the old one in the row. Enter or leaving the field renames,
  * Esc keeps the old name. The name before the extension is selected to start with.
  */
-function RenameField({ entry, events }: { entry: FileEntry; events: RowEvents }) {
+export function RenameField({ entry, events }: { entry: FileEntry; events: RowEvents }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState(entry.name);
   const [busy, setBusy] = useState(false);
