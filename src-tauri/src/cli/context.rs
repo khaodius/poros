@@ -21,7 +21,7 @@ use crate::ssh::HostKeyApproval;
 /// Sessions belong to a window in the app; the command line's belong to this name.
 pub const OWNER: &str = "cli";
 /// The app's identifier, which names its config folder.
-const APP_IDENTIFIER: &str = "io.github.khaodius.poros";
+pub const APP_IDENTIFIER: &str = "io.github.khaodius.poros";
 
 pub struct Context {
     pub options: GlobalOptions,

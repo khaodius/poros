@@ -64,6 +64,13 @@ pub trait Backend: Send + Sync {
 
     /// Closes the connections the backend opened for itself, once the drive is gone.
     async fn close(&self) {}
+
+    /// The SHA-256 of a file as the server's own command computes it, for checking an upload.
+    /// `None` where the server runs no such command.
+    async fn server_sha256(&self, path: &str) -> Option<Vec<u8>> {
+        let _ = path;
+        None
+    }
 }
 
 /// How many requests of each kind run at once.

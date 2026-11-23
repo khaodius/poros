@@ -1,8 +1,10 @@
 //! Sends a spooled file to the server the way the transfer queue sends an upload: through
 //! `RemoteFileSystem::open_write`, then checked as a finished transfer is. The server must
-//! hold as many bytes as were sent, and where the transfer settings ask for uploads to be
-//! read back (FTP and WebDAV servers, which cannot hash a file themselves, and vaults), the
-//! file is read back and compared with a SHA-256 of what was sent.
+//! hold as many bytes as were sent. Where the transfer settings ask for uploads to be
+//! verified, an SFTP server's own `sha256sum` must agree with a SHA-256 of what was sent, and
+//! where they ask for reading back (FTP and WebDAV servers, which cannot hash a file
+//! themselves, vaults, and SFTP servers that run no commands), the file is read back and
+//! compared with it.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -39,6 +41,14 @@ pub enum UploadCheck {
     Size,
     /// The file is also read back and compared with what was sent.
     ReadBack,
+    /// The server hashes its copy, or, if it cannot and `read_back` says so, it is read back.
+    ServerHash { read_back: bool },
+}
+
+impl UploadCheck {
+    fn hashes(self) -> bool {
+        self != UploadCheck::Size
+    }
 }
 
 /// Says how an upload to a given server is checked.
@@ -49,7 +59,9 @@ pub type ChooseCheck = dyn Fn(&dyn RemoteFileSystem) -> UploadCheck + Send + Syn
 pub fn check_for(files: &dyn RemoteFileSystem, verify: bool, read_back: bool) -> UploadCheck {
     let transport = files.transport();
     let in_vault = files.protocol() == Protocol::Cryptomator;
-    if verify
+    if verify && !in_vault && transport == Protocol::Sftp {
+        UploadCheck::ServerHash { read_back }
+    } else if verify
         && read_back
         && (transport.is_ftp()
             || transport.is_webdav()
@@ -114,7 +126,7 @@ pub async fn upload(
                 "{name} changed while it was being uploaded"
             )));
         }
-        if check == UploadCheck::ReadBack {
+        if check.hashes() {
             hasher.update(&buffer);
         }
         step(writer.write(Bytes::from(buffer)))
@@ -136,11 +148,25 @@ pub async fn upload(
             .with_path(request.remote_path.clone()));
         }
     }
-    if check == UploadCheck::ReadBack {
-        let stored = read_back_digest(&files, &request.remote_path, request.size).await?;
+    let compared = match check {
+        UploadCheck::Size => None,
+        UploadCheck::ReadBack => Some(("read back", None)),
+        UploadCheck::ServerHash { read_back } => {
+            match backend.server_sha256(&request.remote_path).await {
+                Some(digest) => Some(("hashed by the server", Some(digest))),
+                None if read_back => Some(("read back", None)),
+                None => None,
+            }
+        }
+    };
+    if let Some((how, digest)) = compared {
+        let stored = match digest {
+            Some(digest) => digest,
+            None => read_back_digest(&files, &request.remote_path, request.size).await?,
+        };
         if stored != hasher.finalize().as_slice() {
             return Err(AppError::integrity(format!(
-                "The copy of {name} on the server, read back, does not match what was written"
+                "The copy of {name} on the server, {how}, does not match what was written"
             ))
             .with_path(request.remote_path.clone()));
         }

@@ -200,6 +200,12 @@ impl MountManager {
         })
     }
 
+    /// Where a drive of this process keeps what programs wrote until it is uploaded.
+    pub fn spool_folder(&self, drive_id: &str) -> PathBuf {
+        self.spool_root
+            .join(format!("{}-{drive_id}", std::process::id()))
+    }
+
     pub fn support() -> MountSupport {
         MountSupport {
             missing: platform::missing(),
@@ -313,8 +319,7 @@ impl MountManager {
 
         let id = uuid::Uuid::new_v4().to_string();
         let label = session.info().label.clone();
-        let spool_directory = self.spool_root.join(format!("{}-{id}", std::process::id()));
-        let mut options = FsOptions::new(label.clone(), spool_directory);
+        let mut options = FsOptions::new(label.clone(), self.spool_folder(&id));
         options.read_only = request.read_only;
         let checks = self.upload_checks.clone();
         options.upload_check = Arc::new(move |files| {

@@ -19,12 +19,16 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use tokio::sync::OwnedSemaphorePermit;
+use tokio_util::sync::CancellationToken;
 
 use super::backend::{Backend, Gate, Lease, Limits, Purpose};
+use crate::automation::remote_command::{self, OutputStream};
+use crate::checksum::{parse_output, Algorithm};
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::events::Events;
 use crate::ftp::FtpFs;
 use crate::protocol::RemoteFileSystem;
+use crate::rsync::shell_quote;
 use crate::session::{Session, SessionManager};
 use crate::ssh::HostKeyApproval;
 
@@ -34,6 +38,8 @@ const RECONNECT_WAIT: Duration = Duration::from_secs(15);
 /// folder of a server that is away then get their errors in good time.
 const STILL_AWAY_WAIT: Duration = Duration::from_millis(500);
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
+/// The longest the server may take to hash an uploaded file.
+const HASH_LIMIT: Duration = Duration::from_secs(600);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Carrier {
@@ -136,6 +142,8 @@ pub struct SessionBackend {
     pool: Arc<Mutex<Pool>>,
     /// A request waited the whole time for the session in vain, and none has reached it since.
     waited_out: AtomicBool,
+    /// The server would not hash a file with its own command, so uploads are not offered to.
+    cannot_hash: AtomicBool,
 }
 
 impl SessionBackend {
@@ -156,6 +164,7 @@ impl SessionBackend {
             gate: Gate::new(carrier.limits()),
             pool: Arc::new(Mutex::new(Pool::default())),
             waited_out: AtomicBool::new(false),
+            cannot_hash: AtomicBool::new(false),
         })
     }
 
@@ -320,6 +329,46 @@ impl Backend for SessionBackend {
 
     fn connection_lost(&self) {
         self.retire_connections();
+    }
+
+    async fn server_sha256(&self, path: &str) -> Option<Vec<u8>> {
+        if self.carrier != Carrier::Sftp || self.cannot_hash.load(Ordering::Relaxed) {
+            return None;
+        }
+        let session = self.live_session().await.ok()?;
+        // A vault's files are encrypted on the server, so its hash says nothing.
+        if session.vault().is_some() {
+            return None;
+        }
+        let command = format!("{} -- {}", Algorithm::Sha256.command(), shell_quote(path));
+        let mut output = String::new();
+        let ran = tokio::time::timeout(
+            HASH_LIMIT,
+            remote_command::run_on(
+                &session,
+                &command,
+                None,
+                &CancellationToken::new(),
+                |stream, text| {
+                    if stream == OutputStream::Stdout {
+                        output.push_str(text);
+                    }
+                },
+            ),
+        )
+        .await;
+        let digest = match ran {
+            Ok(Ok(result)) if result.succeeded() => parse_output(&output, Algorithm::Sha256)
+                .into_iter()
+                .next()
+                .map(|(_, digest)| digest),
+            _ => None,
+        };
+        if digest.is_none() {
+            // Shell-less accounts and servers without the command stay that way.
+            self.cannot_hash.store(true, Ordering::Relaxed);
+        }
+        digest
     }
 
     async fn close(&self) {
