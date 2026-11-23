@@ -77,13 +77,14 @@ pub enum UploadDecision {
 
 pub fn upload_decision(change: ServerChange, answer: Option<Resolution>) -> UploadDecision {
     match (change, answer) {
+        // "Don't upload" stands even when the server's copy is back as it was.
+        (_, Some(Resolution::Cancel)) => UploadDecision::Hold,
         (ServerChange::Unchanged, _) => UploadDecision::Replace,
         (_, None) => UploadDecision::Ask,
         (_, Some(Resolution::Overwrite)) => UploadDecision::Replace,
         // With nothing left on the server there is no second file to keep.
         (ServerChange::Deleted, Some(Resolution::KeepBoth)) => UploadDecision::Replace,
         (ServerChange::Changed, Some(Resolution::KeepBoth)) => UploadDecision::BesideServerCopy,
-        (_, Some(Resolution::Cancel)) => UploadDecision::Hold,
     }
 }
 
@@ -153,11 +154,25 @@ mod tests {
             None,
             Some(Resolution::Overwrite),
             Some(Resolution::KeepBoth),
-            Some(Resolution::Cancel),
         ] {
             assert_eq!(
                 upload_decision(ServerChange::Unchanged, answer),
                 UploadDecision::Replace
+            );
+        }
+    }
+
+    #[test]
+    fn do_not_upload_holds_whatever_the_server_shows_by_then() {
+        for change in [
+            ServerChange::Unchanged,
+            ServerChange::Changed,
+            ServerChange::Deleted,
+        ] {
+            assert_eq!(
+                upload_decision(change, Some(Resolution::Cancel)),
+                UploadDecision::Hold,
+                "{change:?}"
             );
         }
     }
