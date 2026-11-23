@@ -143,6 +143,41 @@ describe("sanitizeSettings", () => {
     expect(sanitizeSettings({}).interface.columnWidths).toEqual({});
   });
 
+  it("keeps the whole entries of the rename history, and starts without one", () => {
+    expect(sanitizeSettings({}).interface.renameHistory).toEqual([]);
+    expect(
+      sanitizeSettings({ interface: { renameHistory: "IMG_" } }).interface.renameHistory,
+    ).toEqual([]);
+    const history = sanitizeSettings({
+      interface: {
+        renameHistory: [
+          { mode: "regex", pattern: "IMG_(\\d+)", replacement: "photo-$1", scope: "both" },
+          { pattern: 7 },
+          "IMG_",
+          { mode: "glob", pattern: " ", replacement: 3, caseSensitive: true, allMatches: false },
+        ],
+      },
+    }).interface.renameHistory;
+    expect(history).toEqual([
+      {
+        mode: "regex",
+        pattern: "IMG_(\\d+)",
+        replacement: "photo-$1",
+        caseSensitive: false,
+        allMatches: true,
+        scope: "both",
+      },
+      {
+        mode: "text",
+        pattern: " ",
+        replacement: "",
+        caseSensitive: true,
+        allMatches: false,
+        scope: "name",
+      },
+    ]);
+  });
+
   it("checks the synchronization defaults", () => {
     const sync = sanitizeSettings({
       sync: {
