@@ -8,6 +8,7 @@ import {
 import { onCommandOutput, serverCommands, toAppError } from "../lib/ipc";
 import type { ServerCommand } from "../lib/settings";
 import type { CommandResult, OutputChunk } from "../lib/types";
+import { forgetServerListings } from "./listings";
 import { listPanes } from "./paneRegistry";
 import { currentSessionId } from "./sessionStore";
 import { useToastStore } from "./toastStore";
@@ -174,6 +175,8 @@ export const useCommandStore = create<CommandState>((set, get) => {
         note: (text) => append("note", text),
         output: (chunk) => append(chunk.stream, chunk.text),
       }).then((summary) => {
+        // A command may have changed any folder, whether or not the panes are to reload.
+        forgetServerListings(run.sessionId);
         if (run.refresh) refreshServerPanes(run.sessionId);
         if (current === control) set({ running: false, summary });
       });
@@ -211,6 +214,7 @@ export function runServerCommand(
   }
   const control: RunControl = { stopped: false, runId: null };
   void runEach(run, { control, note: () => undefined, output: () => undefined }).then((summary) => {
+    forgetServerListings(sessionId);
     if (run.refresh) refreshServerPanes(sessionId);
     useToastStore
       .getState()

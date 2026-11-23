@@ -85,6 +85,14 @@ export function childPath(folder: string, name: string, style: PathStyle): strin
   return ended ? folder + name : folder + separator + name;
 }
 
+/** The folder a server path is in: `/srv/www` -> `/srv`, `/srv` -> `/`; null for the root. */
+export function remoteParent(path: string): string | null {
+  const trimmed = normalizedPath(path, "posix");
+  const slash = trimmed.lastIndexOf("/");
+  if (slash < 0 || trimmed === "/") return null;
+  return slash === 0 ? "/" : trimmed.slice(0, slash);
+}
+
 export function samePath(first: string, second: string, style: PathStyle): boolean {
   return normalizedPath(first, style) === normalizedPath(second, style);
 }

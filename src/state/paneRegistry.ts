@@ -16,6 +16,8 @@ export interface PaneHandle {
   refresh: (focus?: string | readonly string[]) => void;
   /** Empties the pane at once, before it is given another session to list from. */
   clear?: () => void;
+  /** Whether a listing is on its way, so what the pane shows may be about to change. */
+  loading?: () => boolean;
   selected: () => FileEntry[];
   /** Everything the listing holds, also rows scrolled away or filtered out. */
   entries?: () => readonly FileEntry[];
