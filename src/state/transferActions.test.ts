@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FileEntry, SessionInfo } from "../lib/types";
-import type { PaneHandle } from "./paneRegistry";
+import { getPane, registerPane, updatePane, type PaneHandle } from "./paneRegistry";
 import { useSessionStore } from "./sessionStore";
 import { useToastStore } from "./toastStore";
 import { refusesLockedVault, transferBetween } from "./transferActions";
@@ -73,6 +73,7 @@ function pane(kind: PaneHandle["kind"], path: string, more: Partial<PaneHandle> 
 let folders: Record<string, FileEntry[]> = {};
 const toasts: string[] = [];
 const commands = () => invoke.mock.calls.map(([command]) => command as string);
+const unregister: (() => void)[] = [];
 
 beforeEach(() => {
   folders = {};
@@ -87,6 +88,8 @@ beforeEach(() => {
   useToastStore.setState({ show: (_tone, message) => void toasts.push(message) });
   know(server("s1"));
 });
+
+afterEach(() => unregister.splice(0).forEach((remove) => remove()));
 
 describe("refusesLockedVault", () => {
   const onServer = pane("remote", "/srv", { sessionId: "s1" });
@@ -122,8 +125,36 @@ describe("refusesLockedVault", () => {
     expect(await refusesLockedVault(locked, "/srv/private")).toBe(true);
     expect(toasts).toEqual(["Unlock the vault to copy files into it."]);
     // With the encrypted files shown instead of the card, the user is working on the server.
-    const revealed = pane("remote", "/srv/private", { sessionId: "s1" });
+    const revealed = pane("remote", "/srv/private", { sessionId: "s1", locked: false });
     expect(await refusesLockedVault(revealed, "/srv/private")).toBe(false);
+    expect(commands()).toEqual([]);
+  });
+
+  it("lists the folder a pane shows when the pane has not said whether its card is up", async () => {
+    folders["/srv/private"] = [
+      entry("/srv/private/vault.cryptomator"),
+      entry("/srv/private/d", "dir"),
+    ];
+    folders["/srv/www"] = [entry("/srv/www/index.html")];
+    const unknown = pane("remote", "/srv/private", { sessionId: "s1" });
+    expect(await refusesLockedVault(unknown, "/srv/private")).toBe(true);
+    expect(toasts).toEqual(["private is a locked vault. Open it to copy files into it."]);
+    expect(
+      await refusesLockedVault(pane("remote", "/srv/www", { sessionId: "s1" }), "/srv/www"),
+    ).toBe(false);
+    expect(commands()).toEqual(["remote_list", "remote_list"]);
+  });
+
+  it("still refuses a locked vault whose pane took another session, as after a reconnect", async () => {
+    const registered = (sessionId: string) =>
+      registerPane(pane("remote", "/srv/private", { sessionId, visible: false }));
+    unregister.push(registered("s1"));
+    updatePane("remote-tab", { visible: true, locked: true });
+    know(server("s2"));
+    unregister.push(registered("s2"));
+
+    expect(await refusesLockedVault(getPane("remote-tab")!, "/srv/private")).toBe(true);
+    expect(toasts).toEqual(["Unlock the vault to copy files into it."]);
     expect(commands()).toEqual([]);
   });
 

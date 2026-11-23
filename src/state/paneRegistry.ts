@@ -23,18 +23,33 @@ export interface PaneHandle {
   activatedAt: number;
   /**
    * The pane shows the card of a locked vault in place of the folder's encrypted files, among
-   * which nothing is to be copied unseen.
+   * which nothing is to be copied unseen. Absent until the pane has said either way.
    */
   locked?: boolean;
 }
 
 const panes = new Map<string, PaneHandle>();
 
+/**
+ * Adds a pane. A pane registers again when its session or its name changes, as after a
+ * reconnect or on entering a vault: what it reported since it first registered is still so.
+ */
 export function registerPane(handle: PaneHandle): () => void {
+  const replaced = panes.get(handle.tabId);
+  if (replaced) {
+    handle.visible = replaced.visible;
+    handle.activatedAt = replaced.activatedAt;
+    handle.locked = replaced.locked;
+  }
   panes.set(handle.tabId, handle);
   return () => {
     if (panes.get(handle.tabId) === handle) panes.delete(handle.tabId);
   };
+}
+
+/** Forgets a tab's pane, once the pane itself is gone. */
+export function unregisterPane(tabId: string): void {
+  panes.delete(tabId);
 }
 
 export function updatePane(tabId: string, change: Partial<PaneHandle>): void {

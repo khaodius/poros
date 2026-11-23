@@ -77,15 +77,16 @@ export function paneWritingTo(pane: PaneHandle, folder: string): PaneHandle {
  * Says so and returns true when `folder` is a vault that is not unlocked: files put there
  * through the server would lie unencrypted among the vault's encrypted files. The pane showing
  * the vault's folder knows by its card. A folder `target` does not show, usually a row of the
- * folder the vault is in, is listed to find out. Where the user asked to see what the server
- * stores in a vault, files go in as on any server.
+ * folder the vault is in, is listed to find out, and so is one whose pane has not said whether
+ * its card is up. Where the user asked to see what the server stores in a vault, files go in as
+ * on any server.
  */
 export async function refusesLockedVault(target: PaneHandle, folder: string): Promise<boolean> {
   if (target.kind !== "remote" || !target.sessionId) return false;
   const showToast = useToastStore.getState().show;
-  if (target.path() === folder) {
+  if (target.path() === folder && target.locked !== undefined) {
     if (target.locked) showToast("info", "Unlock the vault to copy files into it.");
-    return target.locked === true;
+    return target.locked;
   }
   const session = useSessionStore.getState().sessions[target.sessionId] as
     { info: SessionInfo } | undefined;
