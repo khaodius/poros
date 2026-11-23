@@ -85,6 +85,18 @@ describe("Shift+click", () => {
     expect(selected(view.pane)).toEqual(["b.txt", "c.txt", "d.txt"]);
   });
 
+  it("selects from the cursor after a reload took away the row clicked before", async () => {
+    const names = ["a.txt", "b.txt", "c.txt", "d.txt", "e.txt"];
+    const view = await paneOn(folderOf(names));
+    await view.act((pane) => pane.selectOnly(`${FOLDER}/b.txt`));
+    await view.act((pane) => pane.stepCursor(1));
+    // Moved away by another program while it was on show.
+    names.splice(names.indexOf("b.txt"), 1);
+    await view.act((pane) => pane.refresh());
+    await view.act((pane) => pane.selectRangeTo(`${FOLDER}/e.txt`));
+    expect(selected(view.pane)).toEqual(["c.txt", "d.txt", "e.txt"]);
+  });
+
   it("selects from the cursor after Esc cleared the selection", async () => {
     const view = await paneOn(folderOf(["a.txt", "b.txt", "c.txt", "d.txt"]));
     await view.act((pane) => pane.selectOnly(`${FOLDER}/b.txt`));
