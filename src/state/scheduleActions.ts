@@ -1,6 +1,6 @@
 // Opens the scheduler with a transfer task made from transfers in the queue or files in a tab.
 
-import { finishedRuns, serverChanges } from "../lib/schedule";
+import { finishedRuns, resolveServerFolder, serverChanges } from "../lib/schedule";
 import {
   downloadBlocker,
   taskFromFiles,
@@ -103,7 +103,7 @@ export function forgetWhatRunsChanged(before: readonly TaskView[], after: readon
       );
       for (const entry of on) {
         if (change.folder === null) forgetServerListings(entry.info.id);
-        else if (change.folder.trim()) forgetListingsWithin(entry.info.id, change.folder.trim());
+        else forgetListingsWithin(entry.info.id, resolveServerFolder(change.folder, entry.info));
       }
     }
   }

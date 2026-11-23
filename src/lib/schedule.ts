@@ -285,6 +285,28 @@ export function serverChanges(action: TaskAction): ServerChange[] {
 }
 
 /**
+ * A folder on the server as a task names it, made full as the backend's `resolve_remote` does:
+ * `~` starts at the session's home folder, a relative path at the folder the connection opens
+ * in, and `.` and `..` are worked out.
+ */
+export function resolveServerFolder(
+  folder: string,
+  session: { home: string; initialPath: string },
+): string {
+  const path = folder.trim();
+  let full: string;
+  if (path.startsWith("/")) full = path;
+  else if (path === "~" || path.startsWith("~/")) full = `${session.home}/${path.slice(1)}`;
+  else full = `${session.initialPath}/${path}`;
+  const parts: string[] = [];
+  for (const part of full.split("/")) {
+    if (part === "..") parts.pop();
+    else if (part !== "" && part !== ".") parts.push(part);
+  }
+  return `/${parts.join("/")}`;
+}
+
+/**
  * The tasks in `after` with a run that finished since `before`, in Poros or in poros-cli. What
  * a run writes as it begins is not a result, and the result that replaces it is.
  */

@@ -11,6 +11,7 @@ import {
   isoWeek,
   minuteOfDayFrom,
   newTask,
+  resolveServerFolder,
   sameTask,
   serverChanges,
   splitInterval,
@@ -290,6 +291,18 @@ describe("what runs change", () => {
     expect(serverChanges({ type: "command", connectionId: "web", command: "make" })).toEqual([
       { connectionId: "web", folder: null },
     ]);
+  });
+
+  it("makes the folders full as the backend does", () => {
+    const session = { home: "/home/me", initialPath: "/srv/www" };
+    expect(resolveServerFolder("/var/backups/", session)).toBe("/var/backups");
+    expect(resolveServerFolder(" ~ ", session)).toBe("/home/me");
+    expect(resolveServerFolder("~/backups", session)).toBe("/home/me/backups");
+    expect(resolveServerFolder("backups", session)).toBe("/srv/www/backups");
+    expect(resolveServerFolder("./site/../logs", session)).toBe("/srv/www/logs");
+    expect(resolveServerFolder("../../../..", session)).toBe("/");
+    // Only `~` alone or before a slash is the home folder.
+    expect(resolveServerFolder("~old", session)).toBe("/srv/www/~old");
   });
 
   it("finds the runs that finished since the last look", () => {
