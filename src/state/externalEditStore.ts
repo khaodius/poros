@@ -32,12 +32,11 @@ export type OpenPrompt =
   /** Double-click asks each time how to open a file. */
   | { kind: "choose"; target: OpenTarget; nearGroupId?: string };
 
-/** Asked before a tab closes with files from its server still open in other programs. */
-export interface ClosePrompt {
-  tabId: string;
-  label: string;
-  sessionIds: string[];
-}
+/** Asked before a server tab closes, or a vault locks, with files from it still open in other
+ * programs. `label` names the server or the vault. */
+export type ClosePrompt =
+  | { kind: "tab"; tabId: string; label: string; sessionIds: string[] }
+  | { kind: "lockVault"; sessionId: string; label: string; sessionIds: string[] };
 
 interface ExternalEditState {
   edits: ExternalEdit[];
@@ -200,34 +199,70 @@ export function editAction(action: () => Promise<void>): void {
   void action().catch(showError);
 }
 
-/** The ids of tabs whose close the user has agreed to with their files still being edited. */
+/** The tabs and vaults the user has agreed to close with their files still being edited, while
+ * that close goes on. */
 const closesAllowed = new Set<string>();
+
+function allowanceOf(prompt: ClosePrompt): string {
+  return prompt.kind === "tab" ? `tab:${prompt.tabId}` : `vault:${prompt.sessionId}`;
+}
+
+/** Whether the close has to wait for the user, because files from it are open in other
+ * programs. Asks when it does. */
+function holdsClose(prompt: ClosePrompt): boolean {
+  if (closesAllowed.has(allowanceOf(prompt))) return false;
+  const editing = editsOfSessions(useExternalEditStore.getState().edits, prompt.sessionIds);
+  if (editing.length === 0) return false;
+  useExternalEditStore.setState({ closing: prompt });
+  return true;
+}
 
 /**
  * Whether the server tab `tabId` has to wait for the user before it closes, because files from
  * its server are open in other programs. Asks when it does.
  */
 export function editsHoldClose(tabId: string, label: string, sessionIds: string[]): boolean {
-  if (closesAllowed.delete(tabId)) return false;
-  const editing = editsOfSessions(useExternalEditStore.getState().edits, sessionIds);
-  if (editing.length === 0) return false;
-  useExternalEditStore.setState({ closing: { tabId, label, sessionIds } });
-  return true;
+  return holdsClose({ kind: "tab", tabId, label, sessionIds });
 }
 
-/** Lets the tab close next time it is asked to, past the files being edited. */
-export function allowClose(tabId: string): void {
-  closesAllowed.add(tabId);
+/**
+ * Whether the vault of session `sessionId` has to wait for the user before it locks, because
+ * files from it are open in other programs, which locking ends. Asks when it does.
+ */
+export function editsHoldLock(sessionId: string, name: string): boolean {
+  return holdsClose({ kind: "lockVault", sessionId, label: name, sessionIds: [sessionId] });
+}
+
+/**
+ * Runs `close` past the question about the files being edited, which the user has answered.
+ * The answer is for this close alone: once `close` is done, having closed or stopped at another
+ * question, the next close asks again.
+ */
+export async function closePastEdits(
+  prompt: ClosePrompt,
+  close: () => Promise<void>,
+): Promise<void> {
+  const allowance = allowanceOf(prompt);
+  closesAllowed.add(allowance);
+  try {
+    await close();
+  } finally {
+    closesAllowed.delete(allowance);
+  }
 }
 
 let exitAllowed = false;
 
 /**
  * Whether quitting has to wait for the user, because files hold saves the servers do not have
- * yet. Asks when it does.
+ * yet. Asks when it does. A save made a moment ago is waited for, so it is asked about too.
  */
 export async function editsHoldExit(): Promise<boolean> {
-  if (exitAllowed) return false;
+  // The user's word to quit is for the one quit it started.
+  if (exitAllowed) {
+    exitAllowed = false;
+    return false;
+  }
   const unsaved = await external.unsaved().catch(() => []);
   if (unsaved.length === 0) return false;
   useExternalEditStore.setState({ exiting: unsaved.map((edit) => edit.id) });
@@ -238,5 +273,10 @@ export async function editsHoldExit(): Promise<boolean> {
 export function exitNow(): void {
   exitAllowed = true;
   useExternalEditStore.setState({ exiting: null });
-  void getCurrentWindow().close();
+  void getCurrentWindow()
+    .close()
+    .catch((caught: unknown) => {
+      exitAllowed = false;
+      showError(caught);
+    });
 }

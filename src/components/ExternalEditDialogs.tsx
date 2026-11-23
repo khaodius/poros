@@ -12,7 +12,7 @@ import { formatDate, formatSize, pluralize } from "../lib/format";
 import { external, onExternalEdits } from "../lib/ipc";
 import type { ExternalEdit, ExternalEditNotice, ExternalResolution } from "../lib/types";
 import {
-  allowClose,
+  closePastEdits,
   editAction,
   exitNow,
   openFileWith,
@@ -27,6 +27,7 @@ import { useSessionStore } from "../state/sessionStore";
 import { saveSettingsSection, useSettingsStore } from "../state/settingsStore";
 import { isMainWindow, requestCloseTab } from "../state/tabActions";
 import { useToastStore } from "../state/toastStore";
+import { requestLockVault } from "../state/vaultActions";
 import { CompareDialog } from "./CompareDialog";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Dialog } from "./Dialog";
@@ -466,7 +467,7 @@ function EditNames({ edits }: { edits: ExternalEdit[] }) {
   );
 }
 
-/** A server tab closes while files from its server are open in other programs. */
+/** A server tab closes, or a vault locks, while files from it are open in other programs. */
 function CloseTabPrompt({ closing }: { closing: ClosePrompt }) {
   const allEdits = useExternalEditStore((state) => state.edits);
   const edits = useMemo(
@@ -475,12 +476,14 @@ function CloseTabPrompt({ closing }: { closing: ClosePrompt }) {
   );
   const [busy, setBusy] = useState(false);
   const [stuck, setStuck] = useState<ExternalEdit[] | null>(null);
+  const locking = closing.kind === "lockVault";
   const inVault = edits.filter((edit) => edit.inVault);
   const cancel = () => useExternalEditStore.setState({ closing: null });
   const close = () => {
     cancel();
-    allowClose(closing.tabId);
-    void requestCloseTab(closing.tabId);
+    void closePastEdits(closing, () =>
+      closing.kind === "tab" ? requestCloseTab(closing.tabId) : requestLockVault(closing.sessionId),
+    );
   };
 
   /** Uploads what waits, of the vault's files or all, and stops editing those when asked. */
@@ -488,7 +491,9 @@ function CloseTabPrompt({ closing }: { closing: ClosePrompt }) {
     const settling = stopEditing ? edits : inVault;
     setBusy(true);
     const remaining =
-      settling.length > 0 ? await external.flush(settling.map((edit) => edit.id)) : [];
+      settling.length > 0
+        ? await external.flush(settling.map((edit) => edit.id)).catch(() => settling)
+        : [];
     if (stopEditing) {
       const clean = settling.filter((edit) => !remaining.some((left) => left.id === edit.id));
       await Promise.all(clean.map((edit) => external.stop(edit.id).catch(() => undefined)));
@@ -498,20 +503,27 @@ function CloseTabPrompt({ closing }: { closing: ClosePrompt }) {
     else close();
   };
 
+  const files = inVault.length === 1 ? "the file" : "the files";
   return (
-    <Dialog title={`Close ${closing.label}?`} onClose={cancel} width={500}>
+    <Dialog
+      title={locking ? `Lock ${closing.label}?` : `Close ${closing.label}?`}
+      onClose={cancel}
+      width={500}
+    >
       <div className="confirm-body">
         <p>
-          {pluralize(edits.length, "file")} from this server {edits.length === 1 ? "is" : "are"}{" "}
-          open in other programs:
+          {pluralize(edits.length, "file")} from this {locking ? "vault" : "server"}{" "}
+          {edits.length === 1 ? "is" : "are"} open in other programs:
         </p>
         <EditNames edits={stuck ?? edits} />
         {stuck ? (
           <p className="warning-text">
             {stuck.length === 1 ? "This one" : "These"} could not be uploaded.{" "}
-            {stuck.some((edit) => edit.inVault)
-              ? "Closing anyway wipes the changes in vault files."
-              : "Closing anyway leaves them in the status bar's list, to upload later."}
+            {locking
+              ? `Locking anyway wipes the changes in ${stuck.length === 1 ? "it" : "them"}.`
+              : stuck.some((edit) => edit.inVault)
+                ? "Closing anyway wipes the changes in vault files."
+                : "Closing anyway leaves them in the status bar's list, to upload later."}
           </p>
         ) : (
           <>
@@ -520,9 +532,9 @@ function CloseTabPrompt({ closing }: { closing: ClosePrompt }) {
             )}
             {inVault.length > 0 && (
               <p>
-                Closing the tab locks its vault, which ends editing{" "}
-                {inVault.length === 1 ? "the file" : "the files"} from it and wipes the working
-                copies. What was saved is uploaded first.
+                {locking ? "Locking the vault" : "Closing the tab locks its vault, which"} ends
+                editing {files} from it and wipes the working copies. What was saved is uploaded
+                first.
               </p>
             )}
           </>
@@ -534,18 +546,20 @@ function CloseTabPrompt({ closing }: { closing: ClosePrompt }) {
         </button>
         {stuck ? (
           <button type="button" className="button button-danger" onClick={close}>
-            Close anyway
+            {locking ? "Lock anyway" : "Close anyway"}
           </button>
         ) : (
           <>
-            <button
-              type="button"
-              className="button"
-              disabled={busy}
-              onClick={() => void settle(true)}
-            >
-              Stop editing and close
-            </button>
+            {!locking && (
+              <button
+                type="button"
+                className="button"
+                disabled={busy}
+                onClick={() => void settle(true)}
+              >
+                Stop editing and close
+              </button>
+            )}
             <button
               type="button"
               data-autofocus
@@ -553,7 +567,13 @@ function CloseTabPrompt({ closing }: { closing: ClosePrompt }) {
               disabled={busy}
               onClick={() => void settle(false)}
             >
-              {busy ? "Uploading..." : inVault.length > 0 ? "Upload and close" : "Keep editing"}
+              {busy
+                ? "Uploading..."
+                : locking
+                  ? "Upload and lock"
+                  : inVault.length > 0
+                    ? "Upload and close"
+                    : "Keep editing"}
             </button>
           </>
         )}
