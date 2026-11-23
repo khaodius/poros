@@ -654,6 +654,28 @@ function InterfaceSettingsPage({ settings }: { settings: Settings }) {
           </div>
         </SettingRow>
       </SettingGroup>
+      <SettingGroup title="Server folders">
+        <SwitchSetting
+          label="Show cached listings while refreshing"
+          hint="A folder opened before shows at once as it was last seen, and updates when the server answers. Listings are kept in memory only, never on disk."
+          checked={options.cachedListings}
+          onChange={(cachedListings) => set({ cachedListings })}
+        />
+        <SwitchSetting
+          label="Load nearby folders ahead"
+          hint="Lists the parent folder and the folder under the cursor while the server is idle, one at a time. Paused on FTP while transfers run."
+          checked={options.prefetchListings}
+          disabled={!options.cachedListings}
+          onChange={(prefetchListings) => set({ prefetchListings })}
+        />
+        <SwitchSetting
+          label="Also on cloud storage"
+          hint="Off: nothing is listed ahead on cloud storage, where requests are counted and limited."
+          checked={options.prefetchOnCloud}
+          disabled={!options.cachedListings || !options.prefetchListings}
+          onChange={(prefetchOnCloud) => set({ prefetchOnCloud })}
+        />
+      </SettingGroup>
       <SettingGroup title="Tabs and windows">
         <SwitchSetting
           label="Ask before closing a tab with queued transfers"
