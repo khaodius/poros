@@ -126,6 +126,16 @@ export function sanitizeProgressBars(
   };
 }
 
+/**
+ * The settings as written to disk. 0.7.0 knew no shapes, only a switch for rounded ends, so the
+ * switch is written beside the shape: after a downgrade, ends with corners keep them.
+ */
+export function storableProgressBars(
+  settings: ProgressBarSettings,
+): ProgressBarSettings & { rounded: boolean } {
+  return { ...settings, rounded: settings.shape === "pill" || settings.shape === "soft" };
+}
+
 /** Dots and the thin line are round by nature, so a bar's shape changes nothing about them. */
 export function fillTakesShape(fill: ProgressFill): boolean {
   return fill !== "dots" && fill !== "line";

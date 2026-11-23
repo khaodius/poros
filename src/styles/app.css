@@ -3057,8 +3057,9 @@ option {
   overflow: var(--progress-spill, hidden);
 }
 
+/* A look may draw its bars thicker than asked, where thinner ones would lose its pattern. */
 :is(.transfer-row, .progress-sample, .progress-look) .progress-track {
-  font-size: var(--progress-height);
+  font-size: max(var(--progress-height), var(--progress-thinnest, 0px));
 }
 
 :is(.transfer-row, .progress-sample, .progress-look) .progress-track.has-label {
@@ -3226,7 +3227,19 @@ option {
   }
 
   .progress-track:not(.is-still, .is-indeterminate) .progress-fill {
-    animation: var(--progress-fill-motion, none), var(--progress-flow, none);
+    animation: var(--progress-fill-motion, none), var(--progress-flow-now, none);
+  }
+}
+
+/* A fill's flow plays only on a bar thick enough to show it, so a look that has one makes the
+   track a container the fill can ask for its height. */
+.progress-track {
+  container-type: var(--progress-flow-box, normal);
+}
+
+@container (min-height: 9px) {
+  .progress-fill {
+    --progress-flow-now: var(--progress-flow);
   }
 }
 
@@ -5916,7 +5929,7 @@ textarea::placeholder {
   background: var(--progress-roam-paint, var(--progress-paint, currentColor));
   animation:
     var(--progress-roam, progress-sweep 1.2s ease-in-out infinite),
-    var(--progress-fill-motion, none), var(--progress-flow, none);
+    var(--progress-fill-motion, none), var(--progress-flow-now, none);
 }
 
 /* Cells stay where they are while light passes over them, so nothing else lies on them. */
@@ -6153,8 +6166,9 @@ textarea::placeholder {
 }
 
 /* Fills. A look inside another starts from nothing, not from the look around it. Fills made of
-   separate parts draw the parts still to come in a faint color that no state color matches, and
-   the text over them once, with a halo that keeps it clear of the parts. */
+   separate parts draw the parts still to come in a faint color that no state color matches.
+   They and the fills of two tones draw the text over them once, in the theme's text color, with
+   a halo that keeps it clear of whatever lies beneath. */
 
 [data-progress-fill] {
   --progress-unlit: color-mix(in srgb, var(--text-faint) 40%, transparent);
@@ -6179,6 +6193,8 @@ textarea::placeholder {
   --progress-texture-shift: initial;
   --progress-texture-pace: initial;
   --progress-flow: initial;
+  --progress-flow-box: initial;
+  --progress-thinnest: initial;
   --progress-roam: initial;
   --progress-roam-width: initial;
   --progress-roam-paint: initial;
@@ -6232,7 +6248,8 @@ textarea::placeholder {
     0 0 / var(--progress-candy) var(--progress-candy);
   --progress-texture-shift: var(--progress-candy);
   --progress-texture-pace: 800ms;
-  --progress-label-glow: 2px;
+  --progress-label-over: hidden;
+  --progress-label-halo: var(--progress-halo);
 }
 
 /* Arrowheads pointing the way the bar grows, on a paler body. Each half of the bar draws one
@@ -6254,7 +6271,8 @@ textarea::placeholder {
       repeat-x;
   --progress-texture-shift: calc(-1 * var(--progress-chevron));
   --progress-texture-pace: 700ms;
-  --progress-label-glow: 2px;
+  --progress-label-over: hidden;
+  --progress-label-halo: var(--progress-halo);
 }
 
 /* The bar's color drifting to the hues beside it, kept light where hues turn muddy. */
@@ -6268,7 +6286,9 @@ textarea::placeholder {
   --progress-label-glow: 2px;
 }
 
-@supports (color: oklch(from currentColor l c h)) {
+/* The probe is the math the paint does, so an engine that knows relative colors but not this
+   math keeps the fallback instead of drawing no fill at all. */
+@supports (color: oklch(from currentColor max(calc(l + 0.06), 0.7) c calc(h - 32))) {
   [data-progress-fill="aurora"] {
     --progress-paint: linear-gradient(
       90deg,
@@ -6291,7 +6311,7 @@ textarea::placeholder {
   --progress-label-ink: var(--text);
 }
 
-/* A liquid whose surface ripples on bars thick enough to show it. */
+/* A liquid whose surface ripples on bars thick enough to show it, from 9 px. */
 [data-progress-fill="wave"] {
   --progress-wave: clamp(0px, calc((1em - 8.9px) * 100), 0.25em);
   --progress-wave-crest: calc(1.28 * var(--progress-wave));
@@ -6317,8 +6337,10 @@ textarea::placeholder {
   --progress-label-glow: 2px;
 }
 
+/* The surface flows by moving the mask, which repaints the fill, so only where it shows. */
 [data-progress-fill="wave"]:not([data-progress-motion="none"]) {
   --progress-flow: progress-wave 2s linear infinite;
+  --progress-flow-box: size;
 }
 
 /* A thin line led by a round head, which stays visible on the thinnest bar. */
@@ -6353,8 +6375,10 @@ textarea::placeholder {
   --progress-label-halo: var(--progress-halo);
 }
 
-/* Beads that light one at a time, over the ones still to come. */
+/* Beads that light one at a time, over the ones still to come. Thinner than 4 px they would
+   fade to specks, so the bar is drawn no thinner. */
 [data-progress-fill="dots"] {
+  --progress-thinnest: 4px;
   --progress-dot: calc(1em + max(2px, 0.25em));
   --progress-cut: radial-gradient(circle closest-side, #000 max(55%, 100% - 1px), transparent) 0 0 /
     var(--progress-dot) 100%;
@@ -6374,6 +6398,14 @@ textarea::placeholder {
   --progress-roam-layers: none;
   --progress-label-over: hidden;
   --progress-label-halo: var(--progress-halo);
+}
+
+/* WebKitGTK lays tiled backgrounds on whole pixels, so the dots repeat at a whole pixel, which
+   the reach and the cut of the track follow. Otherwise the dots drift from both. */
+@supports (width: round(up, 1%, 1px)) {
+  [data-progress-fill="dots"] {
+    --progress-dot: round(1em + max(2px, 0.25em), 1px);
+  }
 }
 
 /* Cells that light one at a time, over the ones still to come. */

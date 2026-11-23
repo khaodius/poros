@@ -10,9 +10,10 @@ import {
   progressBarStyle,
   progressLabel,
   progressReach,
+  storableProgressBars,
   type ProgressBarSettings,
 } from "./progressBars";
-import { DEFAULT_SETTINGS, sanitizeSettings } from "./settings";
+import { DEFAULT_SETTINGS, sanitizeSettings, storableSettings } from "./settings";
 
 const MIB = 1024 * 1024;
 
@@ -204,6 +205,30 @@ describe("progress bars stored by 0.7.0", () => {
   it("stay as loaded when saved and loaded again", () => {
     const loaded = storedBars({ fill: "segmented", rounded: false, motion: "pulse" });
     expect(storedBars({ ...loaded })).toEqual(loaded);
+    expect(storedBars({ ...storableProgressBars(loaded) })).toEqual(loaded);
+  });
+
+  it("are saved with the switch 0.7.0 reads, so a downgrade keeps square ends", () => {
+    const rounded = { pill: true, soft: true, square: false, slanted: false };
+    for (const shape of PROGRESS_SHAPES) {
+      const bars = { ...DEFAULT_PROGRESS_BARS, fill: "glow" as const, shape };
+      const stored = storableProgressBars(bars);
+      expect(stored).toEqual({ ...bars, rounded: rounded[shape] });
+      // Loaded again by this version, the shape wins over the switch.
+      expect(storedBars({ ...stored })).toEqual(bars);
+      // Saved again by 0.7.0, which drops the shape and keeps the switch.
+      const downgraded: Record<string, unknown> = { ...stored };
+      delete downgraded.shape;
+      expect(storedBars(downgraded).shape).toBe(rounded[shape] ? "pill" : "square");
+    }
+  });
+
+  it("are written with the switch whenever the settings are saved", () => {
+    const settings = sanitizeSettings({ appearance: { progressBars: { shape: "square" } } });
+    const written = storableSettings(settings);
+    expect(written.appearance.progressBars).toMatchObject({ shape: "square", rounded: false });
+    expect(sanitizeSettings(written)).toEqual(settings);
+    expect(settings.appearance.progressBars).not.toHaveProperty("rounded");
   });
 });
 

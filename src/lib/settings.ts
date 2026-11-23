@@ -12,6 +12,7 @@ import {
 import {
   DEFAULT_PROGRESS_BARS,
   sanitizeProgressBars,
+  storableProgressBars,
   type ProgressBarSettings,
 } from "./progressBars";
 import { DEFAULT_SYNC_OPTIONS, legacySyncOptions, sanitizeSyncOptions } from "./rsyncOptions";
@@ -467,6 +468,15 @@ export function sanitizeSettings(stored: unknown): Settings {
   }
   automation.commands = sanitizeCommands(automation.commands);
   return settings;
+}
+
+/** The settings as written to disk, with what older versions read beside the newer fields. */
+export function storableSettings(settings: Settings): Settings {
+  const appearance = settings.appearance;
+  return {
+    ...settings,
+    appearance: { ...appearance, progressBars: storableProgressBars(appearance.progressBars) },
+  };
 }
 
 /**
