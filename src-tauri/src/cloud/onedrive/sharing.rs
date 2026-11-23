@@ -187,6 +187,21 @@ fn top_folder() -> AppError {
     AppError::invalid("The top folder itself cannot be shared. Share a folder inside it.")
 }
 
+impl OneDriveFs {
+    async fn links_of(&self, item_id: &str) -> AppResult<Vec<ShareLink>> {
+        let mut links = Vec::new();
+        let mut url = permissions_url(item_id);
+        loop {
+            let page: PermissionPage = self.api.json(&|http| http.get(&url)).await?;
+            links.extend(page.value.iter().filter_map(Permission::link));
+            match page.next_link {
+                Some(next) => url = next,
+                None => return Ok(links),
+            }
+        }
+    }
+}
+
 #[async_trait]
 impl LinkSharing for OneDriveFs {
     fn share_capabilities(&self) -> ShareCapabilities {
@@ -213,16 +228,7 @@ impl LinkSharing for OneDriveFs {
             return Ok(Vec::new());
         }
         let item = self.existing(&path).await?;
-        let mut links = Vec::new();
-        let mut url = permissions_url(&item.id);
-        loop {
-            let page: PermissionPage = self.api.json(&|http| http.get(&url)).await?;
-            links.extend(page.value.iter().filter_map(Permission::link));
-            match page.next_link {
-                Some(next) => url = next,
-                None => return Ok(links),
-            }
-        }
+        self.links_of(&item.id).await
     }
 
     async fn create_share_link(&self, path: &str, options: &ShareOptions) -> AppResult<ShareLink> {
@@ -269,12 +275,26 @@ impl LinkSharing for OneDriveFs {
         Ok(link)
     }
 
+    /// Removes only a permission that is one of the item's links, so an id from the page
+    /// cannot take away a person's own access to the item.
     async fn remove_share_link(&self, path: &str, link_id: &str) -> AppResult<()> {
         let path = protocol::normalize(&self.resolve(path));
         if path == "/" {
             return Err(top_folder());
         }
         let item = self.existing(&path).await?;
+        let links = self.links_of(&item.id).await?;
+        match links.iter().find(|link| link.id == link_id) {
+            // Already removed, here or in the browser.
+            None => return Ok(()),
+            Some(link) if !link.revocable => {
+                return Err(AppError::new(
+                    ErrorKind::PermissionDenied,
+                    "This link comes from a folder above. Stop sharing that folder to remove it.",
+                ))
+            }
+            Some(_) => {}
+        }
         let url = format!(
             "{}/{}",
             permissions_url(&item.id),

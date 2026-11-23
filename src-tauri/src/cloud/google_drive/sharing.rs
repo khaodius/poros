@@ -179,10 +179,7 @@ fn sharing_refusal(refusal: Refusal, audience: Audience, organization: Option<&s
         "cannotModifyInheritedTeamDrivePermission",
         "cannotModifyInheritedPermission",
     ]) {
-        return AppError::new(
-            ErrorKind::PermissionDenied,
-            "This link comes from a folder above. Stop sharing that folder to remove it.",
-        );
+        return inherited_link();
     }
     if !refusal.has_reason(&POLICY_REASONS) {
         return refusal.error;
@@ -203,6 +200,13 @@ fn sharing_refusal(refusal: Refusal, audience: Audience, organization: Option<&s
     AppError::new(ErrorKind::PermissionDenied, message)
 }
 
+fn inherited_link() -> AppError {
+    AppError::new(
+        ErrorKind::PermissionDenied,
+        "This link comes from a folder above. Stop sharing that folder to remove it.",
+    )
+}
+
 fn permission_url(file_id: &str, permission_id: &str) -> String {
     format!(
         "{FILES_URL}/{}/permissions/{}",
@@ -217,6 +221,18 @@ impl DriveFs {
         self.api
             .json(&|http| http.get(&url).query(&[("fields", SHARE_FIELDS)]))
             .await
+    }
+
+    async fn links_of(&self, file_id: &str) -> AppResult<Vec<ShareLink>> {
+        let shared = self.shared_file(file_id).await?;
+        let Some(url) = shared.web_view_link.as_deref() else {
+            return Ok(Vec::new());
+        };
+        Ok(shared
+            .permissions
+            .iter()
+            .filter_map(|permission| permission.link(url, self.organization.as_deref()))
+            .collect())
     }
 
     async fn add_permission(&self, file_id: &str, options: &ShareOptions) -> AppResult<Permission> {
@@ -298,15 +314,7 @@ impl LinkSharing for DriveFs {
     async fn share_links(&self, path: &str) -> AppResult<Vec<ShareLink>> {
         let path = protocol::normalize(&self.resolve(path));
         let file = self.existing(&path).await?;
-        let shared = self.shared_file(&file.id).await?;
-        let Some(url) = shared.web_view_link.as_deref() else {
-            return Ok(Vec::new());
-        };
-        Ok(shared
-            .permissions
-            .iter()
-            .filter_map(|permission| permission.link(url, self.organization.as_deref()))
-            .collect())
+        self.links_of(&file.id).await
     }
 
     /// Reuses the link permission the item already has for the audience, so asking twice
@@ -370,9 +378,18 @@ impl LinkSharing for DriveFs {
         Ok(link)
     }
 
+    /// Removes only a permission that is one of the item's links, so an id from the page
+    /// cannot take away a person's own access to the item.
     async fn remove_share_link(&self, path: &str, link_id: &str) -> AppResult<()> {
         let path = protocol::normalize(&self.resolve(path));
         let file = self.existing(&path).await?;
+        let links = self.links_of(&file.id).await?;
+        match links.iter().find(|link| link.id == link_id) {
+            // Already removed, here or in the browser.
+            None => return Ok(()),
+            Some(link) if !link.revocable => return Err(inherited_link()),
+            Some(_) => {}
+        }
         let url = permission_url(&file.id, link_id);
         let response = self
             .api

@@ -829,7 +829,9 @@ fn clock_note(
     let behind = local_time < server_time;
     let apart = local_time.abs_diff(server_time);
     let direction = if behind { "behind" } else { "ahead of" };
-    if apart >= MAX_CLOCK_SKEW_SECS || (behind && apart >= lifetime_secs) {
+    // A gap of a few seconds is the answer's travel time and the header's whole seconds.
+    let expired_at_once = behind && apart >= NOTABLE_CLOCK_SKEW_SECS && apart >= lifetime_secs;
+    if apart >= MAX_CLOCK_SKEW_SECS || expired_at_once {
         return Err(AppError::new(
             ErrorKind::AuthFailed,
             format!(
@@ -1727,6 +1729,8 @@ mod tests {
         assert!(expired.message.contains("Set the clock"));
         let refused = clock_note(now + 3 * 3600, Some(now), 86_400).unwrap_err();
         assert!(refused.message.contains("3 hours ahead of"));
+        // A second or two is how long the answer took, not a wrong clock.
+        assert_eq!(clock_note(now, Some(now + 2), 1).unwrap(), None);
     }
 
     #[test]
