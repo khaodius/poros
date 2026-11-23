@@ -60,7 +60,7 @@ export async function extractArchives(
       );
       if (summary.warning) write("warn", `${summary.tool}: ${summary.warning}`, pane.sessionId);
       // What came out is selected, so it shows among what the folder already held.
-      refreshFolder(origin, summary.folder, summary.placed);
+      refreshFolder(origin, summary.folder, summary.placed, summary.placed);
     } catch (caught) {
       const error = toAppError(caught);
       if (error.kind === "cancelled") {

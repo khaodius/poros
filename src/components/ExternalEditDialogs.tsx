@@ -22,6 +22,7 @@ import {
   type OpenChoice,
   type OpenPrompt,
 } from "../state/externalEditStore";
+import { forgetListingOf } from "../state/listings";
 import { useSessionStore } from "../state/sessionStore";
 import { saveSettingsSection, useSettingsStore } from "../state/settingsStore";
 import { isMainWindow, requestCloseTab } from "../state/tabActions";
@@ -51,8 +52,15 @@ export function ExternalEditsHost() {
     const store = useExternalEditStore.getState();
     const subscription = onExternalEdits((update) => {
       useExternalEditStore.getState().apply(update);
+      const { notice } = update;
+      if (notice?.kind === "uploaded") {
+        // Its folder no longer lists the file as the cache remembers it. Only the window that
+        // holds the edit's session knows the cache it is in, and tells every window.
+        const edit = update.edits.find((candidate) => candidate.id === notice.editId);
+        if (edit) forgetListingOf(edit.sessionId, edit.remotePath);
+      }
       // Every window hears it; the one in use tells the user.
-      if (update.notice && askingRef.current) tell(update.notice);
+      if (notice && askingRef.current) tell(notice);
     });
     void store.load();
     void store.loadLeftovers().then(() => {
