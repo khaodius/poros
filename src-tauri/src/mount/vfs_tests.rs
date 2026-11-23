@@ -637,7 +637,7 @@ async fn handles_on_one_file_share_what_is_written() {
     drive.fs.release(writer);
     drive.fs.release(reader);
 
-    let mut expected = vec![b'.'; 64];
+    let mut expected = [b'.'; 64];
     expected[..4].copy_from_slice(b"HEAD");
     for part in 0..8usize {
         expected[8 + part * 4..12 + part * 4].fill(b'a' + part as u8);

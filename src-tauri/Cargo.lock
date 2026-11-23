@@ -3929,6 +3929,7 @@ dependencies = [
  "gtk",
  "hmac 0.12.1",
  "keyring",
+ "libc",
  "log",
  "md-5",
  "md4",

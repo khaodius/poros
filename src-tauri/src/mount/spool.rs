@@ -50,10 +50,6 @@ impl Spool {
         &self.path
     }
 
-    pub fn len(&self) -> io::Result<u64> {
-        Ok(self.file.metadata()?.len())
-    }
-
     pub fn set_len(&self, len: u64) -> io::Result<()> {
         self.file.set_len(len)
     }
@@ -195,7 +191,7 @@ pub fn unsent_files(directory: &Path) -> Vec<UnsentFile> {
             }
         }
     }
-    found.sort_by(|first, second| second.note.kept_at.cmp(&first.note.kept_at));
+    found.sort_by_key(|file| std::cmp::Reverse(file.note.kept_at));
     found
 }
 
@@ -263,7 +259,7 @@ mod tests {
         let spool = Spool::create(folder.path()).unwrap();
         spool.write_at(4, b"world").unwrap();
         spool.write_at(0, b"hell").unwrap();
-        assert_eq!(spool.len().unwrap(), 9);
+        assert_eq!(std::fs::metadata(spool.path()).unwrap().len(), 9);
         assert_eq!(spool.read_at(0, 100).unwrap(), b"hellworld");
         assert_eq!(spool.read_at(4, 3).unwrap(), b"wor");
         assert!(spool.read_at(50, 3).unwrap().is_empty());

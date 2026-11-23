@@ -4,6 +4,8 @@
 
 pub mod backend;
 pub mod blocks;
+#[cfg(target_os = "linux")]
+pub mod fuse;
 pub mod names;
 pub mod spool;
 pub mod upload;

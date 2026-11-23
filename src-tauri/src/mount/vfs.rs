@@ -30,7 +30,7 @@ use super::backend::{Backend, Purpose};
 use super::blocks::{BlockCache, BlockKey, BLOCK_SIZE};
 use super::names::{self, FolderNames, NameStyle};
 use super::spool::{Spool, UnsentNote};
-use super::upload::{self, UploadCheck, UploadRequest};
+use super::upload::{self, ChooseCheck, UploadCheck, UploadRequest};
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::model::{DirListing, EntryKind, FileEntry, LinkTarget};
 use crate::protocol::{self, ReadStream, RemoteFileSystem};
@@ -68,6 +68,9 @@ pub enum VfsError {
 }
 
 pub type VfsResult<T> = Result<T, VfsError>;
+
+/// Takes the path of a file whose upload failed, and the reason.
+pub type FailureReport = Arc<dyn Fn(&str, &str) + Send + Sync>;
 
 impl From<AppError> for VfsError {
     fn from(error: AppError) -> Self {
@@ -168,7 +171,7 @@ pub struct FsOptions {
     /// Where files open for writing are held.
     pub spool_directory: PathBuf,
     /// How an upload to a given server is checked.
-    pub upload_check: Arc<dyn Fn(&dyn RemoteFileSystem) -> UploadCheck + Send + Sync>,
+    pub upload_check: Arc<ChooseCheck>,
 }
 
 impl FsOptions {
@@ -423,7 +426,7 @@ pub struct MountFs {
     bytes_read: AtomicU64,
     bytes_written: AtomicU64,
     /// Told about uploads that failed with nobody waiting to hear of it.
-    on_upload_failure: Mutex<Option<Arc<dyn Fn(&str, &str) + Send + Sync>>>,
+    on_upload_failure: Mutex<Option<FailureReport>>,
 }
 
 fn now_seconds() -> i64 {
@@ -495,7 +498,7 @@ impl MountFs {
 
     /// Calls `report` with a file's path and the reason when an upload fails after the
     /// program that wrote the file has gone.
-    pub fn report_upload_failures(&self, report: Arc<dyn Fn(&str, &str) + Send + Sync>) {
+    pub fn report_upload_failures(&self, report: FailureReport) {
         *self.on_upload_failure.lock().unwrap() = Some(report);
     }
 

@@ -41,6 +41,9 @@ pub enum UploadCheck {
     ReadBack,
 }
 
+/// Says how an upload to a given server is checked.
+pub type ChooseCheck = dyn Fn(&dyn RemoteFileSystem) -> UploadCheck + Send + Sync;
+
 /// Chooses the check for a server, given whether the transfer settings ask for uploads to be
 /// verified and read back. Mirrors what the transfer queue reads back.
 pub fn check_for(files: &dyn RemoteFileSystem, verify: bool, read_back: bool) -> UploadCheck {
@@ -73,7 +76,7 @@ pub async fn upload(
     backend: &dyn Backend,
     request: &UploadRequest,
     sent: &AtomicU64,
-    choose_check: &(dyn Fn(&dyn RemoteFileSystem) -> UploadCheck + Send + Sync),
+    choose_check: &ChooseCheck,
 ) -> AppResult<()> {
     let lease = backend.lease(Purpose::Upload).await?;
     let files = lease.files.clone();

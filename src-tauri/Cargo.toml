@@ -150,6 +150,9 @@ windows = { version = "0.62", optional = true, features = ["Win32_Foundation", "
 gtk = { version = "0.18", optional = true }
 # Dolphin and the KDE desktop say over D-Bus where files dragged out of Poros were dropped.
 zbus = { version = "5", optional = true }
+# Mounted drives: receiving the /dev/fuse descriptor from fusermount3 and waiting on it. The
+# FUSE protocol itself is spoken in `mount/fuse`, so nothing of libfuse is linked.
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3"
