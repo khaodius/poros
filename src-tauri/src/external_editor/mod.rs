@@ -448,6 +448,7 @@ impl ExternalEditManager {
             last_upload: None,
             requests: Requests::default(),
             confirmed_executable: request.confirmed_executable,
+            runs,
             blocked: false,
             looked: None,
             program_closed: None,
@@ -513,8 +514,10 @@ impl ExternalEditManager {
         })?;
         {
             let mut core = edit.core.lock().unwrap();
-            // A copy held back as a program stays held back until the user agrees.
-            if !core.blocked || request.confirmed_executable {
+            // A program is never handed to the system, and a copy held back as one stays held
+            // back until the user names an editor for it.
+            let refused = (core.runs || core.blocked) && *launch == Launch::Default;
+            if !refused && (!core.blocked || request.confirmed_executable) {
                 core.confirmed_executable |= request.confirmed_executable;
                 core.requests.open = Some(launch.clone());
             }
@@ -591,7 +594,7 @@ impl ExternalEditManager {
         let chosen = with.map(|with| self.inner.launch_for(with)).transpose()?;
         {
             let mut core = edit.core.lock().unwrap();
-            let runs = core.blocked || executable::is_executable_name(&core.name);
+            let runs = core.blocked || core.runs || executable::is_executable_name(&core.name);
             let launch = match chosen {
                 Some(launch) => {
                     if runs && launch != Launch::Default {
@@ -739,6 +742,8 @@ impl ExternalEditManager {
             kept.remove(position)
         };
         let record = leftover.record;
+        let runs = executable::is_executable_name(&record.name)
+            || executable::is_executable_name(&record.local_name);
         let edit = Arc::new(Edit {
             id: record.id.clone(),
             folder: journal::edit_folder(&self.inner.root, &record.id),
@@ -764,6 +769,7 @@ impl ExternalEditManager {
                     ..Requests::default()
                 },
                 confirmed_executable: false,
+                runs,
                 blocked: false,
                 looked: None,
                 program_closed: None,

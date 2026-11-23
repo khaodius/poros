@@ -701,6 +701,32 @@ async fn files_that_would_run_are_only_opened_in_an_editor_once_confirmed() {
     // The stand-in program would have saved the file by now, had it been started.
     tokio::time::sleep(Duration::from_millis(1500)).await;
     assert_eq!(bench.edit(&opened.id).unwrap().uploads, 0);
+    // Nor does the page get the system to open it, even saying the user agreed: not for the
+    // copy held back, and not for a new one.
+    let by_default = |path: &str| OpenRequest {
+        with: OpenWith::Default,
+        confirmed_executable: true,
+        ..bench.request(path, "rename")
+    };
+    assert!(matches!(
+        bench.external.open(by_default(&disguised)).await.unwrap(),
+        OpenOutcome::AlreadyOpen { .. }
+    ));
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let still_held = bench.edit(&opened.id).unwrap();
+    assert!(still_held.blocked, "{still_held:#?}");
+    assert_eq!(still_held.program, "Stand-in (rename)");
+    let unnamed = bench.put("readme", b"#!/bin/sh\necho not a readme\n").await;
+    let OpenOutcome::Opening { edit: unnamed } =
+        bench.external.open(by_default(&unnamed)).await.unwrap()
+    else {
+        panic!("the file should be downloaded and held back");
+    };
+    bench
+        .wait(&unnamed.id, "the held script", |edit| edit.blocked)
+        .await;
+    bench.external.stop(&unnamed.id).unwrap();
+    bench.wait_gone(&unnamed.id).await;
     assert!(bench.external.reopen(&opened.id, None).is_err());
     assert!(bench
         .external

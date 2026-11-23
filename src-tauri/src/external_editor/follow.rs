@@ -138,7 +138,10 @@ impl Follower {
             core.transferred = 0;
             core.size = content.size;
             core.stalled = None;
-            core.blocked = is_program && !core.confirmed_executable;
+            core.runs |= is_program;
+            // Held back until the user agrees, and names an editor: the system would run it.
+            let by_default = matches!(core.launch, None | Some(Launch::Default));
+            core.blocked = core.runs && (!core.confirmed_executable || by_default);
             (
                 core.blocked,
                 core.name.clone(),
@@ -165,14 +168,16 @@ impl Follower {
 
     /// Opens the working copy with what the edit was last opened with.
     async fn open_program(&mut self) -> AppResult<()> {
-        let launch = self
-            .edit
-            .core
-            .lock()
-            .unwrap()
-            .launch
-            .clone()
-            .unwrap_or(Launch::Default);
+        let (launch, runs, name) = {
+            let core = self.edit.core.lock().unwrap();
+            let launch = core.launch.clone().unwrap_or(Launch::Default);
+            (launch, core.runs, core.name.clone())
+        };
+        if runs && launch == Launch::Default {
+            return Err(AppError::invalid(format!(
+                "{name} is a program or a script. Pick an editor to open it with."
+            )));
+        }
         match &launch {
             Launch::Default => {
                 launch::open_with_default(&self.edit.local_path).await?;
@@ -223,12 +228,18 @@ impl Follower {
     }
 
     async fn reopen(&mut self, launch: Launch) {
-        {
+        let before = {
             let mut core = self.edit.core.lock().unwrap();
-            core.launch = Some(launch);
+            let before = (core.launch.replace(launch), core.blocked);
             core.blocked = false;
-        }
+            before
+        };
         if let Err(error) = self.open_program().await {
+            // Nothing was opened, so the edit stays as it was, held back if it was.
+            {
+                let mut core = self.edit.core.lock().unwrap();
+                (core.launch, core.blocked) = before;
+            }
             let (name, session_id) = self.name_and_session();
             self.inner.events.log(
                 LogLevel::Error,

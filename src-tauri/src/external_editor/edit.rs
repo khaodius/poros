@@ -109,6 +109,9 @@ pub(super) struct Core {
     pub requests: Requests,
     /// The user agreed to open a file of a type that runs, in an editor.
     pub confirmed_executable: bool,
+    /// The file is a program or a script, by its name or its content, so the system's default
+    /// program is never asked to open it.
+    pub runs: bool,
     /// Downloaded but not opened: its content is a program's, and the user has not agreed.
     pub blocked: bool,
     /// When the working copy was last found at rest, changed or not.
