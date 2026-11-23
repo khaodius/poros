@@ -69,9 +69,9 @@ connections that sign in with a key or the SSH agent work as they are; for one t
 password, name it with --connection and give the password with POROS_PASSWORD, --password-env
 or --password-file (and a key passphrase likewise). Nothing given is sent to another server.
 
-Exit status: 0 when every task run succeeded, 13 when a task named is already running
-elsewhere, otherwise the status of the first that did not: 10 when some of its files failed,
-1 for a command that failed, 3 to 6 when it could not connect or sign in.";
+Exit status: 0 when every task run succeeded, otherwise the status of the first task that did
+not succeed: 13 for one already running elsewhere, 10 when some of its files failed, 1 for a
+command that failed, 3 to 6 when it could not connect or sign in, 130 when it was stopped.";
 
 #[derive(Debug, Parser)]
 #[command(

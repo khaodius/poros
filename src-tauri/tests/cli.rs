@@ -668,7 +668,7 @@ fn scheduled_tasks_from_0_7_0_are_listed() {
     for part in [
         "*/5 * * * * poros-cli schedule run --due",
         "OnCalendar=",
-        "13 when a task",
+        "13 for one already running",
     ] {
         assert!(help.contains(part), "{help}");
     }
