@@ -29,6 +29,21 @@ pub struct Behavior {
     pub listing_padding: usize,
     /// A command the server takes this long to answer.
     pub slow_command: Option<(&'static str, Duration)>,
+    /// Announces a transfer only once its data connection is made, as vsftpd does in passive
+    /// mode, rather than at once.
+    pub announces_once_connected: bool,
+    /// What the server does about a data connection it is to make itself, after `PORT`.
+    pub connecting_back: ConnectingBack,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ConnectingBack {
+    #[default]
+    Connects,
+    /// Announces the transfer, then says it could not connect, as Pure-FTPd does.
+    FailsAfterAnnouncing,
+    /// Announces the transfer, then neither connects nor says anything more until aborted.
+    HangsAfterAnnouncing,
 }
 
 #[derive(Default)]
@@ -111,6 +126,22 @@ impl FakeServer {
     /// The commands received on every connection since the last call.
     pub fn take_commands(&self) -> Vec<String> {
         std::mem::take(&mut self.state.lock().unwrap().commands)
+    }
+
+    /// Whether `command` arrives within a few seconds, on any connection.
+    pub async fn receives(&self, command: &str) -> bool {
+        for _ in 0..200 {
+            if self.has_received(command) {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        false
+    }
+
+    fn has_received(&self, command: &str) -> bool {
+        let state = self.state.lock().unwrap();
+        state.commands.iter().any(|received| received == command)
     }
 }
 
@@ -230,11 +261,71 @@ impl Session {
         Ok(port)
     }
 
-    async fn open_data(&mut self) -> io::Result<TcpStream> {
-        match self.data.take() {
-            Some(DataPort::Passive(listener)) => Ok(listener.accept().await?.0),
-            Some(DataPort::Active(address)) => TcpStream::connect(address).await,
-            None => Err(io::Error::other("no data port was set")),
+    /// Announces a transfer and opens its data connection, in the order and with the outcome
+    /// the behavior sets. `None` when the transfer ended without one.
+    async fn start_transfer(&mut self) -> io::Result<Option<TcpStream>> {
+        let connecting_back = matches!(self.data, Some(DataPort::Active(_)));
+        let behavior = self.behavior.connecting_back;
+        if connecting_back && behavior != ConnectingBack::Connects {
+            self.data = None;
+            self.reply("150 Connecting to the data port").await?;
+            if behavior == ConnectingBack::HangsAfterAnnouncing {
+                self.wait_for_abort().await?;
+            } else {
+                self.reply("425 Could not open the data connection").await?;
+            }
+            return Ok(None);
+        }
+        if !self.behavior.announces_once_connected {
+            self.reply("150 Opening the data connection").await?;
+            return self.open_data().await;
+        }
+        let data = self.open_data().await?;
+        if data.is_some() {
+            self.reply("150 Opening the data connection").await?;
+        }
+        Ok(data)
+    }
+
+    /// The data connection set up for this transfer, or `None` once the transfer has ended
+    /// without it: the client aborted it, or it could not be made.
+    async fn open_data(&mut self) -> io::Result<Option<TcpStream>> {
+        let port = self.data.take();
+        let connecting = async move {
+            match port {
+                Some(DataPort::Passive(listener)) => Ok(listener.accept().await?.0),
+                Some(DataPort::Active(address)) => TcpStream::connect(address).await,
+                None => Err(io::Error::other("no data port was set")),
+            }
+        };
+        let connected = tokio::select! {
+            connected = connecting => connected,
+            aborted = self.wait_for_abort() => return aborted.map(|()| None),
+        };
+        match connected {
+            Ok(stream) => Ok(Some(stream)),
+            Err(_) => {
+                self.reply("425 Could not open the data connection").await?;
+                Ok(None)
+            }
+        }
+    }
+
+    /// Reads commands until `ABOR`, and ends the transfer it stops.
+    async fn wait_for_abort(&mut self) -> io::Result<()> {
+        let mut line = String::new();
+        loop {
+            line.clear();
+            if self.control.read_line(&mut line).await? == 0 {
+                return Err(io::ErrorKind::UnexpectedEof.into());
+            }
+            let command = line.trim_end().to_string();
+            self.state.lock().unwrap().commands.push(command.clone());
+            if command == "ABOR" {
+                self.reply("426 Transfer aborted").await?;
+                return self.reply("226 Abort successful").await;
+            }
+            self.reply("503 A transfer is in progress").await?;
         }
     }
 
@@ -267,9 +358,10 @@ impl Session {
 
     /// Announces a transfer, sends `parts` over the data connection, and says how it ended.
     async fn send_data(&mut self, parts: &[Vec<u8>]) -> io::Result<()> {
-        self.reply("150 Opening the data connection").await?;
+        let Some(mut data) = self.start_transfer().await? else {
+            return Ok(());
+        };
         let sent = async {
-            let mut data = self.open_data().await?;
             for part in parts {
                 data.write_all(part).await?;
             }
@@ -284,14 +376,11 @@ impl Session {
 
     /// Keeps the part of the file before the restart marker and replaces the rest.
     async fn receive_file(&mut self, path: &str, restart: usize) -> io::Result<()> {
-        self.reply("150 Opening the data connection").await?;
+        let Some(mut data) = self.start_transfer().await? else {
+            return Ok(());
+        };
         let mut received = Vec::new();
-        let read = async {
-            let mut data = self.open_data().await?;
-            data.read_to_end(&mut received).await
-        }
-        .await;
-        if read.is_err() {
+        if data.read_to_end(&mut received).await.is_err() {
             return self.reply("426 Transfer aborted").await;
         }
         {

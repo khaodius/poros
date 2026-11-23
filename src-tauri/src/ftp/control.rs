@@ -722,15 +722,11 @@ impl Control {
         }
     }
 
-    /// The reply that ends a transfer between two servers. It comes once the whole file has
-    /// moved, however long that takes, so only cancelling the transfer stops the wait.
-    pub async fn finish_direct_transfer(&mut self) -> AppResult<()> {
-        let reply = self.read_reply_untimed().await?;
-        if reply.class() == 2 {
-            Ok(())
-        } else {
-            Err(reply_error(&reply))
-        }
+    /// The reply that ends a transfer between two servers, whatever it says. It comes once the
+    /// whole file has moved, however long that takes, so only cancelling the transfer stops
+    /// the wait.
+    pub async fn direct_transfer_end(&mut self) -> AppResult<Reply> {
+        self.read_reply_untimed().await
     }
 
     /// Stops a transfer early. Servers answer an abort in different ways (426 then 226, or
