@@ -117,6 +117,15 @@ describe("what the previews keep of a session", () => {
     expect(cachedFileView(place("vault2"), file, caps, false)).toMatchObject({ view: "text" });
   });
 
+  it("shows nothing kept from before for a remembered listing, which a read must confirm", async () => {
+    serve(diary);
+    const file = entry("diary.txt", diary);
+    await readFileView(place("vault"), file, caps, false, never);
+    const remembered: PreviewPlace = { ...place("vault"), sizes: "remembered" };
+    expect(cachedFileView(remembered, file, caps, false)).toBeUndefined();
+    expect(cachedFileView(place("vault"), file, caps, false)).toMatchObject({ view: "text" });
+  });
+
   it("keeps nothing of a read that ends after the session closed", async () => {
     let answer: (reply: ArrayBuffer) => void = () => undefined;
     invoke.mockImplementation(

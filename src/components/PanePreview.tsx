@@ -37,6 +37,9 @@ export function PanePreview({
   const inVault = useSessionStore((state) =>
     Boolean(remoteSession && state.sessions[remoteSession]?.info.vault),
   );
+  // A listing remembered from before, on show while the server is asked again or when it could
+  // not be: its sizes and times decide nothing until a read compares them with the file's.
+  const remembered = pane.stale !== null;
   const place = useMemo<PreviewPlace>(
     () => ({
       connection: source.key,
@@ -45,9 +48,9 @@ export function PanePreview({
       // Not compared with the files' until the session is known here.
       exactTimes: remoteSession ? protocol !== undefined && listsExactTimes(protocol) : true,
       inVault,
-      sizes: remoteSession ? "listed" : "exact",
+      sizes: remembered ? "remembered" : remoteSession ? "listed" : "exact",
     }),
-    [source.key, remoteSession, protocol, inVault],
+    [source.key, remoteSession, protocol, inVault, remembered],
   );
   const { visibleEntries, cursorPath, selectedEntries, refresh } = pane;
   const subject = useMemo(
