@@ -501,9 +501,20 @@ function iconSize(bytes: Uint8Array): ImageSize | null {
   return largest;
 }
 
+/** How much of an AVIF file's `meta` box is searched for the sizes of its images. */
+const AVIF_META_SEARCH_BYTES = 1024 * 1024;
+
+/** Whether the four bytes at `at` spell `ispe`, the property that holds an image's size. */
+function isImageSpatialExtent(bytes: Uint8Array, at: number): boolean {
+  return (
+    bytes[at] === 0x69 && bytes[at + 1] === 0x73 && bytes[at + 2] === 0x70 && bytes[at + 3] === 0x65
+  );
+}
+
 /**
  * The largest image an AVIF file holds, by the `ispe` property each image has in the file's
- * `meta` box: the picture itself, a grid's tiles and any thumbnail.
+ * `meta` box: the picture itself, a grid's tiles and any thumbnail. The properties come early
+ * in the box, so only its first mebibyte is searched, however large the box says it is.
  */
 function avifSize(bytes: Uint8Array): ImageSize | null {
   let offset = 0;
@@ -519,10 +530,11 @@ function avifSize(bytes: Uint8Array): ImageSize | null {
     }
     if (size < header) return null;
     if (hasAscii(bytes, "meta", offset + 4)) {
-      const meta = bytes.subarray(offset, Math.min(bytes.length, offset + size));
+      const end = Math.min(bytes.length, offset + size, offset + AVIF_META_SEARCH_BYTES);
+      const meta = bytes.subarray(offset, end);
       let largest: ImageSize | null = null;
       for (let at = 0; at + 16 <= meta.length; at++) {
-        if (!hasAscii(meta, "ispe", at)) continue;
+        if (!isImageSpatialExtent(meta, at)) continue;
         largest = larger(
           largest,
           sized(uint32BigEndian(meta, at + 8), uint32BigEndian(meta, at + 12)),

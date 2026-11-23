@@ -397,6 +397,14 @@ describe("imageDimensions", () => {
     expect(imageDimensions(AVIF, "avif")).toBeNull();
   });
 
+  it("searches only the first mebibyte of an AVIF file's properties", () => {
+    const ispe = box("ispe", [0, 0, 0, 0], number(30_000, 4, true), number(30_000, 4, true));
+    const padding = box("free", new Array(1024 * 1024).fill(0));
+    const meta = box("meta", [0, 0, 0, 0], padding, box("iprp", box("ipco", ispe)));
+    const file = bytes(box("ftyp", [...encoder.encode("avif")]), meta);
+    expect(imageDimensions(file, "avif")).toBeNull();
+  });
+
   it("says nothing of a drawing, nor of a header cut short", () => {
     expect(imageDimensions(bytes(SVG), "svg")).toBeNull();
     expect(imageDimensions(JPEG, "jpeg")).toBeNull();

@@ -40,8 +40,10 @@ interface PressedKey {
 export const FOCUS_PREVIEW_SHORTCUT = "Ctrl+Shift+P";
 
 /**
- * Ctrl+Shift+P, Cmd+Shift+P on a Mac: from a file list into its preview. Neither Poros nor the
- * web views it runs in give it any other meaning, and Tab keeps going from list to list.
+ * Ctrl+Shift+P, Cmd+Shift+P on a Mac: from a file list into its preview. Poros gives it no other
+ * meaning. WebView2 on Windows binds it to printing, but the file list's handler takes the key
+ * and prevents that default whenever it is pressed inside a pane. Tab keeps going from list to
+ * list.
  */
 export function isFocusPreviewKey(event: PressedKey): boolean {
   const primary = event.ctrlKey || event.metaKey;
