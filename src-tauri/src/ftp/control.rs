@@ -1007,7 +1007,7 @@ impl Control {
             _ => return Err(reply_error(&reply)),
         };
         Ok(SocketAddr::new(
-            passive_ip(*offered.ip(), self.peer.ip()),
+            direct_copy_ip(*offered.ip(), self.peer.ip()),
             offered.port(),
         ))
     }
@@ -1126,13 +1126,19 @@ fn parse_pasv_address(text: &str) -> Option<std::net::SocketAddrV4> {
 /// Whether `ip` is a host on the public internet: not this computer, not on a private or
 /// link-local network, and not an address no host has.
 fn is_public(ip: Ipv4Addr) -> bool {
-    let [first, second, ..] = ip.octets();
+    let [first, ..] = ip.octets();
     !(ip.is_private()
         || ip.is_loopback()
         || ip.is_link_local()
         || first == 0
         || first >= 224
-        || (first == 100 && (64..128).contains(&second)))
+        || is_carrier_grade_nat(ip))
+}
+
+/// `100.64.0.0/10`, which internet providers and VPNs such as Tailscale use as private space.
+fn is_carrier_grade_nat(ip: Ipv4Addr) -> bool {
+    let [first, second, ..] = ip.octets();
+    first == 100 && (64..128).contains(&second)
 }
 
 /// Where a passive data connection goes: to the server Poros is already talking to, as with
@@ -1150,6 +1156,29 @@ fn passive_ip(offered: Ipv4Addr, peer: IpAddr) -> IpAddr {
     match peer {
         IpAddr::V4(server) if is_public(server) && is_public(offered) => IpAddr::V4(offered),
         _ => peer,
+    }
+}
+
+/// What a server-to-server copy tells the target to connect to, for a source that Poros
+/// reaches at `server` and that named `offered` in its `PASV` reply.
+///
+/// Poros opens no data connection here: the target does, from where it stands, so the rule
+/// for Poros's own connections does not apply. Two servers in one Docker or private network,
+/// reached through published ports, reach each other only at the address the source names.
+/// That address is replaced only when it cannot lead the target to the source: the source's
+/// own machine, a link-local, multicast or reserved address, `0.0.0.0/8`, or a private address
+/// named by a server on the public internet, which sits behind NAT and named its address
+/// inside it.
+fn direct_copy_ip(offered: Ipv4Addr, server: IpAddr) -> IpAddr {
+    let [first, ..] = offered.octets();
+    let leads_nowhere =
+        offered.is_loopback() || offered.is_link_local() || first == 0 || first >= 224;
+    let behind_nat = (offered.is_private() || is_carrier_grade_nat(offered))
+        && matches!(server, IpAddr::V4(server) if is_public(server));
+    if leads_nowhere || behind_nat {
+        server
+    } else {
+        IpAddr::V4(offered)
     }
 }
 
@@ -1357,6 +1386,45 @@ mod tests {
         ] {
             assert_eq!(
                 passive_ip(address(offered), peer(server)),
+                peer(expected),
+                "{offered} named by {server}"
+            );
+        }
+    }
+
+    #[test]
+    fn direct_copies_pass_on_the_address_the_source_names_unless_it_leads_nowhere() {
+        let address = |text: &str| text.parse::<Ipv4Addr>().unwrap();
+        let peer = |text: &str| text.parse::<IpAddr>().unwrap();
+        // (the address the source names, the source's address, what the target is told)
+        for (offered, server, expected) in [
+            // Two servers in one Docker network, reached through published ports.
+            ("172.18.0.2", "127.0.0.1", "172.18.0.2"),
+            ("172.18.0.2", "192.168.1.10", "172.18.0.2"),
+            // A source on the local network or a VPN that names itself or another host there.
+            ("192.168.1.10", "192.168.1.10", "192.168.1.10"),
+            ("192.168.1.20", "192.168.1.10", "192.168.1.20"),
+            ("100.64.3.2", "10.8.0.1", "100.64.3.2"),
+            // A source behind NAT that names its address inside it.
+            ("192.168.1.2", "203.0.113.5", "203.0.113.5"),
+            ("10.0.0.5", "203.0.113.5", "203.0.113.5"),
+            ("100.64.3.2", "203.0.113.5", "203.0.113.5"),
+            // A public address, named by any source.
+            ("198.51.100.7", "203.0.113.5", "198.51.100.7"),
+            ("198.51.100.7", "192.168.1.10", "198.51.100.7"),
+            // The source's own machine, a link-local, multicast or empty address.
+            ("127.0.0.1", "192.168.1.10", "192.168.1.10"),
+            ("127.0.0.1", "203.0.113.5", "203.0.113.5"),
+            ("169.254.10.1", "192.168.1.10", "192.168.1.10"),
+            ("224.0.0.1", "192.168.1.10", "192.168.1.10"),
+            ("0.0.0.0", "127.0.0.1", "127.0.0.1"),
+            ("0.0.0.0", "203.0.113.5", "203.0.113.5"),
+            // A source reached over IPv6 has no IPv4 address to compare with.
+            ("172.18.0.2", "2001:db8::5", "172.18.0.2"),
+            ("127.0.0.1", "2001:db8::5", "2001:db8::5"),
+        ] {
+            assert_eq!(
+                direct_copy_ip(address(offered), peer(server)),
                 peer(expected),
                 "{offered} named by {server}"
             );
