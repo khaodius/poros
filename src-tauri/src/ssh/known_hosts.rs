@@ -184,6 +184,8 @@ impl KnownHosts {
         let mut kept: Vec<&str> = existing
             .lines()
             .filter(|line| match parse_line(line) {
+                // A revocation or an authority is not this host's key, even where it matches.
+                Some(entry) if entry.marker != Marker::None => true,
                 Some(entry) => {
                     !(entry.matches_host(&host_port)
                         && entry.key.key_data().algorithm() == key.key_data().algorithm())
@@ -494,6 +496,24 @@ mod tests {
             known_hosts.check("a.example.com", 22, &key(KEY_B)),
             HostKeyStatus::Revoked
         );
+    }
+
+    #[test]
+    fn saving_a_key_keeps_revocations_and_authorities() {
+        let marked = format!(
+            "@revoked * ssh-ed25519 {KEY_A}\n@cert-authority *.example.com ssh-ed25519 {KEY_A}\n"
+        );
+        let (_dir, known_hosts) = store(&marked, "");
+        known_hosts
+            .trust("web.example.com", 22, &key(KEY_B))
+            .unwrap();
+        assert_eq!(
+            known_hosts.check("web.example.com", 22, &key(KEY_A)),
+            HostKeyStatus::Revoked
+        );
+        let contents = fs::read_to_string(&known_hosts.app_file).unwrap();
+        assert!(contents.starts_with(&marked), "{contents}");
+        assert!(contents.contains(&format!("web.example.com ssh-ed25519 {KEY_B}")));
     }
 
     #[test]
