@@ -9,7 +9,7 @@
 use std::io::Write;
 use std::os::unix::fs::{FileExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -612,11 +612,25 @@ async fn unmounting_waits_for_open_files_unless_forced_and_keeps_what_they_wrote
         setup.finish().await;
         return;
     };
-    let folder = at.clone();
-    let open = program(move || {
-        let mut file = std::fs::File::create(folder.join("draft.md")).unwrap();
-        file.write_all(b"words not saved yet").unwrap();
-        file
+    // Another program holds the file, as an editor would. Not this process: every close of
+    // a descriptor reaches the drive as a flush, and the programs this process starts close
+    // their copies of its descriptors, which would send the file.
+    let mut holder = Command::new("dd")
+        .arg(format!("of={}", at.join("draft.md").display()))
+        // With a block size, each piece read is written at once rather than gathered.
+        .args(["bs=4096", "status=none"])
+        .stdin(Stdio::piped())
+        // It fails to close the file once the drive is gone, and says so.
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut words = holder.stdin.take().unwrap();
+    words.write_all(b"words not saved yet").unwrap();
+    until("the program wrote its words", || {
+        setup.mounts.list()[0]
+            .uploads
+            .iter()
+            .any(|upload| upload.path == "draft.md" && upload.size == 19)
     })
     .await;
 
@@ -628,7 +642,9 @@ async fn unmounting_waits_for_open_files_unless_forced_and_keeps_what_they_wrote
 
     setup.mounts.unmount(&drive.id, true).await.unwrap();
     assert!(!is_mounted(&at), "{label}");
-    program(move || drop(open)).await;
+    // The program finds the drive gone when it closes the file.
+    drop(words);
+    program(move || holder.wait().unwrap()).await;
     let kept = setup.mounts.unsent();
     assert_eq!(kept.len(), 1, "{label}");
     assert_eq!(
