@@ -1009,7 +1009,10 @@ impl MountFs {
                 node.removed || (state.generation == state.uploaded && state.uploading.is_none())
             });
         if done {
-            node.local = None;
+            if let Some(local) = node.local.take() {
+                // Removed through the drive: what it held was meant to go.
+                local.spool.release();
+            }
         }
         nodes.release_if_unused(id);
     }
@@ -1111,12 +1114,21 @@ impl MountFs {
             _ => 0,
         };
         let local = self.local_file(id, fill).await?;
-        let mut state = local.state.lock().unwrap();
-        if had_local || remote_size != size {
-            local.spool.set_len(size)?;
-            state.size = size;
-            state.generation += 1;
-            state.touched = now_seconds();
+        let first_change = {
+            let mut state = local.state.lock().unwrap();
+            if had_local || remote_size != size {
+                local.spool.set_len(size)?;
+                let first_change = state.generation == state.uploaded;
+                state.size = size;
+                state.generation += 1;
+                state.touched = now_seconds();
+                first_change
+            } else {
+                false
+            }
+        };
+        if first_change {
+            self.note_unsent(id, &local);
         }
         Ok(())
     }
@@ -1133,13 +1145,48 @@ impl MountFs {
             return Err(VfsError::BadHandle);
         }
         let local = self.local_file(open.node, Fill::FromServer).await?;
-        let mut state = local.state.lock().unwrap();
-        let offset = if open.mode.append { state.size } else { offset };
-        local.spool.write_at(offset, data)?;
-        state.size = state.size.max(offset + data.len() as u64);
-        state.generation += 1;
-        state.touched = now_seconds();
+        let first_change = {
+            let mut state = local.state.lock().unwrap();
+            let offset = if open.mode.append { state.size } else { offset };
+            local.spool.write_at(offset, data)?;
+            let first_change = state.generation == state.uploaded;
+            state.size = state.size.max(offset + data.len() as u64);
+            state.generation += 1;
+            state.touched = now_seconds();
+            first_change
+        };
+        if first_change {
+            self.note_unsent(open.node, &local);
+        }
         Ok(data.len() as u32)
+    }
+
+    /// Writes the note that says where a spool's contents belong, from their first change
+    /// on, so they are found again even after a crash.
+    fn note_unsent(&self, id: NodeId, local: &LocalFile) {
+        let Some(remote_path) = self
+            .nodes
+            .lock()
+            .unwrap()
+            .by_id
+            .get(&id)
+            .map(|node| node.path.clone())
+        else {
+            return;
+        };
+        let note = {
+            let state = local.state.lock().unwrap();
+            UnsentNote {
+                connection: self.options.connection.clone(),
+                remote_path,
+                size: state.size,
+                error: state.failed.as_ref().map(|(_, reason)| reason.clone()),
+                kept_at: now_seconds(),
+            }
+        };
+        if let Err(error) = local.spool.note(&note) {
+            log::warn!("Could not note where a file written to a drive belongs: {error}");
+        }
     }
 
     /// Uploads the file if it has unsent changes and waits until the server holds them.
@@ -1510,7 +1557,11 @@ impl MountFs {
         mut wanted: watch::Receiver<u64>,
         stop: &CancellationToken,
     ) -> VfsResult<()> {
-        let lease = self.backend.lease(Purpose::Stream).await?;
+        let Some(lease) = self.backend.try_lease(Purpose::Stream).await else {
+            // Every stream is taken; the reader fetches its blocks one by one meanwhile.
+            return Ok(());
+        };
+        let lease = lease?;
         let start = first.index * BLOCK_SIZE;
         let mut stream = read_step(lease.files.clone().open_read(path, start..file_size)).await?;
         let mut index = first.index;
@@ -1822,7 +1873,26 @@ impl MountFs {
             .unwrap()
             .move_paths(&source_path, &target_path);
         self.put_entry(&target_path, Some(new_name), source);
+        for (id, local) in self.unsent_under(&target_path) {
+            self.note_unsent(id, &local);
+        }
         Ok(())
+    }
+
+    /// The files at or below `path` whose changes are not on the server yet.
+    fn unsent_under(&self, path: &str) -> Vec<(NodeId, Arc<LocalFile>)> {
+        let prefix = format!("{path}/");
+        self.nodes
+            .lock()
+            .unwrap()
+            .by_id
+            .iter()
+            .filter(|(_, node)| node.path == path || node.path.starts_with(&prefix))
+            .filter_map(|(id, node)| {
+                let local = node.local.as_ref().filter(|local| local.is_dirty())?;
+                Some((*id, local.clone()))
+            })
+            .collect()
     }
 
     /// Truncates or extends a file, sets its time, or its permissions where the server has

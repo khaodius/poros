@@ -70,6 +70,7 @@ use {
     editor::EditorManager,
     events::Events,
     file_ops::FileOperations,
+    mount::manager::{MountManager, SPOOL_FOLDER},
     session::SessionManager,
     settings::SettingsStore,
     sync::SyncManager,
@@ -153,6 +154,18 @@ pub fn run() {
             app.manage(TerminalManager::new(sessions.clone(), events.clone()));
             app.manage(CommandRunner::new(sessions.clone(), events.clone()));
             app.manage(FileOperations::new(sessions.clone(), events.clone()));
+            let handle = app.handle().clone();
+            let mounts = MountManager::new(
+                sessions.clone(),
+                events.clone(),
+                app.path().app_cache_dir()?.join(SPOOL_FOLDER),
+                Arc::new(move || {
+                    let transfers = handle.state::<SettingsStore>().get().transfers;
+                    (transfers.verify_checksums, transfers.read_back)
+                }),
+            );
+            mounts.tidy_up_in_background();
+            app.manage(mounts);
             app.manage(sessions);
             app.manage(settings);
             app.manage(connections);
@@ -266,7 +279,11 @@ pub fn run() {
             let label = window.label().to_string();
             tauri::async_runtime::spawn(async move {
                 let sessions = app.state::<Arc<SessionManager>>();
-                sessions.disconnect_owned_by(&label).await;
+                let closed = sessions.disconnect_owned_by(&label).await;
+                let mounts = app.state::<Arc<MountManager>>();
+                for session_id in closed {
+                    mounts.end_for_session(&session_id).await;
+                }
                 tokio::time::sleep(ADOPTION_GRACE).await;
                 app.state::<EditorManager>().close_owned_by(&label).await;
                 app.state::<TerminalManager>().close_owned_by(&label).await;
@@ -380,6 +397,16 @@ pub fn run() {
             commands::update_find_release,
             commands::update_restart,
             commands::log_startup,
+            commands::mount_support,
+            commands::mount_default_point,
+            commands::mount_start,
+            commands::mount_list,
+            commands::mount_unmount,
+            commands::mount_open,
+            commands::mount_retry,
+            commands::mount_unsent,
+            commands::mount_unsent_save,
+            commands::mount_unsent_discard,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Poros");
@@ -394,7 +421,10 @@ pub fn run() {
             handle.state::<TransferManager>().save_queue();
             let sessions = handle.state::<Arc<SessionManager>>();
             let terminals = handle.state::<TerminalManager>();
+            let mounts = handle.state::<Arc<MountManager>>();
             tauri::async_runtime::block_on(async {
+                // First, so what programs wrote to a drive is kept before its session goes.
+                mounts.unmount_all().await;
                 terminals.close_all().await;
                 sessions.disconnect_all().await;
             });

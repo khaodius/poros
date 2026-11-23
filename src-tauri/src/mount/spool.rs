@@ -6,11 +6,9 @@
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::{Deserialize, Serialize};
-
-static NEXT_SPOOL: AtomicU64 = AtomicU64::new(1);
 
 /// The extension of the note written beside a spool file that was kept.
 pub const NOTE_EXTENSION: &str = "unsent.json";
@@ -24,11 +22,7 @@ pub struct Spool {
 impl Spool {
     pub fn create(directory: &Path) -> io::Result<Self> {
         std::fs::create_dir_all(directory)?;
-        let name = format!(
-            "{}-{}.spool",
-            std::process::id(),
-            NEXT_SPOOL.fetch_add(1, Ordering::Relaxed)
-        );
+        let name = format!("{}.spool", uuid::Uuid::new_v4());
         let path = directory.join(name);
         let mut options = OpenOptions::new();
         options.read(true).write(true).create_new(true);
@@ -81,9 +75,16 @@ impl Spool {
         Ok(())
     }
 
-    /// Leaves the file on disk when the spool is dropped, with a note of where it belongs.
+    /// Leaves the file on disk when the spool is dropped, with a note of where it belongs,
+    /// and makes sure its contents reached the disk.
     pub fn keep(&self, note: &UnsentNote) -> io::Result<()> {
         self.file.sync_all()?;
+        self.note(note)
+    }
+
+    /// Writes the note beside the file, which then stays on disk until `release`, without
+    /// waiting for the disk: for contents that are still changing.
+    pub fn note(&self, note: &UnsentNote) -> io::Result<()> {
         let text = serde_json::to_vec_pretty(note).map_err(io::Error::other)?;
         std::fs::write(note_path(&self.path), text)?;
         self.kept.store(true, Ordering::Relaxed);
@@ -297,7 +298,7 @@ mod tests {
         let folder = tempfile::tempdir().unwrap();
         let kept = Spool::create(folder.path()).unwrap();
         kept.keep(&note("/a")).unwrap();
-        let orphan = folder.path().join("123-9.spool");
+        let orphan = folder.path().join("0b4e5a9e-orphan.spool");
         std::fs::write(&orphan, b"half written").unwrap();
         remove_orphans(folder.path());
         assert!(!orphan.exists());

@@ -22,10 +22,12 @@ pub enum Purpose {
     Upload,
 }
 
-/// A connection held for one request or stream. Dropping it lets the next one in.
+/// A connection held for one request or stream. Dropping it lets the next one in, and gives
+/// a connection taken from a pool back to it.
 pub struct Lease {
     pub files: Arc<dyn RemoteFileSystem>,
     _permit: Option<OwnedSemaphorePermit>,
+    _returned: Option<Box<dyn Send + Sync>>,
 }
 
 impl Lease {
@@ -33,7 +35,14 @@ impl Lease {
         Self {
             files,
             _permit: permit,
+            _returned: None,
         }
+    }
+
+    /// Keeps `guard` until the lease ends; its `Drop` gives the connection back.
+    pub fn returning(mut self, guard: impl Send + Sync + 'static) -> Self {
+        self._returned = Some(Box::new(guard));
+        self
     }
 }
 
@@ -43,9 +52,18 @@ pub trait Backend: Send + Sync {
     /// connection to come back. Fails rather than waiting for long.
     async fn lease(&self, purpose: Purpose) -> AppResult<Lease>;
 
+    /// A connection for `purpose` if one is free now, for work that can do without, such as
+    /// reading ahead. `None` when every connection for it is taken.
+    async fn try_lease(&self, purpose: Purpose) -> Option<AppResult<Lease>> {
+        Some(self.lease(purpose).await)
+    }
+
     /// Called when a request failed because its connection was lost, so the next lease looks
     /// for a new one.
     fn connection_lost(&self) {}
+
+    /// Closes the connections the backend opened for itself, once the drive is gone.
+    async fn close(&self) {}
 }
 
 /// How many requests of each kind run at once.
@@ -82,16 +100,24 @@ impl Gate {
     }
 
     pub async fn enter(&self, purpose: Purpose) -> AppResult<OwnedSemaphorePermit> {
-        let semaphore = match purpose {
-            Purpose::Request => &self.requests,
-            Purpose::Stream => &self.streams,
-            Purpose::Upload => &self.uploads,
-        };
-        semaphore
+        self.semaphore(purpose)
             .clone()
             .acquire_owned()
             .await
             .map_err(|_| AppError::cancelled())
+    }
+
+    /// A permit if one is free now.
+    pub fn try_enter(&self, purpose: Purpose) -> Option<OwnedSemaphorePermit> {
+        self.semaphore(purpose).clone().try_acquire_owned().ok()
+    }
+
+    fn semaphore(&self, purpose: Purpose) -> &Arc<Semaphore> {
+        match purpose {
+            Purpose::Request => &self.requests,
+            Purpose::Stream => &self.streams,
+            Purpose::Upload => &self.uploads,
+        }
     }
 }
 
@@ -116,5 +142,10 @@ impl Backend for SharedBackend {
     async fn lease(&self, purpose: Purpose) -> AppResult<Lease> {
         let permit = self.gate.enter(purpose).await?;
         Ok(Lease::new(self.files.clone(), Some(permit)))
+    }
+
+    async fn try_lease(&self, purpose: Purpose) -> Option<AppResult<Lease>> {
+        let permit = self.gate.try_enter(purpose)?;
+        Some(Ok(Lease::new(self.files.clone(), Some(permit))))
     }
 }

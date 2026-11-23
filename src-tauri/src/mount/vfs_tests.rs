@@ -25,7 +25,12 @@ impl Drive {
 
     fn spooled_files(&self) -> usize {
         std::fs::read_dir(self.spool_folder())
-            .map(|entries| entries.count())
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .filter(|entry| entry.path().extension().is_some_and(|kind| kind == "spool"))
+                    .count()
+            })
             .unwrap_or(0)
     }
 }
@@ -784,6 +789,66 @@ async fn unsent_files_are_kept_when_the_drive_goes_away() {
     assert_eq!(unsent[0].note.connection, "memory");
     assert_eq!(std::fs::read(&unsent[0].path).unwrap(), b"unsaved words");
     drop(folder);
+}
+
+#[tokio::test]
+async fn unsent_changes_carry_a_note_from_the_first_write_on() {
+    let drive = drive();
+    drive.server.put_folder("/docs");
+    let (_, handle) = drive
+        .fs
+        .create(ROOT_NODE, "draft.md", OpenMode::WRITE_TRUNCATE, false, None)
+        .await
+        .unwrap();
+    assert!(
+        spool::unsent_files(&drive.spool_folder()).is_empty(),
+        "an empty new file holds nothing to lose"
+    );
+    drive.fs.write(handle, 0, b"words").await.unwrap();
+    // What a crash now would leave behind says where it belongs.
+    let unsent = spool::unsent_files(&drive.spool_folder());
+    assert_eq!(unsent.len(), 1);
+    assert_eq!(unsent[0].note.remote_path, "/draft.md");
+
+    let docs = node(&drive, "/docs").await;
+    drive
+        .fs
+        .rename(ROOT_NODE, "draft.md", docs, "final.md", false)
+        .await
+        .unwrap();
+    let unsent = spool::unsent_files(&drive.spool_folder());
+    assert_eq!(unsent[0].note.remote_path, "/docs/final.md");
+
+    drive.fs.flush(handle).await.unwrap();
+    assert!(spool::unsent_files(&drive.spool_folder()).is_empty());
+    drive.fs.release(handle);
+    until("the spool is removed", || drive.spooled_files() == 0).await;
+}
+
+#[tokio::test]
+async fn a_file_removed_with_unsent_changes_leaves_nothing_behind() {
+    let drive = drive();
+    let (_, handle) = drive
+        .fs
+        .create(
+            ROOT_NODE,
+            "scratch.tmp",
+            OpenMode::WRITE_TRUNCATE,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+    drive.fs.write(handle, 0, b"temporary").await.unwrap();
+    drive
+        .fs
+        .remove_file(ROOT_NODE, "scratch.tmp")
+        .await
+        .unwrap();
+    drive.fs.release(handle);
+    until("the spool is removed", || drive.spooled_files() == 0).await;
+    assert!(spool::unsent_files(&drive.spool_folder()).is_empty());
+    assert!(!drive.server.exists("/scratch.tmp"));
 }
 
 #[tokio::test]

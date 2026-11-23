@@ -75,6 +75,10 @@ impl Session {
         }
     }
 
+    pub fn info(&self) -> &SessionInfo {
+        &self.info
+    }
+
     /// The unlocked vault this session shows, if it is a vault's.
     pub fn vault(&self) -> Option<&Arc<VaultFs>> {
         match &self.link {
@@ -681,7 +685,8 @@ impl SessionManager {
         Ok(())
     }
 
-    pub async fn disconnect_owned_by(&self, owner: &str) {
+    /// Returns the sessions it closed.
+    pub async fn disconnect_owned_by(&self, owner: &str) -> Vec<String> {
         let owned = |sessions: &HashMap<String, Arc<Session>>| -> Vec<String> {
             sessions
                 .values()
@@ -691,9 +696,10 @@ impl SessionManager {
         };
         let mut ids = owned(&*self.sessions.read().await);
         ids.extend(owned(&*self.lost.read().await));
-        for id in ids {
-            let _ = self.disconnect(&id).await;
+        for id in &ids {
+            let _ = self.disconnect(id).await;
         }
+        ids
     }
 
     pub async fn disconnect_all(&self) {

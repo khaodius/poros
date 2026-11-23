@@ -14,6 +14,8 @@ pub const SYNC_PROGRESS_EVENT: &str = "poros://sync-progress";
 pub const QUEUE_FINISHED_EVENT: &str = "poros://queue-finished";
 pub const COMMAND_OUTPUT_EVENT: &str = "poros://command-output";
 pub const FILE_OPERATION_EVENT: &str = "poros://file-operation";
+/// A drive was mounted or unmounted, or one of its uploads failed.
+pub const MOUNTS_EVENT: &str = "poros://mounts";
 /// Records kept for the main window while it loads; later ones past this are dropped.
 const MAX_STARTUP_RECORDS: usize = 500;
 
@@ -129,6 +131,10 @@ impl Events {
 
     pub fn file_operation(&self, progress: &crate::file_ops::OperationProgress) {
         self.emit(FILE_OPERATION_EVENT, progress);
+    }
+
+    pub fn mounts_changed(&self) {
+        self.emit(MOUNTS_EVENT, ());
     }
 
     pub fn store_changed(&self, store: Store) {

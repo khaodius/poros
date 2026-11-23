@@ -31,7 +31,7 @@ use crate::error::{AppError, AppResult, ErrorKind};
 use device::UnmountError;
 use wire::{opcode, setattr_flag, Fields, FolderReply, Header, Reply, Truncated};
 
-pub use device::{clear_dead_drives, missing, Missing};
+pub use device::{clear_dead_drives, missing};
 
 /// How long the kernel may go on using a name or attributes without asking again.
 const KERNEL_VALID_SECONDS: u64 = 1;

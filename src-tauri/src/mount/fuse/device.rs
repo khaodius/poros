@@ -15,6 +15,7 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use crate::error::{AppError, AppResult, ErrorKind};
+use crate::mount::platform::Missing;
 
 const HELPER: &str = "fusermount3";
 const DEVICE: &str = "/dev/fuse";
@@ -22,13 +23,6 @@ const DEVICE: &str = "/dev/fuse";
 const SUBTYPE: &str = "poros";
 /// How long the helper may take to mount before it counts as stuck.
 const HELPER_LIMIT: Duration = Duration::from_secs(30);
-
-/// What is missing for mounting on this computer, and what to do about it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Missing {
-    pub problem: String,
-    pub help: String,
-}
 
 fn helper() -> Option<PathBuf> {
     let listed = std::env::var_os("PATH")
@@ -47,6 +41,7 @@ pub fn missing() -> Option<Missing> {
         return Some(Missing {
             problem: "This system has no FUSE support: /dev/fuse is missing.".into(),
             help: "Load the kernel module with: sudo modprobe fuse".into(),
+            link: None,
         });
     }
     if helper().is_none() {
@@ -55,6 +50,7 @@ pub fn missing() -> Option<Missing> {
             help: "Install it with: sudo apt install fuse3 (Debian, Ubuntu), \
                    sudo dnf install fuse3 (Fedora) or sudo pacman -S fuse3 (Arch)"
                 .into(),
+            link: None,
         });
     }
     None
