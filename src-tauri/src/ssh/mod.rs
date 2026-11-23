@@ -294,6 +294,17 @@ impl client::Handler for ClientHandler {
             certificate_problem: None,
         };
         let status = self.known_hosts.check(&self.host, self.port, &key);
+        if status == HostKeyStatus::Revoked {
+            // Not a question for the user: no approval lets a revoked key in.
+            *self.rejection.lock().unwrap() = Some(AppError::new(
+                ErrorKind::HostKeyChanged,
+                format!(
+                    "The host key for {}:{} is revoked in known_hosts ({} {}), so Poros will not connect. Ask the server's administrator for its new key.",
+                    info.host, info.port, info.algorithm, info.fingerprint
+                ),
+            ));
+            return Ok(false);
+        }
         if status == HostKeyStatus::Trusted {
             self.log(
                 LogLevel::Info,
@@ -732,15 +743,27 @@ mod tests {
 
     /// Shows `SERVER_KEY` to the handler of the hop at `host`, port 22, with nothing on record.
     async fn show_key(hop: Hop, host: &str, approval: Option<HostKeyApproval>) -> Checked {
+        show_key_with(hop, host, approval, "").await
+    }
+
+    /// `show_key` with `system_lines` in the system known_hosts file.
+    async fn show_key_with(
+        hop: Hop,
+        host: &str,
+        approval: Option<HostKeyApproval>,
+        system_lines: &str,
+    ) -> Checked {
         let temp_dir = tempfile::tempdir().unwrap();
         let app_file = temp_dir.path().join("known_hosts");
+        let system_file = temp_dir.path().join("system_known_hosts");
+        std::fs::write(&system_file, system_lines).unwrap();
         let rejection = Arc::new(Mutex::new(None));
         let mut handler = ClientHandler {
             host: host.to_string(),
             port: 22,
             hop,
             session_id: "test".to_string(),
-            known_hosts: KnownHosts::new(app_file.clone(), Vec::new()),
+            known_hosts: KnownHosts::new(app_file.clone(), vec![system_file]),
             approval,
             rejection: rejection.clone(),
             accepted_fingerprint: Arc::default(),
@@ -810,6 +833,26 @@ mod tests {
                 .await
                 .accepted
         );
+    }
+
+    #[tokio::test]
+    async fn no_approval_lets_a_revoked_key_in() {
+        let revoked = format!("@revoked * ssh-ed25519 {SERVER_KEY}\n");
+        for hop in [Hop::Server, Hop::JumpHost] {
+            let asked =
+                show_key_with(hop, "target", Some(approval_for("target", true)), &revoked).await;
+            assert!(!asked.accepted);
+            assert_eq!(asked.recorded, "", "a revoked key is never saved");
+            let rejection = asked.rejection.expect("the refusal says why");
+            assert_eq!(rejection.kind, ErrorKind::HostKeyChanged);
+            assert!(
+                rejection.message.contains("revoked"),
+                "{}",
+                rejection.message
+            );
+            // Nothing to approve: the page does not ask about it.
+            assert!(rejection.host_key.is_none());
+        }
     }
 
     #[test]

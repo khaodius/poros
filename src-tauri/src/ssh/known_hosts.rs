@@ -16,9 +16,12 @@ use sha1::Sha1;
 pub enum HostKeyStatus {
     Trusted,
     Unknown,
-    /// Also returned for a `@revoked` key, and for a key of a type the host is not on record
-    /// with when it is on record with others.
+    /// Also returned for a key of a type the host is not on record with when it is on record
+    /// with others.
     Changed,
+    /// A `@revoked` line in any of the files names the key for the host. No approval can let
+    /// it in.
+    Revoked,
 }
 
 /// What one known_hosts file says about a host's key.
@@ -26,7 +29,7 @@ pub enum HostKeyStatus {
 enum Record {
     NotListed,
     Trusted,
-    /// Revoked, or another key of the same type is listed.
+    /// Another key of the same type is listed.
     Changed,
     /// The host is listed, but only with keys of other types.
     OtherKeyTypes,
@@ -58,6 +61,11 @@ impl KnownHosts {
 
     pub fn check(&self, host: &str, port: u16, key: &PublicKey) -> HostKeyStatus {
         let host_port = host_pattern(host, port);
+        // As in OpenSSH, a revocation in any file outweighs every line and approval that trusts
+        // the key, wherever it comes in the files.
+        if self.files().any(|file| revokes(file, &host_port, key)) {
+            return HostKeyStatus::Revoked;
+        }
         let trusted_for_now =
             self.trusted_until_exit
                 .lock()
@@ -215,13 +223,12 @@ fn check_file(path: &Path, host_port: &str, key: &PublicKey) -> Record {
         if !entry.matches_host(host_port) {
             continue;
         }
-        let same_key = entry.key.key_data() == key.key_data();
         match entry.marker {
-            Marker::Revoked if same_key => return Record::Changed,
+            // Revocations are looked for in every file before any file is read for this.
             Marker::Revoked | Marker::CertAuthority => continue,
             Marker::None => {}
         }
-        if same_key {
+        if entry.key.key_data() == key.key_data() {
             return Record::Trusted;
         }
         if entry.key.key_data().algorithm() == key.key_data().algorithm() {
@@ -231,6 +238,18 @@ fn check_file(path: &Path, host_port: &str, key: &PublicKey) -> Record {
         }
     }
     record
+}
+
+/// Whether a `@revoked` line in the file names `key` for the host.
+fn revokes(path: &Path, host_port: &str, key: &PublicKey) -> bool {
+    let Ok(contents) = fs::read_to_string(path) else {
+        return false;
+    };
+    contents.lines().filter_map(parse_line).any(|entry| {
+        entry.marker == Marker::Revoked
+            && entry.matches_host(host_port)
+            && entry.key.key_data() == key.key_data()
+    })
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -448,7 +467,45 @@ mod tests {
         );
         assert_eq!(
             known_hosts.check("a.example.com", 22, &key(KEY_B)),
-            HostKeyStatus::Changed
+            HostKeyStatus::Revoked
+        );
+    }
+
+    #[test]
+    fn a_revoked_key_is_refused_wherever_it_is_trusted() {
+        let plain = format!("web.example.com ssh-ed25519 {KEY_A}\n");
+        let revoked = format!("@revoked * ssh-ed25519 {KEY_A}\n");
+
+        // The revocation an admin appended after the line it revokes.
+        let (_dir, known_hosts) = store("", &format!("{plain}{revoked}"));
+        assert_eq!(
+            known_hosts.check("web.example.com", 22, &key(KEY_A)),
+            HostKeyStatus::Revoked
+        );
+
+        // Approved in Poros once, revoked in the system file since.
+        let (_dir, known_hosts) = store(&plain, &revoked);
+        assert_eq!(
+            known_hosts.check("web.example.com", 22, &key(KEY_A)),
+            HostKeyStatus::Revoked
+        );
+
+        // Trusted until Poros closes.
+        let (_dir, known_hosts) = store("", &revoked);
+        known_hosts.trust_until_exit("web.example.com", 22, &key(KEY_A));
+        assert_eq!(
+            known_hosts.check("web.example.com", 22, &key(KEY_A)),
+            HostKeyStatus::Revoked
+        );
+
+        // Other keys of the host are not touched by it.
+        let (_dir, known_hosts) = store(
+            "",
+            &format!("web.example.com ssh-ed25519 {KEY_B}\n{revoked}"),
+        );
+        assert_eq!(
+            known_hosts.check("web.example.com", 22, &key(KEY_B)),
+            HostKeyStatus::Trusted
         );
     }
 
