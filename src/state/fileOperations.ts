@@ -12,6 +12,7 @@ import {
   type FileOrigin,
 } from "../lib/fileOrigin";
 import { pluralize } from "../lib/format";
+import { folderOf } from "../lib/search";
 import { fileOperations, toAppError } from "../lib/ipc";
 import { baseName, breadcrumbs, isWithin, samePath } from "../lib/path";
 import type {
@@ -153,10 +154,13 @@ export async function placeEntries(request: PlaceRequest): Promise<boolean> {
   const target = paneWritingTo(request.target, targetFolder);
   const targetOrigin = paneOrigin(target);
 
+  const style = pathStyleOf(origin);
+  // Entries are in `sourceFolder`, or, found by a search, each in a folder of its own.
+  const inTarget = (entry: FileEntry) => samePath(folderOf(entry, style), targetFolder, style);
+
   if (!placesInPlace(origin, target)) {
-    const style = pathStyleOf(origin);
     // A transfer into the folder the files came from would write each file over itself.
-    if (sameFilesystem(origin, targetOrigin) && samePath(sourceFolder, targetFolder, style)) {
+    if (sameFilesystem(origin, targetOrigin) && entries.some(inTarget)) {
       showToast(
         "info",
         isInsideVault(origin)
@@ -191,14 +195,14 @@ export async function placeEntries(request: PlaceRequest): Promise<boolean> {
   }
 
   if (await refusesLockedVault(target, targetFolder)) return false;
-  const style = pathStyleOf(origin);
-  const inPlace = samePath(sourceFolder, targetFolder, style);
+  const inPlace = entries.every(inTarget);
   if (inPlace && mode === "move") return false;
   const location = toLocation(targetOrigin);
   let conflict: NameClash = "keepBoth";
   try {
     if (!inPlace) {
-      const names = entries.map((entry) => entry.name);
+      // Those already in the folder are left there, or copied under a new name, unasked.
+      const names = entries.filter((entry) => !inTarget(entry)).map((entry) => entry.name);
       const taken = await fileOperations.conflicts(location, names, targetFolder);
       if (taken.length > 0) {
         const choice = await askNameClash({

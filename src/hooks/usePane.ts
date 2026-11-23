@@ -20,6 +20,8 @@ interface HistoryEntry {
   path: string;
   /** Where the cursor was on leaving the folder, to put it back on returning. */
   cursor: string | null;
+  /** The pane showed the results it was given there, such as a search's, not the folder. */
+  results?: boolean;
 }
 
 interface History {
@@ -70,7 +72,14 @@ export interface PaneController {
   canGoBack: boolean;
   canGoForward: boolean;
   canGoUp: boolean;
-  navigate: (path: string) => Promise<boolean>;
+  /** The pane shows the results it was given in place of the folder's listing. */
+  showingResults: boolean;
+  /** Shows the results given to the pane, found in or below `path`, as a step in its history. */
+  showResults: (path: string) => void;
+  /** Leaves the results for the folder they were found in, and forgets their step in history. */
+  closeResults: () => void;
+  /** Goes to `path`, selecting `focus` there. */
+  navigate: (path: string, focus?: Focus) => Promise<boolean>;
   /** Reloads the folder, selecting `focus` (one path or several) where the listing has it. */
   refresh: (focus?: Focus) => Promise<boolean>;
   /** Empties the pane until its next listing arrives, for a listing that must not stay up. */
@@ -114,6 +123,12 @@ export interface PaneOptions {
    * with when that is not the pane's own, or null. The pane keeps its place and its history.
    */
   handover?: (path: string) => Handover | null;
+  /**
+   * Entries from elsewhere, such as search results, shown with sorting, filtering and selection
+   * as a listing is while the pane is at the step `showResults` made. Their `path` is the folder
+   * they were found in, and they have no parent.
+   */
+  results?: DirListing | null;
 }
 
 export function usePane(
@@ -125,9 +140,10 @@ export function usePane(
     groupByDate = false,
     onSortChange,
     handover,
+    results = null,
   }: PaneOptions = {},
 ): PaneController {
-  const [listing, setListing] = useState<DirListing | null>(null);
+  const [folderListing, setListing] = useState<DirListing | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<AppError | null>(null);
   const [history, setHistory] = useState<History>({ entries: [], index: -1 });
@@ -160,6 +176,12 @@ export function usePane(
   });
   // The source a handover listed the folder on show with, until it is the pane's own.
   const takenOverBy = useRef<string | null>(null);
+  const showingResults = history.entries[history.index]?.results === true && results !== null;
+  const listing = showingResults ? results : folderListing;
+  const hasResults = useRef(results !== null);
+  useLayoutEffect(() => {
+    hasResults.current = results !== null;
+  });
 
   const sortedEntries = useMemo(
     () =>
@@ -254,7 +276,8 @@ export function usePane(
             return { entries, index: current.index };
           }
           if (shown && !sameDirectory) entries[current.index] = { ...shown, cursor: leftCursor };
-          const stays = mode === "travel" || shown?.path === next.path;
+          // Leaving results for their own folder is a step of its own.
+          const stays = mode === "travel" || (shown?.path === next.path && !shown.results);
           if (stays) return { entries, index: current.index };
           entries.splice(current.index + 1, Infinity, { path: next.path, cursor: null });
           return { entries, index: entries.length - 1 };
@@ -297,7 +320,7 @@ export function usePane(
     };
   }, [source, load]);
 
-  const navigate = useCallback((path: string) => load(path, "push"), [load]);
+  const navigate = useCallback((path: string, focus?: Focus) => load(path, "push", focus), [load]);
   // Reloads the folder last listed, which a navigation sets before the pane renders its listing.
   const refresh = useCallback(
     (focus?: Focus) =>
@@ -323,18 +346,79 @@ export function usePane(
     if (listing?.parent) void load(listing.parent, "push", listing.path);
   }, [listing, load]);
 
+  /** Stops a listing on its way, which would replace what the pane is about to show. */
+  const supersedeLoads = useCallback(() => {
+    const superseding = loads.current.start("navigation");
+    if (superseding !== null) loads.current.finish(superseding);
+    setLoading(false);
+  }, []);
+
+  const showResults = useCallback(
+    (path: string) => {
+      supersedeLoads();
+      travelIndex.current = null;
+      setHistory((current) => {
+        const shown = current.entries[current.index];
+        if (shown?.results) {
+          const entries = [...current.entries];
+          entries[current.index] = { ...shown, path, cursor: null };
+          return { entries, index: current.index };
+        }
+        // One step shows results: the pane holds one set of them.
+        const before = current.entries
+          .slice(0, current.index + 1)
+          .map((entry, index) =>
+            index === current.index ? { ...entry, cursor: cursorRef.current } : entry,
+          )
+          .filter((entry) => !entry.results);
+        return {
+          entries: [...before, { path, cursor: null, results: true }],
+          index: before.length,
+        };
+      });
+      setSelection(new Set());
+      setAnchorPath(null);
+      setCursorPath(null);
+      setCollapsedGroups(new Set());
+    },
+    [supersedeLoads],
+  );
+
+  const closeResults = useCallback(() => {
+    const at = history.entries[history.index];
+    if (!at?.results) return;
+    const entries = history.entries.filter((entry) => !entry.results);
+    const previous = history.entries[history.index - 1];
+    // Back to the folder the results were found in, without a step for it twice.
+    const returning = previous?.path === at.path;
+    const index = returning ? history.index - 1 : history.index;
+    if (!returning) entries.splice(index, 0, { path: at.path, cursor: null });
+    travelIndex.current = null;
+    setHistory({ entries, index });
+    void load(at.path, "travel", returning ? (previous.cursor ?? undefined) : undefined);
+  }, [history, load]);
+
   const travel = useCallback(
     (offset: number) => {
       const index = (travelIndex.current ?? history.index) + offset;
       const target = history.entries[index];
       if (target === undefined) return;
+      if (target.results && hasResults.current) {
+        supersedeLoads();
+        travelIndex.current = null;
+        setHistory((current) => ({ ...current, index }));
+        setSelection(new Set());
+        setAnchorPath(null);
+        setCursorPath(target.cursor);
+        return;
+      }
       travelIndex.current = index;
       void load(target.path, "travel", target.cursor ?? undefined).then((loaded) => {
         if (travelIndex.current === index) travelIndex.current = null;
         if (loaded) setHistory((current) => ({ ...current, index }));
       });
     },
-    [history, load],
+    [history, load, supersedeLoads],
   );
 
   const goHome = useCallback(() => {
@@ -521,6 +605,9 @@ export function usePane(
     canGoBack: history.index > 0,
     canGoForward: history.index < history.entries.length - 1,
     canGoUp: Boolean(listing?.parent),
+    showingResults,
+    showResults,
+    closeResults,
     navigate,
     refresh,
     clear,
