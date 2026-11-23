@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use russh::client::KeyboardInteractiveAuthResponse;
 use russh::keys::{self as russh_keys, PrivateKeyWithHashAlg};
@@ -11,6 +11,24 @@ use crate::events::{Events, LogLevel};
 
 /// Servers sometimes send an empty info request before the real prompt.
 const MAX_KEYBOARD_INTERACTIVE_ROUNDS: usize = 5;
+
+/// Held while a key file is unlocked. Unlocking may take seconds and up to a gibibyte of
+/// memory, and a transfer opens several connections at once, so they take turns.
+static UNLOCKING_A_KEY: Mutex<()> = Mutex::new(());
+
+/// Runs `unlock` on a blocking thread once no other key is being unlocked. The turn is held
+/// on that thread, so a sign-in given up halfway keeps it until its unlocking ends.
+async fn one_key_at_a_time<T: Send + 'static>(
+    unlock: impl FnOnce() -> T + Send + 'static,
+) -> AppResult<T> {
+    Ok(tokio::task::spawn_blocking(move || {
+        let _turn = UNLOCKING_A_KEY
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        unlock()
+    })
+    .await?)
+}
 
 pub(super) async fn authenticate(
     handle: &mut SshHandle,
@@ -52,10 +70,9 @@ pub(super) async fn authenticate(
                 format!("Trying public key {}", path.display()),
             );
             let passphrase = passphrase.clone();
-            let key = tokio::task::spawn_blocking(move || {
-                keys::load_private_key(&path, passphrase.as_deref())
-            })
-            .await??;
+            let key =
+                one_key_at_a_time(move || keys::load_private_key(&path, passphrase.as_deref()))
+                    .await??;
             let hash = if key.algorithm().is_rsa() {
                 handle.best_supported_rsa_hash().await?.flatten()
             } else {
@@ -235,4 +252,34 @@ fn expand_home(path: &str) -> PathBuf {
         }
     }
     PathBuf::from(trimmed)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    use super::*;
+
+    /// A transfer opens several connections at once, and each would otherwise unlock its key
+    /// with up to a gibibyte of memory at the same moment.
+    #[tokio::test]
+    async fn keys_unlocked_at_once_take_turns() {
+        let unlocking = Arc::new(AtomicUsize::new(0));
+        let most_at_once = Arc::new(AtomicUsize::new(0));
+        let unlock = || {
+            let (unlocking, most_at_once) = (unlocking.clone(), most_at_once.clone());
+            move || {
+                let now = unlocking.fetch_add(1, Ordering::SeqCst) + 1;
+                most_at_once.fetch_max(now, Ordering::SeqCst);
+                std::thread::sleep(Duration::from_millis(200));
+                unlocking.fetch_sub(1, Ordering::SeqCst);
+            }
+        };
+        let (first, second) =
+            tokio::join!(one_key_at_a_time(unlock()), one_key_at_a_time(unlock()));
+        first.unwrap();
+        second.unwrap();
+        assert_eq!(most_at_once.load(Ordering::SeqCst), 1);
+    }
 }
