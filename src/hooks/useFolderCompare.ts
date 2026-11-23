@@ -3,6 +3,7 @@ import type { FileSource } from "../lib/fileSource";
 import {
   legendCounts,
   outdatedNote,
+  pausedNote,
   namesIn,
   sizeOnlyIn,
   type LegendCounts,
@@ -34,6 +35,8 @@ export interface FolderCompareBarModel {
   note: string | undefined;
   /** Why the marks may be out of date: a listing on show could not be refreshed. */
   outdated: string | undefined;
+  /** Why there are no marks for now: search results are on show in place of a folder. */
+  paused: string | undefined;
   options: FolderCompareSettings;
   /** Size alone decides, by the bar's option or by Settings > Sync. */
   sizeOnly: boolean;
@@ -134,6 +137,7 @@ export function useFolderCompare({
   const comparing = pairId !== undefined;
   const listing = pane.listing;
   const outdated = pane.stale === "outdated";
+  const showingResults = pane.showingResults;
   const snapshot = useMemo<PaneSnapshot | null>(
     () =>
       comparing
@@ -148,9 +152,21 @@ export function useFolderCompare({
             lost,
             covered,
             outdated,
+            showingResults,
           })
         : null,
-    [comparing, listing, covered, source.kind, source.pathStyle, sessionId, info, lost, outdated],
+    [
+      comparing,
+      listing,
+      covered,
+      source.kind,
+      source.pathStyle,
+      sessionId,
+      info,
+      lost,
+      outdated,
+      showingResults,
+    ],
   );
   // Before the browser paints, so a folder never shows with the marks of the one before it.
   useLayoutEffect(() => {
@@ -248,6 +264,11 @@ export function useFolderCompare({
       outdated: outdatedNote(
         snapshot?.outdated === true,
         partnerSnapshot?.outdated === true,
+        partner.label,
+      ),
+      paused: pausedNote(
+        snapshot?.showingResults === true,
+        partnerSnapshot?.showingResults === true,
         partner.label,
       ),
       options,

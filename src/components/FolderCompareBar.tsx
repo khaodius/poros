@@ -1,5 +1,6 @@
 import type { MouseEvent, ReactNode } from "react";
 import {
+  CirclePause,
   EyeOff,
   FolderSync,
   FolderTree,
@@ -130,6 +131,12 @@ export function FolderCompareBar({ bar, onMenu }: FolderCompareBarProps) {
         <p className="folder-compare-status">
           <Info size={13} aria-hidden />
           <span>There are too many subfolders to mark them all. The deepest are not marked.</span>
+        </p>
+      )}
+      {bar.paused && (
+        <p className="folder-compare-status" role="status">
+          <CirclePause size={13} aria-hidden />
+          <span>{bar.paused}.</span>
         </p>
       )}
       {bar.outdated && (

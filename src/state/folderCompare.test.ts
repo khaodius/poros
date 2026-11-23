@@ -42,6 +42,7 @@ function listed(
     ignoresCase: false,
     coarseTimes: false,
     outdated: false,
+    showingResults: false,
     path,
     parent: path === "/" ? null : parent,
     entries,
@@ -305,6 +306,7 @@ describe("what a pane gives the comparison", () => {
     lost: false,
     covered: false,
     outdated: false,
+    showingResults: false,
     ...more,
   });
 
@@ -316,6 +318,7 @@ describe("what a pane gives the comparison", () => {
       ignoresCase: false,
       coarseTimes: true,
       outdated: false,
+      showingResults: false,
       path: "/www",
       parent: "/",
       entries: [
@@ -350,6 +353,34 @@ describe("what a pane gives the comparison", () => {
       docs: "both",
       "same.txt": "identical",
       "edited.txt": "older",
+    });
+  });
+
+  it("pauses while a pane shows search results, and marks the rows again once they close", async () => {
+    expect(snapshotOf(shown({ showingResults: true }))?.showingResults).toBe(true);
+    const { main, pairId, state } = await comparedPair();
+    const started = main.compare.startDeep("left");
+    main.finish({
+      folders: [summary("docs", { identical: 1, newerLeft: 1 })],
+      truncated: false,
+      leftEntries: 3,
+      rightEntries: 2,
+    });
+    await started;
+    expect(state().comparisons[pairId]?.left.get("docs")?.state).toBe("differsInside");
+    // Results are not the folder: neither pane's rows are marked, as their names are not the
+    // folder's rows. The folder stays behind them, so nothing found below it is dropped.
+    main.compare.publish("right", listed("/var/www", THERE, { showingResults: true }));
+    expect(state().comparisons[pairId]).toBeNull();
+    expect(state().deep[pairId]).toMatchObject({ status: "done" });
+    void main.compare.startDeep("left");
+    expect(main.requests).toHaveLength(1);
+    main.compare.publish("right", listed("/var/www", THERE));
+    expect(states(state().comparisons[pairId]?.left)).toEqual({
+      docs: "differsInside",
+      "same.txt": "identical",
+      "edited.txt": "newer",
+      "new.txt": "onlyHere",
     });
   });
 
@@ -528,6 +559,7 @@ describe("panes in two windows", () => {
         ignoresCase: "yes",
         coarseTimes: 1,
         outdated: "no",
+        showingResults: "yes",
         parent: 7,
         entries: [
           { name: "a.txt", shape: "file", size: 1, modified: null, hidden: "no" },
@@ -544,6 +576,7 @@ describe("panes in two windows", () => {
       ...good,
       ignoresCase: false,
       coarseTimes: false,
+      showingResults: false,
       parent: null,
       entries: [{ name: "a.txt", shape: "file", size: 1, modified: null, hidden: false }],
     });
@@ -889,6 +922,20 @@ describe("browsing two panes together", () => {
     // A jump elsewhere puts them in step again as well.
     left.show("/home/me/site/img");
     left.show("/srv");
+    expect(state().notes[pairId]).toBeUndefined();
+  });
+
+  it("leaves a pane showing search results where it is", async () => {
+    const { main, pairId, left, right, state } = await browsing();
+    main.compare.publish(
+      "right",
+      listed("/var/www", ["css"].map(folder), { showingResults: true }),
+    );
+    left.show("/home/me/site/css");
+    expect(right.moves).toEqual([]);
+    expect(state().notes[pairId]).toBe("web.example.com shows search results");
+    // Back where the two were, they are in step again.
+    left.show("/home/me/site");
     expect(state().notes[pairId]).toBeUndefined();
   });
 

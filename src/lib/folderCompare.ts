@@ -362,6 +362,15 @@ export function outdatedNote(here: boolean, there: boolean, partner: string): st
   return undefined;
 }
 
+/** What the compare bar says while search results are on show in place of a compared folder. */
+export function pausedNote(here: boolean, there: boolean, partner: string): string | undefined {
+  const after = "The marks come back when the results are closed";
+  if (here && there) return `Comparing is paused while both panes show search results. ${after}`;
+  if (here) return `Comparing is paused while this pane shows search results. ${after}`;
+  if (there) return `Comparing is paused while ${partner} shows search results. ${after}`;
+  return undefined;
+}
+
 /** What a folder's summary says in words, seen from one side: "2 newer here, 1 only there". */
 export function describeSummary(summary: FolderSummary, side: "left" | "right"): string {
   const here = side === "left";

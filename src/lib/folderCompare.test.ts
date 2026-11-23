@@ -12,6 +12,7 @@ import {
   namesIn,
   outdatedNote,
   pathBelow,
+  pausedNote,
   rowMarks,
   sameEntries,
   sameMoment,
@@ -259,6 +260,15 @@ describe("what the page knows of each side", () => {
     expect(outdatedNote(true, false, "web")).toMatch(/^This pane's listing could not be/);
     expect(outdatedNote(false, true, "web")).toMatch(/^The listing in web could not be/);
     expect(outdatedNote(true, true, "web")).toMatch(/^Neither pane's listing/);
+  });
+
+  it("says which pane shows search results while comparing is paused", () => {
+    expect(pausedNote(false, false, "web")).toBeUndefined();
+    expect(pausedNote(true, false, "web")).toBe(
+      "Comparing is paused while this pane shows search results. The marks come back when the results are closed",
+    );
+    expect(pausedNote(false, true, "web")).toMatch(/^Comparing is paused while web shows/);
+    expect(pausedNote(true, true, "web")).toMatch(/while both panes show search results/);
   });
 
   it("knows where case does not tell names apart", () => {

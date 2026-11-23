@@ -53,6 +53,12 @@ export interface PaneSnapshot {
    * is compared all the same, as the pane shows it, and the bar says so.
    */
   outdated: boolean;
+  /**
+   * The pane shows search results in place of the folder, so comparing waits until they are
+   * closed: the rows on show are not the folder's, and the other pane's marks would be about a
+   * folder out of sight. `entries` stay the folder's, so nothing found below it is lost.
+   */
+  showingResults: boolean;
   path: string;
   parent: string | null;
   entries: readonly CompareEntry[];
@@ -71,6 +77,8 @@ export interface ShownFolder {
   covered: boolean;
   /** The listing on show is a remembered one the server could not be asked for again. */
   outdated: boolean;
+  /** Search results are on show in place of the folder, whose listing stays behind them. */
+  showingResults: boolean;
 }
 
 /**
@@ -88,6 +96,7 @@ export function snapshotOf(shown: ShownFolder): PaneSnapshot | null {
     ignoresCase: ignoresCase(pathStyle, info?.protocol),
     coarseTimes: info?.coarseTimes === true,
     outdated: shown.outdated,
+    showingResults: shown.showingResults,
     path: listing.path,
     parent: listing.parent,
     entries: compareEntries(listing.entries),
@@ -311,6 +320,7 @@ function asSnapshot(value: unknown): PaneSnapshot | null {
     ignoresCase: snapshot.ignoresCase === true,
     coarseTimes: snapshot.coarseTimes === true,
     outdated: snapshot.outdated === true,
+    showingResults: snapshot.showingResults === true,
     path,
     parent: typeof snapshot.parent === "string" ? snapshot.parent : null,
     entries: entries.map(asEntry).filter((entry) => entry !== null),
@@ -459,7 +469,7 @@ export function createFolderCompare(env: CompareEnvironment) {
     const sides = sidesOf(pairId);
     if (!sides) return;
     const { pair, left, right } = sides;
-    if (!left || !right || settling.has(pairId)) {
+    if (!left || !right || settling.has(pairId) || left.showingResults || right.showingResults) {
       setComparison(pairId, null);
       return;
     }
@@ -657,6 +667,11 @@ export function createFolderCompare(env: CompareEnvironment) {
   }
 
   function startFollow(pair: ComparePair, pane: PaneRef, move: BrowseMove) {
+    // Going elsewhere would close the results, so the pane stays with them.
+    if (store.getState().snapshots[paneKey(pane)]?.showingResults) {
+      followFailed(pair, pane, move, `${pane.label} shows search results`);
+      return;
+    }
     const sides = sidesOf(pair.id);
     const ignoreCase = Boolean(sides?.left?.ignoresCase || sides?.right?.ignoresCase);
     const going = followers.get(pane.tabId)?.follow(move, ignoreCase) ?? null;
@@ -836,6 +851,7 @@ export function createFolderCompare(env: CompareEnvironment) {
     const sides = pairId ? sidesOf(pairId) : null;
     if (!sides?.left || !sides.right) return;
     const { pair, left, right } = sides;
+    if (left.showingResults || right.showingResults) return;
     if (store.getState().deep[pair.id]?.status === "running") return;
     const rules = rulesFor(left, right);
     const options = optionsKey();
