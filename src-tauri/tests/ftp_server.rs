@@ -629,6 +629,10 @@ async fn manages_files_and_folders() {
         assert_eq!(files.stat(&sub).await.unwrap(), None);
         let taken = files.rename(&file, "renamed").await.unwrap_err();
         assert_eq!(taken.kind, ErrorKind::AlreadyExists);
+        // A `..` part would name another item than the one asked for.
+        let around = remote_path::join(&remote_path::join(root, "renamed"), "../moved.txt");
+        let refused = files.rename(&around, "elsewhere").await.unwrap_err();
+        assert_eq!(refused.kind, ErrorKind::InvalidInput);
         let renamed_file = files.rename(&file, "moved.txt").await.unwrap();
         assert_eq!(read_remote(files, &renamed_file).await, contents);
 
