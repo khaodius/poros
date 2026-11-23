@@ -346,6 +346,7 @@ pub fn run() {
             commands::editor_save,
             commands::editor_close,
             commands::file_preview_read,
+            commands::file_preview_list,
             commands::file_preview_cancel,
             commands::terminal_open,
             commands::terminal_attach,

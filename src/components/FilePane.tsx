@@ -38,6 +38,7 @@ import {
   Lock,
   LockKeyhole,
   PackageOpen,
+  PanelRight,
   Pencil,
   RefreshCw,
   RotateCcw,
@@ -94,6 +95,7 @@ import {
   saveSettingsSection,
   useSettingsStore,
 } from "../state/settingsStore";
+import { togglePreview, usePreviewOpen } from "../state/previewState";
 import { openTerminal } from "../state/terminalActions";
 import { useToastStore } from "../state/toastStore";
 import { transferFromPane, transferToOtherSide } from "../state/transferActions";
@@ -105,7 +107,9 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { FileList, type MenuPosition } from "./FileList";
 import { NewVaultDialog } from "./NewVaultDialog";
+import { PanePreview } from "./PanePreview";
 import { PathBar } from "./PathBar";
+import { PreviewSplit } from "./PreviewSplit";
 import { PromptDialog } from "./PromptDialog";
 import { PropertiesDialog } from "./PropertiesDialog";
 import { VaultUnlockCard } from "./VaultUnlockCard";
@@ -141,10 +145,15 @@ interface OpenMenu {
   items: MenuItem[];
 }
 
-/** Moves keyboard focus to the next file list on screen, left to right, then top to bottom. */
+/**
+ * Moves keyboard focus to the next file list or open preview on screen, left to right, then
+ * top to bottom.
+ */
 function focusNextPane(from: HTMLElement | null) {
   const lists = [
-    ...document.querySelectorAll<HTMLElement>(`.tab-panel:not([hidden]) ${PANE_KEYBOARD_TARGET}`),
+    ...document.querySelectorAll<HTMLElement>(
+      `.tab-panel:not([hidden]) :is(${PANE_KEYBOARD_TARGET}, .preview)`,
+    ),
   ]
     .map((list) => ({ list, bounds: list.getBoundingClientRect() }))
     .sort(
@@ -232,6 +241,7 @@ export function FilePane({
   const [renaming, setRenaming] = useState<string | null>(null);
   const [menu, setMenu] = useState<OpenMenu | null>(null);
   const [pathEditRequest, setPathEditRequest] = useState(0);
+  const previewOpen = usePreviewOpen(tabId);
   const sectionRef = useRef<HTMLElement>(null);
   const filterRef = useRef<HTMLInputElement>(null);
   const writeLog = useLogStore((state) => state.write);
@@ -451,6 +461,13 @@ export function FilePane({
   };
 
   const markActive = () => updatePane(tabId, { visible: true, activatedAt: Date.now() });
+
+  /** Opens or closes the preview. The keyboard goes back to the list if the preview had it. */
+  const switchPreview = () => {
+    const leaving = sectionRef.current?.querySelector(".preview")?.contains(document.activeElement);
+    togglePreview(tabId);
+    if (leaving) focusList();
+  };
 
   const startDrag = (event: ReactPointerEvent<HTMLElement>, entry: FileEntry) => {
     const wasSelected = pane.selection.has(entry.path);
@@ -885,6 +902,14 @@ export function FilePane({
       // Nothing is dropped unseen among a locked vault's encrypted files.
       data-drop-pane={lockedCard ? undefined : tabId}
       onMouseDown={markActive}
+      onKeyDown={(event) => {
+        // Not from a dialog the pane opened, whose keys reach here without being inside it.
+        const inPane = event.currentTarget.contains(event.target as Node);
+        const plain = !(event.ctrlKey || event.metaKey || event.altKey || event.shiftKey);
+        if (event.key !== "F3" || !plain || !inPane) return;
+        event.preventDefault();
+        switchPreview();
+      }}
     >
       <header className="pane-header">
         <div className="pane-title">
@@ -981,6 +1006,9 @@ export function FilePane({
           >
             {pane.showHidden ? <Eye size={15} /> : <EyeOff size={15} />}
           </ToolbarButton>
+          <ToolbarButton label="Preview (F3)" onClick={switchPreview} pressed={previewOpen}>
+            <PanelRight size={15} />
+          </ToolbarButton>
         </div>
       </header>
 
@@ -1060,43 +1088,59 @@ export function FilePane({
               </span>
             </p>
           )}
-          <FileList
-            pane={pane}
-            side={side}
-            active={active}
-            rowHeight={Math.max(rowHeight, fontSize + MIN_ROW_PADDING)}
-            hiddenColumns={hiddenColumns}
-            columnWidths={columnWidths}
-            onColumnWidthsChange={(widths, done) => {
-              if (done) void saveSettingsSection("interface", { columnWidths: widths });
-              else previewSettingsSection("interface", { columnWidths: widths });
-            }}
-            dateFormat={dateFormat}
-            striped={stripedRows}
-            fontSize={fontSize}
-            dropFolder={dropFolder}
-            cutPaths={cutPaths}
-            onActivate={markActive}
-            onContextMenu={showContextMenu}
-            onHeaderContextMenu={showHeaderMenu}
-            onDelete={openDelete}
-            renaming={renaming}
-            onRename={(entry) => setRenaming(entry.path)}
-            onRenameSubmit={renameEntry}
-            onRenameCancel={() => setRenaming(null)}
-            onEdit={edit}
-            onNewFolder={openNewFolder}
-            onNewFile={openNewFile}
-            onEditPath={() => setPathEditRequest((count) => count + 1)}
-            onFocusFilter={() => filterRef.current?.focus()}
-            onSwitchPane={(from) => focusNextPane(from)}
-            onRowPointerDown={startDrag}
-            onFileActivate={activateFile}
-            onCut={() => cutOrCopy("move", pane.selectedEntries())}
-            onCopy={() => cutOrCopy("copy", pane.selectedEntries())}
-            onPaste={() => pasteInto(null)}
-            onProperties={() => openProperties(pane.selectedEntries())}
-          />
+          <PreviewSplit
+            preview={
+              previewOpen ? (
+                <PanePreview
+                  pane={pane}
+                  source={source}
+                  sessionId={sessionId}
+                  dateFormat={dateFormat}
+                  onOpenInEditor={edit}
+                  onSwitchPane={focusNextPane}
+                  onLeave={focusList}
+                />
+              ) : null
+            }
+          >
+            <FileList
+              pane={pane}
+              side={side}
+              active={active}
+              rowHeight={Math.max(rowHeight, fontSize + MIN_ROW_PADDING)}
+              hiddenColumns={hiddenColumns}
+              columnWidths={columnWidths}
+              onColumnWidthsChange={(widths, done) => {
+                if (done) void saveSettingsSection("interface", { columnWidths: widths });
+                else previewSettingsSection("interface", { columnWidths: widths });
+              }}
+              dateFormat={dateFormat}
+              striped={stripedRows}
+              fontSize={fontSize}
+              dropFolder={dropFolder}
+              cutPaths={cutPaths}
+              onActivate={markActive}
+              onContextMenu={showContextMenu}
+              onHeaderContextMenu={showHeaderMenu}
+              onDelete={openDelete}
+              renaming={renaming}
+              onRename={(entry) => setRenaming(entry.path)}
+              onRenameSubmit={renameEntry}
+              onRenameCancel={() => setRenaming(null)}
+              onEdit={edit}
+              onNewFolder={openNewFolder}
+              onNewFile={openNewFile}
+              onEditPath={() => setPathEditRequest((count) => count + 1)}
+              onFocusFilter={() => filterRef.current?.focus()}
+              onSwitchPane={(from) => focusNextPane(from)}
+              onRowPointerDown={startDrag}
+              onFileActivate={activateFile}
+              onCut={() => cutOrCopy("move", pane.selectedEntries())}
+              onCopy={() => cutOrCopy("copy", pane.selectedEntries())}
+              onPaste={() => pasteInto(null)}
+              onProperties={() => openProperties(pane.selectedEntries())}
+            />
+          </PreviewSplit>
         </>
       ) : (
         <div className="pane-empty">

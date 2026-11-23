@@ -737,6 +737,20 @@ pub async fn file_preview_read(
 }
 
 #[tauri::command]
+pub async fn file_preview_list(
+    previews: State<'_, FilePreviews>,
+    transfers: State<'_, TransferManager>,
+    session_id: String,
+    path: String,
+) -> AppResult<DirListing> {
+    previews
+        .list(&session_id, &path, |files| {
+            transfers.borrows_connection_of(files)
+        })
+        .await
+}
+
+#[tauri::command]
 pub fn file_preview_cancel(previews: State<'_, FilePreviews>, request_id: String) {
     previews.cancel(&request_id);
 }

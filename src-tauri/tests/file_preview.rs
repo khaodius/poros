@@ -312,9 +312,9 @@ async fn the_start_of_a_large_file_and_a_whole_picture_are_read_from_every_serve
             .unwrap_err();
         assert_eq!(refused.kind, ErrorKind::InvalidInput, "{label}");
 
-        // The connection still lists after all of that.
-        let names: Vec<String> = files
-            .list_dir(&scratch)
+        // The connection still lists after all of that, as the summary of a folder does.
+        let names: Vec<String> = previews
+            .list(&session.id, &scratch, |_| false)
             .await
             .unwrap_or_else(|error| panic!("{label}: {}", error.message))
             .entries
@@ -322,6 +322,11 @@ async fn the_start_of_a_large_file_and_a_whole_picture_are_read_from_every_serve
             .map(|entry| entry.name)
             .collect();
         assert_eq!(names.len(), 3, "{label}: {names:?}");
+        let relative = previews
+            .list(&session.id, "relative/folder", |_| false)
+            .await
+            .unwrap_err();
+        assert_eq!(relative.kind, ErrorKind::InvalidInput, "{label}");
 
         files.delete(std::slice::from_ref(&scratch)).await.unwrap();
         manager.disconnect(&session.id).await.unwrap();
@@ -528,12 +533,19 @@ async fn a_preview_does_not_wait_on_the_connection_ftp_transfers_borrow() {
 
         transfers.set_paused(false);
         let during = read_notes().await;
+        let listed = previews
+            .list(&session.id, &scratch, |files| {
+                transfers.borrows_connection_of(files)
+            })
+            .await;
         if separate_connections {
             let reply = during.unwrap_or_else(|error| panic!("{label}: {}", error.message));
             assert_eq!(reply.contents, b"Read between transfers", "{label}");
+            assert!(listed.is_ok(), "{label}");
         } else {
             let error = during.unwrap_err();
             assert_eq!(error.kind, ErrorKind::Busy, "{label}: {}", error.message);
+            assert_eq!(listed.unwrap_err().kind, ErrorKind::Busy, "{label}");
         }
 
         wait_until_settled(&transfers).await;

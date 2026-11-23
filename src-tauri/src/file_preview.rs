@@ -14,6 +14,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::editor::{self, FileLocation, FileStamp};
 use crate::error::{AppError, AppResult, ErrorKind};
+use crate::model::DirListing;
 use crate::protocol::RemoteFileSystem;
 use crate::session::SessionManager;
 
@@ -116,14 +117,27 @@ impl FilePreviews {
                 validate_remote_path(&path)?;
                 let files = self.sessions.get(&session_id).await?.files();
                 if lent(files.as_ref()) {
-                    return Err(AppError::new(
-                        ErrorKind::Busy,
-                        "A transfer is using this connection",
-                    ));
+                    return Err(lent_to_transfers());
                 }
                 read_remote(files, &path, request.offset, length, &running.cancel).await
             }
         }
+    }
+
+    /// Lists a folder on a server for the summary of what it holds, on the same terms as a
+    /// read: not while transfers are using the connection.
+    pub async fn list(
+        &self,
+        session_id: &str,
+        path: &str,
+        lent: impl Fn(&dyn RemoteFileSystem) -> bool,
+    ) -> AppResult<DirListing> {
+        validate_remote_path(path)?;
+        let files = self.sessions.get(session_id).await?.files();
+        if lent(files.as_ref()) {
+            return Err(lent_to_transfers());
+        }
+        files.list_dir(path).await
     }
 
     /// Stops the read named `request_id`, also when it has not started yet.
@@ -171,6 +185,10 @@ fn validate_request_id(request_id: &str) -> AppResult<()> {
         return Err(AppError::invalid("This is not the name of a preview read"));
     }
     Ok(())
+}
+
+fn lent_to_transfers() -> AppError {
+    AppError::new(ErrorKind::Busy, "A transfer is using this connection")
 }
 
 fn not_a_file(path: &str) -> AppError {
@@ -312,7 +330,6 @@ mod tests {
 
     use super::*;
     use crate::events::Events;
-    use crate::model::DirListing;
     use crate::protocol::{
         Capabilities, Protocol, ReadStream, RemoteStat, WriteRequest, WriteStream,
     };

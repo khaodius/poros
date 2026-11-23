@@ -47,6 +47,7 @@ import { ArchiveSettingsPage } from "./ArchiveSettings";
 import { AutomationSettingsPage } from "./AutomationSettings";
 import { CloudSettingsPage } from "./CloudSettings";
 import { Dialog } from "./Dialog";
+import { PreviewSettingsGroup } from "./PreviewSettings";
 import { SyncSettingsPage } from "./SyncSettings";
 import {
   NumberSetting,
@@ -654,6 +655,7 @@ function InterfaceSettingsPage({ settings }: { settings: Settings }) {
           </div>
         </SettingRow>
       </SettingGroup>
+      <PreviewSettingsGroup settings={settings} />
       <SettingGroup title="Tabs and windows">
         <SwitchSetting
           label="Ask before closing a tab with queued transfers"
