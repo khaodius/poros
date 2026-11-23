@@ -26,6 +26,7 @@ use crate::file_ops::{
     FileOperations, Location, MoveCopyRequest, OperationSummary, PermissionRequest,
     PermissionSummary, Usage,
 };
+use crate::file_preview::{FilePreviews, ReadRequest};
 use crate::fonts::{self, FontFamily};
 use crate::import::{
     self, ImportOutcome, ImportRequest, ImportScan, ImportScans, ImportSource, SourceInfo,
@@ -720,6 +721,24 @@ pub async fn editor_save(
 pub async fn editor_close(editor: State<'_, EditorManager>, document_id: String) -> AppResult<()> {
     editor.close(&document_id).await;
     Ok(())
+}
+
+/// Answers with the file's size and time, then the bytes read, as one binary block.
+#[tauri::command]
+pub async fn file_preview_read(
+    previews: State<'_, FilePreviews>,
+    transfers: State<'_, TransferManager>,
+    request: ReadRequest,
+) -> AppResult<tauri::ipc::Response> {
+    let reply = previews
+        .read(request, |files| transfers.borrows_connection_of(files))
+        .await?;
+    Ok(tauri::ipc::Response::new(reply.into_frame()))
+}
+
+#[tauri::command]
+pub fn file_preview_cancel(previews: State<'_, FilePreviews>, request_id: String) {
+    previews.cancel(&request_id);
 }
 
 fn terminal_sink(output: Channel<TerminalEvent>) -> Sink {

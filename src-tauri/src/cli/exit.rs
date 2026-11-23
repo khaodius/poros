@@ -98,7 +98,8 @@ impl Exit {
             | ErrorKind::Ftp
             | ErrorKind::Cloud
             | ErrorKind::Keychain
-            | ErrorKind::Update => Self::Failure,
+            | ErrorKind::Update
+            | ErrorKind::Busy => Self::Failure,
         }
     }
 }

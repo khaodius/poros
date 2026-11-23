@@ -17,6 +17,7 @@ pub mod editor;
 pub mod error;
 pub mod events;
 pub mod file_ops;
+pub mod file_preview;
 #[cfg(feature = "gui")]
 pub mod fonts;
 pub mod format;
@@ -69,6 +70,7 @@ use {
     editor::EditorManager,
     events::Events,
     file_ops::FileOperations,
+    file_preview::FilePreviews,
     session::SessionManager,
     settings::SettingsStore,
     sync::SyncManager,
@@ -152,6 +154,7 @@ pub fn run() {
             app.manage(TerminalManager::new(sessions.clone(), events.clone()));
             app.manage(CommandRunner::new(sessions.clone(), events.clone()));
             app.manage(FileOperations::new(sessions.clone(), events.clone()));
+            app.manage(FilePreviews::new(sessions.clone()));
             app.manage(sessions);
             app.manage(settings);
             app.manage(connections);
@@ -342,6 +345,8 @@ pub fn run() {
             commands::editor_adopt,
             commands::editor_save,
             commands::editor_close,
+            commands::file_preview_read,
+            commands::file_preview_cancel,
             commands::terminal_open,
             commands::terminal_attach,
             commands::terminal_write,
