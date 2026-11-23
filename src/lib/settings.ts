@@ -447,7 +447,10 @@ export function sanitizeSettings(stored: unknown): Settings {
     appearance.rowHeight = COMPACT_ROW_HEIGHT;
   }
   appearance.rowHeight = clamp(appearance.rowHeight, ROW_HEIGHT_LIMITS.min, ROW_HEIGHT_LIMITS.max);
-  appearance.progressBars = sanitizeProgressBars(appearance.progressBars);
+  appearance.progressBars = sanitizeProgressBars(
+    appearance.progressBars,
+    asSection(storedAppearance.progressBars),
+  );
   settings.log.maxLines = clamp(settings.log.maxLines, LOG_LINE_LIMITS.min, LOG_LINE_LIMITS.max);
 
   settings.updates.skippedVersion = settings.updates.skippedVersion.trim();

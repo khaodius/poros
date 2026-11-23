@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { CalendarClock, FolderOpen, LoaderCircle } from "lucide-react";
 import { useOptionCheck } from "../hooks/useOptionCheck";
 import { localSource } from "../lib/fileSource";
 import { pluralize } from "../lib/format";
 import { onSyncProgress, sync, toAppError } from "../lib/ipc";
+import { progressReach } from "../lib/progressBars";
 import { commandPreview, withOption } from "../lib/rsyncOptions";
 import { newTask, syncAction } from "../lib/schedule";
 import {
@@ -487,8 +488,11 @@ function ComparingView({
           : `Listing folders: ${progress?.localEntries ?? 0} local and ${progress?.remoteEntries ?? 0} server entries`}
       </p>
       {comparing && (
-        <span className="progress-track sync-comparing-track">
-          <span className="progress-fill" style={{ width: `${fraction * 100}%` }} />
+        <span
+          className="progress-track sync-comparing-track"
+          style={progressReach(fraction) as CSSProperties}
+        >
+          <span className="progress-fill" />
         </span>
       )}
       <div className="dialog-actions">

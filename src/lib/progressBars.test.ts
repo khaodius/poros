@@ -1,14 +1,35 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_PROGRESS_BARS, progressBarStyle, progressLabel } from "./progressBars";
+import {
+  DEFAULT_PROGRESS_BARS,
+  PROGRESS_FILLS,
+  PROGRESS_MOTIONS,
+  PROGRESS_PRESETS,
+  PROGRESS_SHAPES,
+  fillTakesShape,
+  matchingPreset,
+  progressBarStyle,
+  progressLabel,
+  progressReach,
+  type ProgressBarSettings,
+} from "./progressBars";
 import { DEFAULT_SETTINGS, sanitizeSettings } from "./settings";
 
 const MIB = 1024 * 1024;
+
+function storedBars(progressBars: Record<string, unknown>): ProgressBarSettings {
+  return sanitizeSettings({ appearance: { progressBars } }).appearance.progressBars;
+}
 
 describe("progress bar settings", () => {
   it("start plain, as bars looked before they could be changed", () => {
     expect(DEFAULT_SETTINGS.appearance.progressBars).toEqual(DEFAULT_PROGRESS_BARS);
     expect(sanitizeSettings({}).appearance.progressBars).toEqual(DEFAULT_PROGRESS_BARS);
-    expect(DEFAULT_PROGRESS_BARS).toMatchObject({ fill: "solid", motion: "none", height: 6 });
+    expect(DEFAULT_PROGRESS_BARS).toMatchObject({
+      fill: "solid",
+      motion: "none",
+      height: 6,
+      shape: "pill",
+    });
   });
 
   it("keep valid values and replace unknown ones", () => {
@@ -45,9 +66,23 @@ describe("progress bar settings", () => {
     expect(progressBars.height).toBe(2);
   });
 
+  it("keep every fill, motion and shape there is", () => {
+    for (const fill of PROGRESS_FILLS) expect(storedBars({ fill }).fill).toBe(fill);
+    for (const motion of PROGRESS_MOTIONS) expect(storedBars({ motion }).motion).toBe(motion);
+    for (const shape of PROGRESS_SHAPES) expect(storedBars({ shape }).shape).toBe(shape);
+    expect(storedBars({ fill: "plaid", motion: "wobble", shape: "star" })).toEqual(
+      DEFAULT_PROGRESS_BARS,
+    );
+  });
+
   it("turn into custom properties and document attributes", () => {
     expect(
-      progressBarStyle({ ...DEFAULT_PROGRESS_BARS, rounded: false, stateColors: false, height: 9 }),
+      progressBarStyle({
+        ...DEFAULT_PROGRESS_BARS,
+        shape: "square",
+        stateColors: false,
+        height: 9,
+      }),
     ).toEqual({
       properties: {
         "--progress-height": "9px",
@@ -55,12 +90,168 @@ describe("progress bar settings", () => {
         "--progress-custom": DEFAULT_PROGRESS_BARS.color,
       },
       attributes: {
-        progressFill: "solid",
-        progressColoring: "theme",
-        progressMotion: "none",
-        progressStates: "off",
+        "data-progress-fill": "solid",
+        "data-progress-coloring": "theme",
+        "data-progress-motion": "none",
+        "data-progress-shape": "square",
+        "data-progress-states": "off",
       },
     });
+  });
+
+  it("give each shape its corners, and leave fills with a shape of their own alone", () => {
+    const radius = (change: Partial<ProgressBarSettings>) =>
+      progressBarStyle({ ...DEFAULT_PROGRESS_BARS, ...change }).properties["--progress-radius"];
+    expect(radius({ shape: "pill" })).toBe("999px");
+    expect(radius({ shape: "soft" })).toBe("max(2px, 0.25em)");
+    expect(radius({ shape: "square" })).toBe("0px");
+    expect(radius({ shape: "slanted" })).toBe("0px");
+
+    expect(PROGRESS_FILLS.filter((fill) => !fillTakesShape(fill))).toEqual(["line", "dots"]);
+    for (const fill of ["line", "dots"] as const) {
+      const style = progressBarStyle({ ...DEFAULT_PROGRESS_BARS, fill, shape: "slanted" });
+      expect(style.attributes["data-progress-shape"]).toBe("square");
+      expect(style.properties["--progress-radius"]).toBe("0px");
+    }
+  });
+});
+
+describe("progressReach", () => {
+  it("sizes the fill from a property on the track, kept between empty and full", () => {
+    expect(progressReach(0.625)).toEqual({ "--progress-percent": "62.5%" });
+    expect(progressReach(0)).toEqual({ "--progress-percent": "0%" });
+    expect(progressReach(1.4)).toEqual({ "--progress-percent": "100%" });
+    expect(progressReach(-0.2)).toEqual({ "--progress-percent": "0%" });
+  });
+});
+
+describe("progress bars stored by 0.7.0", () => {
+  // Every value 0.7.0 could write, and the document attributes and properties it set for them.
+  const fills = ["solid", "gradient", "striped", "segmented", "glow"];
+  const colorings = ["theme", "direction", "custom"];
+  const motions = ["none", "stripes", "shimmer", "pulse"];
+  const labels = ["percent", "bytes", "remaining", "none"];
+
+  it("load with every choice kept", () => {
+    for (const fill of fills) {
+      for (const coloring of colorings) {
+        for (const motion of motions) {
+          for (const label of labels) {
+            for (const rounded of [true, false]) {
+              const kept = {
+                fill,
+                coloring,
+                color: "#12ab9f",
+                height: 11,
+                motion,
+                label,
+                labelInside: !rounded,
+                stateColors: rounded,
+              };
+              expect(storedBars({ ...kept, rounded })).toEqual({
+                ...kept,
+                shape: rounded ? "pill" : "square",
+              });
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it("are drawn from the same attributes and properties", () => {
+    for (const rounded of [true, false]) {
+      const style = progressBarStyle(
+        storedBars({
+          fill: "glow",
+          coloring: "direction",
+          color: "#12ab9f",
+          height: 14,
+          rounded,
+          motion: "shimmer",
+          label: "bytes",
+          labelInside: true,
+          stateColors: true,
+        }),
+      );
+      expect(style.properties).toEqual({
+        "--progress-height": "14px",
+        "--progress-radius": rounded ? "999px" : "0px",
+        "--progress-custom": "#12ab9f",
+      });
+      expect(style.attributes).toMatchObject({
+        "data-progress-fill": "glow",
+        "data-progress-coloring": "direction",
+        "data-progress-motion": "shimmer",
+        "data-progress-states": "on",
+      });
+    }
+  });
+
+  it("have square ends only where the switch for rounded ends was off", () => {
+    expect(storedBars({ rounded: false }).shape).toBe("square");
+    expect(storedBars({ rounded: true }).shape).toBe("pill");
+    expect(storedBars({}).shape).toBe("pill");
+  });
+
+  it("follow a shape picked since, whatever the old switch said", () => {
+    expect(storedBars({ rounded: false, shape: "slanted" }).shape).toBe("slanted");
+    expect(storedBars({ rounded: true, shape: "square" }).shape).toBe("square");
+    expect(storedBars({ rounded: false, shape: "star" }).shape).toBe("square");
+    expect(storedBars({ rounded: false, shape: 3 }).shape).toBe("square");
+  });
+
+  it("stay as loaded when saved and loaded again", () => {
+    const loaded = storedBars({ fill: "segmented", rounded: false, motion: "pulse" });
+    expect(storedBars({ ...loaded })).toEqual(loaded);
+  });
+});
+
+describe("progress bar presets", () => {
+  it("have names and ids of their own", () => {
+    expect(PROGRESS_PRESETS.length).toBeGreaterThanOrEqual(6);
+    expect(PROGRESS_PRESETS.length).toBeLessThanOrEqual(10);
+    expect(new Set(PROGRESS_PRESETS.map((preset) => preset.id)).size).toBe(PROGRESS_PRESETS.length);
+    expect(new Set(PROGRESS_PRESETS.map((preset) => preset.name)).size).toBe(
+      PROGRESS_PRESETS.length,
+    );
+  });
+
+  it("are all looks the settings keep as they are, each unlike the others", () => {
+    const seen = new Set<string>();
+    for (const preset of PROGRESS_PRESETS) {
+      const applied = { ...DEFAULT_PROGRESS_BARS, ...preset.look };
+      expect(storedBars({ ...applied })).toEqual(applied);
+      expect(matchingPreset(applied)).toBe(preset);
+      seen.add(JSON.stringify(preset.look));
+    }
+    expect(seen.size).toBe(PROGRESS_PRESETS.length);
+  });
+
+  it("begin with the look bars have until they are changed", () => {
+    expect(matchingPreset(DEFAULT_PROGRESS_BARS)).toBe(PROGRESS_PRESETS[0]);
+    expect(matchingPreset(storedBars({ rounded: true }))).toBe(PROGRESS_PRESETS[0]);
+  });
+
+  it("leave the custom color alone and match whatever it is", () => {
+    const preset = PROGRESS_PRESETS[1];
+    expect("color" in preset.look).toBe(false);
+    const applied = { ...DEFAULT_PROGRESS_BARS, color: "#123456", ...preset.look };
+    expect(applied.color).toBe("#123456");
+    expect(matchingPreset(applied)).toBe(preset);
+  });
+
+  it("match nothing once any part of the look differs", () => {
+    expect(matchingPreset({ ...DEFAULT_PROGRESS_BARS, height: 7 })).toBeNull();
+    expect(matchingPreset({ ...DEFAULT_PROGRESS_BARS, stateColors: false })).toBeNull();
+    expect(matchingPreset({ ...DEFAULT_PROGRESS_BARS, shape: "square" })).toBeNull();
+  });
+
+  it("between them show every new fill and most motions", () => {
+    const fills = new Set(PROGRESS_PRESETS.map((preset) => preset.look.fill));
+    for (const fill of PROGRESS_FILLS.slice(5)) expect(fills).toContain(fill);
+    const motions = new Set(PROGRESS_PRESETS.map((preset) => preset.look.motion));
+    expect(motions.size).toBeGreaterThanOrEqual(6);
   });
 });
 
