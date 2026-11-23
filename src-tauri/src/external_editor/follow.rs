@@ -114,9 +114,8 @@ impl Follower {
                 _ => self.show_progress(&progress),
             }
         }
-        if !self.inner.files.keeps_completed() {
-            self.inner.files.remove(&[job]);
-        }
+        // Its ending has been read; working copies stay out of the queue's Completed list.
+        self.inner.files.remove(&[job]);
 
         let path = self.edit.local_path.clone();
         let prepared = tokio::task::spawn_blocking(move || {
@@ -672,9 +671,8 @@ impl Follower {
     /// The server has `content` now, at `target`: the path uploaded to, or the new name a file
     /// kept beside the server's copy was given.
     async fn finish_upload(&mut self, job: JobId, content: Fingerprint, target: String) {
-        if !self.inner.files.keeps_completed() {
-            self.inner.files.remove(&[job]);
-        }
+        // The edit's own list counts its uploads; the queue's Completed list is not for them.
+        self.inner.files.remove(&[job]);
         let route = self.edit.core.lock().unwrap().route.clone();
         let baseline = match self.inner.files.stat(&route, &target).await {
             Ok(Some(found)) if !found.is_dir => ServerState::of(&found),

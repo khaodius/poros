@@ -176,11 +176,6 @@ impl FileQueue {
         super::update_queue(&self.shared, |queue| queue.remove(ids));
     }
 
-    /// Whether finished transfers stay listed, as the settings say.
-    pub fn keeps_completed(&self) -> bool {
-        self.shared.settings().keep_completed
-    }
-
     /// The whole queue is paused, so nothing moves until it runs again.
     pub fn is_paused(&self) -> bool {
         self.shared.queue.lock().unwrap().paused

@@ -394,13 +394,10 @@ async fn a_file_saved_in_another_program_is_uploaded() {
     );
     assert_eq!(bench.external.list().len(), 1);
 
-    // The upload went through the queue, where it is listed like any other.
+    // The download and the upload went through the queue, which keeps no finished job of a
+    // working copy in its Completed list, though the bench keeps completed transfers.
     let jobs = bench.transfers.list().jobs;
-    assert!(
-        jobs.iter()
-            .any(|job| job.name == name && job.target == path),
-        "{jobs:#?}"
-    );
+    assert!(jobs.is_empty(), "{jobs:#?}");
 
     bench.external.stop(&opened.id).unwrap();
     bench.wait_gone(&opened.id).await;
