@@ -53,9 +53,9 @@ pub(super) fn organization_of(account: &Account) -> Option<String> {
         && domain
             .split('.')
             .all(|label| !label.is_empty() && !label.starts_with('-'))
-        && domain
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-');
+        && domain.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '.' || character == '-'
+        });
     plain.then_some(domain)
 }
 

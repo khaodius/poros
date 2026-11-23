@@ -85,29 +85,43 @@ impl SharedLink {
     }
 }
 
-/// The body that gives an item the link `options` ask for, made at `now`. Box keeps the
-/// value of a field left out, so a link without an end says so: otherwise an end the
-/// item's link already has would stay. A password left out stays too, which keeps a
-/// protected link protected.
-fn link_request(options: &ShareOptions, now: i64) -> AppResult<serde_json::Value> {
+/// Refuses what no Box link can be, before anything is asked of Box.
+fn check_options(options: &ShareOptions) -> AppResult<()> {
     if options.kind != LinkKind::View {
         return Err(AppError::invalid(
             "Box links open the item for viewing; make a view link",
         ));
     }
-    let unshared_at = options
-        .lifetime_secs
-        .map(|lifetime_secs| timestamp::format_rfc3339(now.saturating_add_unsigned(lifetime_secs)));
-    let mut link = json!({
-        "access": access_of(options.audience),
-        "unshared_at": unshared_at,
-    });
-    if let Some(password) = &options.password {
-        if options.audience != Audience::Anyone {
-            return Err(AppError::invalid(
-                "Box links take a password only when anyone can open them",
+    if options.password.is_some() && options.audience != Audience::Anyone {
+        return Err(AppError::invalid(
+            "Box links take a password only when anyone can open them",
+        ));
+    }
+    Ok(())
+}
+
+/// The body that gives an item the link `options` ask for, made at `now`. Box keeps the
+/// value of a field left out. So a link asked for without an end clears the end with
+/// `null` when the item's link has one (`clears_end`), and otherwise leaves the field out,
+/// since setting it at all is a paid feature. A password left out stays, which keeps a
+/// protected link protected.
+fn link_request(
+    options: &ShareOptions,
+    now: i64,
+    clears_end: bool,
+) -> AppResult<serde_json::Value> {
+    check_options(options)?;
+    let mut link = json!({ "access": access_of(options.audience) });
+    match options.lifetime_secs {
+        Some(lifetime_secs) => {
+            link["unshared_at"] = json!(timestamp::format_rfc3339(
+                now.saturating_add_unsigned(lifetime_secs)
             ));
         }
+        None if clears_end => link["unshared_at"] = serde_json::Value::Null,
+        None => {}
+    }
+    if let Some(password) = &options.password {
         link["password"] = json!(password);
     }
     Ok(json!({ "shared_link": link }))
@@ -143,6 +157,16 @@ fn top_folder() -> AppError {
 }
 
 impl BoxFs {
+    /// The link `item` has now, if any.
+    async fn current_link(&self, item: &BoxItem) -> AppResult<Option<SharedLink>> {
+        let url = item_url(item);
+        let shared: SharedItem = self
+            .api
+            .json(&|http| http.get(&url).query(&[("fields", "shared_link")]))
+            .await?;
+        Ok(shared.shared_link)
+    }
+
     async fn shareable(&self, path: &str) -> AppResult<BoxItem> {
         let path = protocol::normalize(&self.resolve(path));
         let (item, _) = self.existing(&path).await?;
@@ -175,20 +199,27 @@ impl LinkSharing for BoxFs {
         if item.id == ROOT_ID {
             return Ok(Vec::new());
         }
-        let url = item_url(&item);
-        let shared: SharedItem = self
-            .api
-            .json(&|http| http.get(&url).query(&[("fields", "shared_link")]))
-            .await?;
-        Ok(shared.shared_link.iter().map(SharedLink::link).collect())
+        Ok(self
+            .current_link(&item)
+            .await?
+            .iter()
+            .map(SharedLink::link)
+            .collect())
     }
 
     /// Sets the item's one link, which changes the link it already has, if any, for
     /// everyone who has its address: the address stays, the audience and end become the
     /// ones asked for, and a password stays unless a new one is given.
     async fn create_share_link(&self, path: &str, options: &ShareOptions) -> AppResult<ShareLink> {
-        let body = link_request(options, timestamp::now_seconds())?;
+        check_options(options)?;
         let item = self.shareable(path).await?;
+        // Only a link asked for without an end needs to know whether the one there has an end.
+        let clears_end = options.lifetime_secs.is_none()
+            && self
+                .current_link(&item)
+                .await?
+                .is_some_and(|current| current.unshared_at.is_some());
+        let body = link_request(options, timestamp::now_seconds(), clears_end)?;
         let url = item_url(&item);
         let response = self
             .api
@@ -218,15 +249,11 @@ impl LinkSharing for BoxFs {
 
     async fn remove_share_link(&self, path: &str, _link_id: &str) -> AppResult<bool> {
         let item = self.shareable(path).await?;
-        let url = item_url(&item);
-        let shared: SharedItem = self
-            .api
-            .json(&|http| http.get(&url).query(&[("fields", "shared_link")]))
-            .await?;
-        if shared.shared_link.is_none() {
+        if self.current_link(&item).await?.is_none() {
             // Already removed, here or in the browser.
             return Ok(false);
         }
+        let url = item_url(&item);
         let body = json!({ "shared_link": null });
         self.api
             .send(&|http| {
@@ -255,40 +282,59 @@ mod tests {
     #[test]
     fn builds_the_shared_link_request() {
         assert_eq!(
-            link_request(&options(Audience::Anyone), 0).unwrap(),
-            json!({ "shared_link": { "access": "open", "unshared_at": null } })
-        );
-        assert_eq!(
-            link_request(&options(Audience::Invited), 0).unwrap(),
-            json!({ "shared_link": { "access": "collaborators", "unshared_at": null } })
+            link_request(&options(Audience::Invited), 0, false).unwrap(),
+            json!({ "shared_link": { "access": "collaborators" } })
         );
         let limited = ShareOptions {
             lifetime_secs: Some(7 * 86_400),
             ..options(Audience::Organization)
         };
-        // 14 May 2024, 18:30 UTC, and a week later.
-        assert_eq!(
-            link_request(&limited, 1_715_711_400).unwrap(),
-            json!({ "shared_link": { "access": "company", "unshared_at": "2024-05-21T18:30:00Z" } })
-        );
+        // 14 May 2024, 18:30 UTC, and a week later, whatever end the link had.
+        for clears_end in [false, true] {
+            assert_eq!(
+                link_request(&limited, 1_715_711_400, clears_end).unwrap(),
+                json!({ "shared_link": { "access": "company", "unshared_at": "2024-05-21T18:30:00Z" } })
+            );
+        }
         let protected = ShareOptions {
             password: Some("Open-Sesame1".into()),
             ..options(Audience::Anyone)
         };
         assert_eq!(
-            link_request(&protected, 0).unwrap(),
-            json!({ "shared_link": { "access": "open", "unshared_at": null, "password": "Open-Sesame1" } })
+            link_request(&protected, 0, false).unwrap(),
+            json!({ "shared_link": { "access": "open", "password": "Open-Sesame1" } })
         );
         let narrow = ShareOptions {
             password: Some("Open-Sesame1".into()),
             ..options(Audience::Organization)
         };
-        assert!(link_request(&narrow, 0).is_err());
+        assert!(link_request(&narrow, 0, false).is_err());
+        assert!(check_options(&narrow).is_err());
         let edit = ShareOptions {
             kind: LinkKind::Edit,
             ..options(Audience::Anyone)
         };
-        assert!(link_request(&edit, 0).is_err());
+        assert!(link_request(&edit, 0, false).is_err());
+        assert!(check_options(&edit).is_err());
+        assert!(check_options(&protected).is_ok());
+    }
+
+    #[test]
+    fn clears_an_end_only_when_the_link_has_one() {
+        // No end asked for and none there: the field stays out, as a free account may not
+        // send it at all.
+        let body = link_request(&options(Audience::Anyone), 0, false).unwrap();
+        assert_eq!(body, json!({ "shared_link": { "access": "open" } }));
+        assert!(body["shared_link"].get("unshared_at").is_none());
+        // No end asked for, but the link has one: null takes it away.
+        let body = link_request(&options(Audience::Anyone), 0, true).unwrap();
+        assert_eq!(
+            body,
+            json!({ "shared_link": { "access": "open", "unshared_at": null } })
+        );
+        assert!(body["shared_link"]
+            .get("unshared_at")
+            .is_some_and(serde_json::Value::is_null));
     }
 
     #[test]

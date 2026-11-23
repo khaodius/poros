@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Check, Copy, ExternalLink, Files } from "lucide-react";
+import type { PathStyle } from "../lib/fileSource";
 import { clipboard, share, toAppError } from "../lib/ipc";
+import { relativeFolder } from "../lib/search";
 import {
   KIND_LABELS,
   LIFETIME_UNITS,
@@ -36,10 +38,10 @@ interface ShareDialogProps {
   /** The folder the entries are in, or the one a search for them started in. */
   folder: string;
   /**
-   * Where each entry is, for entries from several folders such as search results: relative to
-   * `folder`, and `.` for an entry in it.
+   * For entries from several folders, such as search results: the path style each row names
+   * its folder in, relative to `folder`.
    */
-  folderOf?: (entry: FileEntry) => string;
+  folderStyle?: PathStyle;
   entries: FileEntry[];
   sharing: ShareCapabilities;
   /** The service's name, such as Google Drive. */
@@ -96,7 +98,7 @@ function useNow(tickMs: number): number {
 export function ShareDialog({
   sessionId,
   folder,
-  folderOf,
+  folderStyle,
   entries,
   sharing,
   service,
@@ -118,9 +120,9 @@ export function ShareDialog({
   const single = entries.length === 1 ? entries[0] : null;
   const nowMillis = useNow(CLOCK_TICK_MS);
 
-  // An entry in `folder` itself needs no line of its own: the subject names that folder.
+  // Relative to the folder the subject names, and nothing for an entry in it.
   const placeOf = (entry: FileEntry) => {
-    const place = folderOf?.(entry);
+    const place = folderStyle ? relativeFolder(folder, entry, folderStyle) : undefined;
     return place && place !== "." ? place : undefined;
   };
 

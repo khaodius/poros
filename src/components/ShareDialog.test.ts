@@ -2,6 +2,8 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import type { PathStyle } from "../lib/fileSource";
+import { sharedFolder } from "../lib/search";
 import type { FileEntry, ShareCapabilities, ShareLink, ShareOptions } from "../lib/types";
 import { ShareDialog } from "./ShareDialog";
 
@@ -80,7 +82,10 @@ afterEach(() => {
   invoke.mockReset();
 });
 
-async function show(entries: FileEntry[], folderOf?: (entry: FileEntry) => string) {
+/** Where the results below come from. */
+const SEARCH_ROOT = "/poros-media";
+
+async function show(entries: FileEntry[], folder: string, folderStyle?: PathStyle) {
   invoke.mockImplementation(async (command: string, args: Record<string, unknown>) =>
     answer(command, args),
   );
@@ -91,8 +96,8 @@ async function show(entries: FileEntry[], folderOf?: (entry: FileEntry) => strin
     root!.render(
       createElement(ShareDialog, {
         sessionId: "session-1",
-        folder: "/poros-media",
-        folderOf,
+        folder,
+        folderStyle,
         entries,
         sharing: signed,
         service: "S3",
@@ -102,29 +107,31 @@ async function show(entries: FileEntry[], folderOf?: (entry: FileEntry) => strin
   );
 }
 
+/** Search results, given the folder the pane does: the one they share, else the search's. */
+const showResults = (results: FileEntry[]) =>
+  show(results, sharedFolder(results, "posix") ?? SEARCH_ROOT, "posix");
+
 const createButton = () => container.querySelector<HTMLButtonElement>("[data-autofocus]")!;
 const createdPaths = () =>
   invoke.mock.calls
     .filter(([command]) => command === "share_create")
     .map(([, args]) => (args as { path: string }).path);
+const places = () =>
+  [...container.querySelectorAll(".share-batch-place")].map((place) => place.textContent);
+const subject = () => container.querySelector(".share-subject-text span")?.textContent;
 
 describe("ShareDialog", () => {
   it("makes each search result's link for its own path, and says which folder it is in", async () => {
-    // Search results from /poros-media: the same name there and in two folders below it.
+    // The same name in the folder searched and in two folders below it.
     const results = [
       file("/poros-media/reports/2025/q3.pdf"),
       file("/poros-media/archive/q3.pdf"),
       file("/poros-media/q3.pdf"),
     ];
-    // As the search names the folders: relative to the one searched, `.` for that one.
-    await show(results, (entry) => {
-      const folder = entry.path.slice(0, entry.path.lastIndexOf("/"));
-      return folder === "/poros-media" ? "." : folder.slice("/poros-media/".length);
-    });
-    const places = [...container.querySelectorAll(".share-batch-place")].map(
-      (place) => place.textContent,
-    );
-    expect(places).toEqual(["reports/2025", "archive"]);
+    await showResults(results);
+    expect(subject()).toBe("On S3 in /poros-media");
+    // Relative to that folder, and nothing for the result in it.
+    expect(places()).toEqual(["reports/2025", "archive"]);
     const titles = [...container.querySelectorAll(".share-batch-name")].map((name) =>
       name.getAttribute("title"),
     );
@@ -148,9 +155,26 @@ describe("ShareDialog", () => {
     expect(container.querySelectorAll(".share-batch-label")).toHaveLength(0);
   });
 
+  it("names the subfolder once when every result is in it", async () => {
+    const results = [
+      file("/poros-media/reports/2025/q3.pdf"),
+      file("/poros-media/reports/2025/q4.pdf"),
+    ];
+    await showResults(results);
+    // Not the folder again below each name, as reports/2025 under /poros-media/reports/2025.
+    expect(subject()).toBe("On S3 in /poros-media/reports/2025");
+    expect(places()).toEqual([]);
+    await act(async () => createButton().click());
+    expect(createdPaths().sort()).toEqual(results.map((result) => result.path));
+  });
+
   it("names no folder for items listed in one folder", async () => {
-    await show([file("/poros-media/reports/a.pdf"), file("/poros-media/reports/b.pdf")]);
-    expect(container.querySelectorAll(".share-batch-place")).toHaveLength(0);
+    await show(
+      [file("/poros-media/reports/a.pdf"), file("/poros-media/reports/b.pdf")],
+      "/poros-media/reports",
+    );
+    expect(subject()).toBe("On S3 in /poros-media/reports");
+    expect(places()).toEqual([]);
     await act(async () => createButton().click());
     expect(createdPaths().sort()).toEqual([
       "/poros-media/reports/a.pdf",

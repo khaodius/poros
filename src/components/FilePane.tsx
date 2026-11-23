@@ -1594,7 +1594,7 @@ export function FilePane({
         <ShareDialog
           sessionId={sessionId}
           folder={inResults ? folderOfResults(dialog.entries) : pane.listing.path}
-          folderOf={inResults ? folderLabel : undefined}
+          folderStyle={inResults ? style : undefined}
           entries={dialog.entries}
           sharing={sharing}
           service={protocolInfo(protocol).shortLabel}
