@@ -179,6 +179,14 @@ impl Context {
             .as_deref()
             .map(str::trim)
             .filter(|pin| !pin.is_empty());
+        if let (Some(profile), Some(_)) = (plan.attempts.first(), pin) {
+            if !profile.checks_server_key() {
+                return Err(AppError::invalid(format!(
+                    "--host-key cannot be checked for {}",
+                    profile.kind_of_server()
+                )));
+            }
+        }
         let pinned = plan
             .attempts
             .first()

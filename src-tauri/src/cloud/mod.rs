@@ -132,6 +132,16 @@ pub fn server_address(profile: &ConnectProfile) -> Option<(String, u16)> {
     }
 }
 
+/// Whether a WebDAV server or an S3 endpoint is reached over TLS, with the certificate checked
+/// against what the user approved. `None` when the address does not parse.
+pub fn checks_certificate(profile: &ConnectProfile) -> Option<bool> {
+    match profile.protocol {
+        Protocol::WebDav | Protocol::WebDavs => webdav::is_secure(profile),
+        Protocol::S3 => s3::is_secure(profile),
+        _ => Some(false),
+    }
+}
+
 /// A first request that failed because of the server's certificate fails with the prompt to
 /// trust it instead.
 fn certificate_rejection(error: AppError, tls: Option<&ServerTls>) -> AppError {

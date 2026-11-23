@@ -140,6 +140,11 @@ fn address_of(base: &Url) -> (String, u16) {
     )
 }
 
+pub(super) fn is_secure(profile: &ConnectProfile) -> Option<bool> {
+    let (base, _) = endpoint(profile).ok()?;
+    Some(base.scheme() == "https")
+}
+
 pub(super) fn server_address(profile: &ConnectProfile) -> Option<(String, u16)> {
     let (base, _) = endpoint(profile).ok()?;
     Some(address_of(&base))

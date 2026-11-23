@@ -152,6 +152,33 @@ impl ConnectProfile {
             .unwrap_or_else(|| (self.host.trim().to_string(), self.port))
     }
 
+    /// Whether Poros itself checks the server's host key or certificate, so that an approval or
+    /// a pin can name it. Other servers show none, or only the system checks their certificate.
+    pub fn checks_server_key(&self) -> bool {
+        match self.protocol {
+            Protocol::Sftp | Protocol::Ftps | Protocol::FtpsImplicit => true,
+            // An address that does not parse fails on connecting, with its own message.
+            Protocol::WebDav | Protocol::WebDavs | Protocol::S3 => {
+                crate::cloud::checks_certificate(self).unwrap_or(true)
+            }
+            _ => false,
+        }
+    }
+
+    /// The kind of server, as a message names it: the protocol, and plain HTTP where WebDAV or S3
+    /// go without TLS.
+    pub fn kind_of_server(&self) -> String {
+        let name = self.protocol.display_name();
+        match self.protocol {
+            Protocol::WebDav | Protocol::WebDavs | Protocol::S3
+                if crate::cloud::checks_certificate(self) == Some(false) =>
+            {
+                format!("{name} over plain HTTP")
+            }
+            _ => name.to_string(),
+        }
+    }
+
     pub fn label(&self) -> String {
         if self.protocol.service_host().is_some() {
             return format!("{} ({})", self.protocol.display_name(), self.username);
@@ -914,6 +941,39 @@ mod tests {
         let asked = show_key_with(Hop::Server, "target", None, "", pin_this).await;
         assert!(!asked.accepted, "a pin alone is no approval");
         assert_eq!(asked.rejection.unwrap().kind, ErrorKind::HostKeyUnknown);
+    }
+
+    #[test]
+    fn only_servers_whose_key_poros_checks_can_be_held_to_one() {
+        let checks = |protocol: &str, host: &str| -> (bool, String) {
+            let profile: ConnectProfile = serde_json::from_value(serde_json::json!({
+                "protocol": protocol,
+                "host": host,
+                "port": 0,
+                "username": "poros",
+                "auth": { "type": "password", "password": "" },
+            }))
+            .unwrap();
+            (profile.checks_server_key(), profile.kind_of_server())
+        };
+        assert!(checks("sftp", "files.example.com").0);
+        assert!(checks("ftps", "files.example.com").0);
+        assert!(checks("ftpsImplicit", "files.example.com").0);
+        assert!(checks("webDavs", "dav.example.com").0);
+        assert!(checks("webDav", "https://dav.example.com").0);
+        assert!(checks("s3", "").0, "Amazon S3 goes over TLS");
+        assert_eq!(checks("ftp", "files.example.com"), (false, "FTP".into()));
+        assert_eq!(
+            checks("webDav", "dav.example.com"),
+            (false, "WebDAV over plain HTTP".into())
+        );
+        assert_eq!(
+            checks("s3", "http://127.0.0.1:9000"),
+            (false, "S3 over plain HTTP".into())
+        );
+        for service in ["backblazeB2", "googleDrive", "oneDrive", "box"] {
+            assert!(!checks(service, "").0, "{service}");
+        }
     }
 
     #[test]

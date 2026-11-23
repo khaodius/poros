@@ -299,6 +299,35 @@ fn a_host_key_pin_is_never_replaced() {
     assert_eq!(status(&output), 0, "{output:?}");
 }
 
+/// A server that shows no key of its own cannot be held to one: `--host-key` is refused before
+/// anything is sent, rather than ignored.
+#[test]
+fn a_host_key_is_refused_where_no_key_can_be_checked() {
+    let Some(port) = std::env::var("POROS_TEST_FTP_PORT").ok() else {
+        return;
+    };
+    let user = std::env::var("POROS_TEST_FTP_USER").unwrap_or_else(|_| "poros".into());
+    let password = std::env::var("POROS_TEST_FTP_PASSWORD").unwrap_or_else(|_| "poros-pass".into());
+    let run = Run::new(
+        format!("ftp://{user}@127.0.0.1:{port}"),
+        password.clone(),
+        String::new(),
+    );
+    let (code, value) = run.json(&["info"]);
+    assert_eq!(code, 0, "{value}");
+    let (code, value) = run.json(&["--host-key", "SHA256:not-it", "info"]);
+    assert_eq!(code, 2, "{value}");
+    assert_eq!(value["error"]["kind"], "invalidInput");
+    assert_eq!(
+        value["error"]["message"],
+        "--host-key cannot be checked for FTP"
+    );
+    // Refused before connecting: a port nothing listens on gives the same answer.
+    let closed = Run::new(format!("ftp://{user}@127.0.0.1:9"), password, String::new());
+    let (code, value) = closed.json(&["--host-key", "SHA256:not-it", "info"]);
+    assert_eq!(code, 2, "{value}");
+}
+
 #[test]
 fn sign_in_failures_exit_with_the_auth_status() {
     let Some(run) = Run::online("auth") else {
