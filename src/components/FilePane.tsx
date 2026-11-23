@@ -61,6 +61,7 @@ import { PANE_KEYBOARD_TARGET } from "../lib/focus";
 import { toAppError } from "../lib/ipc";
 import { formatSize, pluralize } from "../lib/format";
 import { baseName, exampleFileName, samePath } from "../lib/path";
+import { protocolInfo } from "../lib/protocols";
 import { groupOfTab } from "../lib/layout";
 import { isDirLike, type SortKey, type SortSpec } from "../lib/sort";
 import type { FileEntry, PlaceMode } from "../lib/types";
@@ -108,8 +109,10 @@ import { NewVaultDialog } from "./NewVaultDialog";
 import { PathBar } from "./PathBar";
 import { PromptDialog } from "./PromptDialog";
 import { PropertiesDialog } from "./PropertiesDialog";
+import { ShareDialog } from "./ShareDialog";
 import { VaultUnlockCard } from "./VaultUnlockCard";
 import { serverCommandsMenu } from "./commandMenu";
+import { shareMenuItem } from "./shareMenu";
 
 type PaneDialog =
   | { type: "newFolder" }
@@ -118,6 +121,7 @@ type PaneDialog =
   | { type: "delete"; entries: FileEntry[] }
   | { type: "placeTo"; mode: PlaceMode; entries: FileEntry[] }
   | { type: "properties"; entries: FileEntry[] }
+  | { type: "share"; entries: FileEntry[] }
   | { type: "compare"; left: CompareSide; right: CompareSide };
 
 interface FilePaneProps {
@@ -243,6 +247,10 @@ export function FilePane({
   });
   const protocol = useSessionStore((state) =>
     sessionId ? state.sessions[sessionId]?.info.protocol : undefined,
+  );
+  /** The share links the session's service makes, if any. */
+  const sharing = useSessionStore((state) =>
+    sessionId ? state.sessions[sessionId]?.info.sharing : undefined,
   );
   /** The unlocked vault the pane is in, when its session is a vault's. */
   const vault = useSessionStore((state) =>
@@ -771,6 +779,12 @@ export function FilePane({
     const compare = compareMenuItem(targets);
     const extract = extractMenuItems(targets);
     const lockable = lockableVault(targets.length > 1 ? null : entry);
+    const shareItem =
+      source.kind === "remote"
+        ? shareMenuItem(targets, sharing, Boolean(vault), () =>
+            setDialog({ type: "share", entries: targets }),
+          )
+        : null;
     return [
       ...(targets.length > 0 ? [transferMenuItem(targets), "separator" as const] : []),
       ...(entry && isDirLike(entry)
@@ -852,6 +866,7 @@ export function FilePane({
         icon: <ClipboardCopy size={14} />,
         onSelect: () => copyPaths(targets),
       },
+      ...(shareItem ? [shareItem] : []),
       ...(compare ? [compare] : []),
       ...(source.kind === "remote" && targets.length > 0
         ? [
@@ -1203,6 +1218,17 @@ export function FilePane({
           entries={dialog.entries}
           onClose={() => setDialog(null)}
           onApplied={() => void pane.refresh()}
+        />
+      )}
+
+      {dialog?.type === "share" && sessionId && sharing && protocol && pane.listing && (
+        <ShareDialog
+          sessionId={sessionId}
+          folder={pane.listing.path}
+          entries={dialog.entries}
+          sharing={sharing}
+          service={protocolInfo(protocol).shortLabel}
+          onClose={() => setDialog(null)}
         />
       )}
 
