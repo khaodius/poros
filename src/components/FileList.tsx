@@ -350,13 +350,16 @@ function RenameField({ entry, events }: { entry: FileEntry; events: RowEvents })
   const [name, setName] = useState(entry.name);
   const [busy, setBusy] = useState(false);
   const finished = useRef(false);
+  // Selected once: each reload hands the row a new entry for the same file, and selecting the
+  // name again would let the next key replace what was typed.
+  const [stem] = useState(() => stemLength(entry.name, isDirLike(entry)));
 
   useLayoutEffect(() => {
     const input = inputRef.current;
     if (!input) return;
     input.focus({ preventScroll: true });
-    input.setSelectionRange(0, stemLength(entry.name, isDirLike(entry)));
-  }, [entry]);
+    input.setSelectionRange(0, stem);
+  }, [stem]);
 
   const submit = async (fromKeyboard: boolean) => {
     if (finished.current || busy) return;

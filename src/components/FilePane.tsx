@@ -230,6 +230,11 @@ export function FilePane({
   const [dialog, setDialog] = useState<PaneDialog | null>(null);
   /** The entry whose row shows the name field. */
   const [renaming, setRenaming] = useState<string | null>(null);
+  // An entry renamed or deleted elsewhere takes its field along, so the field cannot come back
+  // with a file given that name later.
+  if (renaming !== null && !pane.listing?.entries.some((entry) => entry.path === renaming)) {
+    setRenaming(null);
+  }
   const [menu, setMenu] = useState<OpenMenu | null>(null);
   const [pathEditRequest, setPathEditRequest] = useState(0);
   const sectionRef = useRef<HTMLElement>(null);
