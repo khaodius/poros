@@ -379,6 +379,46 @@ async fn manages_files_and_folders() {
     }
 }
 
+/// An `https://` address typed while the type is still WebDAV (HTTP) is reached over HTTPS, so
+/// the password never goes out in the clear.
+#[tokio::test]
+async fn a_typed_https_address_is_reached_over_https() {
+    let Some(secure) = server("POROS_TEST_WEBDAVS_PORT", Protocol::WebDav) else {
+        return;
+    };
+    let (_config, manager) = new_manager();
+    let typed = ConnectProfile {
+        host: format!("https://127.0.0.1:{}/", secure.port),
+        port: Protocol::WebDav.default_port(),
+        ..profile(&secure, &secure.password)
+    };
+    // Only a TLS handshake shows the server's self-signed certificate.
+    let error = manager
+        .connect(typed.clone(), None, OWNER)
+        .await
+        .unwrap_err();
+    let certificate = error
+        .host_key
+        .unwrap_or_else(|| panic!("no certificate question: {}", error.message));
+    assert_eq!(certificate.host, "127.0.0.1");
+    assert_eq!(certificate.port, secure.port);
+    assert!(certificate.certificate_problem.is_some());
+    let approval = HostKeyApproval::of(&certificate, false);
+    let info = manager.connect(typed, Some(approval), OWNER).await.unwrap();
+    manager.disconnect(&info.id).await.unwrap();
+
+    // A typed http address still goes to the plain server as before.
+    if let Some(plain) = server("POROS_TEST_WEBDAV_PORT", Protocol::WebDav) {
+        let typed = ConnectProfile {
+            host: format!("http://127.0.0.1:{}/", plain.port),
+            port: Protocol::WebDav.default_port(),
+            ..profile(&plain, &plain.password)
+        };
+        let info = manager.connect(typed, None, OWNER).await.unwrap();
+        manager.disconnect(&info.id).await.unwrap();
+    }
+}
+
 /// Stores an object under a key exactly as written. A URL library folds `.` and `..` parts away
 /// before sending, which other S3 clients can be told not to do.
 async fn put_object_as_named(port: u16, bucket: &str, key: &str, contents: &[u8]) {

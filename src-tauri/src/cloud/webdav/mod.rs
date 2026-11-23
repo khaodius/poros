@@ -97,21 +97,35 @@ enum Created {
 /// The server's address, and the folder a URL typed as the host points into.
 fn endpoint(profile: &ConnectProfile) -> AppResult<(Url, Option<String>)> {
     let typed = profile.host.trim();
-    let without_scheme = typed.split_once("://").map_or(typed, |(_, rest)| rest);
+    let (typed_scheme, without_scheme) = match typed.split_once("://") {
+        Some((scheme, rest)) => (Some(scheme.to_ascii_lowercase()), rest),
+        None => (None, typed),
+    };
     let (authority, path) = match without_scheme.find('/') {
         Some(slash) => without_scheme.split_at(slash),
         None => (without_scheme, ""),
     };
-    let scheme = match profile.protocol {
-        Protocol::WebDav => "http",
-        _ => "https",
-    };
+    // A typed secure address is kept with the type left on WebDAV (HTTP): going plain would send
+    // the password in the clear.
+    let typed_secure = typed_scheme
+        .as_deref()
+        .is_some_and(|scheme| matches!(scheme, "https" | "davs" | "webdavs"));
+    let secure = profile.protocol == Protocol::WebDavs || typed_secure;
+    let scheme = if secure { "https" } else { "http" };
     let mut url = Url::parse(&format!("{scheme}://{authority}/"))
         .ok()
         .filter(|url| url.host_str().is_some_and(|host| !host.is_empty()))
         .ok_or_else(|| AppError::invalid(format!("{typed} is not a valid server address")))?;
     if url.port().is_none() {
-        let _ = url.set_port(Some(profile.port));
+        // The port field still holds the plain HTTP port the type came with.
+        let upgraded = profile.protocol == Protocol::WebDav && typed_secure;
+        let port = match profile.port {
+            port if upgraded && port == Protocol::WebDav.default_port() => {
+                Protocol::WebDavs.default_port()
+            }
+            port => port,
+        };
+        let _ = url.set_port(Some(port));
     }
     let folder = percent_decode_str(path).decode_utf8_lossy();
     let folder = protocol::normalize(&folder);
@@ -152,8 +166,8 @@ impl WebDavFs {
         events: &Events,
     ) -> AppResult<(Self, String)> {
         let (base, folder_in_address) = endpoint(profile)?;
-        let tls = match profile.protocol {
-            Protocol::WebDavs => {
+        let tls = match base.scheme() {
+            "https" => {
                 let (host, port) = address_of(&base);
                 Some(login.server_tls(&host, port, session_id, events)?)
             }
@@ -824,6 +838,55 @@ mod tests {
             profile(Protocol::WebDav, "x", 80).auth,
             AuthMethod::Password { .. }
         ));
+    }
+
+    #[test]
+    fn a_typed_https_address_is_never_downgraded() {
+        let address = |protocol, host: &str, port| {
+            let (url, folder) = endpoint(&profile(protocol, host, port)).unwrap();
+            (url.to_string(), folder)
+        };
+        // Pasted with the type left on WebDAV (HTTP), whose port is still in the port field.
+        assert_eq!(
+            address(
+                Protocol::WebDav,
+                "https://cloud.example.com/remote.php/dav",
+                80
+            ),
+            (
+                "https://cloud.example.com/".to_string(),
+                Some("/remote.php/dav".to_string())
+            )
+        );
+        assert_eq!(
+            address(Protocol::WebDav, "HTTPS://cloud.example.com:8443/dav", 80).0,
+            "https://cloud.example.com:8443/"
+        );
+        assert_eq!(
+            address(Protocol::WebDav, "davs://nas.local", 5006).0,
+            "https://nas.local:5006/"
+        );
+        assert_eq!(
+            server_address(&profile(
+                Protocol::WebDav,
+                "https://cloud.example.com/dav",
+                80
+            )),
+            Some(("cloud.example.com".to_string(), 443))
+        );
+        // Typed http stays as chosen, and WebDAV (HTTPS) never goes plain.
+        assert_eq!(
+            address(Protocol::WebDav, "http://nas.local/dav", 80).0,
+            "http://nas.local/"
+        );
+        assert_eq!(
+            address(Protocol::WebDavs, "http://nas.local", 443).0,
+            "https://nas.local/"
+        );
+        assert_eq!(
+            address(Protocol::WebDavs, "nas.local", 80).0,
+            "https://nas.local:80/"
+        );
     }
 
     #[test]
