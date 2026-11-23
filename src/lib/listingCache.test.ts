@@ -1,16 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   ListingCache,
+  folderUnavailable,
   freshenListing,
   heldEntries,
   listingScope,
   outlivesSession,
   sameListing,
-  serverUnreachable,
   withHeldEntries,
   type StoredListing,
 } from "./listingCache";
-import type { ConnectProfile, DirListing, FileEntry, SessionInfo } from "./types";
+import type { AppError, ConnectProfile, DirListing, FileEntry, SessionInfo } from "./types";
 
 function file(path: string, change: Partial<FileEntry> = {}): FileEntry {
   return {
@@ -306,10 +306,19 @@ describe("comparing listings", () => {
     expect(heldEntries(shown.entries, fresh, new Set(["/srv/a"]))).toEqual([]);
   });
 
-  it("tells a server that cannot be reached from a folder that cannot be listed", () => {
-    expect(serverUnreachable({ kind: "disconnected", message: "gone" })).toBe(true);
-    expect(serverUnreachable({ kind: "timeout", message: "slow" })).toBe(true);
-    expect(serverUnreachable({ kind: "notFound", message: "no such folder" })).toBe(false);
-    expect(serverUnreachable({ kind: "permissionDenied", message: "no" })).toBe(false);
+  it("tells a folder that cannot be listed from a failure that may pass", () => {
+    expect(folderUnavailable({ kind: "notFound", message: "No such file" })).toBe(true);
+    expect(folderUnavailable({ kind: "permissionDenied", message: "Permission denied" })).toBe(
+      true,
+    );
+    const passing: AppError[] = [
+      { kind: "disconnected", message: "The connection was closed" },
+      { kind: "timeout", message: "The server did not respond in time" },
+      { kind: "cloud", message: "SlowDown: Please reduce your request rate." },
+      { kind: "ftp", message: "451 Requested action aborted" },
+      { kind: "sftp", message: "Failure" },
+      { kind: "io", message: "Broken pipe" },
+    ];
+    for (const failure of passing) expect(folderUnavailable(failure)).toBe(false);
   });
 });

@@ -52,16 +52,15 @@ export function outlivesSession(scope: string): boolean {
   return scope.startsWith('["server",');
 }
 
-/** Errors that say the server could not be asked, not that the folder cannot be listed. */
-const UNREACHABLE: ReadonlySet<AppError["kind"]> = new Set([
-  "connection",
-  "timeout",
-  "disconnected",
-  "sessionNotFound",
-]);
+/** Errors that say the folder itself is gone or closed to the user. */
+const UNAVAILABLE: ReadonlySet<AppError["kind"]> = new Set(["notFound", "permissionDenied"]);
 
-export function serverUnreachable(error: AppError): boolean {
-  return UNREACHABLE.has(error.kind);
+/**
+ * Whether listing a folder failed because the folder can no longer be listed, rather than for a
+ * reason that may pass: a server out of reach, slow or busy, or a reply it could not give now.
+ */
+export function folderUnavailable(error: AppError): boolean {
+  return UNAVAILABLE.has(error.kind);
 }
 
 const ENTRY_FIELDS = [

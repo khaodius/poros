@@ -439,6 +439,44 @@ describe("a refresh that fails", () => {
     expect(view.pane.error).toBeNull();
   });
 
+  const passing: AppError[] = [
+    { kind: "cloud", message: "SlowDown: Please reduce your request rate." },
+    { kind: "ftp", message: "451 Requested action aborted: local error in processing" },
+  ];
+
+  it.each(passing)(
+    "keeps a remembered listing up, marked as out of date, after a passing $kind error",
+    async (failure) => {
+      const server = new FakeServer();
+      const view = await paneThatVisited(server);
+      await act(async () => void view.pane.navigate("/home/site"));
+      await server.fail("/home/site", failure);
+      expect(names(view.pane)).toEqual(["a.html", "b.html", "c.html"]);
+      expect(view.pane.stale).toBe("outdated");
+      expect(view.pane.error).toEqual(failure);
+      expect(view.pane.failedPath).toBeNull();
+      expect(cache.has(SCOPE, "/home/site")).toBe(true);
+    },
+  );
+
+  it.each(passing)(
+    "keeps a reloaded listing up, with its selection, after a passing $kind error",
+    async (failure) => {
+      const server = new FakeServer();
+      const view = await paneThatVisited(server);
+      await act(async () => view.pane.selectOnly("/home/notes.txt"));
+      const shown = view.pane.listing;
+      await act(async () => void view.pane.refresh());
+      await server.fail("/home", failure);
+      expect(view.pane.listing).toBe(shown);
+      expect([...view.pane.selection]).toEqual(["/home/notes.txt"]);
+      expect(view.pane.stale).toBe("outdated");
+      expect(view.pane.error).toEqual(failure);
+      expect(view.pane.failedPath).toBeNull();
+      expect(cache.has(SCOPE, "/home")).toBe(true);
+    },
+  );
+
   it("opens the usual first folder when the remembered one to start in is gone", async () => {
     const server = new FakeServer();
     cache.put(SCOPE, listing("/home/old", ["was-here.txt"]));

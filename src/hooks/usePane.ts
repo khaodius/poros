@@ -12,7 +12,7 @@ import { toAppError } from "../lib/ipc";
 import {
   freshenListing,
   heldEntries,
-  serverUnreachable,
+  folderUnavailable,
   withHeldEntries,
   type StoredListing,
 } from "../lib/listingCache";
@@ -178,7 +178,10 @@ export interface PaneOptions {
    * with when that is not the pane's own, or null. The pane keeps its place and its history.
    */
   handover?: (path: string) => Handover | null;
-  /** Remembered listings to show folders from at once; without them every folder is awaited. */
+  /**
+   * Remembered listings to show folders from at once; without them every folder is awaited, and
+   * a folder that fails to reload stays on show as it was.
+   */
   listings?: PaneListings;
   /**
    * Rows the user is in the middle of something with, such as a rename. They stay on show when
@@ -243,9 +246,13 @@ export function usePane(
   const travelIndex = useRef<number | null>(null);
   const handoverRef = useRef(handover);
   const heldRef = useRef(heldPaths);
+  // Read by each load as it starts, so that turning remembered listings on or off does not
+  // open the pane's first folder again.
+  const listingsRef = useRef(listings);
   useLayoutEffect(() => {
     handoverRef.current = handover;
     heldRef.current = heldPaths;
+    listingsRef.current = listings;
   });
   // The source a handover listed the folder on show with, until it is the pane's own.
   const takenOverBy = useRef<string | null>(null);
@@ -397,6 +404,7 @@ export function usePane(
       setLoading(true);
       const first = listedPath.current === null;
       const started = { shown: false };
+      const listings = listingsRef.current;
       const answer = async (): Promise<boolean> => {
         let lister = source;
         let remembered: DirListing | null = null;
@@ -454,10 +462,10 @@ export function usePane(
         } catch (caught) {
           noteAnswer?.(null);
           const failure = toAppError(caught);
-          const unreachable = serverUnreachable(failure);
+          const unavailable = folderUnavailable(failure);
           // The server says the folder cannot be listed, so nothing remembered of it holds,
           // wherever the pane has gone since.
-          if (!unreachable) listings?.forget(lister, target);
+          if (unavailable) listings?.forget(lister, target);
           const current = loads.current.isCurrent(request);
           // Whether the listing on show is one this load was to confirm: the remembered one it
           // put up, or the one it reloads.
@@ -466,8 +474,9 @@ export function usePane(
             : current && mode === "replace" && listings !== undefined && shown.current !== null;
           if (current || unconfirmed) setError(failure);
           if (!unconfirmed) return false;
-          if (unreachable) {
-            // Nothing says the folder changed: it stays up, marked as not confirmed.
+          if (!unavailable) {
+            // The server could not be asked, or could not answer now: nothing says the folder
+            // changed, so it stays up, marked as not confirmed.
             setStaleness("outdated");
             return false;
           }
@@ -486,7 +495,7 @@ export function usePane(
       const answered = answer();
       return { shown: started.shown, answered };
     },
-    [source, listings, show, drop],
+    [source, show, drop],
   );
 
   useEffect(() => {

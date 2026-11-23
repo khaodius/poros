@@ -213,6 +213,7 @@ export function FilePane({
   const foldersFirst = useSettingsStore((state) => state.settings.interface.foldersFirst);
   const hiddenColumns = useSettingsStore((state) => state.settings.interface.hiddenColumns);
   const columnWidths = useSettingsStore((state) => state.settings.interface.columnWidths);
+  const cachedListings = useSettingsStore((state) => state.settings.interface.cachedListings);
   const dateFormat = useSettingsStore((state) => state.settings.interface.dateFormat);
   const rowHeight = useSettingsStore((state) => state.settings.appearance.rowHeight);
   const stripedRows = useSettingsStore((state) => state.settings.appearance.stripedRows);
@@ -243,7 +244,7 @@ export function FilePane({
     onSortChange: rememberSort,
     handover,
     // This computer's folders list at once, so only a server's are remembered.
-    listings: sessionId ? paneListings : undefined,
+    listings: sessionId && cachedListings ? paneListings : undefined,
     heldPaths,
   });
   useListingPrefetch(pane, sessionId, visible);
@@ -1089,7 +1090,10 @@ export function FilePane({
           {pane.stale === "outdated" && (
             <p className="pane-notice pane-notice-warning" role="status">
               <TriangleAlert size={13} />
-              <span>The server could not be reached, so this listing may be out of date.</span>
+              <span>
+                Could not refresh this folder: {pane.error?.message.trim().replace(/\.+$/, "")}.
+                This listing may be out of date.
+              </span>
               <button type="button" className="link-button" onClick={() => void pane.refresh()}>
                 Try again
               </button>
