@@ -646,8 +646,8 @@ mod tests {
 
         let parsed: Settings = serde_json::from_str(
             r#"{"editing": {"keepMinutes": 999999, "uploadOnSave": false, "programs": [
-                {"id": "gimp", "name": " GIMP ", "command": " /usr/bin/gimp 
-rm -rf ~", "arguments": "--new-instance {file}", "patterns": [" *.psd ", "", "*.xcf"]},
+                {"id": "gimp", "name": " GIMP ", "command": " /usr/bin/gimp \nrm -rf ~",
+                 "arguments": "--new-instance {file}", "patterns": [" *.psd ", "", "*.xcf"]},
                 {"id": "gimp", "name": "Twin", "command": "gimp"},
                 {"id": "empty", "name": "No command", "command": "  "}
             ]}}"#,
