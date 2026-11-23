@@ -1,11 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_RULES, type NameTarget, type RenameRules } from "../lib/bulkRename";
 import type { FileOrigin } from "../lib/fileOrigin";
+import { listingScope } from "../lib/listingCache";
 import { DEFAULT_SETTINGS } from "../lib/settings";
-import type { Protocol, RenameRequest, RenameSummary } from "../lib/types";
+import type {
+  ConnectProfile,
+  Protocol,
+  RenameRequest,
+  RenameSummary,
+  SessionInfo,
+} from "../lib/types";
 import { nameTargetOf, runBulkRename, useBulkRenameStore } from "./bulkRename";
+import { listingShare } from "./listings";
 import { useLogStore } from "./logStore";
 import { registerPane } from "./paneRegistry";
+import { useSessionStore } from "./sessionStore";
 import { useSettingsStore } from "./settingsStore";
 import { useToastStore } from "./toastStore";
 
@@ -289,6 +298,65 @@ describe("runBulkRename", () => {
     expect(toasts).toEqual(["Renaming cancelled. 1 of 3 items renamed."]);
     expect(useBulkRenameStore.getState().report).toBeNull();
     expect(refreshes).toEqual([["/srv/photos/d.jpg"]]);
+  });
+
+  it("tells the listing cache which folders changed, when the run finishes and when it is stopped", async () => {
+    const info: SessionInfo = {
+      id: "s1",
+      label: "deploy@web.example.com",
+      host: "web.example.com",
+      port: 22,
+      username: "deploy",
+      home: "/home/deploy",
+      initialPath: "/home/deploy",
+      protocol: "sftp",
+    };
+    const profile: ConnectProfile = {
+      protocol: "sftp",
+      host: "web.example.com",
+      port: 22,
+      username: "deploy",
+      auth: { type: "agent" },
+    };
+    const scope = listingScope(info, profile);
+    const cache = listingShare.cache;
+    const known = [
+      "/srv",
+      "/srv/photos",
+      "/srv/photos/day 1",
+      "/srv/photos/day 2/raw",
+      "/srv/photos/originals",
+      "/srv/photos/edits",
+    ];
+    const folders = [
+      { from: "day 1", to: "day 2" },
+      { from: "day 2", to: "day 1" },
+      { from: "raw", to: "originals" },
+    ];
+    vi.useFakeTimers();
+    useSessionStore.setState({ sessions: { s1: { info, profile, status: "connected" } } });
+    try {
+      for (const cancelled of [false, true]) {
+        for (const path of known) cache.put(scope, { path, parent: "/srv", entries: [] });
+        answers.files_rename = (): RenameSummary => ({
+          renamed: cancelled
+            ? [renamed("raw", "originals")]
+            : folders.map(({ from, to }) => renamed(from, to)),
+          cancelled,
+        });
+        await run(folders);
+        // The folder, and every renamed folder under its old name and its new one, with all inside.
+        expect(known.filter((path) => cache.has(scope, path))).toEqual([
+          "/srv",
+          "/srv/photos/edits",
+        ]);
+      }
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+      useSessionStore.setState({ sessions: {} });
+      cache.clear();
+    }
   });
 
   it("shows why nothing ran when the backend refuses the request, and reloads the folder", async () => {

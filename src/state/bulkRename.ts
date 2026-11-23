@@ -184,7 +184,13 @@ export async function runBulkRename(request: BulkRename): Promise<void> {
     showToast("error", error.message);
     write("error", `${title}: ${error.message}`, sessionId);
   } finally {
-    // Whatever was renamed before a failure or cancel shows too.
-    refreshFolder(origin, folder, renamedPaths);
+    // Whatever was renamed before a failure or cancel shows too. On a server the folder's
+    // remembered listing is forgotten, and so are those of renamed folders, under either name.
+    const style = pathStyleOf(origin);
+    const changed = renames.flatMap(({ from, to }) => [
+      childPath(folder, from, style),
+      childPath(folder, to, style),
+    ]);
+    refreshFolder(origin, folder, renamedPaths, changed);
   }
 }
