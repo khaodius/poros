@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useLatest } from "../hooks/useLatest";
 import { findTab } from "../lib/layout";
 import { closeEditorTab, closeWindowNow, saveAndClose } from "../state/editorActions";
 import { useLayoutStore } from "../state/layoutStore";
@@ -22,6 +23,8 @@ export function UnsavedChangesDialog({ tabIds, closeWindow, onClose }: UnsavedCh
       shown.current = false;
     };
   }, []);
+  // The question as it is now: tabs, and the window, can join it while the files save.
+  const latest = useLatest({ tabIds, closeWindow, onClose });
   const root = useLayoutStore((state) => state.root);
   const names = tabIds.flatMap((tabId) => {
     const tab = findTab(root, tabId);
@@ -29,8 +32,8 @@ export function UnsavedChangesDialog({ tabIds, closeWindow, onClose }: UnsavedCh
   });
 
   const finish = () => {
-    onClose();
-    if (closeWindow && shown.current) closeWindowNow();
+    latest.current.onClose();
+    if (latest.current.closeWindow && shown.current) closeWindowNow();
   };
 
   const save = async () => {
@@ -38,8 +41,9 @@ export function UnsavedChangesDialog({ tabIds, closeWindow, onClose }: UnsavedCh
     setError(null);
     const saved = await saveAndClose(tabIds);
     setBusy(false);
-    if (saved) finish();
-    else setError("Some files could not be saved. Their tabs say why.");
+    if (!saved) setError("Some files could not be saved. Their tabs say why.");
+    // Tabs that joined meanwhile are still to be asked about, and the question stays for them.
+    else if (latest.current.tabIds.every((tabId) => tabIds.includes(tabId))) finish();
   };
 
   const discard = () => {

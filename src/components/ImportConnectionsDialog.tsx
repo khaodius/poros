@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { FileSearch, KeyRound, UserRound } from "lucide-react";
+import { useLatest } from "../hooks/useLatest";
 import {
   IMPORT_SOURCES,
   defaultSelection,
@@ -29,6 +30,7 @@ export function ImportConnectionsDialog({ onClose }: { onClose: () => void }) {
   // The scan the backend still holds passwords for, to forget when the dialog closes.
   const pendingScan = useRef<string | null>(null);
   const closed = useRef(false);
+  const latestOnClose = useLatest(onClose);
 
   useEffect(() => {
     closed.current = false;
@@ -116,7 +118,7 @@ export function ImportConnectionsDialog({ onClose }: { onClose: () => void }) {
           "info",
           `Imported ${count} from ${IMPORT_SOURCES[scan.source].label}.${passwords}`,
         );
-        onClose();
+        latestOnClose.current();
         return;
       }
       setScan(null);

@@ -540,7 +540,7 @@ export function App() {
   );
 }
 
-function AppDialog() {
+export function AppDialog() {
   const dialog = useUiStore((state) => state.dialog);
   const closeIfShown = useUiStore((state) => state.closeIfShown);
   // Each dialog closes only itself, so one that finishes its work after it was dismissed leaves
