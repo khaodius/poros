@@ -28,13 +28,16 @@ export function ImportConnectionsDialog({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState<string | null>(null);
   // The scan the backend still holds passwords for, to forget when the dialog closes.
   const pendingScan = useRef<string | null>(null);
+  const closed = useRef(false);
 
   useEffect(() => {
+    closed.current = false;
     connectionImport
       .sources()
       .then(setSources)
       .catch((caught) => setError(toAppError(caught).message));
     return () => {
+      closed.current = true;
       if (pendingScan.current) void connectionImport.discard(pendingScan.current).catch(() => {});
     };
   }, []);
@@ -50,6 +53,11 @@ export function ImportConnectionsDialog({ onClose }: { onClose: () => void }) {
     setError(null);
     try {
       const found = await connectionImport.scan(source, paths);
+      // Closed while reading: nothing will import this scan, so its passwords go at once.
+      if (closed.current) {
+        void connectionImport.discard(found.scanId).catch(() => {});
+        return;
+      }
       pendingScan.current = found.scanId;
       if (found.entries.length === 0 && found.skipped.length === 0) {
         setError(`There are no saved sites in ${found.origins.join(", ") || "that file"}.`);
