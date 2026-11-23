@@ -55,7 +55,7 @@ import { usePane } from "../hooks/usePane";
 import { archiveFormatOf, isSingleFile, unpackedName } from "../lib/archives";
 import { COLUMN_LABELS, availableColumns, type DetailColumn } from "../lib/columns";
 import { entryAfterRemoval } from "../lib/cursor";
-import { sameFilesystem, toLocation, worksInPlace } from "../lib/fileOrigin";
+import { sameFilesystem, toLocation, worksInPlace, type FileOrigin } from "../lib/fileOrigin";
 import type { FileSource } from "../lib/fileSource";
 import { PANE_KEYBOARD_TARGET } from "../lib/focus";
 import { toAppError } from "../lib/ipc";
@@ -100,6 +100,7 @@ import { transferFromPane, transferToOtherSide } from "../state/transferActions"
 import { useUiStore } from "../state/uiStore";
 import { requestLockVault, vaultHandover } from "../state/vaultActions";
 import { workspaceChanged } from "../state/workspace";
+import { BulkRenameDialog } from "./BulkRenameDialog";
 import { CompareDialog, type CompareSide } from "./CompareDialog";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
@@ -118,6 +119,14 @@ type PaneDialog =
   | { type: "delete"; entries: FileEntry[] }
   | { type: "placeTo"; mode: PlaceMode; entries: FileEntry[] }
   | { type: "properties"; entries: FileEntry[] }
+  | {
+      type: "bulkRename";
+      origin: FileOrigin;
+      folder: string;
+      entries: FileEntry[];
+      /** Everything the folder listed when the dialog opened. */
+      listed: FileEntry[];
+    }
   | { type: "compare"; left: CompareSide; right: CompareSide };
 
 interface FilePaneProps {
@@ -441,6 +450,17 @@ export function FilePane({
       showToast("error", toAppError(caught).message);
       return false;
     }
+  };
+  const openBulkRename = (entries: FileEntry[]) => {
+    const listing = pane.listing;
+    if (!listing || entries.length < 2) return;
+    setDialog({
+      type: "bulkRename",
+      origin: paneOrigin({ kind: source.kind, sessionId }),
+      folder: listing.path,
+      entries,
+      listed: listing.entries,
+    });
   };
   const openDelete = () => selected.length > 0 && setDialog({ type: "delete", entries: selected });
 
@@ -844,8 +864,9 @@ export function FilePane({
         label: "Rename",
         icon: <Pencil size={14} />,
         shortcut: "F2",
-        disabled: targets.length !== 1,
-        onSelect: () => setRenaming(targets[0].path),
+        disabled: targets.length === 0,
+        onSelect: () =>
+          targets.length === 1 ? setRenaming(targets[0].path) : openBulkRename(targets),
       },
       {
         label: targets.length > 1 ? "Copy paths" : "Copy path",
@@ -1082,6 +1103,7 @@ export function FilePane({
             onDelete={openDelete}
             renaming={renaming}
             onRename={(entry) => setRenaming(entry.path)}
+            onRenameSeveral={() => openBulkRename(pane.selectedEntries())}
             onRenameSubmit={renameEntry}
             onRenameCancel={() => setRenaming(null)}
             onEdit={edit}
@@ -1203,6 +1225,16 @@ export function FilePane({
           entries={dialog.entries}
           onClose={() => setDialog(null)}
           onApplied={() => void pane.refresh()}
+        />
+      )}
+
+      {dialog?.type === "bulkRename" && (
+        <BulkRenameDialog
+          origin={dialog.origin}
+          folder={dialog.folder}
+          entries={dialog.entries}
+          listed={dialog.listed}
+          onClose={() => setDialog(null)}
         />
       )}
 
