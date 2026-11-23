@@ -23,6 +23,7 @@ import type {
   SyncPlanView,
   SyncProgress,
 } from "../lib/types";
+import { forgetListingsWithin } from "../state/listings";
 import { lastActivePane, listPanes } from "../state/paneRegistry";
 import { useSavedConnections } from "../state/savedConnectionsStore";
 import { useSessionStore, type SessionEntry } from "../state/sessionStore";
@@ -80,6 +81,7 @@ function startingFolders(given: Omit<SyncDialogProps, "onClose">): Folders {
 
 /** Panes showing either folder, or a folder inside them, reload after a run. */
 function refreshPanes(plan: SyncPlanView, sessionId: string): void {
+  forgetListingsWithin(sessionId, plan.remoteRoot);
   for (const pane of listPanes()) {
     const path = pane.path();
     if (path === null) continue;
@@ -239,6 +241,8 @@ export function SyncDialog({ onClose, ...given }: SyncDialogProps) {
       onClose();
     } catch (caught) {
       held.current = {};
+      // Whatever the run changed before it failed or was cancelled is not what was remembered.
+      forgetListingsWithin(sessionId, plan.remoteRoot);
       setError(toAppError(caught).message);
       setStage({ step: "preview", plan, sessionId });
     }
