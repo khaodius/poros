@@ -104,7 +104,8 @@ function reloadUnseen(scope: string, folder: string, entries: readonly string[])
       if (changed) showing.set(path, [...(showing.get(path) ?? []), pane]);
     }
     for (const [path, panes] of showing) {
-      if (cache.has(scope, path) || panes.some((pane) => pane.loading?.())) continue;
+      const listed = cache.listedSinceChange(scope, path);
+      if (listed || panes.some((pane) => pane.loading?.())) continue;
       (panes.find((pane) => pane.visible) ?? panes[0]).refresh();
     }
   }, RELOAD_CHECK_MILLIS);

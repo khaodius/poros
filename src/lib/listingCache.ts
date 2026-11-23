@@ -181,6 +181,11 @@ export class ListingCache {
    */
   private readonly aliases = new Map<string, string>();
   private readonly pending = new Set<ListingTicket>();
+  /**
+   * Folders the server listed since they last changed that were too large to keep, by key, so
+   * that they are not listed once more only because they are not remembered.
+   */
+  private readonly oversized = new Set<string>();
   private readonly watchers = new Set<(stored: StoredListing) => void>();
   private entryTotal = 0;
   private lastSerial = 0;
@@ -203,6 +208,14 @@ export class ListingCache {
   /** Whether the folder's listing is remembered; does not count as using it. */
   has(scope: string, path: string): boolean {
     return this.slots.has(this.resolve(scope, path));
+  }
+
+  /**
+   * Whether the server listed the folder since it last changed: its listing is remembered, or
+   * was too large to be. Does not count as using it.
+   */
+  listedSinceChange(scope: string, path: string): boolean {
+    return this.has(scope, path) || this.oversized.has(slotKey(scope, path));
   }
 
   /** The folder's last known listing, which counts as using it. */
@@ -259,8 +272,15 @@ export class ListingCache {
     }
     if (listing.entries.length > this.limits.entries) {
       this.remove(key);
+      this.oversized.delete(key);
+      this.oversized.add(key);
+      // Only ever a few, but bounded all the same, the oldest out first.
+      if (this.oversized.size > this.limits.folders) {
+        this.oversized.delete(this.oversized.values().next().value!);
+      }
       return false;
     }
+    this.oversized.delete(key);
     if (replaced) {
       this.slots.delete(key);
       this.entryTotal -= replaced.listing.entries.length;
@@ -289,6 +309,7 @@ export class ListingCache {
     this.note(scope, { path, subtree: false });
     this.remove(this.resolve(scope, path));
     this.aliases.delete(slotKey(scope, path));
+    this.oversized.delete(slotKey(scope, path));
   }
 
   /** Forgets the listing of `path` and of every folder inside it, as after it is deleted. */
@@ -298,10 +319,13 @@ export class ListingCache {
       if (slot.scope === scope && isWithin(slot.listing.path, path, "posix")) this.remove(key);
     }
     const prefix = `${scope}\n`;
+    const inside = (key: string) =>
+      key.startsWith(prefix) && isWithin(key.slice(prefix.length), path, "posix");
     for (const asked of [...this.aliases.keys()]) {
-      if (asked.startsWith(prefix) && isWithin(asked.slice(prefix.length), path, "posix")) {
-        this.aliases.delete(asked);
-      }
+      if (inside(asked)) this.aliases.delete(asked);
+    }
+    for (const key of [...this.oversized]) {
+      if (inside(key)) this.oversized.delete(key);
     }
   }
 
@@ -313,12 +337,16 @@ export class ListingCache {
     for (const [key, slot] of [...this.slots]) {
       if (slot.scope === scope) this.remove(key);
     }
+    for (const key of [...this.oversized]) {
+      if (key.startsWith(`${scope}\n`)) this.oversized.delete(key);
+    }
   }
 
   clear(): void {
     for (const ticket of this.pending) ticket.outdated = true;
     this.slots.clear();
     this.aliases.clear();
+    this.oversized.clear();
     this.entryTotal = 0;
   }
 

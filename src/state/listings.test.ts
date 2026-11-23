@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { remoteSource } from "../lib/fileSource";
-import { listingScope } from "../lib/listingCache";
+import { LISTING_CACHE_LIMITS, listingScope } from "../lib/listingCache";
 import { SAVED_RETENTION_MILLIS } from "../lib/listingShare";
 import { DEFAULT_SETTINGS } from "../lib/settings";
 import type { ConnectProfile, DirListing, FileEntry, SessionInfo } from "../lib/types";
@@ -243,6 +243,19 @@ describe("panes left showing a folder that changed", () => {
     remember(SERVER, "/var");
     vi.advanceTimersByTime(1000);
     expect(later.reloads).toBe(0);
+  });
+
+  it("are left alone when a folder too large to remember was listed since", () => {
+    know(server("s1"));
+    const huge = pane("a", "s1", "/srv/huge");
+    forgetListing("s1", "/srv/huge");
+    const names = Array.from(
+      { length: LISTING_CACHE_LIMITS.entries + 1 },
+      (_, index) => `${index}`,
+    );
+    expect(cache.put(SERVER, listing("/srv/huge", names))).toBe(false);
+    vi.advanceTimersByTime(1000);
+    expect(huge.reloads).toBe(0);
   });
 
   it("reload when they are inside a folder that was moved or deleted", () => {

@@ -143,6 +143,31 @@ describe("ListingCache", () => {
     expect(cache.entryCount).toBe(0);
   });
 
+  it("tells a folder too large to keep was listed, until it changes", () => {
+    const cache = new ListingCache({ folders: 10, entries: 2 });
+    const big = () => listing("/srv/big", ["1", "2", "3"]);
+    expect(cache.listedSinceChange(SERVER, "/srv/big")).toBe(false);
+    cache.put(SERVER, big());
+    expect(cache.has(SERVER, "/srv/big")).toBe(false);
+    expect(cache.listedSinceChange(SERVER, "/srv/big")).toBe(true);
+    cache.invalidate(SERVER, "/srv/big");
+    expect(cache.listedSinceChange(SERVER, "/srv/big")).toBe(false);
+    cache.put(SERVER, big());
+    cache.invalidateSubtree(SERVER, "/srv");
+    expect(cache.listedSinceChange(SERVER, "/srv/big")).toBe(false);
+    cache.put(SERVER, big());
+    cache.dropScope(SERVER);
+    expect(cache.listedSinceChange(SERVER, "/srv/big")).toBe(false);
+    // An answer from before a change does not count.
+    const before = cache.begin(SERVER, "/srv/big");
+    cache.invalidate(SERVER, "/srv/big");
+    cache.put(SERVER, big(), before);
+    expect(cache.listedSinceChange(SERVER, "/srv/big")).toBe(false);
+    // Nor does one for another folder.
+    cache.put(SERVER, big());
+    expect(cache.listedSinceChange(SERVER, "/srv")).toBe(false);
+  });
+
   it("forgets one folder, or a folder with everything inside it", () => {
     const cache = new ListingCache();
     for (const path of ["/srv", "/srv/www", "/srv/www/css", "/srv/www2", "/var"]) {
