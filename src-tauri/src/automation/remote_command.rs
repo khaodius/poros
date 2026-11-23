@@ -56,8 +56,10 @@ pub struct CommandResult {
 }
 
 impl CommandResult {
+    /// Only a command the server reported as exiting with status 0 succeeded: a channel that
+    /// closes with no status, as when the connection drops, says nothing about the command.
     pub fn succeeded(&self) -> bool {
-        !self.stopped && self.signal.is_none() && self.exit_status.unwrap_or(0) == 0
+        !self.stopped && self.signal.is_none() && self.exit_status == Some(0)
     }
 
     pub fn describe(&self) -> String {
@@ -67,8 +69,9 @@ impl CommandResult {
             format!("ended by signal {signal}")
         } else {
             match self.exit_status {
-                Some(0) | None => "finished".into(),
+                Some(0) => "finished".into(),
                 Some(status) => format!("exited with status {status}"),
+                None => "ended without an exit status".into(),
             }
         }
     }
@@ -308,5 +311,9 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(stopped.describe(), "stopped");
+        // The connection went away before the server said how the command ended.
+        let cut_off = CommandResult::default();
+        assert!(!cut_off.succeeded());
+        assert_eq!(cut_off.describe(), "ended without an exit status");
     }
 }

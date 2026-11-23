@@ -1935,6 +1935,70 @@ async fn runs_commands_on_the_server() {
     fixture.close().await;
 }
 
+/// A SOCKS5 proxy that drops every connection it carries once `cut` is cancelled, as when the
+/// network goes away.
+async fn start_severable_proxy(cut: CancellationToken) -> Proxy {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        while let Ok((client, _)) = listener.accept().await {
+            let cut = cut.clone();
+            tokio::spawn(async move {
+                if let Some((mut client, mut server)) =
+                    accept_tunnel(ProxyKind::Socks5, client).await
+                {
+                    tokio::select! {
+                        _ = cut.cancelled() => {}
+                        _ = tokio::io::copy_bidirectional(&mut client, &mut server) => {}
+                    }
+                }
+            });
+        }
+    });
+    Proxy {
+        kind: ProxyKind::Socks5,
+        host: "127.0.0.1".into(),
+        port,
+        username: String::new(),
+        password: String::new(),
+        remote_dns: true,
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_command_cut_off_by_a_lost_connection_is_not_reported_as_finished() {
+    let Some(server) = server() else { return };
+    let (_known_hosts, manager) = trusted_manager(&server).await;
+    let cut = CancellationToken::new();
+    let proxy = start_severable_proxy(cut.clone()).await;
+    let info = manager
+        .connect(routed(&server, Some(proxy), Vec::new()), None, OWNER)
+        .await
+        .unwrap();
+    let session = manager.get(&info.id).await.unwrap();
+
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        cut.cancel();
+    });
+    let started = Instant::now();
+    let cut_off = remote_command::run_on(
+        &session,
+        "sleep 30",
+        None,
+        &CancellationToken::new(),
+        |_, _| {},
+    )
+    .await
+    .unwrap();
+    assert!(started.elapsed() < Duration::from_secs(20));
+    assert_eq!(cut_off.exit_status, None);
+    assert!(!cut_off.stopped);
+    assert!(!cut_off.succeeded());
+    assert_eq!(cut_off.describe(), "ended without an exit status");
+    let _ = manager.disconnect(&info.id).await;
+}
+
 /// Saved connections in these tests use keys, so no secret is ever stored.
 struct NoSecrets;
 
