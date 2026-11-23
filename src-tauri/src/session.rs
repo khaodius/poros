@@ -152,6 +152,7 @@ impl Session {
             protocol: self.protocol(),
             profile: self.profile.clone(),
             host_key_fingerprint: self.host_key_fingerprint.clone(),
+            vault_root: self.vault().map(|vault| vault.root().to_string()),
         }
     }
 }
@@ -166,6 +167,8 @@ pub struct RemoteTarget {
     protocol: Protocol,
     profile: ConnectProfile,
     host_key_fingerprint: String,
+    /// The vault's folder, for the session of an unlocked vault.
+    vault_root: Option<String>,
 }
 
 impl RemoteTarget {
@@ -636,6 +639,38 @@ impl SessionManager {
                         .is_some_and(|vault| vault.root() == root && !vault.is_locked())
             })
             .cloned()
+    }
+
+    /// The session to reach a target's files through now: its own while it is open, else an open
+    /// session to the same account, such as the one a reconnect or connecting again opened, in
+    /// whichever window. A vault's files are reached through the vault alone, unlocked again
+    /// when it was locked, never through its server's session.
+    pub async fn reach(&self, target: &RemoteTarget) -> AppResult<Arc<Session>> {
+        let error = match self.get(&target.session_id).await {
+            Ok(session) => return Ok(session),
+            Err(error) => error,
+        };
+        let stand_in = match &target.vault_root {
+            Some(root) => self.find_vault(&target.profile, root).await,
+            None => self.find_live(&target.profile, None).await,
+        };
+        if let Some(stand_in) = stand_in.filter(|session| session.id != target.session_id) {
+            if let Ok(session) = self.get(&stand_in.id).await {
+                return Ok(session);
+            }
+        }
+        if error.kind != ErrorKind::SessionNotFound {
+            return Err(error);
+        }
+        let advice = if target.vault_root.is_some() {
+            "is locked. Unlock the vault again"
+        } else {
+            "is no longer connected. Connect to it again"
+        };
+        Err(AppError::new(
+            ErrorKind::SessionNotFound,
+            format!("{} {advice} to reach this file", target.label),
+        ))
     }
 
     /// The session's details, for a window taking over a tab; the window becomes its owner,

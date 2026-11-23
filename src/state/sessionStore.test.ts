@@ -196,3 +196,36 @@ describe("unlocked vaults", () => {
     );
   });
 });
+
+describe("a server that reconnects", () => {
+  const page = (id: string, sessionId: string): PaneTab => ({
+    id,
+    kind: "editor",
+    documentId: `document-${id}`,
+    name: "index.html",
+    path: "/srv/www/index.html",
+    origin: "deploy@web.example.com",
+    sessionId,
+  });
+
+  it("takes the editors and terminals opened from it along to its new session", async () => {
+    know(server("s1"), server("s2"));
+    show(
+      { id: "files", kind: "remote", sessionId: "s1", path: "/srv/www" },
+      page("page", "s1"),
+      { id: "shell", kind: "terminal", sessionId: "s1", label: "deploy@web.example.com" },
+      page("elsewhere", "s2"),
+    );
+    invoke.mockImplementation(async (command: string) =>
+      command === "reconnect" ? server("s3") : undefined,
+    );
+    await useSessionStore.getState().reconnect("s1");
+
+    expect(allTabs(useLayoutStore.getState().root)).toEqual([
+      { id: "files", kind: "remote", sessionId: "s3", path: "/srv/www" },
+      page("page", "s3"),
+      { id: "shell", kind: "terminal", sessionId: "s3", label: "deploy@web.example.com" },
+      page("elsewhere", "s2"),
+    ]);
+  });
+});

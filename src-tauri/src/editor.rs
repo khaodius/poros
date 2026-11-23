@@ -1,6 +1,7 @@
 //! Text files open in the editor. A document remembers where its file lives, and for a file on
 //! an SFTP server how to reach the server, so it still saves after its session was closed or
-//! dropped. Files on FTP servers and cloud drives go through their session.
+//! dropped. Files on FTP servers and cloud drives go through their session, or through the
+//! session to the same account that took its place, as after a reconnect.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -282,9 +283,10 @@ impl EditorManager {
         Ok(SaveOutcome::Saved { stamp })
     }
 
-    /// Runs a request on the file's session. For an SFTP file it falls back to a connection of
-    /// the document's own once that session is closed or its connection has dropped; FTP
-    /// sessions reconnect by themselves and cloud drives have no connection to lose.
+    /// Runs a request on the file's session, or once that is gone on the session that took its
+    /// place, such as a reconnect's. For an SFTP file it falls back to a connection of the
+    /// document's own when no session reaches the server; FTP sessions reconnect by themselves
+    /// and cloud drives have no connection to lose.
     async fn on_remote(
         &self,
         document: &Document,
@@ -293,7 +295,7 @@ impl EditorManager {
     ) -> AppResult<Reply> {
         let mut own = remote.own_connection.lock().await;
         if own.is_none() {
-            match self.sessions.get(&remote.target.session_id).await {
+            match self.sessions.reach(&remote.target).await {
                 Ok(session) => match session.sftp() {
                     Ok(fs) => match perform(fs, &document.path, &request).await {
                         Err(error) if error.is_connection_lost() => {}

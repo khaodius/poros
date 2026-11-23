@@ -22,7 +22,7 @@ import type { ConnectProfile, SessionInfo } from "../lib/types";
 import { serverSessionId, sessionFamily } from "../lib/vaults";
 import { landingCorner, landingCornerHere, type ScreenPoint } from "../lib/windowAreas";
 import type { DropTarget } from "./dragStore";
-import { askToSave, closeEditorTab } from "./editorActions";
+import { askToSave, closeEditorTab, savedOrDiscarded, unsavedOnlyThrough } from "./editorActions";
 import { getEditor } from "./editorRegistry";
 import { useLayoutStore } from "./layoutStore";
 import { getPane, lastActivePane } from "./paneRegistry";
@@ -163,7 +163,7 @@ export function familyOf(sessionId: string): string[] {
 }
 
 /** Closes a tab, disconnecting its server and locking that server's vaults; asks first when
- * transfers for them are queued or the file it edits has unsaved changes. */
+ * transfers for them are queued or files that only they can save have unsaved changes. */
 export async function requestCloseTab(tabId: string): Promise<void> {
   const layout = useLayoutStore.getState();
   const tab = findTab(layout.root, tabId);
@@ -186,6 +186,11 @@ export async function requestCloseTab(tabId: string): Promise<void> {
     return;
   }
   const [serverId, ...vaultIds] = familyOf(tab.sessionId);
+  const unsaved = unsavedOnlyThrough([serverId, ...vaultIds]);
+  if (unsaved.length > 0) {
+    if (await savedOrDiscarded(unsaved)) await requestCloseTab(tabId);
+    return;
+  }
   const server = useSessionStore.getState().sessions[serverId];
   const confirm = useSettingsStore.getState().settings.interface.confirmCloseWithTransfers;
   const jobsOf = (sessionId: string) => transfers.sessionJobs(sessionId).catch(() => 0);

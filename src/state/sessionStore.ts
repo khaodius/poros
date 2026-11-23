@@ -76,11 +76,34 @@ function tabsShowing(sessionIds: readonly string[]) {
   );
 }
 
-/** Shows the session that replaces `previousId` in the tabs that showed it, where they were. */
+/** Sessions of this window that a reconnect replaced, each with the one that took its place. */
+const replacedBy = new Map<string, string>();
+
+/**
+ * The session that stands for `sessionId` now, for what still names a session a reconnect
+ * replaced, such as transfers queued before it: the one its reconnects led to, or itself.
+ */
+export function currentSessionId(sessionId: string): string {
+  let current = sessionId;
+  for (let next = replacedBy.get(current); next !== undefined; next = replacedBy.get(current)) {
+    current = next;
+  }
+  return current;
+}
+
+/**
+ * Shows the session that replaces `previousId` in the tabs that showed it, where they were. The
+ * editors and terminals opened from it go on with the new session too.
+ */
 function moveTabs(previousId: string, sessionId: string): void {
   for (const tab of tabsShowing([previousId])) {
     const path = getPane(tab.id)?.path() ?? tab.path;
     useLayoutStore.getState().replaceTab(tab.id, { id: tab.id, kind: "remote", sessionId, path });
+  }
+  for (const tab of allTabs(useLayoutStore.getState().root)) {
+    if (tab.kind !== "editor" && tab.kind !== "terminal") continue;
+    if (isRestoring(tab) || tab.sessionId !== previousId) continue;
+    useLayoutStore.getState().replaceTab(tab.id, { ...tab, sessionId });
   }
 }
 
@@ -98,6 +121,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const info = await remote.reconnect(sessionId, approval);
     await remote.disconnect(sessionId).catch(() => undefined);
     forgetRemoteSource(sessionId);
+    replacedBy.set(sessionId, info.id);
     // In one step with the sessions, so no tab is left showing a session that is gone.
     moveTabs(sessionId, info.id);
     const reattached = vaultSessions(get().sessions, sessionId);

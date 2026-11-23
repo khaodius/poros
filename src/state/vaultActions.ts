@@ -6,6 +6,7 @@ import type { Handover } from "../hooks/usePane";
 import { transfers } from "../lib/ipc";
 import { allTabs, isRestoring } from "../lib/layout";
 import { sessionShowing } from "../lib/vaults";
+import { savedOrDiscarded, unsavedOnlyThrough } from "./editorActions";
 import { useLayoutStore } from "./layoutStore";
 import { useLogStore } from "./logStore";
 import { getPane } from "./paneRegistry";
@@ -54,10 +55,16 @@ export async function lockVault(sessionId: string): Promise<void> {
   useLogStore.getState().write("info", `Locked vault ${root}`, parentSessionId);
 }
 
-/** Locks a vault, asking first when transfers for it are still in the queue. */
+/** Locks a vault, asking first when transfers for it are still in the queue or files in it have
+ * unsaved changes, which nothing can save once it is locked. */
 export async function requestLockVault(sessionId: string): Promise<void> {
   const info = useSessionStore.getState().sessions[sessionId]?.info;
   if (!info?.vault) return;
+  const unsaved = unsavedOnlyThrough([sessionId]);
+  if (unsaved.length > 0) {
+    if (await savedOrDiscarded(unsaved)) await requestLockVault(sessionId);
+    return;
+  }
   const confirm = useSettingsStore.getState().settings.interface.confirmCloseWithTransfers;
   const pendingTransfers = confirm ? await transfers.sessionJobs(sessionId).catch(() => 0) : 0;
   if (pendingTransfers > 0) {
