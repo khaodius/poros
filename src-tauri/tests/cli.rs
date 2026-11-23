@@ -289,6 +289,14 @@ fn a_host_key_pin_is_never_replaced() {
     let (code, value) = through(&fingerprint);
     assert_eq!(code, 0, "{value}");
     assert_eq!(value["hostKeyFingerprint"], fingerprint.as_str());
+
+    // A pin that names nothing, as a script exporting an empty POROS_HOST_KEY gives, is none.
+    let output = run
+        .command(&["--json", "info"])
+        .env("POROS_HOST_KEY", " ")
+        .output()
+        .unwrap();
+    assert_eq!(status(&output), 0, "{output:?}");
 }
 
 #[test]

@@ -173,10 +173,16 @@ impl Context {
         };
         // Every attempt is for the same server, signing in another way. `--host-key` names the
         // only key it is accepted with; jump hosts on the way are not covered by it.
+        let pin = self
+            .options
+            .host_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|pin| !pin.is_empty());
         let pinned = plan
             .attempts
             .first()
-            .zip(self.options.host_key.as_deref().map(str::trim))
+            .zip(pin)
             .map(|(profile, fingerprint)| {
                 let (host, port) = profile.server_address();
                 match profile.protocol {
