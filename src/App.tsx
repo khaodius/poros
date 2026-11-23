@@ -94,13 +94,11 @@ function startApp(): Promise<void> {
       useThemeStore.getState().load(),
       useTransferStore.getState().load(),
       // What scheduled runs finish from now on is compared with this, to forget the listings
-      // of folders they change.
-      isMainWindow()
-        ? useScheduleStore
-            .getState()
-            .load()
-            .catch((caught) => reportError("Could not read scheduled tasks", caught))
-        : undefined,
+      // of folders they change. Every window looks, for the sessions of its own tabs.
+      useScheduleStore
+        .getState()
+        .load()
+        .catch((caught) => reportError("Could not read scheduled tasks", caught)),
     ]);
     if (isMainWindow()) {
       const restored = await restoreWorkspace();
