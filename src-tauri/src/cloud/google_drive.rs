@@ -2,6 +2,8 @@
 //! several files of the same name, so paths are resolved one folder at a time (with recent
 //! folders cached) and the most recently changed file wins a name clash, folders first.
 
+mod sharing;
+
 use std::collections::HashSet;
 use std::ops::Range;
 use std::sync::Arc;
@@ -31,6 +33,8 @@ const FOLDER_TYPE: &str = "application/vnd.google-apps.folder";
 /// Google Docs, Sheets, shortcuts and the like: Drive items without file content.
 const NATIVE_TYPE_PREFIX: &str = "application/vnd.google-apps.";
 const FILE_FIELDS: &str = "id,name,mimeType,size,modifiedTime";
+/// My Drive's own folder, with the account it belongs to.
+const ROOT_FIELDS: &str = "id,name,mimeType,size,modifiedTime,owners(emailAddress)";
 const LIST_FIELDS: &str = "nextPageToken,files(id,name,mimeType,size,modifiedTime)";
 /// Folders before files, then the most recently changed, so a name clash always resolves to
 /// the same item.
@@ -97,6 +101,21 @@ impl DriveFile {
 }
 
 #[derive(Debug, Deserialize)]
+struct Root {
+    #[serde(flatten)]
+    folder: DriveFile,
+    #[serde(default)]
+    owners: Vec<Owner>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Owner {
+    #[serde(default)]
+    email_address: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct FileList {
     #[serde(default)]
@@ -113,6 +132,9 @@ fn quoted(value: &str) -> String {
 pub struct DriveFs {
     api: Api,
     root: DriveFile,
+    /// The Google Workspace domain of the account, which links can be limited to; none for
+    /// a personal account.
+    organization: Option<String>,
     folders: FolderCache,
     /// Parallel uploads would otherwise each create a missing folder, and Drive would keep
     /// every copy.
@@ -121,15 +143,21 @@ pub struct DriveFs {
 
 impl DriveFs {
     pub async fn connect(api: Api) -> AppResult<Self> {
-        let root: DriveFile = api
+        let root: Root = api
             .json(&|http| {
                 http.get(format!("{FILES_URL}/root"))
-                    .query(&[("fields", FILE_FIELDS)])
+                    .query(&[("fields", ROOT_FIELDS)])
             })
             .await?;
+        let organization = root
+            .owners
+            .iter()
+            .filter_map(|owner| owner.email_address.as_deref())
+            .find_map(sharing::organization_of);
         Ok(Self {
             api,
-            root,
+            root: root.folder,
+            organization,
             folders: FolderCache::default(),
             folder_creation: tokio::sync::Mutex::new(()),
         })
@@ -246,6 +274,10 @@ impl RemoteFileSystem for DriveFs {
             ranged_reads: true,
             resumable_writes: false,
         }
+    }
+
+    fn link_sharing(&self) -> Option<&dyn crate::share::LinkSharing> {
+        Some(self)
     }
 
     async fn canonicalize(&self, path: &str) -> AppResult<String> {
@@ -638,5 +670,24 @@ mod tests {
         .unwrap();
         assert!(document.is_native());
         assert_eq!(document.kind(), EntryKind::Other);
+    }
+
+    #[test]
+    fn reads_the_account_from_the_root_folder() {
+        let root: Root = serde_json::from_str(
+            r#"{"id":"0AMrootid","name":"My Drive","mimeType":"application/vnd.google-apps.folder","modifiedTime":"2024-05-01T10:00:00.000Z","owners":[{"emailAddress":"ada@example.com"}]}"#,
+        )
+        .unwrap();
+        assert!(root.folder.is_folder());
+        assert_eq!(root.folder.id, "0AMrootid");
+        assert_eq!(
+            root.owners[0].email_address.as_deref(),
+            Some("ada@example.com")
+        );
+        let bare: Root = serde_json::from_str(
+            r#"{"id":"root","name":"My Drive","mimeType":"application/vnd.google-apps.folder"}"#,
+        )
+        .unwrap();
+        assert!(bare.owners.is_empty());
     }
 }

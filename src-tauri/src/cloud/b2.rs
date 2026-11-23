@@ -28,7 +28,11 @@ use crate::protocol::{
     WriteStream,
 };
 use crate::remote_path;
+use crate::share::{
+    self, Audience, Expiry, LinkKind, LinkSharing, ShareCapabilities, ShareLink, ShareOptions,
+};
 use crate::ssh::ConnectProfile;
+use crate::timestamp;
 
 const AUTHORIZE_URL: &str = "https://api.backblazeb2.com/b2api/v4/b2_authorize_account";
 const API_PATH: &str = "/b2api/v4";
@@ -44,6 +48,10 @@ const COPY_PART: u64 = 1024 * 1024 * 1024;
 const MAX_PARTS: u64 = 10_000;
 /// Lets B2 choose the content type from the file name.
 const AUTO_CONTENT_TYPE: &str = "b2/x-auto";
+/// What an application key needs to make a link to a file in a private bucket.
+const SHARE_CAPABILITY: &str = "shareFiles";
+/// A bucket whose files anyone can download by address.
+const PUBLIC_BUCKET: &str = "allPublic";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -77,6 +85,9 @@ struct Allowed {
     /// `None` for every bucket in the account.
     #[serde(default)]
     buckets: Option<Vec<AllowedBucket>>,
+    /// What the key may do, such as `listFiles` and `shareFiles`.
+    #[serde(default)]
+    capabilities: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -91,6 +102,9 @@ struct AllowedBucket {
 struct Bucket {
     bucket_id: String,
     bucket_name: String,
+    /// `allPublic`, `allPrivate` and a few kinds Backblaze makes itself.
+    #[serde(default)]
+    bucket_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -182,6 +196,13 @@ struct CopiedPart {
     content_sha1: String,
 }
 
+/// A token that downloads the files whose names start with the prefix it was made for.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DownloadAuthorization {
+    authorization_token: String,
+}
+
 #[derive(Debug, Default, Deserialize)]
 struct ErrorBody {
     #[serde(default)]
@@ -221,6 +242,49 @@ fn encode_name(key: &str) -> String {
         .join("/")
 }
 
+/// Where a file is downloaded by name, under the account's download address.
+fn download_path(bucket: &str, key: &str) -> String {
+    format!(
+        "/file/{}{}",
+        percent_encoding::utf8_percent_encode(bucket, super::URL_SEGMENT),
+        super::encode_path(key)
+    )
+}
+
+/// The address of a file in a public bucket, which anyone can open.
+fn public_address(download_url: &str, bucket: &str, key: &str) -> String {
+    format!(
+        "{}{}",
+        download_url.trim_end_matches('/'),
+        download_path(bucket, key)
+    )
+}
+
+/// A download address that carries its own authorization, for a file in a private bucket.
+/// B2 takes the token as the `Authorization` query parameter, escaped like any other.
+fn authorized_address(download_url: &str, bucket: &str, key: &str, token: &str) -> String {
+    format!(
+        "{}?Authorization={}",
+        public_address(download_url, bucket, key),
+        percent_encoding::utf8_percent_encode(token, super::URL_SEGMENT)
+    )
+}
+
+/// A key's capabilities, when Backblaze listed them, have to include sharing.
+fn may_share(key_capabilities: &[String]) -> bool {
+    key_capabilities.is_empty()
+        || key_capabilities
+            .iter()
+            .any(|capability| capability == SHARE_CAPABILITY)
+}
+
+fn files_only(path: &str) -> AppError {
+    AppError::unsupported(
+        "Backblaze B2 makes links for single files, not for folders or buckets. Select the files inside instead.",
+    )
+    .with_path(path)
+}
+
 pub struct B2Fs {
     http: Client,
     key_id: String,
@@ -231,6 +295,8 @@ pub struct B2Fs {
     reauthorizing: tokio::sync::Mutex<()>,
     /// The buckets a restricted key can reach; `None` for all of the account's.
     allowed: Option<Vec<AllowedBucket>>,
+    /// What the key may do; empty when Backblaze did not say.
+    key_capabilities: Vec<String>,
     minimum_part_size: u64,
     home: String,
     bucket_ids: Mutex<HashMap<String, String>>,
@@ -248,6 +314,7 @@ impl B2Fs {
         let authorization = authorize(&http, &key_id, &key).await?;
         let storage = authorization.api_info.storage_api;
         let allowed = storage.allowed.buckets;
+        let key_capabilities = storage.allowed.capabilities;
         let (initial_bucket, _) = split(profile.initial_path.as_deref().unwrap_or_default());
         // A key for a single bucket starts in it.
         let only_bucket = match allowed.as_deref() {
@@ -267,6 +334,7 @@ impl B2Fs {
             })),
             reauthorizing: tokio::sync::Mutex::new(()),
             allowed,
+            key_capabilities,
             minimum_part_size: storage.absolute_minimum_part_size,
             home: home_bucket
                 .as_deref()
@@ -386,6 +454,7 @@ impl B2Fs {
                         Some(name) => buckets.push(Bucket {
                             bucket_id: bucket.id.clone(),
                             bucket_name: name.clone(),
+                            bucket_type: None,
                         }),
                         None => {
                             let body =
@@ -811,6 +880,37 @@ impl B2Fs {
     fn bucket_and_key(&self, path: &str) -> (Option<String>, String) {
         split(&self.resolve(path))
     }
+
+    /// Whether the bucket's files can be downloaded by address alone. A key that may not
+    /// read the bucket's settings gets `false`, and with it a link that works either way.
+    async fn bucket_is_public(&self, name: &str) -> bool {
+        let body = json!({ "accountId": self.account_id, "bucketName": name });
+        self.call::<BucketList>("b2_list_buckets", body, &format!("/{name}"), true)
+            .await
+            .ok()
+            .and_then(|list| {
+                list.buckets
+                    .into_iter()
+                    .find(|bucket| bucket.bucket_name == name)
+            })
+            .is_some_and(|bucket| bucket.bucket_type.as_deref() == Some(PUBLIC_BUCKET))
+    }
+
+    fn public_link(&self, bucket: &str, key: &str) -> ShareLink {
+        ShareLink {
+            id: String::new(),
+            url: public_address(&self.session().download_url, bucket, key),
+            kind: LinkKind::View,
+            audience: Audience::Anyone,
+            expires_at: None,
+            has_password: false,
+            revocable: false,
+            notes: vec![
+                "This bucket is public, so the address works for as long as the file is there. Make the bucket private in Backblaze to share with links that end."
+                    .to_string(),
+            ],
+        }
+    }
 }
 
 async fn authorize(http: &Client, key_id: &str, key: &str) -> AppResult<Authorization> {
@@ -917,6 +1017,10 @@ impl RemoteFileSystem for B2Fs {
             ranged_reads: true,
             resumable_writes: false,
         }
+    }
+
+    fn link_sharing(&self) -> Option<&dyn LinkSharing> {
+        Some(self)
     }
 
     async fn canonicalize(&self, path: &str) -> AppResult<String> {
@@ -1157,11 +1261,7 @@ impl RemoteFileSystem for B2Fs {
             };
             format!("bytes={}-{last}", range.start)
         });
-        let file_path = format!(
-            "/file/{}{}",
-            percent_encoding::utf8_percent_encode(&bucket, super::URL_SEGMENT),
-            super::encode_path(&key)
-        );
+        let file_path = download_path(&bucket, &key);
         let response = self
             .send(&path, true, &|session| {
                 let request = self
@@ -1214,6 +1314,116 @@ impl RemoteFileSystem for B2Fs {
             sha1s: Vec::new(),
         };
         Ok(Box::new(ChunkedUpload::new(target, request.size)))
+    }
+}
+
+#[async_trait]
+impl LinkSharing for B2Fs {
+    fn share_capabilities(&self) -> ShareCapabilities {
+        ShareCapabilities {
+            kinds: vec![LinkKind::View],
+            audiences: vec![Audience::Anyone],
+            expiry: Expiry::Required,
+            max_lifetime_secs: Some(share::MAX_SIGNED_LIFETIME_SECS),
+            password: false,
+            revocable: false,
+            folders: false,
+            organization: None,
+        }
+    }
+
+    /// A file in a public bucket already has an address anyone can open.
+    async fn share_links(&self, path: &str) -> AppResult<Vec<ShareLink>> {
+        let path = protocol::normalize(&self.resolve(path));
+        let (Some(bucket), key) = split(&path) else {
+            return Ok(Vec::new());
+        };
+        if key.is_empty() || !self.bucket_is_public(&bucket).await {
+            return Ok(Vec::new());
+        }
+        let bucket_id = self.existing_bucket(&bucket).await?;
+        match self.file_at(&bucket_id, &key, &path).await? {
+            Some(_) => Ok(vec![self.public_link(&bucket, &key)]),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    /// The plain address in a public bucket. In a private one, a download authorization
+    /// for the file's name, added to the address: B2 keeps no record of it, so the link
+    /// cannot be taken back and works until it expires or the key is deleted.
+    async fn create_share_link(&self, path: &str, options: &ShareOptions) -> AppResult<ShareLink> {
+        let path = protocol::normalize(&self.resolve(path));
+        let (Some(bucket), key) = split(&path) else {
+            return Err(files_only(&path));
+        };
+        if key.is_empty() {
+            return Err(files_only(&path));
+        }
+        let bucket_id = self.existing_bucket(&bucket).await?;
+        // The file and whatever comes next under its name.
+        let page = self
+            .list_page(&bucket_id, &key, false, Some(&key), 2, &path)
+            .await?;
+        let mut names = page
+            .files
+            .iter()
+            .filter(|file| file.is_file())
+            .map(|file| file.file_name.as_str());
+        if names.next() != Some(key.as_str()) {
+            return Err(match self.folder_exists(&bucket_id, &key, &path).await? {
+                true => files_only(&path),
+                false => super::not_found(&path),
+            });
+        }
+        let also_opened = names.next();
+        if self.bucket_is_public(&bucket).await {
+            return Ok(self.public_link(&bucket, &key));
+        }
+        if !may_share(&self.key_capabilities) {
+            return Err(AppError::new(
+                ErrorKind::PermissionDenied,
+                "This application key cannot make links: it lacks the shareFiles capability. Create a key that has it in Backblaze, then connect with that key.",
+            )
+            .with_path(path));
+        }
+        let lifetime_secs = options
+            .lifetime_secs
+            .unwrap_or(share::DEFAULT_LIFETIME_SECS)
+            .clamp(1, share::MAX_SIGNED_LIFETIME_SECS);
+        let requested_at = timestamp::now_seconds();
+        // B2 authorizes by the start of the name, and the whole name is the narrowest start.
+        let body = json!({
+            "bucketId": bucket_id,
+            "fileNamePrefix": key,
+            "validDurationInSeconds": lifetime_secs,
+        });
+        let authorization: DownloadAuthorization = self
+            .call("b2_get_download_authorization", body, &path, true)
+            .await?;
+        let notes = also_opened
+            .map(|other| {
+                format!(
+                    "The link's token also opens other files whose names start with this file's name, such as {}.",
+                    remote_path::file_name(other)
+                )
+            })
+            .into_iter()
+            .collect();
+        Ok(ShareLink {
+            id: String::new(),
+            url: authorized_address(
+                &self.session().download_url,
+                &bucket,
+                &key,
+                &authorization.authorization_token,
+            ),
+            kind: LinkKind::View,
+            audience: Audience::Anyone,
+            expires_at: Some(requested_at.saturating_add_unsigned(lifetime_secs)),
+            has_password: false,
+            revocable: false,
+            notes,
+        })
     }
 }
 
@@ -1313,6 +1523,7 @@ mod tests {
         assert_eq!(storage.api_url, "https://api005.backblazeb2.com");
         assert_eq!(storage.absolute_minimum_part_size, 5_000_000);
         assert!(storage.allowed.buckets.is_none());
+        assert_eq!(storage.allowed.capabilities, ["listBuckets"]);
         let restricted: Authorization = serde_json::from_str(
             r#"{"accountId":"a1","authorizationToken":"t","apiInfo":{"storageApi":{"apiUrl":"u","downloadUrl":"d","allowed":{"buckets":[{"id":"b1","name":"photos"},{"id":"b2","name":null}],"capabilities":[]}}}}"#,
         )
@@ -1378,5 +1589,79 @@ mod tests {
         assert!(upload_should_retry(StatusCode::SERVICE_UNAVAILABLE));
         assert!(upload_should_retry(StatusCode::UNAUTHORIZED));
         assert!(!upload_should_retry(StatusCode::BAD_REQUEST));
+    }
+
+    #[test]
+    fn builds_download_addresses() {
+        let download_url = "https://f005.backblazeb2.com";
+        assert_eq!(
+            public_address(download_url, "photos", "2024/a.jpg"),
+            "https://f005.backblazeb2.com/file/photos/2024/a.jpg"
+        );
+        // Slashes stay; a plus sign must be escaped, or B2 reads it as a space.
+        assert_eq!(
+            public_address(download_url, "photos", "a b/c+d&\u{e9}=#?.txt"),
+            "https://f005.backblazeb2.com/file/photos/a%20b/c%2Bd%26%C3%A9%3D%23%3F.txt"
+        );
+        assert_eq!(
+            public_address(
+                "https://f005.backblazeb2.com/",
+                "photos",
+                "\u{81ea}\u{7531}.txt"
+            ),
+            "https://f005.backblazeb2.com/file/photos/%E8%87%AA%E7%94%B1.txt"
+        );
+        assert_eq!(
+            authorized_address(
+                download_url,
+                "photos",
+                "kitten 1.jpg",
+                "3_20160803004041_53982a92f631a8c7303e3266_d940c7f5ee17cd1de3758aaacf1024188bc0cd0b_000_20160804004041_0006_dnld"
+            ),
+            "https://f005.backblazeb2.com/file/photos/kitten%201.jpg?Authorization=3_20160803004041_53982a92f631a8c7303e3266_d940c7f5ee17cd1de3758aaacf1024188bc0cd0b_000_20160804004041_0006_dnld"
+        );
+        // Nothing in a token may end the parameter or start another.
+        assert_eq!(
+            authorized_address(download_url, "photos", "a.jpg", "to+ken/with=odd&chars#"),
+            "https://f005.backblazeb2.com/file/photos/a.jpg?Authorization=to%2Bken%2Fwith%3Dodd%26chars%23"
+        );
+    }
+
+    #[test]
+    fn reads_what_sharing_needs_from_the_service() {
+        let authorization: DownloadAuthorization = serde_json::from_str(
+            r#"{"authorizationToken":"3_2016_dnld","bucketId":"a71f544e781e6891531b001a","fileNamePrefix":"public"}"#,
+        )
+        .unwrap();
+        assert_eq!(authorization.authorization_token, "3_2016_dnld");
+        let list: BucketList = serde_json::from_str(
+            r#"{"buckets":[
+                {"accountId":"a","bucketId":"b1","bucketInfo":{},"bucketName":"Kitten-Videos","bucketType":"allPrivate","lifecycleRules":[]},
+                {"accountId":"a","bucketId":"b2","bucketName":"Puppy-Videos","bucketType":"allPublic"},
+                {"accountId":"a","bucketId":"b3","bucketName":"Vacation-Pictures"}
+            ]}"#,
+        )
+        .unwrap();
+        assert_eq!(list.buckets[0].bucket_type.as_deref(), Some("allPrivate"));
+        assert_eq!(list.buckets[1].bucket_type.as_deref(), Some(PUBLIC_BUCKET));
+        assert_eq!(list.buckets[2].bucket_type, None);
+    }
+
+    #[test]
+    fn needs_the_share_capability_when_the_key_lists_its_own() {
+        let capabilities =
+            |names: &[&str]| -> Vec<String> { names.iter().map(|name| name.to_string()).collect() };
+        assert!(may_share(&capabilities(&[
+            "listFiles",
+            "readFiles",
+            "shareFiles"
+        ])));
+        assert!(!may_share(&capabilities(&[
+            "listBuckets",
+            "listFiles",
+            "readFiles"
+        ])));
+        // An answer without the list leaves the decision to B2.
+        assert!(may_share(&[]));
     }
 }
