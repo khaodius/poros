@@ -31,7 +31,7 @@ use crate::ftp::FtpFs;
 use crate::model::{EntryKind, LinkTarget};
 use crate::protocol::{Protocol, RemoteFileSystem};
 use crate::settings::TransferSettings;
-use crate::sftp::{RemoteFs, RemoteStat};
+use crate::sftp::{Opened, RemoteFs, RemoteStat};
 use crate::ssh::{self, HostKeyApproval, SshHandle};
 use crate::{local, remote_path, session};
 
@@ -541,6 +541,13 @@ impl JobContext<'_> {
 
     fn retarget(&self, target: &str, name: String) {
         self.job().retarget(target, name);
+    }
+
+    /// How a handle this transfer wrote to is closed.
+    pub(super) fn written(&self) -> Opened {
+        Opened::ForWriting {
+            sync: self.settings.flush_to_disk,
+        }
     }
 
     /// What the first worker read as it closed, worth keeping only if no other worker joined.
@@ -1132,7 +1139,7 @@ async fn download(
     let copied = copy::download(&context.copy_context(), &handle, &mut file).await;
     let (stat, _) = context
         .fs
-        .close_and_stat(handle, false, &context.run.cancel)
+        .close_and_stat(handle, Opened::ForReading, &context.run.cancel)
         .await;
     copied?;
     context.keep_closing_stat(stat);
@@ -1275,7 +1282,7 @@ async fn upload(
     );
     let copied = copy::upload(&context.copy_context(), &mut file, &handle).await;
     let (stat, closed) = fs
-        .close_and_stat(handle, context.settings.flush_to_disk, &context.run.cancel)
+        .close_and_stat(handle, context.written(), &context.run.cancel)
         .await;
     copied?;
     closed?;
@@ -1402,7 +1409,7 @@ async fn help(context: &JobContext<'_>) -> AppResult<RunOutcome> {
             let copied = copy::upload(&context.copy_context(), &mut file, &handle).await;
             let (_, closed) = context
                 .fs
-                .close_and_stat(handle, context.settings.flush_to_disk, &context.run.cancel)
+                .close_and_stat(handle, context.written(), &context.run.cancel)
                 .await;
             copied?;
             closed?;

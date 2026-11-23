@@ -35,10 +35,21 @@ pub use ops::EntryStat;
 use stall::{StallGuardedSession, TrackedStream};
 
 const PARALLEL_REQUESTS: usize = 16;
+
+/// How a transfer used the handle it closes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Opened {
+    /// Read from: closing it flushes nothing, so the server has `STALL_TIMEOUT` to answer.
+    ForReading,
+    /// Written to, and flushed to the server's disk first when `sync` and offered. The server
+    /// has `FLUSH_TIMEOUT` to finish the file.
+    ForWriting { sync: bool },
+}
 /// How long a connection may move no bytes while requests wait before they fail.
 const STALL_TIMEOUT: Duration = Duration::from_secs(30);
-/// The same for the flush and close that end a transfer: a server rightly says nothing while it
-/// writes a large file out to a slow disk, or completes an object it was storing elsewhere.
+/// The same for the flush and close that end a transfer that wrote: a server rightly says
+/// nothing while it writes a large file out to a slow disk, or completes an object it was
+/// storing elsewhere.
 const FLUSH_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// The library's own deadline runs from when a request is queued, so on a slow link it passes
 /// before requests deep in the pipeline are even sent. This many seconds overflows the
@@ -439,17 +450,20 @@ impl RemoteFs {
 
     /// Closes a handle, reading its attributes in the same round trip and, when asked and
     /// offered, flushing the file to the server's disk first. The attributes are `None` when
-    /// the server would not report them. The server may take minutes to flush, so this waits
-    /// for it, though not past `cancel`.
+    /// the server would not report them. A server may take minutes to finish a file written to,
+    /// so this waits for it, though not past `cancel`.
     pub async fn close_and_stat(
         &self,
         handle: String,
-        sync: bool,
+        opened: Opened,
         cancel: &CancellationToken,
     ) -> (Option<RemoteStat>, AppResult<()>) {
-        let fsync = sync && self.fsync;
+        let (fsync, limit) = match opened {
+            Opened::ForReading => (false, STALL_TIMEOUT),
+            Opened::ForWriting { sync } => (sync && self.fsync, FLUSH_TIMEOUT),
+        };
         let handle = handle.as_str();
-        let replies = self.raw.patiently(FLUSH_TIMEOUT, |session| async move {
+        let replies = self.raw.patiently(limit, |session| async move {
             let synced = async {
                 if fsync {
                     session.fsync(handle).await.map(|_| ())
@@ -910,8 +924,9 @@ mod tests {
     use tokio::time::Instant;
 
     /// Answers like a server at the far end of a slow link: one request at a time, each read
-    /// after `delay`, nothing more after `reads_answered` reads, and a flush of a file to its
-    /// disk (`fsync@openssh.com`) after `flush`.
+    /// after `delay`, nothing more after `reads_answered` reads, and the first request that ends
+    /// a file (its flush to disk, `fsync@openssh.com`, or else the `fstat` before its close)
+    /// after `flush`.
     async fn slow_server(
         mut stream: DuplexStream,
         delay: Duration,
@@ -927,6 +942,7 @@ mod tests {
             })
         };
         let mut answered = 0;
+        let mut flushed = false;
         loop {
             let Ok(length) = stream.read_u32().await else {
                 return;
@@ -959,16 +975,22 @@ mod tests {
                     })
                 }
                 Packet::Extended(request) if request.request == extensions::FSYNC => {
+                    flushed = true;
                     tokio::time::sleep(flush).await;
                     ok(request.id)
                 }
-                Packet::Fstat(request) => Packet::Attrs(Attrs {
-                    id: request.id,
-                    attrs: FileAttributes {
-                        size: Some(1024),
-                        ..Default::default()
-                    },
-                }),
+                Packet::Fstat(request) => {
+                    if !std::mem::replace(&mut flushed, true) {
+                        tokio::time::sleep(flush).await;
+                    }
+                    Packet::Attrs(Attrs {
+                        id: request.id,
+                        attrs: FileAttributes {
+                            size: Some(1024),
+                            ..Default::default()
+                        },
+                    })
+                }
                 Packet::Close(request) => ok(request.id),
                 other => panic!("unexpected request {other:?}"),
             };
@@ -1023,7 +1045,11 @@ mod tests {
     async fn flush(fs: &RemoteFs) -> ((Option<RemoteStat>, AppResult<()>), Duration) {
         let started = Instant::now();
         let closed = fs
-            .close_and_stat("file".into(), true, &CancellationToken::new())
+            .close_and_stat(
+                "file".into(),
+                Opened::ForWriting { sync: true },
+                &CancellationToken::new(),
+            )
             .await;
         (closed, started.elapsed())
     }
@@ -1075,6 +1101,18 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn closing_a_file_read_from_waits_only_the_stall_limit() {
+        let fs = connect(Duration::from_secs(5), 0, FLUSH_TIMEOUT * 2).await;
+        let started = Instant::now();
+        let (stat, closed) = fs
+            .close_and_stat("file".into(), Opened::ForReading, &CancellationToken::new())
+            .await;
+        assert_eq!(stat, None);
+        assert_eq!(closed.unwrap_err().kind, ErrorKind::Timeout);
+        assert_eq!(started.elapsed(), STALL_TIMEOUT);
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn a_pause_does_not_wait_for_a_flush() {
         let fs = connect(Duration::from_secs(5), 0, Duration::from_secs(300)).await;
         let cancel = CancellationToken::new();
@@ -1084,7 +1122,9 @@ mod tests {
             pause.cancel();
         });
         let started = Instant::now();
-        let (_, closed) = fs.close_and_stat("file".into(), true, &cancel).await;
+        let (_, closed) = fs
+            .close_and_stat("file".into(), Opened::ForWriting { sync: true }, &cancel)
+            .await;
         assert_eq!(closed.unwrap_err().kind, ErrorKind::Cancelled);
         assert_eq!(started.elapsed(), Duration::from_secs(20));
     }
