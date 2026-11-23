@@ -9,6 +9,8 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
+import { TriangleAlert } from "lucide-react";
+import type { Staleness } from "../hooks/usePane";
 import {
   COUNTER_DIGIT_LIMITS,
   DATE_STYLES,
@@ -40,10 +42,11 @@ import {
   type TidyRule,
   type TimeStyle,
 } from "../lib/bulkRename";
+import { entriesStillListed } from "../lib/deletion";
 import type { FileOrigin } from "../lib/fileOrigin";
 import { pluralize } from "../lib/format";
 import { isDirLike } from "../lib/sort";
-import type { FileEntry } from "../lib/types";
+import type { DirListing, FileEntry } from "../lib/types";
 import { knownTraits, nameTargetOf, runBulkRename, useBulkRenameStore } from "../state/bulkRename";
 import { useSettingsStore } from "../state/settingsStore";
 import { Dialog } from "./Dialog";
@@ -70,6 +73,7 @@ const EXTENSION_LABELS: Record<ExtensionChange, string> = {
   remove: "Remove",
 };
 const COUNTER_LIMIT = 999_999_999;
+const NO_ENTRIES: readonly FileEntry[] = [];
 
 type CounterPlace = "off" | CounterRule["placement"];
 const COUNTER_PLACE_LABELS: Record<CounterPlace, string> = {
@@ -89,19 +93,29 @@ interface BulkRenameDialogProps {
   origin: FileOrigin;
   /** The folder the items are in. */
   folder: string;
-  /** The items to rename, in the order the list shows them. */
-  entries: readonly FileEntry[];
-  /** Everything the folder lists, selected or not. */
-  listed: readonly FileEntry[];
+  /** The items picked to rename, in the order the list shows them, as the listing had them then. */
+  chosen: readonly FileEntry[];
+  /** The folder's listing on show now, which a fresh one may replace while the dialog is open. */
+  listing: DirListing | null;
+  /** Whether that listing is a remembered one the server has yet to confirm, or could not. */
+  stale: Staleness;
+  /** Asks the server for the folder again, after it could not be asked. */
+  onRetry: () => void;
   onClose: () => void;
 }
 
-/** Rules on the left, every item's old and new name on the right, and nothing runs until Rename. */
+/**
+ * Rules on the left, every item's old and new name on the right, and nothing runs until Rename.
+ * Names are checked against what the folder lists now: over a remembered listing Rename waits
+ * for the server's, and an item gone from it by then is left out.
+ */
 export function BulkRenameDialog({
   origin,
   folder,
-  entries,
-  listed,
+  chosen,
+  listing,
+  stale,
+  onRetry,
   onClose,
 }: BulkRenameDialogProps) {
   const [rules, setRules] = useState(() => useBulkRenameStore.getState().rules);
@@ -110,6 +124,11 @@ export function BulkRenameDialog({
   const templateRef = useRef<HTMLInputElement>(null);
   /** Where the cursor goes in the template once a token chip has put its token in. */
   const caretAfterToken = useRef<number | null>(null);
+
+  const listed = listing?.entries ?? NO_ENTRIES;
+  // As the folder lists them now, with the modified times {date} and {time} take.
+  const entries = useMemo(() => entriesStillListed(chosen, listed), [chosen, listed]);
+  const gone = goneNote(chosen.length - entries.length, entries.length);
 
   const selection = useMemo<RenameSelection>(() => {
     const chosen = new Set(entries.map((entry) => entry.path));
@@ -200,12 +219,13 @@ export function BulkRenameDialog({
   };
 
   const canRename = (checked: RenamePreview) =>
+    stale === null &&
     target !== null &&
     checked.findError === null &&
     checked.problemCount === 0 &&
     checked.ready > 0;
   const apply = () => {
-    if (!target) return;
+    if (!target || stale !== null) return;
     // Enter may arrive before the preview has caught up with the last key.
     const checked = previewedRules === rules ? preview : previewRenames(selection, rules, target);
     if (!canRename(checked)) return;
@@ -237,10 +257,14 @@ export function BulkRenameDialog({
   const templateActive = templateIsActive(rules.template);
   const counterPlace: CounterPlace = rules.counter.enabled ? rules.counter.placement : "off";
   const problems = problemSummary(preview);
+  const summary =
+    entries.length === 0 && gone ? gone : [renamedSummary(preview), gone].filter(Boolean).join(" ");
 
   return (
     <Dialog
-      title={`Rename ${entries.length} items`}
+      title={
+        entries.length === 0 ? "Nothing to rename" : `Rename ${pluralize(entries.length, "item")}`
+      }
       onClose={onClose}
       width={1120}
       className="bulk-rename-dialog"
@@ -604,17 +628,25 @@ export function BulkRenameDialog({
         </div>
 
         <div className="rename-footer">
-          {problems ? (
-            <p className="form-error" role="status">
-              {problems}
+          {stale === "outdated" && (
+            <p className="pane-notice pane-notice-warning" role="status">
+              <TriangleAlert size={13} />
+              <span>Could not refresh this folder. This listing may be out of date.</span>
+              <button type="button" className="link-button" onClick={onRetry}>
+                Try again
+              </button>
             </p>
+          )}
+          {problems ? (
+            <>
+              <p className="form-error" role="status">
+                {problems}
+              </p>
+              {gone && <p className="rename-summary">{gone}</p>}
+            </>
           ) : (
             <p className="rename-summary" role="status">
-              {preview.ready === 0
-                ? "No names change yet."
-                : `${preview.ready} of ${pluralize(preview.rows.length, "item")} will be renamed${
-                    preview.unchanged > 0 ? `, ${preview.unchanged} unchanged` : ""
-                  }.`}
+              {summary}
             </p>
           )}
           <div className="dialog-actions">
@@ -630,13 +662,33 @@ export function BulkRenameDialog({
               Cancel
             </button>
             <button type="submit" className="button button-primary" disabled={!canRename(preview)}>
-              {canRename(preview) ? `Rename ${pluralize(preview.ready, "item")}` : "Rename"}
+              {stale === "refreshing"
+                ? "Checking the folder..."
+                : canRename(preview)
+                  ? `Rename ${pluralize(preview.ready, "item")}`
+                  : "Rename"}
             </button>
           </div>
         </div>
       </form>
     </Dialog>
   );
+}
+
+/** How many items get a new name, or that none does yet. */
+function renamedSummary(preview: RenamePreview): string {
+  if (preview.ready === 0) return "No names change yet.";
+  const unchanged = preview.unchanged > 0 ? `, ${preview.unchanged} unchanged` : "";
+  return `${preview.ready} of ${pluralize(preview.rows.length, "item")} will be renamed${unchanged}.`;
+}
+
+/** Says which picked items the folder no longer lists, or null when it lists them all. */
+function goneNote(gone: number, left: number): string | null {
+  if (gone === 0) return null;
+  if (left === 0) return "These items are no longer in the folder.";
+  return gone === 1
+    ? "1 selected item is no longer in the folder and is left out."
+    : `${gone} selected items are no longer in the folder and are left out.`;
 }
 
 interface RuleSectionProps {

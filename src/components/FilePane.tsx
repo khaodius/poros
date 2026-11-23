@@ -122,14 +122,7 @@ type PaneDialog =
   | { type: "delete"; entries: FileEntry[] }
   | { type: "placeTo"; mode: PlaceMode; entries: FileEntry[] }
   | { type: "properties"; entries: FileEntry[] }
-  | {
-      type: "bulkRename";
-      origin: FileOrigin;
-      folder: string;
-      entries: FileEntry[];
-      /** Everything the folder listed when the dialog opened. */
-      listed: FileEntry[];
-    }
+  | { type: "bulkRename"; origin: FileOrigin; folder: string; entries: FileEntry[] }
   | { type: "compare"; left: CompareSide; right: CompareSide };
 
 interface FilePaneProps {
@@ -479,7 +472,6 @@ export function FilePane({
       origin: paneOrigin({ kind: source.kind, sessionId }),
       folder: listing.path,
       entries,
-      listed: listing.entries,
     });
   };
   const openDelete = () => selected.length > 0 && setDialog({ type: "delete", entries: selected });
@@ -1285,8 +1277,10 @@ export function FilePane({
         <BulkRenameDialog
           origin={dialog.origin}
           folder={dialog.folder}
-          entries={dialog.entries}
-          listed={dialog.listed}
+          chosen={dialog.entries}
+          listing={pane.listing}
+          stale={pane.stale}
+          onRetry={() => void pane.refresh()}
           onClose={() => setDialog(null)}
         />
       )}

@@ -6424,6 +6424,11 @@ textarea::placeholder {
   margin-top: 0;
 }
 
+.rename-footer .pane-notice {
+  border-bottom: 0;
+  border-radius: var(--radius-small);
+}
+
 .rename-summary {
   padding: 8px 0;
   color: var(--text-muted);
