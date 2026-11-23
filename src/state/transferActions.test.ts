@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FileEntry, SessionInfo } from "../lib/types";
+import { useLogStore } from "./logStore";
 import { getPane, registerPane, updatePane, type PaneHandle } from "./paneRegistry";
 import { useSessionStore } from "./sessionStore";
 import { useToastStore } from "./toastStore";
@@ -197,5 +198,20 @@ describe("transferBetween", () => {
       request: expect.objectContaining({ sessionId: "v1", targetDirectory: "/srv/private" }),
     });
     expect(commands()).not.toContain("remote_list");
+  });
+
+  it("says where files let go of on search results went", async () => {
+    folders["/srv"] = [];
+    const results = pane("remote", "/srv", { sessionId: "s1", showsResults: () => true });
+    // Dropped in from another program, so no pane watches the files leave.
+    const dropped = { ...local, path: () => null };
+    useLogStore.setState({ write: () => undefined });
+    await transferBetween(dropped, files, results, null);
+    expect(toasts).toEqual(["Copying to /srv"]);
+    // On a folder's own listing, or on a folder row among the results, the files show there.
+    toasts.length = 0;
+    await transferBetween(dropped, files, pane("remote", "/srv", { sessionId: "s1" }), null);
+    await transferBetween(dropped, files, results, "/srv/logs");
+    expect(toasts).toEqual([]);
   });
 });

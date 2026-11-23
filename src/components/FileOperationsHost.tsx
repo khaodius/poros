@@ -1,21 +1,25 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { LoaderCircle } from "lucide-react";
 import { deleteFraction, deleteProgressText, formatCount } from "../lib/deletion";
 import { formatSize, pluralize } from "../lib/format";
 import { fileOperations, onFileOperation } from "../lib/ipc";
 import { baseName } from "../lib/path";
+import { progressReach } from "../lib/progressBars";
 import type { NameClash } from "../lib/types";
+import { closeRenameReport, useBulkRenameStore } from "../state/bulkRename";
 import {
   useOperationStore,
   type NameClashQuestion,
   type RunningOperation,
 } from "../state/operationStore";
 import { Dialog } from "./Dialog";
+import { RenameReportDialog } from "./RenameReportDialog";
 
 /** The moves and copies running in this window, and the question when names are taken. */
 export function FileOperationsHost() {
   const update = useOperationStore((state) => state.update);
   const question = useOperationStore((state) => state.question);
+  const renameReport = useBulkRenameStore((state) => state.report);
 
   useEffect(() => {
     const subscription = onFileOperation(update);
@@ -26,6 +30,7 @@ export function FileOperationsHost() {
     <>
       <OperationTray />
       {question && <NameClashDialog question={question} />}
+      {renameReport && <RenameReportDialog report={renameReport} onClose={closeRenameReport} />}
     </>
   );
 }
@@ -56,6 +61,8 @@ function OperationTray() {
               <DeleteDetail operation={operation} />
             ) : operation.kind === "extract" ? (
               <ExtractDetail operation={operation} />
+            ) : operation.kind === "rename" ? (
+              <RenameDetail operation={operation} />
             ) : (
               <span className="operation-detail">
                 {pluralize(operation.files, "file")} done, {formatSize(operation.bytes)}
@@ -88,15 +95,14 @@ function ExtractDetail({ operation }: { operation: RunningOperation }) {
   );
 }
 
-/** How many entries are gone, where the delete is, and the latest that would not go. */
-function DeleteDetail({ operation }: { operation: RunningOperation }) {
-  const fraction = deleteFraction(operation);
-  const { current, failed, lastFailure } = operation;
+/** How many items have their new name, and the one being renamed. */
+function RenameDetail({ operation }: { operation: RunningOperation }) {
+  const { files, total, current } = operation;
+  const fraction = total ? Math.min(1, files / total) : null;
   return (
     <>
       <span className="operation-detail">
-        {deleteProgressText(operation)}
-        {failed ? `, ${formatCount(failed)} failed` : ""}
+        {total ? `${formatCount(files)} of ${formatCount(total)} renamed` : "Starting"}
       </span>
       <span
         className={`progress-track ${fraction === null ? "is-indeterminate" : ""}`}
@@ -109,6 +115,35 @@ function DeleteDetail({ operation }: { operation: RunningOperation }) {
           className="progress-fill"
           style={fraction === null ? undefined : { width: `${fraction * 100}%` }}
         />
+      </span>
+      {current && (
+        <span className="operation-path" title={current}>
+          <bdi>{current}</bdi>
+        </span>
+      )}
+    </>
+  );
+}
+
+/** How many entries are gone, where the delete is, and the latest that would not go. */
+function DeleteDetail({ operation }: { operation: RunningOperation }) {
+  const fraction = deleteFraction(operation);
+  const { current, failed, lastFailure } = operation;
+  return (
+    <>
+      <span className="operation-detail">
+        {deleteProgressText(operation)}
+        {failed ? `, ${formatCount(failed)} failed` : ""}
+      </span>
+      <span
+        className={`progress-track ${fraction === null ? "is-indeterminate" : ""}`}
+        style={fraction === null ? undefined : (progressReach(fraction) as CSSProperties)}
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={fraction === null ? undefined : Math.round(fraction * 100)}
+      >
+        <span className="progress-fill" />
       </span>
       {current && (
         <span className="operation-path" title={current}>

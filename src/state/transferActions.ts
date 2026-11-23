@@ -162,7 +162,19 @@ export async function transferBetween(
           items: items.map((item) => ({ path: item.path, isDir: item.isDir })),
         });
   const where = target.kind === "remote" ? `${target.label}:${targetFolder}` : targetFolder;
-  if (!(await enqueue(route, items, targetFolder, where))) forget();
+  if (!(await enqueue(route, items, targetFolder, where))) {
+    forget();
+    return;
+  }
+  if (folder === null) sayWhereResultsDropWent(target, "Copying", targetFolder);
+}
+
+/**
+ * Says where files went that were let go of on the blank space of a pane showing search
+ * results: into the folder the search started in, where the results do not show them.
+ */
+export function sayWhereResultsDropWent(target: PaneHandle, verb: string, folder: string) {
+  if (target.showsResults?.()) useToastStore.getState().show("info", `${verb} to ${folder}`);
 }
 
 export function transferFromPane(
