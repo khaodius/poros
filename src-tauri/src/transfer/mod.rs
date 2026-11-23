@@ -13,6 +13,7 @@ mod persist;
 mod pieces;
 mod published;
 mod queue;
+mod single;
 mod streamed;
 mod verify;
 mod worker;
@@ -32,6 +33,7 @@ use queue::Totals;
 pub use queue::{
     ChangedDirectory, Direction, JobId, JobKind, JobSnapshot, JobState, QueueCounts, Side,
 };
+pub use single::{FileQueue, JobProgress, TransferRoute};
 #[cfg(feature = "gui")]
 pub(crate) use worker::is_partial_name;
 pub(crate) use worker::{ensure_remote_folders, keep_local_backup, keep_remote_backup};
@@ -339,13 +341,16 @@ impl Shared {
         self.settings.read().unwrap().clone()
     }
 
-    /// The job writes into a folder that is not kept between runs.
+    /// The job writes into a folder that is not kept between runs, or belongs to a part of
+    /// the app that queues it again itself.
     fn is_unsaved(&self, spec: &JobSpec) -> bool {
-        self.unsaved_folders
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|folder| downloads_into(spec, folder))
+        spec.options.as_ref().is_some_and(|options| options.quiet)
+            || self
+                .unsaved_folders
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|folder| downloads_into(spec, folder))
     }
 
     fn target(&self, session_id: &str) -> AppResult<Arc<SessionTarget>> {
