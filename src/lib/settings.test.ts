@@ -66,6 +66,26 @@ describe("sanitizeSettings", () => {
     expect(sorted.interface.sort).toEqual({ key: "type", direction: -1 });
   });
 
+  it("remembers listings and lists ahead unless turned off, as files saved before do", () => {
+    const before = sanitizeSettings({ interface: { foldersFirst: false } }).interface;
+    expect(before.foldersFirst).toBe(false);
+    expect(before.cachedListings).toBe(true);
+    expect(before.prefetchListings).toBe(true);
+    expect(before.prefetchOnCloud).toBe(false);
+    const chosen = sanitizeSettings({
+      interface: { cachedListings: false, prefetchListings: false, prefetchOnCloud: true },
+    }).interface;
+    expect(chosen.cachedListings).toBe(false);
+    expect(chosen.prefetchListings).toBe(false);
+    expect(chosen.prefetchOnCloud).toBe(true);
+    const wrong = sanitizeSettings({
+      interface: { cachedListings: "yes", prefetchListings: 1, prefetchOnCloud: null },
+    }).interface;
+    expect(wrong.cachedListings).toBe(true);
+    expect(wrong.prefetchListings).toBe(true);
+    expect(wrong.prefetchOnCloud).toBe(false);
+  });
+
   it("keeps the column widths of known columns, within limits", () => {
     const widths = sanitizeSettings({
       interface: {
