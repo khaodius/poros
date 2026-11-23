@@ -214,7 +214,7 @@ async fn walk(
     })
 }
 
-fn render_entries(entries: &[FileEntry], long: bool, show_paths: bool) -> String {
+pub(super) fn render_entries(entries: &[FileEntry], long: bool, show_paths: bool) -> String {
     let shown_name = |entry: &FileEntry| {
         let name = if show_paths { &entry.path } else { &entry.name };
         if entry.is_dir_like() {

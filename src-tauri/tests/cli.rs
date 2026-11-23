@@ -308,6 +308,125 @@ fn files_go_up_and_down_and_verify() {
 }
 
 #[test]
+fn find_searches_below_a_folder_by_name_size_and_kind() {
+    let Some(run) = Run::online("find") else {
+        return;
+    };
+    for (path, size) in [
+        ("site/index.html", 120),
+        ("site/logs/access.log", 3_000),
+        ("site/logs/old/access.log.1", 9_000),
+        ("site/logs/old/Error.LOG", 10),
+        ("site/.git/packed.log", 5),
+        ("site/it's -rf $(reboot).log", 1),
+    ] {
+        let (folder, _) = path.rsplit_once('/').unwrap();
+        let (code, _) = run.json(&["mkdir", "-p", &run.remote(folder)]);
+        assert_eq!(code, 0);
+        let written = run.with_input(&["write", &run.remote(path)], &vec![b'x'; size]);
+        assert_eq!(status(&written), 0, "{written:?}");
+    }
+    let site = run.remote("site");
+    let found = |value: &Value| -> Vec<String> {
+        let prefix = format!("/{site}/");
+        value["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| {
+                let path = entry["path"].as_str().unwrap();
+                path.split_once(&prefix).unwrap().1.to_string()
+            })
+            .collect()
+    };
+
+    let (code, value) = run.json(&["find", "*.log", &site]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(value["engine"], "find", "the server's find did the search");
+    assert_eq!(value["capped"], false);
+    assert_eq!(
+        found(&value),
+        [
+            "it's -rf $(reboot).log",
+            "logs/access.log",
+            "logs/old/Error.LOG"
+        ]
+    );
+    assert_eq!(value["entries"][1]["size"], 3_000);
+    assert_eq!(value["entries"][1]["kind"], "file");
+
+    let (_, value) = run.json(&["find", "--case-sensitive", "--hidden", "*.log", &site]);
+    assert_eq!(
+        found(&value),
+        [
+            ".git/packed.log",
+            "it's -rf $(reboot).log",
+            "logs/access.log"
+        ]
+    );
+
+    let (_, value) = run.json(&["find", "access", &site, "--min-size", "4K"]);
+    assert_eq!(found(&value), ["logs/old/access.log.1"]);
+    let (_, value) = run.json(&["find", "", &site, "--max-size", "100", "--type", "file"]);
+    assert_eq!(
+        found(&value),
+        ["it's -rf $(reboot).log", "logs/old/Error.LOG"]
+    );
+
+    let (_, value) = run.json(&["find", "-E", r"^access\.log(\.\d+)?$", &site]);
+    assert_eq!(found(&value), ["logs/access.log", "logs/old/access.log.1"]);
+
+    let (_, value) = run.json(&["find", "", &site, "--type", "folder", "--max-depth", "2"]);
+    assert_eq!(found(&value), [".git", "logs", "logs/old"]);
+
+    let (_, value) = run.json(&["find", "", &site, "--newer", "1h", "--type", "f"]);
+    assert_eq!(found(&value).len(), 5, "everything was just written");
+    let (_, value) = run.json(&["find", "", &site, "--older", "2001-09-09"]);
+    assert_eq!(found(&value).len(), 0);
+
+    let (code, value) = run.json(&["find", "", &site, "--limit", "2", "--hidden"]);
+    assert_eq!(code, 0);
+    assert_eq!(value["capped"], true);
+    assert_eq!(value["entries"].as_array().unwrap().len(), 2);
+
+    let text = run.run(&["find", "*.log", &site, "--max-depth", "2"]);
+    assert_eq!(status(&text), 0, "{text:?}");
+    let listed = String::from_utf8(text.stdout).unwrap();
+    let lines: Vec<&str> = listed.lines().collect();
+    assert_eq!(lines.len(), 2, "{listed}");
+    assert!(
+        lines[0].ends_with("/site/it's -rf $(reboot).log"),
+        "{listed}"
+    );
+    assert!(lines[1].ends_with("/site/logs/access.log"), "{listed}");
+
+    let long = run.run(&["find", "-l", "index", &site]);
+    let listed = String::from_utf8(long.stdout).unwrap();
+    assert!(listed.starts_with("-rw"), "{listed}");
+    assert!(listed.contains(" 120 "), "{listed}");
+
+    let (code, value) = run.json(&["find", "-E", "(", &site]);
+    assert_eq!(code, 2, "{value}");
+    assert_eq!(value["error"]["kind"], "invalidInput");
+    let (code, value) = run.json(&["find", "x", &site, "--min-size", "huge"]);
+    assert_eq!(code, 2, "{value}");
+    let (code, value) = run.json(&["find", "x", &run.remote("missing")]);
+    assert_eq!(code, 7, "{value}");
+
+    let batch = run.with_input(
+        &["batch"],
+        format!("[\"find\", \"*.html\", \"{site}\"]\n").as_bytes(),
+    );
+    assert_eq!(status(&batch), 0, "{batch:?}");
+    let answer: Value = serde_json::from_slice(&batch.stdout).unwrap();
+    assert_eq!(
+        answer.to_string().matches("index.html").count(),
+        2,
+        "{answer}"
+    );
+}
+
+#[test]
 fn server_side_changes_report_each_path() {
     let Some(run) = Run::online("manage") else {
         return;

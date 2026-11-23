@@ -1,6 +1,15 @@
 import type { FileEntry } from "./types";
 
-export const SORT_KEYS = ["name", "size", "type", "modified", "permissions", "owner"] as const;
+export const SORT_KEYS = [
+  "name",
+  "size",
+  "type",
+  "modified",
+  "permissions",
+  "owner",
+  // Where each item is, which only search results tell apart.
+  "folder",
+] as const;
 export type SortKey = (typeof SORT_KEYS)[number];
 export interface SortSpec {
   key: SortKey;
@@ -20,6 +29,13 @@ export function typeLabel(entry: FileEntry): string {
   const dot = entry.name.lastIndexOf(".");
   // A leading dot marks a hidden file, not an extension.
   return dot > 0 && dot < entry.name.length - 1 ? entry.name.slice(dot + 1).toUpperCase() : "File";
+}
+
+/** The path up to the entry's name, which sorts entries by the folder they are in. */
+function folderPart(entry: FileEntry): string {
+  return entry.path.endsWith(entry.name)
+    ? entry.path.slice(0, entry.path.length - entry.name.length)
+    : entry.path;
 }
 
 /**
@@ -44,6 +60,8 @@ export function sortEntries(
         return (left.permissions ?? 0) - (right.permissions ?? 0);
       case "owner":
         return collator.compare(left.owner ?? "", right.owner ?? "");
+      case "folder":
+        return collator.compare(folderPart(left), folderPart(right));
       case "name":
         return 0;
     }

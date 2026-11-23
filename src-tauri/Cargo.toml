@@ -134,6 +134,7 @@ scrypt = { version = "0.12", default-features = false }
 zeroize = "1"
 # File names and passwords are normalized (NFC) before they are encrypted, as Cryptomator does.
 unicode-normalization = "0.1"
+regex = "1"
 # Advisory file locks (flock, LockFileEx) that end with the process holding them, so the app and
 # poros-cli never run one scheduled task twice or overwrite each other's schedules.json.
 fs4 = { version = "1.1", default-features = false, features = ["sync"] }
