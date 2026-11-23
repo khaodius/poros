@@ -281,11 +281,11 @@ describe("what the windows show", () => {
     });
     expect(scheduleSetsLimits(work)).toBe(true);
     expect(shownLimits(work)).toEqual([
-      { direction: "upload", text: "200 KiB/s" },
-      { direction: "download", text: "500 KiB/s" },
+      { direction: "upload", mode: "limited", text: "200 KiB/s" },
+      { direction: "download", mode: "limited", text: "500 KiB/s" },
     ]);
     expect(shownLimits({ ...work, upload: UNLIMITED })).toEqual([
-      { direction: "download", text: "500 KiB/s" },
+      { direction: "download", mode: "limited", text: "500 KiB/s" },
     ]);
     expect(shownLimits({ ...work, upload: UNLIMITED, download: UNLIMITED })).toHaveLength(2);
     expect(scheduleTooltip(work, now)).toBe(

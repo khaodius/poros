@@ -266,7 +266,7 @@ export function scheduleSetsLimits(limits: LimitStatus): boolean {
  */
 export function shownLimits(
   limits: LimitStatus,
-): { direction: "upload" | "download"; text: string }[] {
+): { direction: "upload" | "download"; mode: LimitMode; text: string }[] {
   const directions = (["upload", "download"] as const).map((direction) => ({
     direction,
     limit: limits[direction],
@@ -274,6 +274,7 @@ export function shownLimits(
   const restricted = directions.filter(({ limit }) => limit.mode !== "unlimited");
   return (restricted.length > 0 ? restricted : directions).map(({ direction, limit }) => ({
     direction,
+    mode: limit.mode,
     text: describeLimit(limit),
   }));
 }
