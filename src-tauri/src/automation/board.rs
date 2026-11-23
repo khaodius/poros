@@ -479,7 +479,8 @@ impl TaskBoard {
                 .iter_mut()
                 .find(|task| task.id == id)
                 .expect("the task was just found");
-            Ok(match self.claim(task, held, chrono::Utc::now().timestamp())? {
+            let claimed = self.claim(task, held, chrono::Utc::now().timestamp())?;
+            Ok(match claimed {
                 Some(claim) => (Claimed::Run(claim), Changed::Tasks),
                 None => (Claimed::Busy(task.clone()), Changed::Nothing),
             })

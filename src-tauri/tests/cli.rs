@@ -603,10 +603,7 @@ impl Run {
     fn wait_until_running(&self, name: &str) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
         while self.task(name)["running"] != true {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "{name} never started"
-            );
+            assert!(std::time::Instant::now() < deadline, "{name} never started");
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
     }
