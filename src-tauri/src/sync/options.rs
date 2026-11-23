@@ -9,7 +9,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::chmod::Chmod;
-use super::filter::{Filter, FilterSpec};
+use super::filter::{Filter, FilterSpec, RSYNC_FILTER_FILE};
 use super::plan::{CompareMode, SyncDirection};
 use crate::error::AppResult;
 
@@ -305,8 +305,9 @@ struct Notes {
 pub fn check(options: SyncOptions, layers: &[&str], direction: SyncDirection) -> OptionCheck {
     let mut options = options;
     let mut notes = Notes::default();
+    let mut filter_files_given = filter_files_given(options.filter_files);
     for layer in layers {
-        apply_arguments(&mut options, layer, &mut notes);
+        apply_arguments(&mut options, layer, &mut notes, &mut filter_files_given);
     }
     validate(&options, direction, &mut notes);
     OptionCheck {
@@ -646,25 +647,28 @@ fn long_option(name: &str) -> Option<Spec> {
         "ignore-errors" => Switch(|options, on| options.ignore_errors = on),
         "ignore-missing-args" => Quiet { takes_value: false },
         "delete-missing-args" => ignored("listed paths that are missing are left alone"),
-        // Filters
+        // Filters. rsync checks them in the order given and the first match decides, so each
+        // becomes a filter rule in turn; the separate fields are checked after these.
         "filter" => Value(|options, value| {
             options.filter_rules.push(value.to_string());
             Ok(())
         }),
         "exclude" => Value(|options, value| {
-            options.excludes.push(value.to_string());
+            options.filter_rules.extend(pattern_rule('-', value));
             Ok(())
         }),
         "include" => Value(|options, value| {
-            options.includes.push(value.to_string());
+            options.filter_rules.extend(pattern_rule('+', value));
             Ok(())
         }),
         "exclude-from" => Value(|options, value| {
-            options.exclude_from.push(non_empty(value)?);
+            let list = non_empty(value)?;
+            options.filter_rules.push(format!("merge,- {list}"));
             Ok(())
         }),
         "include-from" => Value(|options, value| {
-            options.include_from.push(non_empty(value)?);
+            let list = non_empty(value)?;
+            options.filter_rules.push(format!("merge,+ {list}"));
             Ok(())
         }),
         "files-from" => Value(|options, value| {
@@ -867,8 +871,55 @@ fn non_empty(value: &str) -> Result<String, String> {
     }
 }
 
-/// Reads rsync arguments into `options`.
-fn apply_arguments(options: &mut SyncOptions, text: &str, notes: &mut Notes) {
+/// The filter rule `--include` (`sign` `+`) or `--exclude` (`-`) stands for. As in rsync, the
+/// pattern may name its own kind with a leading `+ ` or `- `, and `!` alone clears the rules.
+fn pattern_rule(sign: char, pattern: &str) -> Option<String> {
+    if pattern.trim().is_empty() {
+        None
+    } else if pattern.starts_with("+ ") || pattern.starts_with("- ") || pattern == "!" {
+        Some(pattern.to_string())
+    } else {
+        Some(format!("{sign} {pattern}"))
+    }
+}
+
+/// How many `-F` options the setting stands for.
+fn filter_files_given(setting: FilterFiles) -> u32 {
+    match setting {
+        FilterFiles::Off => 0,
+        FilterFiles::Read => 1,
+        FilterFiles::ReadAndExclude => 2,
+    }
+}
+
+/// Adds what the `given`th `-F` means to rsync: the first reads `.rsync-filter` files in
+/// every folder, the second also leaves them out, and later ones add nothing. The setting is
+/// checked before every rule, so a `-F` that follows rules becomes a rule in their order.
+fn add_filter_files(options: &mut SyncOptions, given: u32) {
+    let (setting, rule) = match given {
+        1 => (FilterFiles::Read, format!("dir-merge {RSYNC_FILTER_FILE}")),
+        2 => (
+            FilterFiles::ReadAndExclude,
+            format!("- {RSYNC_FILTER_FILE}"),
+        ),
+        _ => return,
+    };
+    let comes_next = filter_files_given(options.filter_files) + 1 == given;
+    if comes_next && options.filter_rules.is_empty() {
+        options.filter_files = setting;
+    } else {
+        options.filter_rules.push(rule);
+    }
+}
+
+/// Reads rsync arguments into `options`. `filter_files_given` counts the `-F` options read so
+/// far, as rsync counts them over the whole command line.
+fn apply_arguments(
+    options: &mut SyncOptions,
+    text: &str,
+    notes: &mut Notes,
+    filter_files_given: &mut u32,
+) {
     let words = match split_words(text) {
         Ok(words) => words,
         Err(message) => {
@@ -883,7 +934,6 @@ fn apply_arguments(options: &mut SyncOptions, text: &str, notes: &mut Notes) {
     {
         words.next();
     }
-    let mut filter_files = 0;
     let mut positional = Vec::new();
     while let Some(word) = words.next() {
         if word == "--" {
@@ -924,7 +974,8 @@ fn apply_arguments(options: &mut SyncOptions, text: &str, notes: &mut Notes) {
         for (index, character) in cluster.char_indices() {
             let shown = format!("-{character}");
             if character == 'F' {
-                filter_files += 1;
+                *filter_files_given += 1;
+                add_filter_files(options, *filter_files_given);
                 continue;
             }
             let Some(spec) = short_option(character).and_then(long_option) else {
@@ -946,13 +997,6 @@ fn apply_arguments(options: &mut SyncOptions, text: &str, notes: &mut Notes) {
             }
             run(options, spec, &shown, false, None, &mut words, notes);
         }
-    }
-    if filter_files > 0 {
-        options.filter_files = if filter_files == 1 {
-            FilterFiles::Read
-        } else {
-            FilterFiles::ReadAndExclude
-        };
     }
     if !positional.is_empty() {
         notes.warnings.push(format!(
@@ -1213,18 +1257,48 @@ pub fn render(options: &SyncOptions) -> Vec<String> {
             value(name, text.clone());
         }
     }
-    for (list, name) in [
-        (&options.filter_rules, "filter"),
-        (&options.includes, "include"),
-        (&options.excludes, "exclude"),
-        (&options.include_from, "include-from"),
-        (&options.exclude_from, "exclude-from"),
+    // In the order the filter checks them, which is rsync's: the rules, then the separate
+    // fields. A pattern rsync would read as a rule of its own goes as the rule it is.
+    for rule in options
+        .filter_rules
+        .iter()
+        .filter(|rule| !rule.trim().is_empty())
+    {
+        words.push(rule_argument(rule));
+    }
+    for (sign, patterns, lists) in [
+        ('+', &options.includes, &options.include_from),
+        ('-', &options.excludes, &options.exclude_from),
     ] {
-        for item in list.iter().filter(|item| !item.trim().is_empty()) {
-            value(name, item.clone());
+        for pattern in patterns.iter().filter(|pattern| !pattern.trim().is_empty()) {
+            words.push(rule_argument(&format!("{sign} {pattern}")));
+        }
+        for list in lists.iter().filter(|list| !list.trim().is_empty()) {
+            words.push(rule_argument(&format!("merge,{sign} {list}")));
         }
     }
     words
+}
+
+/// A filter rule as rsync takes it on the command line: an include, an exclude or a list as
+/// the option that reads back as this rule, and any other rule as `--filter`.
+fn rule_argument(rule: &str) -> String {
+    for (sign, pattern_option, list_option) in [
+        ('+', "include", "include-from"),
+        ('-', "exclude", "exclude-from"),
+    ] {
+        if let Some(pattern) = rule.strip_prefix(&format!("{sign} ")) {
+            if pattern_rule(sign, pattern).as_deref() == Some(rule) {
+                return format!("--{pattern_option}={pattern}");
+            }
+        }
+        if let Some(list) = rule.strip_prefix(&format!("merge,{sign} ")) {
+            if non_empty(list).as_deref() == Ok(list) {
+                return format!("--{list_option}={list}");
+            }
+        }
+    }
+    format!("--filter={rule}")
 }
 
 /// Arguments joined into one line, quoted where a shell would need it.
@@ -1259,7 +1333,7 @@ mod tests {
     fn parsed(text: &str) -> (SyncOptions, Notes) {
         let mut options = SyncOptions::default();
         let mut notes = Notes::default();
-        apply_arguments(&mut options, text, &mut notes);
+        apply_arguments(&mut options, text, &mut notes, &mut 0);
         (options, notes)
     }
 
@@ -1276,8 +1350,12 @@ mod tests {
         let (options, _) = parsed("-a --no-perms --no-o --no-g -B 8192 -f'- *.o' -FF");
         assert!(!options.perms && !options.owner && !options.group);
         assert_eq!(options.block_size, Some(8192));
-        assert_eq!(options.filter_rules, ["- *.o"]);
-        assert_eq!(options.filter_files, FilterFiles::ReadAndExclude);
+        // Each -F comes after the rule before it, as in rsync.
+        assert_eq!(
+            options.filter_rules,
+            ["- *.o", "dir-merge .rsync-filter", "- .rsync-filter"]
+        );
+        assert_eq!(options.filter_files, FilterFiles::Off);
         let (options, _) = parsed("-B4096 -F");
         assert_eq!(options.block_size, Some(4096));
         assert_eq!(options.filter_files, FilterFiles::Read);
@@ -1292,8 +1370,10 @@ mod tests {
              --suffix=.bak --log-file=/tmp/sync.log --files-from=list.txt --from0",
         );
         assert_eq!(notes.errors, Vec::<String>::new());
-        assert_eq!(options.excludes, ["*.log", "my folder/"]);
-        assert_eq!(options.includes, ["keep me"]);
+        assert_eq!(
+            options.filter_rules,
+            ["- *.log", "- my folder/", "+ keep me"]
+        );
         assert_eq!(options.chmod, "D755,F644");
         assert_eq!(options.chown, "www-data:www-data");
         assert_eq!(options.bwlimit_kib, 1536);
@@ -1427,9 +1507,26 @@ mod tests {
             ..SyncOptions::default()
         };
         let mut notes = Notes::default();
-        apply_arguments(&mut read_back, &line, &mut notes);
+        apply_arguments(&mut read_back, &line, &mut notes, &mut 0);
         assert_eq!(notes.errors, Vec::<String>::new(), "{line}");
-        assert_eq!(read_back, options, "{line}");
+        // The rules typed read back as filter rules, in the order the fields are checked in.
+        let folded = SyncOptions {
+            filter_rules: vec![
+                "P /keep/".into(),
+                "+ important.tmp".into(),
+                "merge,+ /lists/in".into(),
+                "- *.tmp".into(),
+                "- my dir/".into(),
+                "merge,- C:\\lists\\out.txt".into(),
+            ],
+            includes: Vec::new(),
+            include_from: Vec::new(),
+            excludes: Vec::new(),
+            exclude_from: Vec::new(),
+            ..options.clone()
+        };
+        assert_eq!(read_back, folded, "{line}");
+        assert_eq!(command_line(&render(&read_back)), line);
 
         let defaults = command_line(&render(&SyncOptions::default()));
         assert_eq!(defaults, "-rtL --modify-window=2");
@@ -1444,7 +1541,7 @@ mod tests {
         );
         assert!(checked.errors.is_empty());
         assert!(!checked.options.compress);
-        assert_eq!(checked.options.excludes, [".git/"]);
+        assert_eq!(checked.options.filter_rules, ["- .git/"]);
         assert_eq!(
             checked.arguments,
             "-rtL --modify-window=2 --chmod=F644 --exclude=.git/"
@@ -1476,6 +1573,78 @@ mod tests {
             SyncDirection::Upload,
         );
         assert!(checked.errors.is_empty());
+    }
+
+    #[test]
+    fn rules_keep_the_order_they_are_typed_in() {
+        let typed = "--exclude=node_modules/ --include='*/' --include='*.js' --exclude='*'";
+        let (options, notes) = parsed(typed);
+        assert!(notes.errors.is_empty(), "{:?}", notes.errors);
+        assert_eq!(
+            options.filter_rules,
+            ["- node_modules/", "+ */", "+ *.js", "- *"]
+        );
+        assert!(command_line(&render(&options))
+            .ends_with("--exclude=node_modules/ '--include=*/' '--include=*.js' '--exclude=*'"));
+
+        // A pattern may name its own kind or clear the rules, and lists keep their place.
+        let (options, notes) = parsed(
+            "--exclude='+ keep.txt' --include=! --filter='- *.o' --include-from=in.txt \
+             --exclude-from ' out.txt' --exclude=*",
+        );
+        assert!(notes.errors.is_empty(), "{:?}", notes.errors);
+        assert_eq!(
+            options.filter_rules,
+            [
+                "+ keep.txt",
+                "!",
+                "- *.o",
+                "merge,+ in.txt",
+                "merge,- out.txt",
+                "- *"
+            ]
+        );
+        assert_eq!(
+            command_line(&render(&options)),
+            "-rtL --modify-window=2 --include=keep.txt '--filter=!' '--exclude=*.o' \
+             --include-from=in.txt --exclude-from=out.txt '--exclude=*'"
+        );
+
+        // -F counts over every layer, and the setting it stands for comes before all rules.
+        let (options, _) = parsed("-F --exclude=*.o -F -F");
+        assert_eq!(options.filter_files, FilterFiles::Read);
+        assert_eq!(options.filter_rules, ["- *.o", "- .rsync-filter"]);
+        let checked = check(
+            SyncOptions {
+                filter_files: FilterFiles::Read,
+                ..SyncOptions::default()
+            },
+            &["--exclude=a", "-F"],
+            SyncDirection::Upload,
+        );
+        assert_eq!(checked.options.filter_files, FilterFiles::Read);
+        assert_eq!(checked.options.filter_rules, ["- a", "- .rsync-filter"]);
+        assert_eq!(
+            checked.arguments,
+            "-rtLF --modify-window=2 --exclude=a --exclude=.rsync-filter"
+        );
+
+        // The separate fields keep their own order after the typed rules, and a pattern there
+        // that rsync would read as a rule goes as the pattern it is.
+        let checked = check(
+            SyncOptions {
+                includes: vec!["+ odd".into()],
+                excludes: vec!["*.log".into(), "!".into()],
+                ..SyncOptions::default()
+            },
+            &["--exclude=x"],
+            SyncDirection::Upload,
+        );
+        assert_eq!(
+            checked.arguments,
+            "-rtL --modify-window=2 --exclude=x '--filter=+ + odd' '--exclude=*.log' \
+             '--filter=- !'"
+        );
     }
 
     #[test]
