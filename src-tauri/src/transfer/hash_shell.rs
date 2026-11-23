@@ -131,7 +131,7 @@ pub(super) async fn run(
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
 
     #[test]
@@ -151,7 +151,7 @@ mod tests {
 
     /// What a local `sh` answers to a command given the way the kept shell is given it.
     #[cfg(unix)]
-    fn run_locally(command: &str) -> (String, i32) {
+    pub(in crate::transfer) fn run_locally(command: &str) -> (String, i32) {
         use std::io::Write;
         use std::process::{Command, Stdio};
 
