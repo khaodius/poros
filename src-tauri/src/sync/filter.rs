@@ -3,11 +3,12 @@
 //! from, the side they are sent to, or both: the sending side's rules decide what is copied, the
 //! receiving side's what is kept from deletion.
 //!
-//! Patterns: `*` and `?` stay within one path component, `**` crosses them (`a/**/b` also
-//! matches `a/b`), `dir/***` matches a folder and everything in it, and `[...]` matches a set of
-//! characters. A leading `/` anchors a pattern to the synchronized folder (or to the folder
-//! holding a per-folder rule file); otherwise a pattern without a `/` matches a name at any
-//! depth, and one with a `/` matches the end of a path. A trailing `/` matches folders only.
+//! Patterns: `*` and `?` stay within one path component, `**` crosses them (`a/**/b` matches
+//! `a/x/b` and `a/x/y/b` but, as in rsync, not `a/b`), `dir/***` matches a folder and everything
+//! in it, and `[...]` matches a set of characters. A leading `/` anchors a pattern to the
+//! synchronized folder (or to the folder holding a per-folder rule file); otherwise a pattern
+//! without a `/` matches a name at any depth, and one with a `/` matches the end of a path. A
+//! trailing `/` matches folders only.
 //!
 //! Rule lines: `+`/`include`, `-`/`exclude`, `P`/`protect`, `R`/`risk`, `H`/`hide`,
 //! `S`/`show`, `!`/`clear`, `.`/`merge FILE` and `:`/`dir-merge FILE`, with rsync's modifiers.
@@ -949,9 +950,7 @@ fn glob(pattern: &[char], text: &[char]) -> bool {
                 .take_while(|character| **character == '*')
                 .count();
             let rest = &pattern[stars..];
-            // `a/**/b` also matches `a/b`.
-            let no_folders = rest.first() == Some(&'/') && glob(&rest[1..], text);
-            no_folders || (0..=text.len()).any(|skip| glob(rest, &text[skip..]))
+            (0..=text.len()).any(|skip| glob(rest, &text[skip..]))
         }
         Some('*') => {
             let rest = &pattern[1..];
@@ -1151,8 +1150,14 @@ mod tests {
             "# a comment",
             "",
         ]);
-        assert!(!sent(&filter, "a/z", false));
+        // As in rsync, `/**/` needs at least one folder there.
+        assert!(sent(&filter, "a/z", false));
+        assert!(!sent(&filter, "a/b/z", false));
         assert!(!sent(&filter, "a/b/c/z", false));
+        let triple = excludes(&["docs/***/notes.md"]);
+        assert!(sent(&triple, "docs/notes.md", false));
+        assert!(!sent(&triple, "docs/deep/notes.md", false));
+        assert!(!sent(&triple, "site/docs/deep/er/notes.md", false));
         assert!(!sent(&filter, "file1.c", false));
         assert!(!sent(&filter, "deep/fileX.h", false));
         assert!(sent(&filter, "file10.c", false));

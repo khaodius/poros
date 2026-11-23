@@ -811,6 +811,7 @@ mod tests {
             "node_modules/sub/y.js",
             "docs/readme.md",
             "docs/guide.txt",
+            "docs/notes.md",
             "docs/deep/notes.md",
             "keep.log",
             "drop.log",
@@ -846,6 +847,9 @@ mod tests {
             format!("--delete --exclude='*.bak' --include-from={kept}"),
             "--exclude='+ keep.tmp' --exclude='*.tmp'".into(),
             format!("--include-from={documents} --exclude='*'"),
+            "--exclude='docs/**/notes.md'".into(),
+            "--exclude='docs/***/notes.md'".into(),
+            "--delete --include='/docs/**/*.md' --exclude='*.md'".into(),
         ];
         let source_root = source.to_string_lossy().into_owned();
         let target_root = target.to_string_lossy().into_owned();
