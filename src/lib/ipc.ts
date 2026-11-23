@@ -101,6 +101,8 @@ export const DRAG_PREVIEW_SHOWN_EVENT = "poros://drag-preview-shown";
 export const DRAG_PREVIEW_RELEASED_EVENT = "poros://drag-preview-released";
 /** Sent to every window by the window the user turns to, with its label. */
 export const WINDOW_USED_EVENT = "poros://window-used";
+/** Sent between windows to share the folder listings they remember; see lib/listingShare.ts. */
+export const LISTING_CACHE_EVENT = "poros://listing-cache";
 /** Mirrored in src-tauri/src/drag_out/mod.rs. Says whether files are dragged out of Poros. */
 export const DRAG_OUT_EVENT = "poros://drag-out";
 /**

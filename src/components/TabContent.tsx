@@ -61,7 +61,7 @@ function RemoteTab({ tab, visible, active }: TabContentProps) {
   const entry = useSessionStore((state) => state.sessions[sessionId]);
   // An unlocked vault is reached over its server's connection: lost and back with it.
   const server = useSessionStore((state) => serverEntry(state.sessions, sessionId));
-  const base = entry ? remoteSource(entry.info) : null;
+  const base = entry ? remoteSource(entry.info, entry.profile) : null;
   const source = useMemo(() => base && startingAt(base, path), [base, path]);
 
   if (!entry || !server || !source) return <ClosedSession tabId={tab.id} />;
