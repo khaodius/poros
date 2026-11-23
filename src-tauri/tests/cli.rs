@@ -1113,3 +1113,36 @@ fn a_source_named_twice_is_placed_once() {
         "two\n"
     );
 }
+
+/// Root reads every folder, so where the tests run as root this is left to the unit test of
+/// the report, which is given the plan such a folder makes.
+#[cfg(unix)]
+#[test]
+fn verify_still_lists_files_only_on_the_server_when_a_local_folder_cannot_be_read() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let Some(run) = Run::online("unreadlocal") else {
+        return;
+    };
+    write_tree(
+        run.local.path(),
+        &[
+            ("site/index.html", b"<h1>poros</h1>\n"),
+            ("site/private/key", b"secret"),
+        ],
+    );
+    let (code, value) = run.json(&["put", "site", &run.remote("")]);
+    assert_eq!(code, 0, "{value}");
+    run.write("site/stale.txt", "stale\n");
+    let private = run.local("site/private");
+    std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let readable = std::fs::read_dir(&private).is_ok();
+    let compared = (!readable).then(|| run.json(&["verify", "site", &run.remote("site")]));
+    std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let Some((code, value)) = compared else {
+        return;
+    };
+    assert_eq!(code, 11, "{value}");
+    assert_eq!(value["onlyRemote"][0]["path"], "stale.txt", "{value}");
+    assert_eq!(value["notCompared"], serde_json::json!(["private"]));
+}

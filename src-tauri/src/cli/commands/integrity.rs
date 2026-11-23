@@ -14,7 +14,9 @@ use crate::cli::output::{plural, Reply};
 use crate::error::{AppError, AppResult};
 use crate::protocol::Protocol;
 use crate::rsync::{run_command, shell_quote};
-use crate::sync::{SyncAction, SyncDirection, SyncManager, SyncOptions, SyncReason, SyncRequest};
+use crate::sync::{
+    SyncAction, SyncDirection, SyncManager, SyncOptions, SyncPlanView, SyncReason, SyncRequest,
+};
 
 const COMMAND_OUTPUT_LIMIT: usize = 64 * 1024;
 
@@ -241,6 +243,12 @@ async fn verify_folder(
         }
     };
     manager.discard(&plan.plan_id);
+    Ok(folder_report(&plan, local, remote))
+}
+
+/// What `verify` says about two folders: the same, how they differ, and what it could not
+/// compare.
+fn folder_report(plan: &SyncPlanView, local: &str, remote: &str) -> Reply {
     let (mut only_local, mut only_remote, mut different) = (Vec::new(), Vec::new(), Vec::new());
     for item in &plan.items {
         let listed = json!({ "path": item.path, "isDir": item.is_dir, "files": item.files });
@@ -300,12 +308,12 @@ async fn verify_folder(
         }),
         text,
     );
-    Ok(match (differences, same) {
+    match (differences, same) {
         (0, true) => reply,
         // What was compared matches, but the rest is unknown.
         (0, false) => reply.with_exit(Exit::Partial),
         _ => reply.with_exit(Exit::Integrity),
-    })
+    }
 }
 
 /// A comparison as `rsync --checksum --delete --dry-run` makes it. Nothing is deleted, so files
@@ -333,8 +341,65 @@ fn comparison_arguments(arguments: &VerifyArgs) -> String {
 mod tests {
     use super::*;
     use crate::cli::args::{Cli, Command};
-    use crate::sync::SyncDirection;
+    use crate::sync::{Counts, SyncDirection, SyncItem};
     use clap::Parser;
+
+    /// The plan of a comparison in which the walker could not read this computer's `private`
+    /// folder. Errors are ignored, so the file only on the server is listed all the same.
+    fn plan_without_private(items: Vec<SyncItem>) -> SyncPlanView {
+        SyncPlanView {
+            plan_id: "plan".into(),
+            local_root: "/home/me/site".into(),
+            remote_root: "/srv/site".into(),
+            items,
+            counts: Counts {
+                unchanged: 2,
+                passed_over: 1,
+                ..Counts::default()
+            },
+            passed_over: vec!["private".into()],
+            notes: Vec::new(),
+            arguments: String::new(),
+            dry_run: true,
+            creates_target: false,
+            removes_unchanged: 0,
+        }
+    }
+
+    #[test]
+    fn a_local_folder_that_could_not_be_read_is_named_and_the_rest_still_compared() {
+        let stale = SyncItem {
+            id: 1,
+            path: "stale.txt".into(),
+            is_dir: false,
+            action: SyncAction::DeleteRemote,
+            reason: SyncReason::Extraneous,
+            files: 1,
+            bytes: 6,
+            local: None,
+            remote: None,
+            itemized: "*deleting".into(),
+        };
+        let report = folder_report(&plan_without_private(vec![stale]), "site", "/srv/site");
+        assert_eq!(report.exit, Exit::Integrity);
+        assert_eq!(report.value["same"], false);
+        assert_eq!(report.value["onlyRemote"][0]["path"], "stale.txt");
+        assert_eq!(report.value["notCompared"], serde_json::json!(["private"]));
+        assert_eq!(
+            report.text,
+            "1 difference between site and /srv/site\n  only on the server: stale.txt\n  not \
+             compared: private"
+        );
+
+        let report = folder_report(&plan_without_private(Vec::new()), "site", "/srv/site");
+        assert_eq!(report.exit, Exit::Partial);
+        assert_eq!(report.value["same"], false);
+        assert_eq!(
+            report.text,
+            "Not everything could be compared: 2 files the same in site and /srv/site\n  not \
+             compared: private"
+        );
+    }
 
     #[test]
     fn folders_are_compared_whatever_could_not_be_read() {
