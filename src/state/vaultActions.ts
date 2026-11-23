@@ -23,7 +23,7 @@ export function vaultHandover(tabId: string, sessionId: string, path: string): H
   const showing = sessionShowing(sessions, sessionId, path);
   if (showing === sessionId) return null;
   return {
-    source: remoteSource(sessions[showing].info),
+    source: remoteSource(sessions[showing].info, sessions[showing].profile),
     take: (listed) =>
       useLayoutStore
         .getState()
