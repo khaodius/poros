@@ -1130,7 +1130,10 @@ async fn download(
     );
     let handle = context.fs.open_for_read(&spec.source).await?;
     let copied = copy::download(&context.copy_context(), &handle, &mut file).await;
-    let (stat, _) = context.fs.close_and_stat(handle, false).await;
+    let (stat, _) = context
+        .fs
+        .close_and_stat(handle, false, &context.run.cancel)
+        .await;
     copied?;
     context.keep_closing_stat(stat);
     Ok(RunOutcome::Completed)
@@ -1272,7 +1275,7 @@ async fn upload(
     );
     let copied = copy::upload(&context.copy_context(), &mut file, &handle).await;
     let (stat, closed) = fs
-        .close_and_stat(handle, context.settings.flush_to_disk)
+        .close_and_stat(handle, context.settings.flush_to_disk, &context.run.cancel)
         .await;
     copied?;
     closed?;
@@ -1399,7 +1402,7 @@ async fn help(context: &JobContext<'_>) -> AppResult<RunOutcome> {
             let copied = copy::upload(&context.copy_context(), &mut file, &handle).await;
             let (_, closed) = context
                 .fs
-                .close_and_stat(handle, context.settings.flush_to_disk)
+                .close_and_stat(handle, context.settings.flush_to_disk, &context.run.cancel)
                 .await;
             copied?;
             closed?;

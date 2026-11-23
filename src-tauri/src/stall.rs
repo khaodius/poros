@@ -35,11 +35,21 @@ impl Activity {
         self.origin + Duration::from_millis(self.last_progress.load(Ordering::Relaxed))
     }
 
+    /// Whether any bytes moved after `instant`.
+    pub fn moved_since(&self, instant: Instant) -> bool {
+        self.last_progress() > instant
+    }
+
     /// Completes once nothing has moved for the limit, counting from `since` when that is
     /// later than the last progress.
     pub async fn stalled(&self, since: Instant) {
+        self.stalled_for(since, self.limit).await;
+    }
+
+    /// `stalled` with a limit of its own, for a request the far end is rightly slow to answer.
+    pub async fn stalled_for(&self, since: Instant, limit: Duration) {
         loop {
-            let deadline = self.last_progress().max(since) + self.limit;
+            let deadline = self.last_progress().max(since) + limit;
             if deadline <= Instant::now() {
                 return;
             }

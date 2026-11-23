@@ -420,7 +420,7 @@ async fn repair_remote(
     }
     .await;
     let (_, closed) = fs
-        .close_and_stat(handle, context.settings.flush_to_disk)
+        .close_and_stat(handle, context.settings.flush_to_disk, &context.run.cancel)
         .await;
     let written = written?;
     closed?;
