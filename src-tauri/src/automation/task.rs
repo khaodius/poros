@@ -233,7 +233,9 @@ impl TaskAction {
         }
     }
 
-    fn validate<Tz: TimeZone>(&self, now: &DateTime<Tz>) -> AppResult<()> {
+    /// Checks what a task needs before it can run; a file edited by hand is checked again as
+    /// the run begins.
+    pub(super) fn validate<Tz: TimeZone>(&self, now: &DateTime<Tz>) -> AppResult<()> {
         if self.connection_id().is_empty() {
             return Err(AppError::invalid("Choose a saved connection"));
         }

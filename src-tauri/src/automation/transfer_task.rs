@@ -32,6 +32,9 @@ pub(super) async fn run(task: &ScheduledTask, context: &TaskContext<'_>) -> AppR
     else {
         return Err(AppError::invalid("Not a transfer"));
     };
+    // The app checks a task as it is saved, but not one edited by hand in schedules.json: a
+    // relative download folder would land wherever this process was started.
+    task.action.validate(&Local::now())?;
     // Checked before anything is connected: a paused queue would keep the run, and the next
     // ones behind it, waiting for as long as it stays paused.
     if context.transfers.is_paused() {
@@ -312,6 +315,59 @@ mod tests {
         assert_eq!(resolve_remote(&session, "~"), "/home/me");
         assert_eq!(resolve_remote(&session, "site/../logs"), "/srv/www/logs");
         assert_eq!(resolve_remote(&session, " /a/./b "), "/a/b");
+    }
+
+    #[tokio::test]
+    async fn a_task_edited_by_hand_is_checked_before_it_runs() {
+        let folder = tempfile::tempdir().unwrap();
+        let events = crate::events::Events::default();
+        let sessions = std::sync::Arc::new(crate::session::SessionManager::new(
+            folder.path().join("known_hosts"),
+            events.clone(),
+        ));
+        let sync = crate::sync::SyncManager::new(sessions.clone(), events.clone());
+        let transfers = crate::transfer::TransferManager::new(
+            sessions.clone(),
+            events.clone(),
+            Default::default(),
+        );
+        let context = TaskContext {
+            sessions: &sessions,
+            connections: std::sync::Arc::new(crate::connections::ConnectionStore::new(
+                folder.path().join("connections.json"),
+                Box::new(crate::connections::tests::MemorySecrets::default()),
+            )),
+            connection_settings: Default::default(),
+            cloud_settings: Default::default(),
+            sync: &sync,
+            transfers: &transfers,
+            events: &events,
+            sign_in: Default::default(),
+        };
+        let mut task = super::super::task::tests::task(super::super::schedule::Trigger::Every {
+            minutes: 60,
+            start: 0,
+        });
+        task.action = TaskAction::Transfer {
+            connection_id: "server".into(),
+            source_connection_id: None,
+            direction: Direction::Download,
+            items: vec![TaskItem {
+                path: "/var/www".into(),
+                is_dir: true,
+            }],
+            // Would land under the folder the process was started in.
+            destination: "reldest".into(),
+            exists: crate::transfer::ExistsAction::Overwrite,
+            subfolder: String::new(),
+        };
+        let error = run(&task, &context).await.unwrap_err();
+        assert!(
+            error.message.contains("reldest is not a full path"),
+            "{}",
+            error.message
+        );
+        assert!(!std::path::Path::new("reldest").exists());
     }
 
     #[test]
