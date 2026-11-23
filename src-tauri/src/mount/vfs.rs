@@ -429,6 +429,20 @@ pub struct MountFs {
     on_upload_failure: Mutex<Option<FailureReport>>,
 }
 
+impl Drop for MountFs {
+    fn drop(&mut self) {
+        // Spool files that were not kept go with their files, and the folder with them
+        // when nothing was kept in it.
+        if let Ok(handles) = self.handles.get_mut() {
+            handles.clear();
+        }
+        if let Ok(nodes) = self.nodes.get_mut() {
+            nodes.by_id.clear();
+        }
+        let _ = std::fs::remove_dir(&self.options.spool_directory);
+    }
+}
+
 fn now_seconds() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1280,10 +1294,14 @@ impl MountFs {
                     state.uploaded = generation;
                     state.uploading = None;
                     state.failed = None;
+                    // Under the lock: a write after this notes its change again, and one
+                    // made while the upload ran keeps its note.
+                    if state.generation == generation {
+                        local.spool.release();
+                    }
                     let modified = state.modified.unwrap_or(state.touched);
                     let permissions = state.permissions;
                     drop(state);
-                    local.spool.release();
                     self.bytes_written
                         .fetch_add(request.size, Ordering::Relaxed);
                     self.uploaded(
@@ -1302,7 +1320,6 @@ impl MountFs {
                 }
                 Some(reason) => {
                     state.failed = Some((generation, reason.clone()));
-                    state.uploading = None;
                     let note = UnsentNote {
                         connection: self.options.connection.clone(),
                         remote_path: request.remote_path.clone(),
@@ -1311,9 +1328,12 @@ impl MountFs {
                         kept_at: now_seconds(),
                     };
                     drop(state);
+                    // Still marked as uploading meanwhile, so no attempt that succeeds can
+                    // remove the note before it is written.
                     if let Err(error) = local.spool.keep(&note) {
                         log::warn!("Could not note an unsent file: {error}");
                     }
+                    local.state.lock().unwrap().uploading = None;
                     local.settled.send_modify(|count| *count += 1);
                     return;
                 }

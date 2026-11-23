@@ -792,6 +792,30 @@ async fn unsent_files_are_kept_when_the_drive_goes_away() {
 }
 
 #[tokio::test]
+async fn a_drive_that_kept_nothing_leaves_no_spool_folder() {
+    let drive = drive();
+    let (_, handle) = drive
+        .fs
+        .create(ROOT_NODE, "sent.txt", OpenMode::WRITE_TRUNCATE, false, None)
+        .await
+        .unwrap();
+    drive.fs.write(handle, 0, b"sent in time").await.unwrap();
+    assert!(drive.spool_folder().is_dir());
+    drive.fs.release(handle);
+    until("the file is uploaded", || drive.spooled_files() == 0).await;
+    assert_eq!(
+        drive.server.file("/sent.txt").unwrap()[..],
+        b"sent in time"[..]
+    );
+    let spool_folder = drive.spool_folder();
+    let Drive { fs, server, folder } = drive;
+    drop(fs);
+    until("the spool folder is removed", || !spool_folder.exists()).await;
+    drop(server);
+    drop(folder);
+}
+
+#[tokio::test]
 async fn unsent_changes_carry_a_note_from_the_first_write_on() {
     let drive = drive();
     drive.server.put_folder("/docs");

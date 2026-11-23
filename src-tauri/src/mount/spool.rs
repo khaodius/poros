@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 
 /// The extension of the note written beside a spool file that was kept.
 pub const NOTE_EXTENSION: &str = "unsent.json";
+/// A note being written, renamed into place once whole so it is never read half done.
+const NOTE_WRITING_EXTENSION: &str = "unsent.tmp";
 
 pub struct Spool {
     path: PathBuf,
@@ -86,7 +88,13 @@ impl Spool {
     /// waiting for the disk: for contents that are still changing.
     pub fn note(&self, note: &UnsentNote) -> io::Result<()> {
         let text = serde_json::to_vec_pretty(note).map_err(io::Error::other)?;
-        std::fs::write(note_path(&self.path), text)?;
+        // Named apart from any other write of this note under way at the same time.
+        let writing = self.path.with_extension(format!(
+            "{}.{NOTE_WRITING_EXTENSION}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::write(&writing, text)?;
+        std::fs::rename(&writing, note_path(&self.path))?;
         self.kept.store(true, Ordering::Relaxed);
         Ok(())
     }
@@ -155,8 +163,8 @@ pub struct UnsentFile {
     pub note: UnsentNote,
 }
 
-/// The files kept under `directory` and its folders, newest first. Spool files without a note
-/// were being written when Poros stopped and are listed too, as far as they can be described.
+/// The files kept under `directory` and its folders, newest first. A spool file has its note
+/// from the first change on, so one without a note holds nothing that was changed.
 pub fn unsent_files(directory: &Path) -> Vec<UnsentFile> {
     let mut found = Vec::new();
     let mut folders = vec![directory.to_path_buf()];
@@ -217,8 +225,8 @@ pub fn discard_unsent(directory: &Path, spool: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Removes spool files left without a note by a run of Poros that ended abruptly: nothing
-/// says where they belong, and what they held was never confirmed as written.
+/// Removes spool files left without a note by a run of Poros that ended abruptly, and notes
+/// it left half written: nothing says where those files belong.
 pub fn remove_orphans(directory: &Path) {
     let mut folders = vec![directory.to_path_buf()];
     while let Some(folder) = folders.pop() {
@@ -233,6 +241,12 @@ pub fn remove_orphans(directory: &Path) {
                 .extension()
                 .is_some_and(|extension| extension == "spool")
                 && !note_path(&path).exists()
+            {
+                let _ = std::fs::remove_file(&path);
+            } else if path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(NOTE_WRITING_EXTENSION))
             {
                 let _ = std::fs::remove_file(&path);
             }
@@ -300,8 +314,12 @@ mod tests {
         kept.keep(&note("/a")).unwrap();
         let orphan = folder.path().join("0b4e5a9e-orphan.spool");
         std::fs::write(&orphan, b"half written").unwrap();
+        let half_noted = folder.path().join("0b4e5a9e-orphan.5c2d.unsent.tmp");
+        std::fs::write(&half_noted, b"{\"conn").unwrap();
         remove_orphans(folder.path());
         assert!(!orphan.exists());
+        assert!(!half_noted.exists());
         assert!(kept.path().exists());
+        assert_eq!(unsent_files(folder.path()).len(), 1);
     }
 }
