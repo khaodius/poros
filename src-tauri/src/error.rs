@@ -47,6 +47,10 @@ pub struct HostKeyInfo {
     /// Why the system did not trust a TLS certificate; absent for SSH host keys.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub certificate_problem: Option<String>,
+    /// The server was held to a key given beforehand, as `poros-cli --host-key` does, and showed
+    /// another.
+    #[serde(skip)]
+    pub differs_from_pin: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -280,6 +284,7 @@ mod tests {
                 algorithm: "ssh-ed25519".into(),
                 fingerprint: "SHA256:abc".into(),
                 certificate_problem: None,
+                differs_from_pin: false,
             },
         );
         let json = serde_json::to_value(&error).unwrap();

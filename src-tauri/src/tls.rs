@@ -187,6 +187,7 @@ impl ServerCertVerifier for ApprovingVerifier {
                 algorithm: CERTIFICATE_ALGORITHM.to_string(),
                 fingerprint,
                 certificate_problem: Some("It is not the one given to connect with.".into()),
+                differs_from_pin: true,
             };
             self.outcome.lock().unwrap().rejected = Some(AppError::host_key(kind, info));
             return Err(rustls::Error::InvalidCertificate(
@@ -229,6 +230,7 @@ impl ServerCertVerifier for ApprovingVerifier {
             algorithm: CERTIFICATE_ALGORITHM.to_string(),
             fingerprint,
             certificate_problem: Some(describe_problem(&problem)),
+            differs_from_pin: false,
         };
         self.outcome.lock().unwrap().rejected = Some(AppError::host_key(kind, info));
         Err(problem)

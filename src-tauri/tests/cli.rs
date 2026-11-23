@@ -241,6 +241,10 @@ fn a_host_key_pin_is_never_replaced() {
         value["error"]["hostKey"]["fingerprint"],
         fingerprint.as_str()
     );
+    assert_eq!(
+        value["error"]["hint"],
+        "The server showed another key than the one given with --host-key"
+    );
     assert_eq!(fresh.json(&["info"]).0, 5, "nothing was remembered");
 
     // On record, but not the key asked for.

@@ -295,6 +295,7 @@ impl client::Handler for ClientHandler {
             algorithm: key.algorithm().as_str().to_string(),
             fingerprint: fingerprint(&key),
             certificate_problem: None,
+            differs_from_pin: false,
         };
         let status = self.known_hosts.check(&self.host, self.port, &key);
         if status == HostKeyStatus::Revoked {
@@ -320,6 +321,10 @@ impl client::Handler for ClientHandler {
                 "The host key for {}:{} is not the one given to connect with ({} {}).",
                 info.host, info.port, info.algorithm, info.fingerprint
             );
+            let info = HostKeyInfo {
+                differs_from_pin: true,
+                ..info
+            };
             *self.rejection.lock().unwrap() = Some(AppError {
                 message,
                 ..AppError::host_key(kind, info)
