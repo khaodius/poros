@@ -127,9 +127,47 @@ describe("nameTargetOf", () => {
     ).toBe(false);
   });
 
+  it("asks the folder for one of its names in the other Unicode form, as a Mac stores it", async () => {
+    const accented = ["notes.txt", "r\u00e9sum\u00e9.pdf"];
+    const decomposed = "re\u0301sume\u0301.pdf";
+    answers.files_conflicts = ({ names: probed }) =>
+      (probed as string[]).filter((name) => name === decomposed);
+    const mac = await nameTargetOf(server("sftp"), "/Users/ana", accented);
+    expect(mac).toMatchObject({ caseInsensitive: false, normalizes: true });
+    expect(asked("files_conflicts").map((call) => call.args.names)).toEqual([
+      ["NOTES.TXT"],
+      [decomposed],
+    ]);
+
+    answers.local_stat = ({ paths }) =>
+      (paths as string[]).filter((path) => path.endsWith(decomposed)).map((path) => ({ path }));
+    const local = await nameTargetOf(LOCAL, "/Users/ana", accented);
+    expect(local).toMatchObject({ caseInsensitive: false, normalizes: true });
+    expect(asked("local_stat").map((call) => call.args.paths)).toContainEqual([
+      `/Users/ana/${decomposed}`,
+    ]);
+
+    answers.files_conflicts = () => [];
+    expect((await nameTargetOf(server("webDav"), "/dav", accented)).normalizes).toBe(false);
+    answers.files_conflicts = () => {
+      throw new Error("The connection was lost");
+    };
+    expect((await nameTargetOf(server("ftp"), "/pub", accented)).normalizes).toBe(false);
+
+    // Names without accents leave nothing to ask about form.
+    calls = [];
+    answers.files_conflicts = () => [];
+    expect((await nameTargetOf(server("sftp"), "/srv", names)).normalizes).toBe(false);
+    expect(asked("files_conflicts")).toHaveLength(1);
+  });
+
   it("knows without asking where the kind of place settles it", async () => {
     expect((await nameTargetOf(server("s3"), "/bucket/photos", names)).caseInsensitive).toBe(false);
     expect((await nameTargetOf(server("oneDrive"), "/Photos", names)).caseInsensitive).toBe(true);
+    expect(await nameTargetOf(server("googleDrive"), "/Photos", names)).toMatchObject({
+      caseInsensitive: true,
+      normalizes: false,
+    });
     const vault = await nameTargetOf(server("cryptomator", "/srv/vault"), "/srv/vault", names);
     expect(vault).toMatchObject({ caseInsensitive: false, normalizes: true });
     expect(calls).toEqual([]);

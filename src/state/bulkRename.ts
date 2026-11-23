@@ -5,6 +5,7 @@ import { create } from "zustand";
 import {
   DEFAULT_RULES,
   caseProbe,
+  formProbe,
   planRenames,
   rememberFind,
   renameOutcomes,
@@ -49,23 +50,22 @@ export function closeRenameReport(): void {
 }
 
 /**
- * Whether the folder answers for one of its names spelled in the other case, which means case
- * does not matter there. Not knowing counts as case mattering: a rename onto a name in use is
- * refused when it runs, so guessing that way never overwrites anything.
+ * Whether the folder answers for `name`, another spelling of a name it lists, which means it
+ * holds the two spellings to be one name. Not knowing counts as no: a rename onto a name in use
+ * is refused when it runs, so guessing that way never overwrites anything.
  */
-async function answersInEitherCase(
+async function answersFor(
   origin: FileOrigin,
   folder: string,
-  names: readonly string[],
+  name: string | undefined,
 ): Promise<boolean> {
-  const probe = caseProbe(names);
-  if (!probe) return false;
+  if (name === undefined) return false;
   try {
     if (origin.kind === "local") {
-      const path = childPath(folder, probe.swapped, pathStyleOf(origin));
+      const path = childPath(folder, name, pathStyleOf(origin));
       return (await local.stat([path])).length > 0;
     }
-    const taken = await fileOperations.conflicts(toLocation(origin), [probe.swapped], folder);
+    const taken = await fileOperations.conflicts(toLocation(origin), [name], folder);
     return taken.length > 0;
   } catch {
     return false;
@@ -81,16 +81,21 @@ export function knownTraits(origin: FileOrigin, folder: string) {
   });
 }
 
-/** What names `folder` takes, asking the folder itself where its kind does not say. */
+/**
+ * What names `folder` takes, asking the folder itself where its kind does not say: for one of
+ * its names spelled in the other case, and in the other Unicode form.
+ */
 export async function nameTargetOf(
   origin: FileOrigin,
   folder: string,
   names: readonly string[],
 ): Promise<NameTarget> {
   const traits = knownTraits(origin, folder);
-  const caseInsensitive =
-    traits.caseInsensitive ?? (await answersInEitherCase(origin, folder, names));
-  return { ...traits, caseInsensitive };
+  const [caseInsensitive, normalizes] = await Promise.all([
+    traits.caseInsensitive ?? answersFor(origin, folder, caseProbe(names)?.swapped),
+    traits.normalizes ?? answersFor(origin, folder, formProbe(names)?.otherForm),
+  ]);
+  return { ...traits, caseInsensitive, normalizes };
 }
 
 const TOKEN_BYTES = 4;

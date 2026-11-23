@@ -12,6 +12,7 @@ import {
   formatCounter,
   formatDateToken,
   formatTimeToken,
+  formProbe,
   joinName,
   nameKey,
   nameProblem,
@@ -581,23 +582,31 @@ describe("targetTraits", () => {
     expect(windows.lengthUnit).toBe("characters");
   });
 
-  it("leaves case to the folder where the file system decides", () => {
-    expect(targetTraits({ pathStyle: "posix", folder: "/home" }).caseInsensitive).toBeUndefined();
+  it("leaves case and Unicode form to the folder where the file system decides", () => {
+    const local = targetTraits({ pathStyle: "posix", folder: "/home" });
+    expect(local.caseInsensitive).toBeUndefined();
+    expect(local.normalizes).toBeUndefined();
     for (const protocol of ["sftp", "ftp", "ftps", "ftpsImplicit", "webDav", "webDavs"] as const) {
       expect(traits(protocol).caseInsensitive, protocol).toBeUndefined();
+      expect(traits(protocol).normalizes, protocol).toBeUndefined();
     }
+    expect(targetTraits({ pathStyle: "windows", folder: "C:\\" }).normalizes).toBe(false);
   });
 
   it("knows the services whose rules are fixed", () => {
-    expect(traits("oneDrive").caseInsensitive).toBe(true);
     expect(traits("oneDrive").forbidden).toContain("?");
-    expect(traits("box").caseInsensitive).toBe(true);
     expect(traits("box").forbidden).toBe("/\\");
-    for (const protocol of ["s3", "backblazeB2", "googleDrive", "cryptomator"] as const) {
+    // Drive looks names up without regard to case.
+    for (const protocol of ["oneDrive", "box", "googleDrive"] as const) {
+      expect(traits(protocol).caseInsensitive, protocol).toBe(true);
+    }
+    for (const protocol of ["s3", "backblazeB2", "cryptomator"] as const) {
       expect(traits(protocol).caseInsensitive, protocol).toBe(false);
     }
+    for (const protocol of ["s3", "backblazeB2", "googleDrive", "oneDrive", "box"] as const) {
+      expect(traits(protocol).normalizes, protocol).toBe(false);
+    }
     expect(traits("cryptomator").normalizes).toBe(true);
-    expect(traits("sftp").normalizes).toBe(false);
   });
 
   it("leaves a name on object storage what the folder's key does not use", () => {
@@ -621,6 +630,27 @@ describe("caseProbe", () => {
     expect(caseProbe(["ab", "AB", "123", "żółć", "x"])).toEqual({ listed: "x", swapped: "X" });
     expect(caseProbe(["123", "_", "żółć"])).toBeNull();
     expect(caseProbe([])).toBeNull();
+  });
+});
+
+describe("formProbe", () => {
+  it("picks a listed name with accents whose other form is not listed", () => {
+    expect(formProbe(["notes.txt", "r\u00e9sum\u00e9.pdf"])).toEqual({
+      listed: "r\u00e9sum\u00e9.pdf",
+      otherForm: "re\u0301sume\u0301.pdf",
+    });
+    // As a Mac's older disks list names: decomposed.
+    expect(formProbe(["cafe\u0301"])).toEqual({ listed: "cafe\u0301", otherForm: "caf\u00e9" });
+  });
+
+  it("skips names written only one way and names whose other form is listed too", () => {
+    expect(formProbe(["notes.txt", "2024", "\u{1F600}.png", "\u4E2D\u6587"])).toBeNull();
+    expect(formProbe(["caf\u00e9", "cafe\u0301"])).toBeNull();
+    expect(formProbe(["caf\u00e9", "cafe\u0301", "\u00fc"])).toEqual({
+      listed: "\u00fc",
+      otherForm: "u\u0308",
+    });
+    expect(formProbe([])).toBeNull();
   });
 });
 
@@ -756,6 +786,81 @@ describe("previewRenames", () => {
     expect(preview.rows[0].message).toContain("differs only in how its accents are stored");
   });
 
+  it("changes case on Google Drive through a temporary name and flags case clashes there", () => {
+    const traits = targetTraits({
+      pathStyle: "posix",
+      protocol: "googleDrive",
+      folder: "/Reports",
+    });
+    const drive: NameTarget = {
+      ...traits,
+      caseInsensitive: traits.caseInsensitive ?? false,
+      normalizes: traits.normalizes ?? false,
+    };
+    const preview = previewRenames(
+      selectionOf(["report.txt", "draft.txt"], ["Notes.txt"]),
+      rulesWith({ ...find("draft", "notes"), letterCase: "upper" }),
+      drive,
+    );
+    expect(preview.rows.map((row) => row.newName)).toEqual(["REPORT.txt", "NOTES.txt"]);
+    expect(statuses(preview)).toEqual(["ready", "taken"]);
+    expect(
+      planRenames(renamesOf(preview), ["Notes.txt"], drive, (attempt) => `tmp-${attempt}`),
+    ).toEqual([{ temporary: "tmp-1", renames: [{ from: "report.txt", to: "REPORT.txt" }] }]);
+  });
+
+  it("refuses to rename items that have the same name as another selected item", () => {
+    // Google Drive and S3 can list two items of one name; renames go by name.
+    const twins = previewRenames(
+      selectionOf(["scan.pdf", "scan.pdf", "cover.pdf"]),
+      rulesWith({ counter: { enabled: true } }),
+      POSIX,
+    );
+    expect(statuses(twins)).toEqual(["sharedName", "sharedName", "ready"]);
+    expect(twins.rows[0].message).toBe(
+      "Another selected item has the same name; rename these one at a time",
+    );
+    expect(problemSummary(twins)).toBe("2 items have the same name as another selected item.");
+    expect(renamesOf(twins)).toEqual([{ from: "cover.pdf", to: "cover_03.pdf" }]);
+
+    // S3 can list a folder and an object of one name. The folder keeping its name is no
+    // better: which of the two a rename by name finds is up to the server.
+    const one = previewRenames(
+      selectionOf([folder("scan.pdf"), "scan.pdf", "cover.pdf"]),
+      rulesWith({ extension: { change: "upper" } }),
+      POSIX,
+    );
+    expect(statuses(one)).toEqual(["unchanged", "sharedName", "ready"]);
+
+    // Where case does not matter, names that differ only in case are one name too.
+    const cases = previewRenames(
+      selectionOf(["Report.txt", "report.txt"]),
+      rulesWith({ counter: { enabled: true } }),
+      { ...POSIX, caseInsensitive: true },
+    );
+    expect(statuses(cases)).toEqual(["sharedName", "sharedName"]);
+    expect(cases.rows[0].message).toBe(
+      "report.txt is selected too and counts as the same name here; rename these one at a time",
+    );
+    expect(
+      statuses(
+        previewRenames(
+          selectionOf(["Report.txt", "report.txt"]),
+          rulesWith({ counter: { enabled: true } }),
+          POSIX,
+        ),
+      ),
+    ).toEqual(["ready", "ready"]);
+
+    // Items left alone stand in nobody's way.
+    const untouched = previewRenames(
+      selectionOf(["scan.pdf", "scan.pdf", "cover.pdf"]),
+      rulesWith(find("cover", "front")),
+      POSIX,
+    );
+    expect(statuses(untouched)).toEqual(["unchanged", "unchanged", "ready"]);
+  });
+
   it("flags empty, invalid and overlong names before collisions", () => {
     const preview = previewRenames(
       selectionOf([file("a.txt"), file("b.txt"), file("c"), file("dd")]),
@@ -835,12 +940,21 @@ describe("problemSummary", () => {
       rows: [],
       ready: 0,
       unchanged: 0,
-      problems: { taken: 2, empty: 1, duplicate: 3, invalid: 1, tooLong: 2, undated: 4 },
-      problemCount: 13,
+      problems: {
+        taken: 2,
+        empty: 1,
+        duplicate: 3,
+        invalid: 1,
+        tooLong: 2,
+        undated: 4,
+        sharedName: 1,
+      },
+      problemCount: 14,
       findError: null,
     });
     expect(summary).toBe(
-      "1 name is empty, 1 name cannot be used here, 2 names are too long, " +
+      "1 item has the same name as another selected item, " +
+        "1 name is empty, 1 name cannot be used here, 2 names are too long, " +
         "4 items have no modified time, 3 items would share a name, 2 names are already taken.",
     );
   });

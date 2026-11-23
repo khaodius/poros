@@ -125,12 +125,16 @@ export function BulkRenameDialog({
   }, [entries, listed, folder]);
   const held = useMemo(() => listed.map((entry) => entry.name), [listed]);
 
-  // Whether case matters in the folder may take asking it, so the preview starts from what its
-  // kind says and Rename waits for the answer.
+  // Whether case and Unicode form matter in the folder may take asking it, so the preview starts
+  // from what its kind says and Rename waits for the answer.
   const [target, setTarget] = useState<NameTarget | null>(null);
   const assumedTarget = useMemo<NameTarget>(() => {
     const traits = knownTraits(origin, folder);
-    return { ...traits, caseInsensitive: traits.caseInsensitive ?? false };
+    return {
+      ...traits,
+      caseInsensitive: traits.caseInsensitive ?? false,
+      normalizes: traits.normalizes ?? false,
+    };
   }, [origin, folder]);
   useEffect(() => {
     let wanted = true;

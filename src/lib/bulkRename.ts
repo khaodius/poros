@@ -484,10 +484,15 @@ export interface NameTarget {
   lengthUnit: "bytes" | "characters";
 }
 
-/** A target as far as its kind tells; whether case matters may take a look at the folder. */
-export type TargetTraits = Omit<NameTarget, "caseInsensitive"> & {
+/**
+ * A target as far as its kind tells; whether case and Unicode form matter may take a look at the
+ * folder.
+ */
+export type TargetTraits = Omit<NameTarget, "caseInsensitive" | "normalizes"> & {
   /** Undefined where it depends on the file system behind the folder. */
   caseInsensitive: boolean | undefined;
+  /** Undefined where it depends on the file system behind the folder, as on a Mac. */
+  normalizes: boolean | undefined;
 };
 
 const WINDOWS_FORBIDDEN = '<>:"/\\|?*';
@@ -510,8 +515,9 @@ function objectNameBytes(folder: string): number {
 
 /**
  * What names a folder takes, from where it is: this computer, or a server of some protocol.
- * A server reached over SFTP, FTP or WebDAV, and a mounted folder on this computer, do not say
- * whether case matters; `caseProbe` finds that out from the folder itself.
+ * A server reached over SFTP, FTP or WebDAV, and a folder on this computer that is not on
+ * Windows, do not say whether case matters, or whether composed and decomposed accents are one
+ * name (as on a Mac); `caseProbe` and `formProbe` find that out from the folder itself.
  */
 export function targetTraits(place: {
   pathStyle: PathStyle;
@@ -537,14 +543,14 @@ export function targetTraits(place: {
     case undefined:
       return place.pathStyle === "windows"
         ? { ...windows, caseInsensitive: true }
-        : { ...posix, caseInsensitive: undefined };
+        : { ...posix, caseInsensitive: undefined, normalizes: undefined };
     case "sftp":
     case "ftp":
     case "ftps":
     case "ftpsImplicit":
     case "webDav":
     case "webDavs":
-      return { ...posix, caseInsensitive: undefined };
+      return { ...posix, caseInsensitive: undefined, normalizes: undefined };
     case "s3":
       return { ...posix, maxLength: objectNameBytes(place.folder), caseInsensitive: false };
     case "backblazeB2":
@@ -553,12 +559,14 @@ export function targetTraits(place: {
         maxLength: Math.min(B2_NAME_BYTES, objectNameBytes(place.folder)),
         caseInsensitive: false,
       };
+    // Drive looks names up without regard to case, so names that differ only in case count as
+    // one name here, as on a case-insensitive disk.
     case "googleDrive":
       return {
         ...posix,
         maxLength: DRIVE_NAME_CHARACTERS,
         lengthUnit: "characters",
-        caseInsensitive: false,
+        caseInsensitive: true,
       };
     case "oneDrive":
       return { ...windows, caseInsensitive: true };
@@ -594,6 +602,21 @@ export function caseProbe(names: readonly string[]): { listed: string; swapped: 
   return null;
 }
 
+/**
+ * A name the folder holds and the same name in the other Unicode form, composed or decomposed,
+ * which the folder does not list. If the folder answers for the second name too, it holds the
+ * two forms to be one name. Null when no listed name has accents that can be written two ways.
+ */
+export function formProbe(names: readonly string[]): { listed: string; otherForm: string } | null {
+  const held = new Set(names);
+  for (const name of names) {
+    const composed = name.normalize("NFC");
+    const otherForm = composed === name ? name.normalize("NFD") : composed;
+    if (otherForm !== name && !held.has(otherForm)) return { listed: name, otherForm };
+  }
+  return null;
+}
+
 /** One spelling for every name the target holds to be the same name. */
 export function nameKey(
   name: string,
@@ -617,8 +640,10 @@ function hasControlCharacter(name: string): boolean {
 
 const WINDOWS_DEVICE = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
 
-export type ProblemKind = "empty" | "invalid" | "tooLong" | "undated" | "duplicate" | "taken";
+export type ProblemKind =
+  "sharedName" | "empty" | "invalid" | "tooLong" | "undated" | "duplicate" | "taken";
 export const PROBLEM_KINDS: ProblemKind[] = [
+  "sharedName",
   "empty",
   "invalid",
   "tooLong",
@@ -706,7 +731,8 @@ function spellingNote(first: string, second: string): string {
 /**
  * Every item with its new name and whether it can have it. A name is refused when the target
  * does not take it, when two items would end with it, or when an item that is not being renamed
- * has it. Items that keep their name hold on to it.
+ * has it. Items that keep their name hold on to it. Renames go by name, so an item that has the
+ * same name as another selected item (which Google Drive and S3 allow) cannot be renamed with it.
  */
 export function previewRenames(
   selection: RenameSelection,
@@ -733,9 +759,28 @@ export function previewRenames(
     else holders.set(key, [index]);
   });
   const others = new Map(selection.others.map((name) => [nameKey(name, target), name]));
+  const sources = new Map<string, number[]>();
+  rows.forEach((row, index) => {
+    const key = nameKey(row.name, target);
+    const sharing = sources.get(key);
+    if (sharing) sharing.push(index);
+    else sources.set(key, [index]);
+  });
 
   rows.forEach((row, index) => {
     if (row.status !== "ready") return;
+    const twin = sources.get(nameKey(row.name, target))?.find((holder) => holder !== index);
+    if (twin !== undefined) {
+      const other = rows[twin].name;
+      flag(
+        row,
+        "sharedName",
+        other === row.name
+          ? "Another selected item has the same name; rename these one at a time"
+          : `${other} is selected too and counts as the same name here; rename these one at a time`,
+      );
+      return;
+    }
     const refusal = nameProblem(row.newName, target);
     if (refusal) {
       flag(row, refusal.problem, refusal.message);
@@ -795,6 +840,8 @@ function countOf(count: number, singular: string, plural = `${singular}s`): stri
 }
 
 const PROBLEM_NOTES: Record<ProblemKind, (count: number) => string> = {
+  sharedName: (count) =>
+    `${countOf(count, "item has", "items have")} the same name as another selected item`,
   empty: (count) => `${countOf(count, "name is", "names are")} empty`,
   invalid: (count) => `${countOf(count, "name")} cannot be used here`,
   tooLong: (count) => `${countOf(count, "name is", "names are")} too long`,
