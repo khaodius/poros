@@ -6220,7 +6220,7 @@ textarea::placeholder {
 /* Two tones in wide diagonal stripes. */
 [data-progress-fill="candy"] {
   --progress-candy: max(14px, 2.2em);
-  --progress-candy-tone: color-mix(in srgb, currentColor 28%, white);
+  --progress-candy-tone: color-mix(in srgb, currentColor 40%, white);
   --progress-textured: "";
   --progress-texture: linear-gradient(
       -45deg,
