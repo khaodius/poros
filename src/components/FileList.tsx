@@ -16,6 +16,7 @@ import { defaultRangeExtractor, useVirtualizer, type Range } from "@tanstack/rea
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, CornerLeftUp } from "lucide-react";
 import { useFitCount } from "../hooks/useFitCount";
 import type { PaneController } from "../hooks/usePane";
+import { useListAnchor } from "../hooks/useListAnchor";
 import { useSelectionBox, type RowRange } from "../hooks/useSelectionBox";
 import { DATE_GROUP_LABELS, type DateGroup, type EntryGroup } from "../lib/dateGroups";
 import { formatDate, formatPermissions, formatSize } from "../lib/format";
@@ -442,6 +443,16 @@ interface FileListProps extends FileListActions {
   folderOf?: (entry: FileEntry) => string;
   /** Said in place of the rows while there are none, instead of what an empty folder says. */
   emptyMessage?: string;
+  /** Rows the user is in the middle of something with, which a newer listing leaves in place. */
+  heldPaths?: ReadonlySet<string>;
+}
+
+const NO_HELD_PATHS: ReadonlySet<string> = new Set();
+
+/** Names a row so that it can be found again among the rows of a newer listing. */
+function rowKey(row: ListRow): string {
+  if (row.kind === "entry") return row.entry.path;
+  return row.kind === "group" ? `\0group:${row.group}` : "\0parent";
 }
 
 export function FileList({
@@ -460,6 +471,7 @@ export function FileList({
   renaming,
   folderOf,
   emptyMessage: givenEmptyMessage,
+  heldPaths = NO_HELD_PATHS,
   ...actions
 }: FileListProps) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -554,18 +566,32 @@ export function FileList({
     if (renamingRow >= 0) virtualizer.scrollToIndex(renamingRow, { align: "auto" });
   }, [renamingRow, virtualizer]);
 
+  // Results shown in place of the folder they were found in are another place than the folder.
+  const shownPlace = `${pane.showingResults ? "results:" : ""}${pane.listing?.path ?? ""}`;
+  // The folder on show listed again, as when the server answers for a remembered listing,
+  // leaves the list where the user has it; so do results as more of them come in.
+  const rowKeys = useMemo(() => rows.map(rowKey), [rows]);
+  const keptInPlace = useListAnchor(scrollRef, {
+    folder: pane.listing ? shownPlace : undefined,
+    listing: pane.listing,
+    rowKeys,
+    cursor: pane.cursorPath,
+    held: heldPaths,
+    rowHeight,
+  });
+
   // A folder opens at the top, or with the cursor's row in the middle when it has one, as the
   // folder just left does after going up or back. Collapsing or expanding a group leaves the
   // list where it is, rather than bringing the cursor back into view.
   const scrolledPath = useRef<string | undefined>(undefined);
   const groupToggled = useRef(false);
   // Results shown in place of the folder they were found in open at the top too.
-  const shownPlace = `${pane.showingResults ? "results:" : ""}${pane.listing?.path ?? ""}`;
   useEffect(() => {
     const opened = scrolledPath.current !== shownPlace;
     scrolledPath.current = shownPlace;
     const toggled = groupToggled.current;
     groupToggled.current = false;
+    if (keptInPlace(rowKeys)) return;
     const row = pane.cursorPath ? rowOfPath.get(pane.cursorPath) : undefined;
     if (row !== undefined && !(toggled && !opened)) {
       // The first row of a group brings its heading into view with it on the way up.
@@ -579,7 +605,7 @@ export function FileList({
     } else if (opened) {
       scrollRef.current?.scrollTo({ top: 0 });
     }
-  }, [shownPlace, pane.cursorPath, rows, rowOfPath, rowHeight, virtualizer]);
+  }, [shownPlace, pane.cursorPath, rows, rowKeys, rowOfPath, rowHeight, virtualizer, keptInPlace]);
 
   useEffect(() => {
     virtualizer.measure();

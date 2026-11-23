@@ -6314,3 +6314,57 @@ textarea::placeholder {
   flex: none;
   color: var(--text-muted);
 }
+
+/* Cached listings */
+
+/* A thin line under the location bar while a remembered listing waits for the server's. */
+.pane-locationbar {
+  position: relative;
+}
+
+.pane.is-refreshing .pane-locationbar::after {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  pointer-events: none;
+  content: "";
+  background: linear-gradient(90deg, transparent, var(--accent), transparent) no-repeat;
+  background-size: 40% 100%;
+  animation: listing-refreshing 1.1s ease-in-out infinite;
+}
+
+@keyframes listing-refreshing {
+  from {
+    background-position: -67% 0;
+  }
+
+  to {
+    background-position: 167% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pane.is-refreshing .pane-locationbar::after {
+    background-size: 100% 100%;
+    opacity: 0.6;
+    animation: none;
+  }
+}
+
+/* A listing the server could not be asked about stays up, told apart from a current one. */
+.pane.is-outdated .file-list-body {
+  opacity: 0.6;
+}
+
+.pane-notice-warning > svg {
+  color: var(--warning);
+}
+
+.pane-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}

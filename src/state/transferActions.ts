@@ -83,7 +83,9 @@ export function paneWritingTo(pane: PaneHandle, folder: string): PaneHandle {
 export async function refusesLockedVault(target: PaneHandle, folder: string): Promise<boolean> {
   if (target.kind !== "remote" || !target.sessionId) return false;
   const showToast = useToastStore.getState().show;
-  if (target.path() === folder) {
+  // A pane still waiting for the server may show the folder as it was remembered, from before
+  // it became a vault, so it is listed below like a folder no pane shows.
+  if (target.path() === folder && !target.loading?.()) {
     if (target.locked) showToast("info", "Unlock the vault to copy files into it.");
     return target.locked === true;
   }

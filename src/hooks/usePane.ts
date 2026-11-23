@@ -10,6 +10,13 @@ import {
 } from "../lib/dateGroups";
 import { toAppError } from "../lib/ipc";
 import { showsHiddenItems } from "../lib/search";
+import {
+  freshenListing,
+  heldEntries,
+  folderUnavailable,
+  withHeldEntries,
+  type StoredListing,
+} from "../lib/listingCache";
 import { ListingLoads } from "../lib/listingLoads";
 import { filterEntries, isDirLike, sortEntries, type SortKey, type SortSpec } from "../lib/sort";
 import type { AppError, DirListing, FileEntry } from "../lib/types";
@@ -40,6 +47,18 @@ function focusList(focus: Focus | undefined): readonly string[] {
   return typeof focus === "string" ? [focus] : focus;
 }
 
+function sameSet(first: ReadonlySet<string>, second: ReadonlySet<string>): boolean {
+  return first.size === second.size && [...first].every((path) => second.has(path));
+}
+
+/** Names whose files a source lists: sessions on one connection list the same ones. */
+function filesOf(source: FileSource): string {
+  return source.listingScope ?? source.key;
+}
+
+const NO_PATHS: ReadonlySet<string> = new Set();
+const NO_ENTRIES: readonly FileEntry[] = [];
+
 /**
  * Another source that shows a folder in place of the pane's own, as an unlocked vault does for
  * the paths inside it, or its server for those outside.
@@ -49,6 +68,41 @@ export interface Handover {
   /** Makes `source` the pane's own, once it has listed the folder at `path`. */
   take: (path: string) => void;
 }
+
+/**
+ * The listings remembered for the server a pane is on, so that a folder seen before shows at
+ * once. `state/listings.ts` gives the panes of a window theirs.
+ */
+export interface PaneListings {
+  /** The folder's last known listing, to show while the server is asked for it again. */
+  recall: (source: FileSource, path: string) => DirListing | null;
+  /**
+   * Notes that `by` asks the server for `path`. The function returned takes the answer, to
+   * remember it, or null when the folder could not be listed.
+   */
+  asking: (source: FileSource, path: string, by: unknown) => (answer: DirListing | null) => void;
+  /** Forgets a folder that can no longer be listed, with the folders inside it. */
+  forget: (source: FileSource, path: string) => void;
+  /** Calls `listener` with every listing remembered from now on, whoever asked for it. */
+  watch: (listener: (stored: StoredListing) => void) => () => void;
+}
+
+/**
+ * What a remembered listing on show is waiting for: "refreshing" while the server is asked for
+ * the folder again, "outdated" when the server could not be reached to ask. Null for a listing
+ * the server just gave.
+ */
+export type Staleness = "refreshing" | "outdated" | null;
+
+/** A folder on its way into the pane. */
+interface Load {
+  /** Whether the folder is on show already, from a remembered listing. */
+  shown: boolean;
+  /** Whether the server listed the folder and the pane shows it, once that is known. */
+  answered: Promise<boolean>;
+}
+
+const NOT_STARTED: Load = { shown: false, answered: Promise.resolve(false) };
 
 export interface PaneController {
   listing: DirListing | null;
@@ -65,6 +119,10 @@ export interface PaneController {
   hiddenCount: number;
   loading: boolean;
   error: AppError | null;
+  /** Set while the listing on show is a remembered one the server has not confirmed. */
+  stale: Staleness;
+  /** The folder that was on show until it could no longer be listed, which emptied the pane. */
+  failedPath: string | null;
   selection: ReadonlySet<string>;
   cursorPath: string | null;
   sort: SortSpec;
@@ -79,12 +137,20 @@ export interface PaneController {
   showResults: (path: string) => void;
   /** Leaves the results for the folder they were found in, and forgets their step in history. */
   closeResults: () => void;
-  /** Goes to `path`, selecting `focus` there. */
+  /**
+   * Opens a folder, selecting `focus` there; true once it is on show, which a remembered
+   * listing makes it at once.
+   */
   navigate: (path: string, focus?: Focus) => Promise<boolean>;
-  /** Reloads the folder, selecting `focus` (one path or several) where the listing has it. */
+  /**
+   * Reloads the folder from the server, never from a remembered listing, selecting `focus` (one
+   * path or several) where the listing has it.
+   */
   refresh: (focus?: Focus) => Promise<boolean>;
   /** Empties the pane until its next listing arrives, for a listing that must not stay up. */
   clear: () => void;
+  /** Whether a listing is on its way. */
+  isLoading: () => boolean;
   goUp: () => void;
   goBack: () => void;
   goForward: () => void;
@@ -125,9 +191,19 @@ export interface PaneOptions {
    */
   handover?: (path: string) => Handover | null;
   /**
+   * Remembered listings to show folders from at once; without them every folder is awaited, and
+   * a folder that fails to reload stays on show as it was.
+   */
+  listings?: PaneListings;
+  /**
+   * Rows the user is in the middle of something with, such as a rename. They stay on show when
+   * a newer listing of the folder no longer has them, until that is over.
+   */
+  heldPaths?: ReadonlySet<string>;
+  /**
    * Entries from elsewhere, such as search results, shown with sorting, filtering and selection
    * as a listing is while the pane is at the step `showResults` made. Their `path` is the folder
-   * they were found in, and they have no parent.
+   * they were found in, and they have no parent. They are never remembered as a folder's listing.
    */
   results?: DirListing | null;
 }
@@ -141,12 +217,19 @@ export function usePane(
     groupByDate = false,
     onSortChange,
     handover,
+    listings,
+    heldPaths = NO_PATHS,
     results = null,
   }: PaneOptions = {},
 ): PaneController {
-  const [folderListing, setListing] = useState<DirListing | null>(null);
+  const [listing, setListing] = useState<DirListing | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<AppError | null>(null);
+  const [staleness, setStaleness] = useState<Staleness>(null);
+  /** The folder that could no longer be listed, and the one it is in, to go up to. */
+  const [failed, setFailed] = useState<{ path: string; parent: string | null } | null>(null);
+  /** Rows held for the user that the listing on show no longer has. */
+  const [carried, setCarried] = useState<readonly FileEntry[]>(NO_ENTRIES);
   const [history, setHistory] = useState<History>({ entries: [], index: -1 });
   const [selection, setSelection] = useState<ReadonlySet<string>>(new Set());
   const [anchorPath, setAnchorPath] = useState<string | null>(null);
@@ -164,35 +247,57 @@ export function usePane(
   const today = useToday();
   const loads = useRef(new ListingLoads());
   const listedPath = useRef<string | null>(null);
+  /** The listing on show as the server or the memory gave it, and the source it is from. */
+  const shown = useRef<DirListing | null>(null);
+  const shownBy = useRef<FileSource | null>(null);
+  /** Counts what the loads put on show, so a load can tell whether its listing still is. */
+  const view = useRef(0);
+  /** Tells this pane's own listings from the ones other panes had remembered. */
+  const self = useRef<object>({});
   const cursorRef = useRef(cursorPath);
+  const selectionRef = useRef(selection);
   useEffect(() => {
     cursorRef.current = cursorPath;
-  }, [cursorPath]);
+    selectionRef.current = selection;
+  }, [cursorPath, selection]);
   // Where Back or Forward is taking the pane, so pressing it again before the folder loads
   // steps on from there.
   const travelIndex = useRef<number | null>(null);
   const handoverRef = useRef(handover);
+  const heldRef = useRef(heldPaths);
+  // Read by each load as it starts, so that turning remembered listings on or off does not
+  // open the pane's first folder again.
+  const listingsRef = useRef(listings);
   useLayoutEffect(() => {
     handoverRef.current = handover;
+    heldRef.current = heldPaths;
+    listingsRef.current = listings;
   });
   // The source a handover listed the folder on show with, until it is the pane's own.
   const takenOverBy = useRef<string | null>(null);
+
   const showingResults = history.entries[history.index]?.results === true && results !== null;
-  const listing = showingResults ? results : folderListing;
   const hasResults = useRef(results !== null);
+  // Whether results are on show, for what changes the folder's listing behind them.
+  const resultsOnShow = useRef(showingResults);
   useLayoutEffect(() => {
     hasResults.current = results !== null;
+    resultsOnShow.current = showingResults;
   });
-
+  const folderDisplayed = useMemo(
+    () => withHeldEntries(listing, carried, heldPaths),
+    [listing, carried, heldPaths],
+  );
+  const displayed = showingResults ? results : folderDisplayed;
   const showsHidden = showsHiddenItems(showHidden, showingResults);
   const sortedEntries = useMemo(
     () =>
       sortEntries(
-        filterEntries(listing?.entries ?? [], { showHidden: showsHidden, query: filter }),
+        filterEntries(displayed?.entries ?? [], { showHidden: showsHidden, query: filter }),
         sort,
         foldersFirst,
       ),
-    [listing, showsHidden, filter, sort, foldersFirst],
+    [displayed, showsHidden, filter, sort, foldersFirst],
   );
   // As in Explorer, the groups run the other way only while sorting oldest first by date.
   const newestFirst = sort.key !== "modified" || sort.direction === -1;
@@ -215,89 +320,217 @@ export function usePane(
     [groups, collapsedGroups, sortedEntries],
   );
   const hiddenCount = useMemo(
-    () => (showsHidden ? 0 : (listing?.entries.filter((entry) => entry.hidden).length ?? 0)),
-    [listing, showsHidden],
+    () => (showsHidden ? 0 : (displayed?.entries.filter((entry) => entry.hidden).length ?? 0)),
+    [displayed, showsHidden],
   );
 
+  /**
+   * Puts a listing on show. One of the folder already on show changes nothing that did not
+   * change on the server: the selection, the cursor and the rows that are the same stay as they
+   * are. For a folder newly on show, returns the cursor and the selection it starts with.
+   */
+  const show = useCallback(
+    (
+      next: DirListing,
+      lister: FileSource,
+      mode: NavigationMode,
+      focusPaths?: Focus,
+      travelTo?: number,
+    ) => {
+      const leftPath = listedPath.current;
+      const leftCursor = cursorRef.current;
+      const sameDirectory = leftPath === next.path;
+      // A vault and its server show one path with different files, so the source counts too.
+      const sameFiles =
+        sameDirectory && shownBy.current !== null && filesOf(shownBy.current) === filesOf(lister);
+      const before = sameFiles ? shown.current : null;
+      const fresh = before ? freshenListing(before, next) : next;
+      const existing = new Set(fresh.entries.map((entry) => entry.path));
+      listedPath.current = fresh.path;
+      shown.current = fresh;
+      shownBy.current = lister;
+      // A reload selects what it was asked to, with the cursor on the first; Back or Forward
+      // puts the cursor where it was in the folder, or else on the way back into the folder
+      // just left.
+      const wanted = focusList(focusPaths).filter((path) => existing.has(path));
+      const focus =
+        wanted[0] ??
+        (mode === "travel" && leftPath ? entryLeadingTo(fresh.entries, leftPath) : undefined);
+      const selected = new Set(wanted.length > 0 ? wanted : focus ? [focus] : []);
+      const held = heldRef.current;
+      setListing(fresh);
+      setCarried((current) => {
+        const kept = before ? heldEntries([...before.entries, ...current], fresh, held) : [];
+        return kept.length === 0 && current.length === 0 ? current : kept;
+      });
+      // A newer listing of the folder behind search results changes only that listing: the
+      // results, their selection and their step in history stay.
+      if (mode === "replace" && resultsOnShow.current) return null;
+      if (!sameDirectory) setCollapsedGroups(new Set());
+      const focused = fresh.entries.filter((entry) => selected.has(entry.path));
+      if (focused.length > 0 && sameDirectory) {
+        // Items shown in a collapsed date group open it, so what was selected can be seen.
+        const groupOf = dateGroupFinder(new Date(), WEEK_STARTS_ON);
+        const groups = new Set(focused.map((entry) => groupOf(entry.modified)));
+        setCollapsedGroups((current) => {
+          if (![...groups].some((group) => current.has(group))) return current;
+          const expanded = new Set(current);
+          for (const group of groups) expanded.delete(group);
+          return expanded;
+        });
+      }
+      const staying = (current: string | null) =>
+        sameDirectory && current !== null && existing.has(current) ? current : null;
+      setSelection((current) => {
+        if (selected.size > 0) return selected;
+        const kept = sameDirectory ? [...current].filter((path) => existing.has(path)) : [];
+        return kept.length === current.size ? current : new Set(kept);
+      });
+      setCursorPath((current) => focus ?? staying(current));
+      setAnchorPath((current) => focus ?? staying(current));
+      setHistory((current) => {
+        const entries = [...current.entries];
+        const entry = entries[current.index];
+        if (mode === "replace") {
+          if (entry?.path === fresh.path) return current;
+          if (entry) entries[current.index] = { ...entry, path: fresh.path };
+          return { entries, index: current.index };
+        }
+        if (entry && !sameDirectory) entries[current.index] = { ...entry, cursor: leftCursor };
+        if (mode === "travel") return { entries, index: travelTo ?? current.index };
+        // Leaving results for their own folder is a step of its own.
+        if (entry?.path === fresh.path && !entry.results) {
+          return { entries, index: current.index };
+        }
+        entries.splice(current.index + 1, Infinity, { path: fresh.path, cursor: null });
+        return { entries, index: entries.length - 1 };
+      });
+      return sameDirectory ? null : { cursor: focus ?? null, selection: selected };
+    },
+    [],
+  );
+
+  /** Takes off show a listing whose folder can no longer be listed. */
+  const drop = useCallback((first: boolean) => {
+    const parent = shown.current?.parent ?? null;
+    view.current += 1;
+    shown.current = null;
+    setListing(null);
+    setCarried(NO_ENTRIES);
+    setSelection(new Set());
+    setAnchorPath(null);
+    setCursorPath(null);
+    setStaleness(null);
+    if (first) {
+      // As if the folder had never opened, so the pane opens where it does when one cannot.
+      listedPath.current = null;
+      setHistory({ entries: [], index: -1 });
+    } else if (listedPath.current !== null) {
+      setFailed({ path: listedPath.current, parent });
+    }
+  }, []);
+
   const load = useCallback(
-    async (target: string, mode: NavigationMode, focusPaths?: Focus): Promise<boolean> => {
+    (target: string, mode: NavigationMode, focusPaths?: Focus, travelTo?: number): Load => {
       const request = loads.current.start(mode === "replace" ? "refresh" : "navigation");
-      if (request === null) return false;
+      if (request === null) return NOT_STARTED;
       if (mode === "push") travelIndex.current = null;
       takenOverBy.current = null;
       setLoading(true);
-      try {
-        const other = handoverRef.current?.(target) ?? null;
-        const next = await (other?.source ?? source).list(target);
-        if (!loads.current.isCurrent(request)) return false;
-        const existing = new Set(next.entries.map((entry) => entry.path));
-        const leftPath = listedPath.current;
-        const leftCursor = cursorRef.current;
-        const sameDirectory = leftPath === next.path;
-        listedPath.current = next.path;
-        // A reload selects what it was asked to, with the cursor on the first; Back or Forward
-        // puts the cursor where it was in the folder, or else on the way back into the folder
-        // just left.
-        const wanted = focusList(focusPaths).filter((path) => existing.has(path));
-        const focus =
-          wanted[0] ??
-          (mode === "travel" && leftPath ? entryLeadingTo(next.entries, leftPath) : undefined);
-        const selected = new Set(wanted.length > 0 ? wanted : focus ? [focus] : []);
-        setListing(next);
-        if (!sameDirectory) setCollapsedGroups(new Set());
-        const focused = next.entries.filter((entry) => selected.has(entry.path));
-        if (focused.length > 0 && sameDirectory) {
-          // Items shown in a collapsed date group open it, so what was selected can be seen.
-          const groupOf = dateGroupFinder(new Date(), WEEK_STARTS_ON);
-          const groups = new Set(focused.map((entry) => groupOf(entry.modified)));
-          setCollapsedGroups((current) => {
-            if (![...groups].some((group) => current.has(group))) return current;
-            const expanded = new Set(current);
-            for (const group of groups) expanded.delete(group);
-            return expanded;
-          });
-        }
-        setSelection((current) => {
-          if (selected.size > 0) return selected;
-          return sameDirectory
-            ? new Set([...current].filter((path) => existing.has(path)))
-            : new Set<string>();
-        });
-        setCursorPath((current) => {
-          if (focus) return focus;
-          if (sameDirectory && current && existing.has(current)) return current;
-          return null;
-        });
-        setAnchorPath(focus ?? null);
-        setError(null);
-        setHistory((current) => {
-          const entries = [...current.entries];
-          const shown = entries[current.index];
-          if (mode === "replace") {
-            if (shown) entries[current.index] = { ...shown, path: next.path };
-            return { entries, index: current.index };
+      const first = listedPath.current === null;
+      const started = { shown: false };
+      const listings = listingsRef.current;
+      const answer = async (): Promise<boolean> => {
+        let lister = source;
+        let remembered: DirListing | null = null;
+        let rememberedView = -1;
+        let noteAnswer: ((answer: DirListing | null) => void) | undefined;
+        try {
+          const other = handoverRef.current?.(target) ?? null;
+          lister = other?.source ?? source;
+          const take = (path: string) => {
+            if (!other) return;
+            takenOverBy.current = other.source.key;
+            other.take(path);
+          };
+          // A reload asks the server, and shows nothing remembered in the meantime.
+          remembered = mode === "replace" ? null : (listings?.recall(lister, target) ?? null);
+          let startedWith: ReturnType<typeof show> = null;
+          if (remembered) {
+            startedWith = show(remembered, lister, mode, focusPaths, travelTo);
+            view.current += 1;
+            rememberedView = view.current;
+            setError(null);
+            setFailed(null);
+            setStaleness("refreshing");
+            // The folder is on show, so a reload asked for from here on is of this folder.
+            loads.current.landed(request);
+            take(remembered.path);
+            started.shown = true;
           }
-          if (shown && !sameDirectory) entries[current.index] = { ...shown, cursor: leftCursor };
-          // Leaving results for their own folder is a step of its own.
-          const stays = mode === "travel" || (shown?.path === next.path && !shown.results);
-          if (stays) return { entries, index: current.index };
-          entries.splice(current.index + 1, Infinity, { path: next.path, cursor: null });
-          return { entries, index: entries.length - 1 };
-        });
-        if (other) {
-          takenOverBy.current = other.source.key;
-          other.take(next.path);
+          noteAnswer = listings?.asking(lister, target, self.current);
+          const next = await lister.list(target);
+          noteAnswer?.(next);
+          noteAnswer = undefined;
+          if (remembered) {
+            // Still the remembered listing on show: the pane went nowhere else meanwhile.
+            if (view.current !== rememberedView) return false;
+            const known = new Set(remembered.entries.map((entry) => entry.path));
+            const untouched =
+              startedWith !== null &&
+              cursorRef.current === startedWith.cursor &&
+              sameSet(selectionRef.current, startedWith.selection);
+            // What was to be selected and is listed only now is, unless the user chose since.
+            const selectsNow = untouched && focusList(focusPaths).some((path) => !known.has(path));
+            show(next, lister, "replace", selectsNow ? focusPaths : undefined);
+            if (next.path !== remembered.path) take(next.path);
+          } else {
+            if (!loads.current.isCurrent(request)) return false;
+            show(next, lister, mode, focusPaths, travelTo);
+            take(next.path);
+          }
+          view.current += 1;
+          setError(null);
+          setFailed(null);
+          setStaleness(null);
+          return true;
+        } catch (caught) {
+          noteAnswer?.(null);
+          const failure = toAppError(caught);
+          const unavailable = folderUnavailable(failure);
+          // The server says the folder cannot be listed, so nothing remembered of it holds,
+          // wherever the pane has gone since.
+          if (unavailable) listings?.forget(lister, target);
+          const current = loads.current.isCurrent(request);
+          // Whether the listing on show is one this load was to confirm: the remembered one it
+          // put up, or the one it reloads.
+          const unconfirmed = remembered
+            ? view.current === rememberedView
+            : current && mode === "replace" && listings !== undefined && shown.current !== null;
+          if (current || unconfirmed) setError(failure);
+          if (!unconfirmed) return false;
+          if (!unavailable) {
+            // The server could not be asked, or could not answer now: nothing says the folder
+            // changed, so it stays up, marked as not confirmed.
+            setStaleness("outdated");
+            return false;
+          }
+          // The folder on show, which a link asked for as `target` may have listed under its own
+          // path.
+          if (listedPath.current !== null && listedPath.current !== target) {
+            listings?.forget(lister, listedPath.current);
+          }
+          drop(first && remembered !== null);
+          return false;
+        } finally {
+          loads.current.finish(request);
+          if (loads.current.isCurrent(request)) setLoading(false);
         }
-        return true;
-      } catch (caught) {
-        if (loads.current.isCurrent(request)) setError(toAppError(caught));
-        return false;
-      } finally {
-        loads.current.finish(request);
-        if (loads.current.isCurrent(request)) setLoading(false);
-      }
+      };
+      const answered = answer();
+      return { shown: started.shown, answered };
     },
-    [source],
+    [source, show, drop],
   );
 
   useEffect(() => {
@@ -308,11 +541,11 @@ export function usePane(
     }
     let cancelled = false;
     const open = async () => {
-      const opened = await load(await source.initialPath(), "push");
+      const opened = await load(await source.initialPath(), "push").answered;
       // Nothing listed yet, so the user has not gone anywhere else meanwhile.
       if (opened || cancelled || !source.fallbackPath || listedPath.current !== null) return;
       const fallback = await source.fallbackPath();
-      if (!cancelled) await load(fallback, "push");
+      if (!cancelled) await load(fallback, "push").answered;
     };
     open().catch((caught) => {
       if (!cancelled) setError(toAppError(caught));
@@ -322,12 +555,32 @@ export function usePane(
     };
   }, [source, load]);
 
-  const navigate = useCallback((path: string, focus?: Focus) => load(path, "push", focus), [load]);
+  // A listing another pane or window had remembered for the folder on show is newer than the
+  // one here, so it is shown here too.
+  useEffect(() => {
+    if (!listings) return;
+    return listings.watch((stored) => {
+      const lister = shownBy.current;
+      if (stored.by === self.current || !lister || !shown.current) return;
+      if (lister.listingScope !== stored.scope || shown.current.path !== stored.listing.path) {
+        return;
+      }
+      show(stored.listing, lister, "replace");
+    });
+  }, [listings, show]);
+
+  const navigate = useCallback(
+    (path: string, focus?: Focus) => {
+      const { shown: remembered, answered } = load(path, "push", focus);
+      return remembered ? Promise.resolve(true) : answered;
+    },
+    [load],
+  );
   // Reloads the folder last listed, which a navigation sets before the pane renders its listing.
   const refresh = useCallback(
     (focus?: Focus) =>
       listedPath.current !== null
-        ? load(listedPath.current, "replace", focus)
+        ? load(listedPath.current, "replace", focus).answered
         : Promise.resolve(false),
     [load],
   );
@@ -336,23 +589,36 @@ export function usePane(
     // A load on its way would bring back what is cleared.
     const superseding = loads.current.start("navigation");
     if (superseding !== null) loads.current.finish(superseding);
+    view.current += 1;
+    shown.current = null;
     setLoading(false);
     setListing(null);
+    setCarried(NO_ENTRIES);
     setSelection(new Set());
     setAnchorPath(null);
     setCursorPath(null);
     setError(null);
+    setStaleness(null);
+    setFailed(null);
   }, []);
 
+  const isLoading = useCallback(() => loads.current.busy, []);
+
+  // A folder that could no longer be listed is left the way it would have been on show; results
+  // have no folder above them.
+  const upward = showingResults ? results : (displayed ?? failed);
   const goUp = useCallback(() => {
-    if (listing?.parent) void load(listing.parent, "push", listing.path);
-  }, [listing, load]);
+    if (upward?.parent) void load(upward.parent, "push", upward.path);
+  }, [upward, load]);
 
   /** Stops a listing on its way, which would replace what the pane is about to show. */
   const supersedeLoads = useCallback(() => {
     const superseding = loads.current.start("navigation");
     if (superseding !== null) loads.current.finish(superseding);
+    // A remembered listing on show is no longer the one a load is to confirm.
+    view.current += 1;
     setLoading(false);
+    setStaleness(null);
   }, []);
 
   const showResults = useCallback(
@@ -360,10 +626,10 @@ export function usePane(
       supersedeLoads();
       travelIndex.current = null;
       setHistory((current) => {
-        const shown = current.entries[current.index];
-        if (shown?.results) {
+        const at = current.entries[current.index];
+        if (at?.results) {
           const entries = [...current.entries];
-          entries[current.index] = { ...shown, path, cursor: null };
+          entries[current.index] = { ...at, path, cursor: null };
           return { entries, index: current.index };
         }
         // One step shows results: the pane holds one set of them.
@@ -396,8 +662,9 @@ export function usePane(
     const index = returning ? history.index - 1 : history.index;
     if (!returning) entries.splice(index, 0, { path: at.path, cursor: null });
     travelIndex.current = null;
+    resultsOnShow.current = false;
     setHistory({ entries, index });
-    void load(at.path, "travel", returning ? (previous.cursor ?? undefined) : undefined);
+    void load(at.path, "travel", returning ? (previous.cursor ?? undefined) : undefined).answered;
   }, [history, load]);
 
   const travel = useCallback(
@@ -415,9 +682,9 @@ export function usePane(
         return;
       }
       travelIndex.current = index;
-      void load(target.path, "travel", target.cursor ?? undefined).then((loaded) => {
+      resultsOnShow.current = false;
+      void load(target.path, "travel", target.cursor ?? undefined, index).answered.then(() => {
         if (travelIndex.current === index) travelIndex.current = null;
-        if (loaded) setHistory((current) => ({ ...current, index }));
       });
     },
     [history, load, supersedeLoads],
@@ -426,7 +693,7 @@ export function usePane(
   const goHome = useCallback(() => {
     source
       .home()
-      .then((home) => load(home, "push"))
+      .then((home) => load(home, "push").answered)
       .catch((caught) => setError(toAppError(caught)));
   }, [source, load]);
 
@@ -589,7 +856,7 @@ export function usePane(
   );
 
   return {
-    listing,
+    listing: displayed,
     visibleEntries,
     entryCount: sortedEntries.length,
     groups,
@@ -599,6 +866,9 @@ export function usePane(
     hiddenCount,
     loading,
     error,
+    // What the folder behind the results waits for is not the results'.
+    stale: showingResults ? null : staleness,
+    failedPath: showingResults ? null : (failed?.path ?? null),
     selection,
     cursorPath,
     sort,
@@ -606,13 +876,14 @@ export function usePane(
     showHidden,
     canGoBack: history.index > 0,
     canGoForward: history.index < history.entries.length - 1,
-    canGoUp: Boolean(listing?.parent),
+    canGoUp: Boolean(upward?.parent),
     showingResults,
     showResults,
     closeResults,
     navigate,
     refresh,
     clear,
+    isLoading,
     goUp,
     goBack: () => travel(-1),
     goForward: () => travel(1),

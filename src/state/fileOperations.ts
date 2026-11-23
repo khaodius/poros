@@ -14,7 +14,7 @@ import {
 import { pluralize } from "../lib/format";
 import { folderOf } from "../lib/search";
 import { fileOperations, toAppError } from "../lib/ipc";
-import { baseName, breadcrumbs, isWithin, samePath } from "../lib/path";
+import { baseName, breadcrumbs, childPath, isWithin, samePath } from "../lib/path";
 import type {
   Direction,
   FileEntry,
@@ -27,6 +27,7 @@ import { useClipboardStore } from "./clipboardStore";
 import { serverSessionId } from "../lib/vaults";
 import type { DropTarget } from "./dragStore";
 import { flyPlaced, measureRows } from "./fileFlight";
+import { forgetListing } from "./listings";
 import { useLogStore } from "./logStore";
 import { askNameClash, track } from "./operationStore";
 import { getPane, listPanes, type PaneHandle } from "./paneRegistry";
@@ -75,12 +76,20 @@ export function placesInPlace(origin: FileOrigin, target: PaneHandle): boolean {
   return worksInPlace(origin) && sameFilesystem(origin, paneOrigin(target));
 }
 
-/** Reloads the panes showing `folder`, moving their cursor to `focusPath` when given. */
+/**
+ * Reloads the panes showing `folder`, moving their cursor to `focusPath` when given. On a server
+ * the folder's remembered listing is forgotten first, and so are those of the folders among
+ * `changed`, which were moved, deleted or written over, with everything inside them.
+ */
 export function refreshFolder(
   origin: FileOrigin,
   folder: string,
   focus?: string | readonly string[],
+  changed: readonly string[] = [],
 ): void {
+  if (origin.kind === "remote" && origin.sessionId) {
+    forgetListing(origin.sessionId, folder, changed);
+  }
   const style = pathStyleOf(origin);
   for (const pane of listPanes()) {
     const shown = pane.path();
@@ -88,6 +97,26 @@ export function refreshFolder(
       pane.refresh(focus);
     }
   }
+}
+
+/**
+ * Reloads the panes showing the folders `entries` are in, as search results from several
+ * folders have them, forgetting the remembered listings of those folders and of the entries.
+ * `reloaded` is a folder already reloaded, left out.
+ */
+export function refreshFoldersOf(
+  origin: FileOrigin,
+  entries: readonly FileEntry[],
+  reloaded?: string,
+): void {
+  const style = pathStyleOf(origin);
+  const folders = new Map<string, string[]>();
+  for (const entry of entries) {
+    const folder = folderOf(entry, style);
+    if (reloaded !== undefined && samePath(folder, reloaded, style)) continue;
+    folders.set(folder, [...(folders.get(folder) ?? []), entry.path]);
+  }
+  for (const [folder, paths] of folders) refreshFolder(origin, folder, undefined, paths);
 }
 
 const METHOD_NOTES: Partial<Record<OperationMethod, string>> = {
@@ -226,6 +255,8 @@ export async function placeEntries(request: PlaceRequest): Promise<boolean> {
   // Moved files' rows go away, so where they were is measured before they leave.
   const points = measureRows(sourceTabId, side, entries);
   let placed: string | undefined;
+  // What a name clash has written over is not what it was, whether or not the rest went through.
+  const written = entries.map((entry) => childPath(targetFolder, entry.name, style));
   try {
     const summary = await track(title, (operationId) =>
       fileOperations.moveOrCopy({
@@ -238,6 +269,7 @@ export async function placeEntries(request: PlaceRequest): Promise<boolean> {
       }),
     );
     placed = summary.placed[0];
+    written.push(...summary.placed);
     report(mode, summary, targetFolder, targetOrigin.sessionId);
     flyPlaced({
       side,
@@ -258,8 +290,13 @@ export async function placeEntries(request: PlaceRequest): Promise<boolean> {
     return false;
   } finally {
     // Whatever was done before a failure or cancel shows too.
-    refreshFolder(targetOrigin, targetFolder, placed);
-    if (mode === "move") refreshFolder(origin, sourceFolder);
+    refreshFolder(targetOrigin, targetFolder, placed, written);
+    if (mode === "move") {
+      const moved = entries.map((entry) => entry.path);
+      refreshFolder(origin, sourceFolder, undefined, moved);
+      // Search results moved out of the folders they were found in.
+      refreshFoldersOf(origin, entries, sourceFolder);
+    }
   }
 }
 
@@ -328,7 +365,10 @@ export async function deleteOnServer(request: DeleteOnServer): Promise<void> {
     }
   } finally {
     // Whatever went before a failure or cancel shows too.
-    refreshFolder(origin, folder, focusPath);
+    const deleted = entries.map((entry) => entry.path);
+    refreshFolder(origin, folder, focusPath, deleted);
+    // Search results deleted from the folders they were found in.
+    refreshFoldersOf(origin, entries, folder);
   }
 }
 

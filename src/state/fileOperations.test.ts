@@ -1,6 +1,8 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { listingScope } from "../lib/listingCache";
 import type { FileEntry, Protocol } from "../lib/types";
-import { dropAction } from "./fileOperations";
+import { dropAction, refreshFoldersOf } from "./fileOperations";
+import { listingShare } from "./listings";
 import { registerPane, type PaneHandle } from "./paneRegistry";
 import { useSessionStore } from "./sessionStore";
 
@@ -26,6 +28,7 @@ function pane(
   path: string,
   sessionId?: string,
   protocol: Protocol = "sftp",
+  refresh: PaneHandle["refresh"] = () => undefined,
 ) {
   if (sessionId) {
     const info = {
@@ -49,7 +52,7 @@ function pane(
       sessionId,
       label: tabId,
       path: () => path,
-      refresh: () => undefined,
+      refresh,
       selected: () => [],
       visible: true,
       activatedAt: 0,
@@ -251,5 +254,38 @@ describe("dropAction", () => {
       kind: "transfer",
       direction: "relay",
     });
+  });
+});
+
+describe("refreshFoldersOf", () => {
+  it("reloads and forgets the folder of each search result, but the one reloaded already", () => {
+    const reloaded = { root: vi.fn(), logs: vi.fn(), www: vi.fn(), elsewhere: vi.fn() };
+    pane("root", "remote", "/srv", "s1", "sftp", reloaded.root);
+    pane("logs", "remote", "/srv/logs", "s1", "sftp", reloaded.logs);
+    pane("www", "remote", "/srv/www", "s1", "sftp", reloaded.www);
+    pane("elsewhere", "remote", "/srv/tmp", "s1", "sftp", reloaded.elsewhere);
+    const scope = listingScope(useSessionStore.getState().sessions.s1.info, null);
+    const cache = listingShare.cache;
+    for (const path of ["/srv", "/srv/logs", "/srv/www", "/srv/logs/old", "/srv/tmp"]) {
+      cache.put(scope, { path, parent: null, entries: [] });
+    }
+    const results = [
+      entry("/srv/top.log"),
+      entry("/srv/logs/app.log"),
+      entry("/srv/logs/old", "dir"),
+      entry("/srv/www/error.log"),
+    ];
+    refreshFoldersOf({ kind: "remote", sessionId: "s1" }, results, "/srv");
+    expect(reloaded.root).not.toHaveBeenCalled();
+    expect(reloaded.logs).toHaveBeenCalledTimes(1);
+    expect(reloaded.www).toHaveBeenCalledTimes(1);
+    expect(reloaded.elsewhere).not.toHaveBeenCalled();
+    // The folders the results were in, and the folder among them with what was in it.
+    expect(cache.get(scope, "/srv/logs")).toBeUndefined();
+    expect(cache.get(scope, "/srv/www")).toBeUndefined();
+    expect(cache.get(scope, "/srv/logs/old")).toBeUndefined();
+    expect(cache.get(scope, "/srv")).toBeDefined();
+    expect(cache.get(scope, "/srv/tmp")).toBeDefined();
+    cache.clear();
   });
 });
