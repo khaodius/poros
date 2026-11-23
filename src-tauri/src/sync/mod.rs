@@ -489,17 +489,26 @@ fn build_filter(options: &SyncOptions, local_root: &str) -> AppResult<Filter> {
     let read = |path: &str| read_list(local_root, path);
     let mut spec = options.filter_spec(&read)?;
     // A backup folder inside the target is kept from --delete, which rsync itself would let
-    // delete it. The first matching rule decides, so this one goes before the rules given.
-    let backup_dir = options.backup_dir.trim();
-    if options.backup
-        && !backup_dir.is_empty()
-        && !backup_dir.starts_with('/')
-        && !Path::new(backup_dir).is_absolute()
-    {
-        spec.rules
-            .insert(0, format!("P /{}/", backup_dir.trim_matches('/')));
-    }
+    // delete it. It is no rule, so no rule given, `!` or per-folder file can undo that.
+    spec.protected_folders
+        .extend(backup_folder_inside_target(options));
     Filter::build(&spec, &read)
+}
+
+/// The backup folder relative to the target, when `--backup-dir` names one inside it.
+fn backup_folder_inside_target(options: &SyncOptions) -> Option<String> {
+    let backup_dir = options.backup_dir.trim();
+    if !options.backup || backup_dir.starts_with('/') || Path::new(backup_dir).is_absolute() {
+        return None;
+    }
+    let components: Vec<&str> = backup_dir
+        .split('/')
+        .filter(|component| !component.is_empty() && *component != ".")
+        .collect();
+    if components.is_empty() || components.contains(&"..") {
+        return None;
+    }
+    Some(components.join("/"))
 }
 
 fn read_list(local_root: &str, path: &str) -> AppResult<String> {
@@ -655,14 +664,69 @@ mod tests {
         assert!(verdict("old", true, filter::Side::Sender).is_included());
         assert!(!verdict("old", true, filter::Side::Receiver).is_included());
 
-        // Before rules that would otherwise decide about the folder first.
-        let options = SyncOptions {
-            filter_rules: vec!["+ */".into(), "- *".into()],
-            ..options
-        };
-        let filter = build_filter(&options, &root).unwrap();
-        let verdict = |path, is_dir, side| filter.verdict(path, is_dir, side, &rules);
-        assert!(!verdict("old", true, filter::Side::Receiver).is_included());
+        // Whatever the rules say: ones that would decide about the folder first, `!` given
+        // in any form, or a per-folder rule file.
+        std::fs::write(folder.path().join("clears.txt"), "*.tmp\n!\n").unwrap();
+        let per_folder = HashMap::from([(".rsync-filter".to_string(), "+ */\n".to_string())]);
+        for (described, changed) in [
+            (
+                "+ */ first",
+                SyncOptions {
+                    filter_rules: vec!["+ */".into(), "- *".into()],
+                    ..options.clone()
+                },
+            ),
+            (
+                "a typed !",
+                check_options(options.clone(), &["--exclude=!"], SyncDirection::Upload).options,
+            ),
+            (
+                "! in a list",
+                SyncOptions {
+                    exclude_from: vec!["clears.txt".into()],
+                    ..options.clone()
+                },
+            ),
+            (
+                "+ */ in .rsync-filter",
+                SyncOptions {
+                    filter_files: FilterFiles::Read,
+                    ..options.clone()
+                },
+            ),
+            (
+                "a folder named in the long way",
+                SyncOptions {
+                    backup_dir: "./old/".into(),
+                    filter_rules: vec!["!".into()],
+                    ..options.clone()
+                },
+            ),
+        ] {
+            let filter = build_filter(&changed, &root).unwrap();
+            let rules = filter.enter(&rules, "", &per_folder).unwrap();
+            let verdict = |path, is_dir, side| filter.verdict(path, is_dir, side, &rules);
+            assert!(
+                !verdict("old", true, filter::Side::Receiver).is_included(),
+                "{described}"
+            );
+            assert!(
+                !verdict("old/a.txt", false, filter::Side::Receiver).is_included(),
+                "{described}"
+            );
+            assert!(
+                verdict("older", true, filter::Side::Receiver).is_included(),
+                "{described}"
+            );
+        }
+        // A folder outside the target is not the target's to keep.
+        for outside in ["../old", "/srv/old", ""] {
+            let options = SyncOptions {
+                backup_dir: outside.into(),
+                ..options.clone()
+            };
+            assert_eq!(backup_folder_inside_target(&options), None, "{outside}");
+        }
     }
 
     /// The files a plan copies and deletes, a folder copied or deleted whole standing for the

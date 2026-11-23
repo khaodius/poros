@@ -77,6 +77,9 @@ pub struct FilterSpec {
     /// Rules that name no side apply to the sender only, so the receiver deletes what they
     /// exclude (`--delete-excluded`).
     pub delete_excluded: bool,
+    /// Folders, relative to the synchronized folder, that the receiver keeps from deletion
+    /// whatever the rules say, as a `!` would clear a rule.
+    pub protected_folders: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -162,6 +165,7 @@ pub struct Filter {
     entries: Arc<[Entry]>,
     merges: Arc<[MergeSpec]>,
     delete_excluded: bool,
+    protected_folders: Arc<[String]>,
 }
 
 /// The rules per-folder merge files add in one folder, nearest folder first. Cheap to clone.
@@ -233,6 +237,7 @@ impl Filter {
             entries: builder.entries.into(),
             merges: builder.merges.into(),
             delete_excluded: spec.delete_excluded,
+            protected_folders: spec.protected_folders.clone().into(),
         })
     }
 
@@ -325,6 +330,13 @@ impl Filter {
     /// kept from deletion (for the receiver). `folder` holds the rules of the folder `path` is
     /// in.
     pub fn verdict(&self, path: &str, is_dir: bool, side: Side, folder: &FolderRules) -> Verdict {
+        let protected = |folder: &String| {
+            path.strip_prefix(folder.as_str())
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+        };
+        if side == Side::Receiver && self.protected_folders.iter().any(protected) {
+            return Verdict::Excluded { perishable: false };
+        }
         for entry in self.entries.iter() {
             match entry {
                 Entry::Rule(rule) => {

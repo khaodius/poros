@@ -280,6 +280,7 @@ impl SyncOptions {
             cvs_exclude: self.cvs_exclude,
             cvs_ignore: std::env::var("CVSIGNORE").unwrap_or_default(),
             delete_excluded: self.delete_excluded,
+            protected_folders: Vec::new(),
         })
     }
 }
