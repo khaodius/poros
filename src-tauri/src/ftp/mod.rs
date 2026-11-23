@@ -126,11 +126,14 @@ impl FtpFs {
         Ok((control, home, certificate))
     }
 
-    /// The control connection, reopened if the server dropped it.
+    /// The control connection, reopened if the server dropped it or an earlier request left
+    /// it out of step.
     async fn connection(&self) -> AppResult<ControlGuard> {
         let mut guard = self.control.clone().lock_owned().await;
         if let Some(control) = guard.as_mut() {
-            if control.idle_for() > STALE_AFTER && control.noop().await.is_err() {
+            let unusable = control.is_out_of_step()
+                || (control.idle_for() > STALE_AFTER && control.noop().await.is_err());
+            if unusable {
                 *guard = None;
             }
         }
@@ -267,7 +270,9 @@ async fn keep_alive(control: Weak<Mutex<Option<Control>>>, interval: Duration) {
             continue;
         };
         if let Some(connection) = guard.as_mut() {
-            if connection.idle_for() >= interval && connection.noop().await.is_err() {
+            let unusable = connection.is_out_of_step()
+                || (connection.idle_for() >= interval && connection.noop().await.is_err());
+            if unusable {
                 *guard = None;
             }
         }
@@ -719,6 +724,7 @@ mod tests {
         let server = FakeServer::start(Behavior {
             refuses_extended_passive: true,
             passive_address: Some(std::net::Ipv4Addr::new(127, 0, 0, 2)),
+            ..Behavior::default()
         })
         .await;
         let files = server.connect(&server.profile()).await;
@@ -726,6 +732,46 @@ mod tests {
         server.put_file(PATH, &contents);
         let received = read_range(&files, 0..contents.len() as u64).await;
         assert_eq!(received, contents);
+    }
+
+    /// A listing over the size limit fails while the server still owes the reply that ends
+    /// it. The next request must not take that reply for its own: here `SIZE` would read it
+    /// as a refusal, and the `CWD` after it would read the size as a folder it entered.
+    #[tokio::test]
+    async fn a_listing_over_the_limit_leaves_the_next_request_its_own_reply() {
+        let server = FakeServer::start(Behavior {
+            listing_padding: 65 * 1024 * 1024,
+            ..Behavior::default()
+        })
+        .await;
+        let files = server.connect(&server.profile()).await;
+        server.put_file("/notes.txt", b"abc");
+        let error = files.list_dir("/").await.unwrap_err();
+        assert_eq!(error.kind, ErrorKind::Ftp, "{}", error.message);
+        let stat = files.stat("/notes.txt").await.unwrap().unwrap();
+        assert!(!stat.is_dir);
+        assert_eq!(stat.size, 3);
+        let listing = files.list_dir("/").await.unwrap_err();
+        assert_eq!(listing.kind, ErrorKind::Ftp, "{}", listing.message);
+    }
+
+    /// A request dropped while it waits for the server, as cancelling does, leaves its reply
+    /// on the way. The next request must not take that reply for its own.
+    #[tokio::test]
+    async fn a_cancelled_request_leaves_the_next_request_its_own_reply() {
+        let server = FakeServer::start(Behavior {
+            slow_command: Some(("SIZE", Duration::from_millis(300))),
+            ..Behavior::default()
+        })
+        .await;
+        let files = server.connect(&server.profile()).await;
+        server.put_file("/short.txt", b"abc");
+        server.put_file("/long.txt", b"abcdefgh");
+        let cancelled =
+            tokio::time::timeout(Duration::from_millis(50), files.stat("/short.txt")).await;
+        assert!(cancelled.is_err(), "the request ended by itself");
+        let stat = files.stat("/long.txt").await.unwrap().unwrap();
+        assert_eq!(stat.size, 8);
     }
 
     #[tokio::test]

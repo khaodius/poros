@@ -7,6 +7,7 @@ use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
@@ -24,6 +25,10 @@ pub struct Behavior {
     /// The address `PASV` replies name instead of the server's own. The server still listens
     /// on its own.
     pub passive_address: Option<Ipv4Addr>,
+    /// Bytes of made-up entries that every folder listing carries besides the files.
+    pub listing_padding: usize,
+    /// A command the server takes this long to answer.
+    pub slow_command: Option<(&'static str, Duration)>,
 }
 
 #[derive(Default)]
@@ -139,6 +144,9 @@ impl Session {
             // As RFC 959 has it, and as Apache FtpServer does, only the command right after
             // `REST` sees the restart marker; vsftpd keeps it until a transfer uses it.
             let restart = std::mem::take(&mut self.restart);
+            if let Some((_, delay)) = self.behavior.slow_command.filter(|(slow, _)| *slow == verb) {
+                tokio::time::sleep(delay).await;
+            }
             match verb {
                 "USER" => self.reply("331 Password required").await?,
                 "PASS" => self.reply("230 Logged in").await?,
@@ -195,6 +203,7 @@ impl Session {
                     }
                     Err(_) => self.reply("501 Not a position").await?,
                 },
+                "LIST" => self.send_listing().await?,
                 "RETR" => self.send_file(argument, restart).await?,
                 "STOR" => self.receive_file(argument, restart).await?,
                 "ABOR" => self.reply("226 Nothing left to abort").await?,
@@ -233,11 +242,37 @@ impl Session {
         let Some(contents) = self.state.lock().unwrap().files.get(path).cloned() else {
             return self.reply("550 No such file").await;
         };
+        let rest = contents[restart.min(contents.len())..].to_vec();
+        self.send_data(&[rest]).await
+    }
+
+    /// Every file as a line of `ls -l`, whatever folder is asked for, then the padding.
+    async fn send_listing(&mut self) -> io::Result<()> {
+        let mut listing = String::new();
+        for (path, contents) in &self.state.lock().unwrap().files {
+            let name = path.trim_start_matches('/');
+            let size = contents.len();
+            listing.push_str(&format!(
+                "-rw-r--r-- 1 poros poros {size} Jan 01 2024 {name}\r\n"
+            ));
+        }
+        let filler = "-rw-r--r-- 1 poros poros 0 Jan 01 2024 filler\r\n".repeat(1024);
+        let mut parts = vec![listing.into_bytes()];
+        parts.resize(
+            1 + self.behavior.listing_padding.div_ceil(filler.len()),
+            filler.into_bytes(),
+        );
+        self.send_data(&parts).await
+    }
+
+    /// Announces a transfer, sends `parts` over the data connection, and says how it ended.
+    async fn send_data(&mut self, parts: &[Vec<u8>]) -> io::Result<()> {
         self.reply("150 Opening the data connection").await?;
-        let rest = &contents[restart.min(contents.len())..];
         let sent = async {
             let mut data = self.open_data().await?;
-            data.write_all(rest).await?;
+            for part in parts {
+                data.write_all(part).await?;
+            }
             data.shutdown().await
         }
         .await;

@@ -298,6 +298,8 @@ pub struct Control {
     /// Cleared once the server refuses to set a time with `MDTM`.
     sets_time_with_mdtm: bool,
     last_used: Instant,
+    /// Commands sent whose closing reply has not been read yet.
+    replies_owed: u32,
 }
 
 impl Control {
@@ -351,6 +353,7 @@ impl Control {
             extended_passive: true,
             sets_time_with_mdtm: true,
             last_used: Instant::now(),
+            replies_owed: 0,
         };
 
         let mut welcome = control.read_reply().await?;
@@ -463,6 +466,15 @@ impl Control {
         self.timeout
     }
 
+    /// Whether a reply to an earlier command is still to come. Between requests that means
+    /// one stopped partway: on an error after the server began a transfer, on a reply that
+    /// could not be read, or because it was cancelled. The next command would be answered
+    /// with what belongs to the earlier one, and every command after it likewise, so the
+    /// connection must not be used again.
+    pub fn is_out_of_step(&self) -> bool {
+        self.replies_owed > 0
+    }
+
     async fn read_line(&mut self) -> AppResult<String> {
         let mut bytes = Vec::new();
         let read = (&mut self.stream)
@@ -512,7 +524,13 @@ impl Control {
                 }
             }
         }
-        Ok(Reply { code, lines })
+        let reply = Reply { code, lines };
+        // A 1xx reply only announces the one that closes its command. The greeting answers
+        // no command at all.
+        if reply.class() != 1 {
+            self.replies_owed = self.replies_owed.saturating_sub(1);
+        }
+        Ok(reply)
     }
 
     pub async fn read_reply(&mut self) -> AppResult<Reply> {
@@ -531,6 +549,7 @@ impl Control {
 
     pub async fn send(&mut self, line: &str) -> AppResult<()> {
         self.last_used = Instant::now();
+        self.replies_owed += 1;
         let stream = self.stream.get_mut();
         stream
             .write_all(format!("{line}\r\n").as_bytes())
@@ -733,6 +752,8 @@ impl Control {
         for _ in 0..6 {
             let reply = self.read_reply().await?;
             if reply.code == 200 {
+                // However many replies the abort drew, none is left once `NOOP` is answered.
+                self.replies_owed = 0;
                 return Ok(());
             }
             if reply.code == 421 {
@@ -1134,6 +1155,7 @@ fn passive_ip(offered: Ipv4Addr, peer: IpAddr) -> IpAddr {
 
 #[cfg(test)]
 mod tests {
+    use super::super::fake_server::{Behavior, FakeServer};
     use super::*;
 
     const STALL_LIMIT: Duration = Duration::from_millis(300);
@@ -1200,6 +1222,29 @@ mod tests {
         }
         sending.await.unwrap();
         assert_eq!(received.len(), 80);
+    }
+
+    /// From the reply that announces a transfer to the one that ends it, any error returns
+    /// with a reply still to come, whatever its kind: a listing over the size limit, or a
+    /// data connection whose certificate is refused.
+    #[tokio::test]
+    async fn a_transfer_is_out_of_step_until_its_closing_reply_is_read() {
+        let server = FakeServer::start(Behavior::default()).await;
+        server.put_file("/notes.txt", b"abc");
+        let (mut control, _) =
+            Control::connect(&server.profile(), None, "fake", &Events::default())
+                .await
+                .unwrap();
+        assert!(!control.is_out_of_step());
+        let DataStart::Opened(mut data) = control.retrieve("/notes.txt", 0).await.unwrap() else {
+            panic!("the server opened no data connection");
+        };
+        assert!(control.is_out_of_step());
+        let mut buffer = [0u8; 16];
+        while data.read_some(&mut buffer).await.unwrap() > 0 {}
+        drop(data);
+        control.finish_transfer().await.unwrap();
+        assert!(!control.is_out_of_step());
     }
 
     #[test]
