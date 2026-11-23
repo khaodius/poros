@@ -25,7 +25,7 @@ function Probe({ load }: { load: (signal: AbortSignal) => Promise<string> }) {
   const { state } = useRestedLoad({
     key: "/srv/logo.png",
     cached: undefined,
-    mode: "auto",
+    mode: "rest",
     storage: "server",
     inVault: false,
     load,
