@@ -10,6 +10,8 @@ use russh::client::Msg;
 use russh::{Channel, ChannelMsg};
 use serde::Serialize;
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::events::{Events, LogLevel};
@@ -76,6 +78,11 @@ struct Terminal {
     input: Mutex<Option<mpsc::UnboundedSender<Input>>>,
     /// The terminal's own connection; `None` when it shares the session's.
     connection: Mutex<Option<SshHandle>>,
+    /// Cancelled when the terminal closes. On the shared connection the server's last replies
+    /// for a closed channel are dropped, so its reader would otherwise wait for the connection.
+    closed: CancellationToken,
+    /// The task reading the shell's output.
+    reader: Mutex<Option<JoinHandle<()>>>,
 }
 
 pub struct TerminalManager {
@@ -122,6 +129,8 @@ impl TerminalManager {
             }),
             input: Mutex::new(None),
             connection: Mutex::new(None),
+            closed: CancellationToken::new(),
+            reader: Mutex::new(None),
         });
         self.start(&terminal).await?;
         let info = TerminalInfo {
@@ -258,7 +267,8 @@ impl TerminalManager {
         let (sender, receiver) = mpsc::unbounded_channel();
         *terminal.input.lock().unwrap() = Some(sender);
         tokio::spawn(forward_input(writer, receiver));
-        tokio::spawn(read_output(terminal.clone(), reader, self.events.clone()));
+        let reading = tokio::spawn(read_output(terminal.clone(), reader, self.events.clone()));
+        *terminal.reader.lock().unwrap() = Some(reading);
         Ok(())
     }
 
@@ -342,7 +352,19 @@ async fn forward_input(
 async fn read_output(terminal: Arc<Terminal>, mut reader: russh::ChannelReadHalf, events: Events) {
     let mut exit_status = None;
     let mut exit_signal = None;
-    while let Some(message) = reader.wait().await {
+    loop {
+        let message = tokio::select! {
+            message = reader.wait() => message,
+            () = terminal.closed.cancelled() => {
+                events.log(
+                    LogLevel::Info,
+                    Some(&terminal.target.session_id),
+                    format!("Terminal on {} closed", terminal.target.label),
+                );
+                return;
+            }
+        };
+        let Some(message) = message else { break };
         match message {
             ChannelMsg::Data { data } | ChannelMsg::ExtendedData { data, .. } => {
                 let mut screen = terminal.screen.lock().unwrap();
@@ -383,10 +405,16 @@ async fn read_output(terminal: Arc<Terminal>, mut reader: russh::ChannelReadHalf
     screen.emit(TerminalEvent::Exit { message });
 }
 
-/// Ends the shell and forgets where output went, so nothing reaches a tab that closed.
+/// Ends the shell and forgets where output went, so nothing reaches a tab that closed. Returns
+/// once the shell's output is no longer read.
 async fn stop(terminal: &Terminal) {
     terminal.screen.lock().unwrap().sink = None;
     terminal.input.lock().unwrap().take();
+    terminal.closed.cancel();
+    let reading = terminal.reader.lock().unwrap().take();
+    if let Some(reading) = reading {
+        let _ = reading.await;
+    }
     disconnect(terminal).await;
 }
 

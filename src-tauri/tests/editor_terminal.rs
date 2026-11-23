@@ -413,11 +413,6 @@ async fn a_terminal_on_the_browsing_connection_ends_its_shell_when_closed() {
         .open(&session_id, 80, 24, screen.sink(), OWNER)
         .await
         .unwrap();
-    let shared = events
-        .take_startup_log()
-        .into_iter()
-        .any(|record| record.message.contains("shares the browsing connection"));
-    assert!(shared, "the terminal got a connection of its own");
 
     // A process name no other test run shares, which ends by itself should a run fail.
     let sleeper = format!("sleep 300.{:06}", std::process::id() % 1_000_000);
@@ -449,5 +444,21 @@ async fn a_terminal_on_the_browsing_connection_ends_its_shell_when_closed() {
     }
     // The browsing connection is still there for everything else.
     assert!(!runs_on_server(&sessions, &session_id, &sleeper).await);
+    // The shell's output is no longer read, although the browsing connection stays.
+    let log: Vec<String> = events
+        .take_startup_log()
+        .into_iter()
+        .map(|record| record.message)
+        .collect();
+    assert!(
+        log.iter()
+            .any(|message| message.contains("shares the browsing connection")),
+        "the terminal got a connection of its own: {log:?}"
+    );
+    let closing_line = format!("Terminal on {} closed", info.label);
+    assert!(
+        log.contains(&closing_line),
+        "the shell's output is still read: {log:?}"
+    );
     sessions.disconnect_all().await;
 }
