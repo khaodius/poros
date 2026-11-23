@@ -559,6 +559,8 @@ pub struct Abandoned {
     pub session_id: String,
     pub direction: Direction,
     pub path: String,
+    /// The folder it is in.
+    pub directory: String,
 }
 
 /// A temporary file a job left, until the caller takes it to delete.
@@ -580,6 +582,7 @@ impl Left {
                 session_id: spec.session_id.clone(),
                 direction: spec.direction,
                 path,
+                directory: spec.target_directory.clone(),
             },
         }
     }
@@ -906,6 +909,10 @@ impl Queue {
                 job.resolution = Some(ExistsAction::Overwrite);
                 if let Some(plan) = run.plan.get().filter(|plan| plan.rename_to.is_some()) {
                     job.stale_partial = Some(plan.target.clone());
+                }
+                // A download that failed its check is deleted, or rewritten, by now.
+                if job.spec.direction == Direction::Download {
+                    self.changed_directories.push(changed_directory(&job.spec));
                 }
             } else if let Some(resume) = run.resume_point() {
                 job.resume = Some(resume);
@@ -1264,6 +1271,13 @@ impl Queue {
             .collect()
     }
 
+    /// The caller deleted a temporary file `take_abandoned` gave it, so panes showing its
+    /// folder can refresh.
+    pub fn deleted(&mut self, partial: &Abandoned) {
+        let folder = folder_written(partial.direction, &partial.session_id, &partial.directory);
+        self.changed_directories.push(folder);
+    }
+
     pub fn pause(&mut self, ids: &[JobId]) {
         for id in ids {
             let Some(job) = self.jobs.get_mut(id) else {
@@ -1535,16 +1549,21 @@ fn stop_run(job: &mut Job, reason: StopReason) {
 }
 
 fn changed_directory(spec: &JobSpec) -> ChangedDirectory {
-    match spec.direction {
+    folder_written(spec.direction, &spec.session_id, &spec.target_directory)
+}
+
+/// `directory` on the side a transfer of `direction` to or from `session_id` writes to.
+fn folder_written(direction: Direction, session_id: &str, directory: &str) -> ChangedDirectory {
+    match direction {
         Direction::Download => ChangedDirectory {
             side: Side::Local,
             session_id: None,
-            path: spec.target_directory.clone(),
+            path: directory.to_string(),
         },
         Direction::Upload | Direction::Relay => ChangedDirectory {
             side: Side::Remote,
-            session_id: Some(spec.session_id.clone()),
-            path: spec.target_directory.clone(),
+            session_id: Some(session_id.to_string()),
+            path: directory.to_string(),
         },
     }
 }
@@ -2149,6 +2168,7 @@ mod tests {
                 session_id: "session".into(),
                 direction: Direction::Upload,
                 path: "/remote/.big.poros-part".into(),
+                directory: "/remote".into(),
             }]
         );
     }
@@ -2179,6 +2199,7 @@ mod tests {
             session_id: "session".into(),
             direction: Direction::Upload,
             path: "/remote/.live.log.poros-part".into(),
+            directory: "/remote".into(),
         };
         let mut queue = Queue::new();
         let id = queue.add(file("live.log", 100));
@@ -2283,6 +2304,66 @@ mod tests {
                 session_id: "session".into(),
                 direction: Direction::Upload,
                 path: "/remote/.live.log.poros-part".into(),
+                directory: "/remote".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn deleting_a_file_reports_its_folder() {
+        let mut queue = Queue::new();
+        let id = queue.add(JobSpec {
+            direction: Direction::Download,
+            source: "/remote/live.log".into(),
+            target: "/local/live.log".into(),
+            target_directory: "/local".into(),
+            ..file("live.log", 100)
+        });
+        let claim = queue.claim(Instant::now()).unwrap();
+        claim.run.plan.set(plan("/local/live.log", 100)).unwrap();
+        claim.run.restart.store(true, Ordering::Relaxed);
+        queue.take_changes();
+        // Failed its check, it was deleted where it lay.
+        let failed = RunOutcome::Failed(AppError::integrity("live.log changed meanwhile"));
+        finish(&mut queue, id, failed);
+        let (_, _, changed) = queue.take_changes();
+        assert_eq!(
+            changed,
+            vec![ChangedDirectory {
+                side: Side::Local,
+                session_id: None,
+                path: "/local".into(),
+            }]
+        );
+        queue.remove(&[id]);
+        assert!(queue.take_abandoned().is_empty());
+
+        // A removed job's temporary file, once it is deleted and not before.
+        let id = queue.add(file("big", 100));
+        let claim = queue.claim(Instant::now()).unwrap();
+        claim
+            .run
+            .plan
+            .set(Plan {
+                rename_to: Some("/remote/big".into()),
+                ..plan("/remote/.big.poros-part", 100)
+            })
+            .unwrap();
+        claim.run.start_pieces(Pieces::new(0, 100, 10));
+        let piece = claim.run.claim_piece().unwrap();
+        claim.run.complete_piece(piece.start);
+        queue.remove(&[id]);
+        finish(&mut queue, id, RunOutcome::Stopped);
+        let abandoned = queue.take_abandoned();
+        assert_eq!(abandoned.len(), 1);
+        assert!(queue.take_changes().2.is_empty());
+        queue.deleted(&abandoned[0]);
+        assert_eq!(
+            queue.take_changes().2,
+            vec![ChangedDirectory {
+                side: Side::Remote,
+                session_id: Some("session".into()),
+                path: "/remote".into(),
             }]
         );
     }

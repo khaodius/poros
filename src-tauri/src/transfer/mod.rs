@@ -842,7 +842,8 @@ enum Placement {
     Last,
 }
 
-/// Changes the queue, then deletes the temporary files of jobs that left it unfinished.
+/// Changes the queue, then deletes the temporary files of jobs that left it unfinished and
+/// says which folders changed.
 fn update_queue(shared: &Arc<Shared>, change: impl FnOnce(&mut Queue)) {
     let abandoned = {
         let mut queue = shared.queue.lock().unwrap();
@@ -862,6 +863,7 @@ fn update_queue(shared: &Arc<Shared>, change: impl FnOnce(&mut Queue)) {
                         discard_with_browsing_session(&shared, &partial).await
                     }
                 }
+                shared.queue.lock().unwrap().deleted(&partial);
             }
         });
     }

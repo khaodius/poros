@@ -749,7 +749,8 @@ fn log_server_change(shared: &Shared, session_id: &str, change: ServerChange, er
     shared.events.log(level, Some(session_id), message);
 }
 
-/// Deletes the temporary files of transfers removed from the queue before they finished.
+/// Deletes the temporary files of transfers removed from the queue before they finished, and
+/// says which folders changed.
 async fn discard_partials(shared: &Shared, connections: &Connections, abandoned: Vec<Abandoned>) {
     for partial in abandoned {
         match partial.direction {
@@ -766,6 +767,7 @@ async fn discard_partials(shared: &Shared, connections: &Connections, abandoned:
                 }
             }
         }
+        shared.queue.lock().unwrap().deleted(&partial);
     }
 }
 
