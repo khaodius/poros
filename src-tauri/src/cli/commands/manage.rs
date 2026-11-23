@@ -61,10 +61,14 @@ pub async fn remove(context: &Context, arguments: &RemoveArgs) -> AppResult<Repl
     let connected = context.connected().await?;
     let files = connected.files();
     refuse_dots(&arguments.paths)?;
-    let paths = match expand(connected, &arguments.paths).await {
-        Err(error) if arguments.force && error.kind == ErrorKind::NotFound => Vec::new(),
-        result => result?,
-    };
+    // One operand at a time, so -f passes over only a pattern that matches nothing.
+    let mut paths = Vec::new();
+    for path in &arguments.paths {
+        match expand(connected, std::slice::from_ref(path)).await {
+            Err(error) if arguments.force && error.kind == ErrorKind::NotFound => {}
+            result => paths.extend(result?),
+        }
+    }
     let mut doomed = Vec::new();
     let mut refused = Vec::new();
     for path in paths {

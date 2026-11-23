@@ -563,3 +563,35 @@ fn an_empty_path_is_never_the_folder_the_connection_starts_in() {
     let (_, changed) = run.json(&["stat", &run.remote("start")]);
     assert_eq!(changed["mode"], "0750", "{changed}");
 }
+
+#[test]
+fn rm_force_passes_over_only_what_is_not_there() {
+    let Some(run) = Run::online("force") else {
+        return;
+    };
+    run.write("app.lock", "lock\n");
+    run.write("keep.txt", "keep\n");
+    let (code, value) = run.json(&[
+        "rm",
+        "-f",
+        &run.remote("none*.bak"),
+        &run.remote("app.lock"),
+    ]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(value["deleted"].as_array().unwrap().len(), 1, "{value}");
+    assert_eq!(run.names(""), ["keep.txt"]);
+
+    let (code, value) = run.json(&[
+        "rm",
+        "-f",
+        &run.remote("none*.bak"),
+        &run.remote("missing.txt"),
+    ]);
+    assert_eq!(code, 0, "{value}");
+    assert!(value["deleted"].as_array().unwrap().is_empty(), "{value}");
+
+    // Without -f, a pattern that matches nothing stops the command before it deletes.
+    let (code, value) = run.json(&["rm", &run.remote("none*.bak"), &run.remote("keep.txt")]);
+    assert_eq!(code, 7, "{value}");
+    assert_eq!(run.names(""), ["keep.txt"]);
+}
