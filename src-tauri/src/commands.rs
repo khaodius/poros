@@ -24,7 +24,7 @@ use crate::file_ops::archive::{self, ExtractSummary, InstalledTool};
 use crate::file_ops::{
     CompareRequest, Comparison, DeleteRequest, DeleteSummary, Details, ExtractRequest,
     FileOperations, Location, MoveCopyRequest, OperationSummary, PermissionRequest,
-    PermissionSummary, Usage,
+    PermissionSummary, RenameRequest, RenameSummary, Usage,
 };
 use crate::fonts::{self, FontFamily};
 use crate::import::{
@@ -314,6 +314,14 @@ pub async fn files_delete(
     request: DeleteRequest,
 ) -> AppResult<DeleteSummary> {
     operations.delete(request).await
+}
+
+#[tauri::command]
+pub async fn files_rename(
+    operations: State<'_, FileOperations>,
+    request: RenameRequest,
+) -> AppResult<RenameSummary> {
+    operations.rename(request).await
 }
 
 #[tauri::command]

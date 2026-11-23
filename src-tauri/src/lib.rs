@@ -297,6 +297,7 @@ pub fn run() {
             commands::files_conflicts,
             commands::files_move_or_copy,
             commands::files_delete,
+            commands::files_rename,
             commands::files_cancel,
             commands::files_details,
             commands::files_measure,

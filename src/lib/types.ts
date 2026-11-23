@@ -909,6 +909,58 @@ export interface DeleteSummary {
   methods: OperationMethod[];
 }
 
+/** One item's name in its folder, and the name it is to have. */
+export interface PlannedRename {
+  from: string;
+  to: string;
+}
+
+/**
+ * Renames that go through together or not at all, in an order in which each new name is free
+ * by the time it is needed. Names that trade places form a ring with no such order: the first
+ * item of the ring then waits under `temporary` while the others move, and takes its name last.
+ */
+export interface RenameGroup {
+  temporary?: string;
+  renames: PlannedRename[];
+}
+
+export interface RenameRequest {
+  operationId: string;
+  location: FileLocation;
+  /** The folder every item is in. */
+  directory: string;
+  /** Run in this order. */
+  groups: RenameGroup[];
+}
+
+export interface RenamedItem extends PlannedRename {
+  /** Where the item is now. */
+  path: string;
+}
+
+export interface RenameFailure extends PlannedRename {
+  message: string;
+}
+
+/** An item left under its temporary name, because it could not be moved back either. */
+export interface StrandedItem extends PlannedRename {
+  /** The name it has now. */
+  temporary: string;
+  /** Why it could not be moved back. */
+  message: string;
+}
+
+export interface RenameSummary {
+  /** The items that have their new name, in the order they got it. */
+  renamed: RenamedItem[];
+  /** The rename that stopped the rest, and why. The items after it keep their names. */
+  failure?: RenameFailure;
+  stranded?: StrandedItem;
+  /** Stopped by the user before every item was renamed. */
+  cancelled: boolean;
+}
+
 export interface FileDetails {
   uid: number | null;
   gid: number | null;
