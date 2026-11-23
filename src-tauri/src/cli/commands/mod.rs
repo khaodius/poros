@@ -1,5 +1,6 @@
 mod browse;
 mod exec;
+mod find;
 mod integrity;
 mod manage;
 mod share;
@@ -37,6 +38,7 @@ pub async fn run(
         Command::Cat(arguments) => browse::cat(context, arguments, json).await,
         Command::Write(arguments) => browse::write(context, arguments, input).await,
         Command::Du(arguments) => browse::usage(context, arguments).await,
+        Command::Find(arguments) => find::find(context, arguments).await,
         Command::Get(arguments) => transfer::download(context, arguments).await,
         Command::Put(arguments) => transfer::upload(context, arguments).await,
         Command::Mkdir(arguments) => manage::make_dirs_command(context, arguments).await,
