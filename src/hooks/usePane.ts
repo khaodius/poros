@@ -114,6 +114,8 @@ export interface PaneOptions {
    * with when that is not the pane's own, or null. The pane keeps its place and its history.
    */
   handover?: (path: string) => Handover | null;
+  /** Entries left out by name, as the identical ones of two compared panes can be. */
+  hideNames?: ReadonlySet<string>;
 }
 
 export function usePane(
@@ -125,6 +127,7 @@ export function usePane(
     groupByDate = false,
     onSortChange,
     handover,
+    hideNames,
   }: PaneOptions = {},
 ): PaneController {
   const [listing, setListing] = useState<DirListing | null>(null);
@@ -161,15 +164,14 @@ export function usePane(
   // The source a handover listed the folder on show with, until it is the pane's own.
   const takenOverBy = useRef<string | null>(null);
 
-  const sortedEntries = useMemo(
-    () =>
-      sortEntries(
-        filterEntries(listing?.entries ?? [], { showHidden, query: filter }),
-        sort,
-        foldersFirst,
-      ),
-    [listing, showHidden, filter, sort, foldersFirst],
-  );
+  const sortedEntries = useMemo(() => {
+    const shown = filterEntries(listing?.entries ?? [], { showHidden, query: filter });
+    return sortEntries(
+      hideNames ? shown.filter((entry) => !hideNames.has(entry.name)) : shown,
+      sort,
+      foldersFirst,
+    );
+  }, [listing, showHidden, filter, sort, foldersFirst, hideNames]);
   // As in Explorer, the groups run the other way only while sorting oldest first by date.
   const newestFirst = sort.key !== "modified" || sort.direction === -1;
   const groups = useMemo(

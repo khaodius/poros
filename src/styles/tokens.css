@@ -77,6 +77,13 @@
   --diff-removed: rgb(229 72 77 / 0.12);
   --diff-removed-word: rgb(229 72 77 / 0.32);
 
+  /* Rows of two compared panes (Compare folders): each state's stripe, tint and glyph. */
+  --compare-newer: #3dbb76;
+  --compare-older: #f0a33a;
+  --compare-only: #d27be0;
+  --compare-different: #e5484d;
+  --compare-identical: #8b95a5;
+
   --shadow-popover: 0 8px 28px rgb(0 0 0 / 0.45), 0 0 0 1px var(--border-strong);
   --shadow-dialog: 0 24px 64px rgb(0 0 0 / 0.55), 0 0 0 1px var(--border-strong);
   --backdrop: rgb(5 6 8 / 0.6);
@@ -148,6 +155,12 @@
     --diff-removed: rgb(209 52 56 / 0.09);
     --diff-removed-word: rgb(209 52 56 / 0.22);
 
+    --compare-newer: #1f8a4c;
+    --compare-older: #b86e00;
+    --compare-only: #a23fb5;
+    --compare-different: #d13438;
+    --compare-identical: #6b7483;
+
     --shadow-popover: 0 8px 24px rgb(20 30 50 / 0.16), 0 0 0 1px var(--border-strong);
     --shadow-dialog: 0 24px 64px rgb(20 30 50 / 0.22), 0 0 0 1px var(--border-strong);
     --backdrop: rgb(20 24 32 / 0.35);
@@ -203,6 +216,12 @@
   --diff-added-word: rgb(31 138 76 / 0.24);
   --diff-removed: rgb(209 52 56 / 0.09);
   --diff-removed-word: rgb(209 52 56 / 0.22);
+
+  --compare-newer: #1f8a4c;
+  --compare-older: #b86e00;
+  --compare-only: #a23fb5;
+  --compare-different: #d13438;
+  --compare-identical: #6b7483;
 
   --shadow-popover: 0 8px 24px rgb(20 30 50 / 0.16), 0 0 0 1px var(--border-strong);
   --shadow-dialog: 0 24px 64px rgb(20 30 50 / 0.22), 0 0 0 1px var(--border-strong);

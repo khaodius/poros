@@ -31,6 +31,7 @@ import {
   FolderOutput,
   FolderPlus,
   FolderSync,
+  GitCompareArrows,
   HardDrive,
   Home,
   Info,
@@ -51,6 +52,7 @@ import {
   X,
 } from "lucide-react";
 import { useBackForwardButtons } from "../hooks/useBackForwardButtons";
+import { useFolderCompare, useHiddenIdentical } from "../hooks/useFolderCompare";
 import { usePane } from "../hooks/usePane";
 import { archiveFormatOf, isSingleFile, unpackedName } from "../lib/archives";
 import { COLUMN_LABELS, availableColumns, type DetailColumn } from "../lib/columns";
@@ -104,6 +106,11 @@ import { CompareDialog, type CompareSide } from "./CompareDialog";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { FileList, type MenuPosition } from "./FileList";
+import {
+  COMPARE_FOLDERS_SHORTCUT,
+  FolderCompareBar,
+  folderCompareMenuItems,
+} from "./FolderCompareBar";
 import { NewVaultDialog } from "./NewVaultDialog";
 import { PathBar } from "./PathBar";
 import { PromptDialog } from "./PromptDialog";
@@ -219,6 +226,7 @@ export function FilePane({
     (path: string) => (sessionId ? vaultHandover(tabId, sessionId, path) : null),
     [tabId, sessionId],
   );
+  const hiddenIdentical = useHiddenIdentical(tabId);
   const pane = usePane(source, {
     showHiddenByDefault,
     initialSort: useSettingsStore.getState().settings.interface.sort,
@@ -226,6 +234,7 @@ export function FilePane({
     groupByDate,
     onSortChange: rememberSort,
     handover,
+    hideNames: hiddenIdentical,
   });
   const [dialog, setDialog] = useState<PaneDialog | null>(null);
   /** The entry whose row shows the name field. */
@@ -309,6 +318,16 @@ export function FilePane({
   useEffect(() => {
     updatePane(tabId, { locked: lockedCard });
   }, [tabId, lockedCard]);
+  const folderCompare = useFolderCompare({
+    tabId,
+    source,
+    sessionId,
+    pane,
+    covered: lockedCard,
+    focusList,
+  });
+  /** Rows left out because they are identical in the pane this one is compared with. */
+  const identicalHidden = hiddenIdentical ? (folderCompare.bar?.counts?.identical ?? 0) : 0;
 
   // The card takes the keyboard with it as it leaves, so the file list gets it back.
   const hadLockedCard = useRef(lockedCard);
@@ -655,7 +674,7 @@ export function FilePane({
     }
     if (!worksHere) {
       return {
-        label: `Compare (${needsSftp})`,
+        label: `Compare files (${needsSftp})`,
         icon: <FileDiff size={14} />,
         disabled: true,
         onSelect: () => undefined,
@@ -675,7 +694,9 @@ export function FilePane({
     }
     const other = counterpartFile(tabId);
     return {
-      label: other ? `Compare with ${other.entry.name}` : "Compare (select a file in another tab)",
+      label: other
+        ? `Compare with ${other.entry.name}`
+        : "Compare files (select a file in another tab)",
       icon: <FileDiff size={14} />,
       disabled: !other,
       onSelect: () =>
@@ -833,6 +854,7 @@ export function FilePane({
         : []),
       ...(entry ? [] : [sortMenu(), groupMenu()]),
       syncMenuItem(entry),
+      ...folderCompareMenuItems(folderCompare, entry === null),
       // Commands run over SSH.
       ...(sessionId && protocol === "sftp" && pane.listing
         ? [serverCommandsMenu(sessionId, { folder: pane.listing.path, items: targets })]
@@ -885,6 +907,14 @@ export function FilePane({
       // Nothing is dropped unseen among a locked vault's encrypted files.
       data-drop-pane={lockedCard ? undefined : tabId}
       onMouseDown={markActive}
+      onKeyDown={(event) => {
+        // From anywhere in the pane; the file list handles it itself while it has the keyboard.
+        const primary = event.ctrlKey || event.metaKey;
+        if (!primary || !event.shiftKey || event.altKey || event.key.toLowerCase() !== "d") return;
+        if (dialog || menu) return;
+        event.preventDefault();
+        folderCompare.toggle();
+      }}
     >
       <header className="pane-header">
         <div className="pane-title">
@@ -981,6 +1011,14 @@ export function FilePane({
           >
             {pane.showHidden ? <Eye size={15} /> : <EyeOff size={15} />}
           </ToolbarButton>
+          <ToolbarButton
+            label={`Compare folders (${COMPARE_FOLDERS_SHORTCUT})`}
+            onClick={folderCompare.toggle}
+            pressed={folderCompare.comparing}
+            disabled={!pane.listing && !folderCompare.comparing}
+          >
+            <GitCompareArrows size={15} />
+          </ToolbarButton>
         </div>
       </header>
 
@@ -1060,6 +1098,12 @@ export function FilePane({
               </span>
             </p>
           )}
+          {folderCompare.bar && (
+            <FolderCompareBar
+              bar={folderCompare.bar}
+              onMenu={(anchor, items) => setMenu({ x: anchor.left, y: anchor.bottom + 4, items })}
+            />
+          )}
           <FileList
             pane={pane}
             side={side}
@@ -1076,6 +1120,10 @@ export function FilePane({
             fontSize={fontSize}
             dropFolder={dropFolder}
             cutPaths={cutPaths}
+            compareMarks={folderCompare.marks}
+            emptyNote={
+              identicalHidden > 0 ? "Everything here is identical in both panes" : undefined
+            }
             onActivate={markActive}
             onContextMenu={showContextMenu}
             onHeaderContextMenu={showHeaderMenu}
@@ -1096,6 +1144,7 @@ export function FilePane({
             onCopy={() => cutOrCopy("copy", pane.selectedEntries())}
             onPaste={() => pasteInto(null)}
             onProperties={() => openProperties(pane.selectedEntries())}
+            onCompareFolders={folderCompare.toggle}
           />
         </>
       ) : (
@@ -1120,6 +1169,7 @@ export function FilePane({
         <span>
           {lockedCard ? "Locked vault" : pluralize(pane.entryCount, "item")}
           {!lockedCard && pane.hiddenCount > 0 && `, ${pane.hiddenCount} hidden`}
+          {!lockedCard && identicalHidden > 0 && `, ${identicalHidden} identical not shown`}
         </span>
         {selected.length > 0 && (
           <span>

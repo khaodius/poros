@@ -125,6 +125,21 @@ const DOUBLE_CLICK_ACTIONS: DoubleClickAction[] = ["transfer", "edit", "nothing"
 export type DateFormat = "minutes" | "seconds" | "locale";
 export const DATE_FORMATS: DateFormat[] = ["minutes", "seconds", "locale"];
 
+/** `sync` takes the rule from Settings > Sync until the compare bar sets one. */
+export type CompareSizeRule = "sync" | "sizeAndTime" | "sizeOnly";
+const COMPARE_SIZE_RULES: CompareSizeRule[] = ["sync", "sizeAndTime", "sizeOnly"];
+
+/** The options of the bar over two compared panes (Compare folders), as last set. */
+export interface FolderCompareSettings {
+  hideIdentical: boolean;
+  sizeRule: CompareSizeRule;
+  /** Times a whole number of hours apart count as the same, as with a server in another zone. */
+  ignoreHourOffsets: boolean;
+  includeHidden: boolean;
+  /** Entering a folder or going up in one pane does the same in the other. */
+  browseTogether: boolean;
+}
+
 export interface InterfaceSettings {
   doubleClickFile: DoubleClickAction;
   showHiddenFiles: boolean;
@@ -145,6 +160,7 @@ export interface InterfaceSettings {
   columnWidths: ColumnWidths;
   /** The program that extracts archives on this computer. */
   extractor: ExtractorSettings;
+  folderCompare: FolderCompareSettings;
 }
 
 export interface AppearanceSettings {
@@ -325,6 +341,13 @@ export const DEFAULT_SETTINGS: Settings = {
     hiddenColumns: [],
     columnWidths: {},
     extractor: { choice: "", program: "", arguments: CUSTOM_ARGUMENTS_EXAMPLE },
+    folderCompare: {
+      hideIdentical: false,
+      sizeRule: "sync",
+      ignoreHourOffsets: false,
+      includeHidden: true,
+      browseTogether: false,
+    },
   },
   appearance: {
     theme: "builtin:system",
@@ -432,6 +455,9 @@ export function sanitizeSettings(stored: unknown): Settings {
   }
   options.hiddenColumns = DETAIL_COLUMNS.filter((column) => options.hiddenColumns.includes(column));
   options.columnWidths = sanitizeColumnWidths(asSection(source.interface).columnWidths);
+  if (!COMPARE_SIZE_RULES.includes(options.folderCompare.sizeRule)) {
+    options.folderCompare.sizeRule = DEFAULT_SETTINGS.interface.folderCompare.sizeRule;
+  }
 
   const appearance = settings.appearance;
   const storedAppearance = asSection(source.appearance);
