@@ -145,6 +145,12 @@ export interface InterfaceSettings {
   columnWidths: ColumnWidths;
   /** The program that extracts archives on this computer. */
   extractor: ExtractorSettings;
+  /** A server folder seen before shows its last listing at once, while it is asked for again. */
+  cachedListings: boolean;
+  /** Lists the parent folder and the folder under the cursor ahead, while a server is idle. */
+  prefetchListings: boolean;
+  /** Does so on cloud storage too, which counts and limits requests. */
+  prefetchOnCloud: boolean;
 }
 
 export interface AppearanceSettings {
@@ -325,6 +331,9 @@ export const DEFAULT_SETTINGS: Settings = {
     hiddenColumns: [],
     columnWidths: {},
     extractor: { choice: "", program: "", arguments: CUSTOM_ARGUMENTS_EXAMPLE },
+    cachedListings: true,
+    prefetchListings: true,
+    prefetchOnCloud: false,
   },
   appearance: {
     theme: "builtin:system",

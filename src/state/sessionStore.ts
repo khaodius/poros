@@ -5,6 +5,7 @@ import { allTabs, isRestoring, type SavedServer } from "../lib/layout";
 import type { ConnectProfile, HostKeyApproval, SessionInfo, VaultInfo } from "../lib/types";
 import { serverSessionId, vaultSessions } from "../lib/vaults";
 import { useLayoutStore } from "./layoutStore";
+import { forgetListing, listingsLeft } from "./listings";
 import { getPane } from "./paneRegistry";
 import { useSettingsStore } from "./settingsStore";
 
@@ -69,6 +70,12 @@ function withSession(sessions: Sessions, info: SessionInfo, profile: ConnectProf
   return { sessions: { ...sessions, [info.id]: { info, profile, status: "connected" as const } } };
 }
 
+/** A session and the unlocked vaults that leave with it, as far as this window has them. */
+function leavingWith(sessions: Sessions, sessionId: string): SessionEntry[] {
+  const vaultIds = vaultSessions(sessions, sessionId).map((vault) => vault.id);
+  return [sessionId, ...vaultIds].flatMap((id) => (sessions[id] as SessionEntry | undefined) ?? []);
+}
+
 /** The file tabs of this window that show one of `sessionIds`. */
 function tabsShowing(sessionIds: readonly string[]) {
   return allTabs(useLayoutStore.getState().root).flatMap((tab) =>
@@ -98,6 +105,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const info = await remote.reconnect(sessionId, approval);
     await remote.disconnect(sessionId).catch(() => undefined);
     forgetRemoteSource(sessionId);
+    // What the server showed is remembered for the session that replaces this one, which is on
+    // the same connection; only what was kept for this session alone goes with it.
+    if (previous) listingsLeft([previous], false);
     // In one step with the sessions, so no tab is left showing a session that is gone.
     moveTabs(sessionId, info.id);
     const reattached = vaultSessions(get().sessions, sessionId);
@@ -134,23 +144,29 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   createVault: async (sessionId, parent, name, password) => {
     const info = await vaults.create(sessionId, parent, name, password);
     set((state) => withSession(state.sessions, info, null));
+    // The vault's folder is new in `parent`.
+    forgetListing(sessionId, parent);
     return info;
   },
 
   disconnect: async (sessionId) => {
+    const closing = leavingWith(get().sessions, sessionId);
     get().release(sessionId);
+    // Closed for good, so the listings remembered for them have no session left to show them.
+    listingsLeft(closing, true);
     await remote.disconnect(sessionId).catch(() => undefined);
   },
 
   release: (sessionId) => {
-    const vaultIds = vaultSessions(get().sessions, sessionId).map((vault) => vault.id);
-    const leaving = [sessionId, ...vaultIds];
-    leaving.forEach(forgetRemoteSource);
+    const leaving = leavingWith(get().sessions, sessionId);
+    const leavingIds = new Set([sessionId, ...leaving.map((entry) => entry.info.id)]);
+    leavingIds.forEach(forgetRemoteSource);
     set((state) => {
       const sessions = { ...state.sessions };
-      for (const id of leaving) delete sessions[id];
+      for (const id of leavingIds) delete sessions[id];
       return { sessions };
     });
+    listingsLeft(leaving, false);
   },
 
   linkSaved: (sessionId, savedConnectionId) =>
