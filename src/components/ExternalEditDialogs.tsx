@@ -219,19 +219,31 @@ function ConflictPrompt({ edit }: { edit: ExternalEdit }) {
         <button type="button" className="button" onClick={() => answer("cancel")}>
           Don't upload
         </button>
-        {!deleted && (
-          <button type="button" className="button" onClick={() => answer("keepBoth")}>
-            Keep both
+        {deleted ? (
+          <button
+            type="button"
+            data-autofocus
+            className="button button-primary"
+            onClick={() => answer("overwrite")}
+          >
+            Upload it again
           </button>
+        ) : (
+          <>
+            <button type="button" className="button" onClick={() => answer("overwrite")}>
+              Overwrite
+            </button>
+            {/* Enter loses neither copy. */}
+            <button
+              type="button"
+              data-autofocus
+              className="button button-primary"
+              onClick={() => answer("keepBoth")}
+            >
+              Keep both
+            </button>
+          </>
         )}
-        <button
-          type="button"
-          data-autofocus
-          className="button button-primary"
-          onClick={() => answer("overwrite")}
-        >
-          {deleted ? "Upload it again" : "Overwrite"}
-        </button>
       </div>
       {comparing && (
         <CompareDialog
