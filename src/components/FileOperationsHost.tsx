@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { LoaderCircle } from "lucide-react";
 import { deleteFraction, deleteProgressText, formatCount } from "../lib/deletion";
 import { formatSize, pluralize } from "../lib/format";
 import { fileOperations, onFileOperation } from "../lib/ipc";
 import { baseName } from "../lib/path";
+import { progressReach } from "../lib/progressBars";
 import type { NameClash } from "../lib/types";
 import { closeRenameReport, useBulkRenameStore } from "../state/bulkRename";
 import {
@@ -136,15 +137,13 @@ function DeleteDetail({ operation }: { operation: RunningOperation }) {
       </span>
       <span
         className={`progress-track ${fraction === null ? "is-indeterminate" : ""}`}
+        style={fraction === null ? undefined : (progressReach(fraction) as CSSProperties)}
         role="progressbar"
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={fraction === null ? undefined : Math.round(fraction * 100)}
       >
-        <span
-          className="progress-fill"
-          style={fraction === null ? undefined : { width: `${fraction * 100}%` }}
-        />
+        <span className="progress-fill" />
       </span>
       {current && (
         <span className="operation-path" title={current}>
