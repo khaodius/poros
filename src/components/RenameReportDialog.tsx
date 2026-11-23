@@ -59,8 +59,10 @@ export function RenameReportDialog({ report, onClose }: RenameReportDialogProps)
         <div className="confirm-body selectable">
           <p>
             {renamedCount} of {pluralize(outcomes.length, "item")} in <strong>{folder}</strong>{" "}
-            {renamedCount === 1 ? "has its" : "have their"} new name. The rest were left as they
-            were.
+            {renamedCount === 1 ? "has its" : "have their"} new name.
+            {stranded
+              ? " The others keep their old names, but for the one below."
+              : " The others keep their old names."}
           </p>
           {failure && (
             <p className="form-error">

@@ -6189,13 +6189,14 @@ textarea::placeholder {
 .rename-tokens {
   display: flex;
   flex-wrap: wrap;
-  gap: 5px;
+  gap: 4px;
 }
 
 .rename-token {
   height: 22px;
-  padding: 0 7px;
+  padding: 0 6px;
   color: var(--accent);
+  font-size: var(--font-size-tiny);
   background: var(--accent-soft);
   border: 1px solid transparent;
   border-radius: 11px;
@@ -6385,9 +6386,10 @@ textarea::placeholder {
   align-self: flex-start;
 }
 
+/* A header and eleven whole rows. */
 .rename-report .rename-table {
   flex: none;
-  height: min(320px, calc(100vh - 380px));
+  height: min(315px, calc(100vh - 380px));
   min-height: 120px;
 }
 

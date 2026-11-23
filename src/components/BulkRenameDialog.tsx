@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type FormEvent,
+  type KeyboardEvent,
   type ReactNode,
 } from "react";
 import {
@@ -199,14 +200,24 @@ export function BulkRenameDialog({
     checked.findError === null &&
     checked.problemCount === 0 &&
     checked.ready > 0;
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
+  const apply = () => {
     if (!target) return;
     // Enter may arrive before the preview has caught up with the last key.
     const checked = previewedRules === rules ? preview : previewRenames(selection, rules, target);
     if (!canRename(checked)) return;
     onClose();
     void runBulkRename({ origin, folder, renames: renamesOf(checked), held, target, rules });
+  };
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    apply();
+  };
+  /** Enter applies from anywhere in the dialog, the lists and the preview included, but a button. */
+  const applyOnEnter = (event: KeyboardEvent<HTMLFormElement>) => {
+    if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+    if (event.target instanceof HTMLButtonElement) return;
+    event.preventDefault();
+    apply();
   };
 
   const tableRow = (index: number): RenameTableRow => {
@@ -230,7 +241,7 @@ export function BulkRenameDialog({
       width={1120}
       className="bulk-rename-dialog"
     >
-      <form className="rename-form" onSubmit={submit}>
+      <form className="rename-form" onSubmit={submit} onKeyDown={applyOnEnter}>
         <div className="rename-rules">
           <p className="field-hint">Applied in this order, each to the result of the last.</p>
 
@@ -256,23 +267,18 @@ export function BulkRenameDialog({
                   aria-label="Recent patterns"
                   value=""
                   onChange={(event) => {
-                    const entry = history.find(
-                      (known) => findHistoryLabel(known) === event.target.value,
-                    );
+                    const entry = history[Number(event.target.value)];
                     if (entry) changeFind({ ...entry, enabled: true });
                   }}
                 >
                   <option value="" disabled>
                     Recent
                   </option>
-                  {history.map((entry) => {
-                    const label = findHistoryLabel(entry);
-                    return (
-                      <option key={label} value={label}>
-                        {label}
-                      </option>
-                    );
-                  })}
+                  {history.map((entry, index) => (
+                    <option key={index} value={index}>
+                      {findHistoryLabel(entry)}
+                    </option>
+                  ))}
                 </select>
               )}
             </div>
