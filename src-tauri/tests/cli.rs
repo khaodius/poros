@@ -1146,3 +1146,58 @@ fn verify_still_lists_files_only_on_the_server_when_a_local_folder_cannot_be_rea
     assert_eq!(value["onlyRemote"][0]["path"], "stale.txt", "{value}");
     assert_eq!(value["notCompared"], serde_json::json!(["private"]));
 }
+
+#[test]
+fn rm_and_mv_never_take_the_home_or_start_folder_or_everything_at_the_top() {
+    let Some(run) = Run::online("own") else {
+        return;
+    };
+    let (_, info) = run.json(&["info"]);
+    let start = format!(
+        "{}/{}/start",
+        info["home"].as_str().unwrap().trim_end_matches('/'),
+        run.remote
+    );
+    let (code, _) = run.json(&["mkdir", "-p", &run.remote("start/keep")]);
+    assert_eq!(code, 0);
+    run.write("start/keep/file.txt", "kept\n");
+    // Every command starts in `start`, as with a saved connection's own folder.
+    let connection = format!("{}{start}", run.connection);
+    let inside = |arguments: &[&str]| {
+        let output = run
+            .command(&[&["--json"], arguments].concat())
+            .env("POROS_CONNECTION", &connection)
+            .output()
+            .unwrap();
+        (status(&output), parsed(&output))
+    };
+    let start_slash = format!("{start}/");
+    // Patterns that match nothing, so a regression could never delete anything there.
+    let refused: [(&[&str], &str); 8] = [
+        (&["rm", "-r", start.as_str()], "starts in"),
+        (&["rm", "-rf", start_slash.as_str()], "starts in"),
+        (&["mv", start.as_str(), "keep"], "starts in"),
+        (&["mv", "~", "keep"], "home folder"),
+        (&["mv", "~/", "keep"], "home folder"),
+        (
+            &["rm", "-rf", "/poros-nothing-is-named-this-*"],
+            "top of the server",
+        ),
+        (&["rm", "-f", "/*.poros-never-a-name"], "top of the server"),
+        (&["rm", "-rf", "//poros-nothing-??"], "top of the server"),
+    ];
+    for (arguments, says) in refused {
+        let (code, value) = inside(arguments);
+        assert_eq!(code, 2, "{arguments:?}: {value}");
+        assert_eq!(value["error"]["kind"], "invalidInput", "{arguments:?}");
+        let message = value["error"]["message"].as_str().unwrap();
+        assert!(message.contains(says), "{arguments:?}: {message}");
+        assert_eq!(run.names(""), ["start"], "{arguments:?}");
+        assert_eq!(run.names("start"), ["keep"], "{arguments:?}");
+        assert_eq!(run.names("start/keep"), ["file.txt"], "{arguments:?}");
+    }
+    // What is inside them is still named as usual.
+    let (code, value) = inside(&["rm", "-r", &format!("{start}/keep")]);
+    assert_eq!(code, 0, "{value}");
+    assert!(run.names("start").is_empty());
+}

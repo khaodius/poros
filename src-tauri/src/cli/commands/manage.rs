@@ -4,7 +4,9 @@
 
 use serde_json::json;
 
-use super::{distinct, each, expand, make_dirs, missing, operand, refuse_dots, same_name};
+use super::{
+    distinct, each, expand, has_wildcards, make_dirs, missing, operand, refuse_dots, same_name,
+};
 use crate::cli::args::{ChmodArgs, ChownArgs, Conflict, MakeDirArgs, PlaceArgs, RemoveArgs};
 use crate::cli::context::{Connected, Context};
 use crate::cli::exit::Exit;
@@ -63,6 +65,7 @@ pub async fn remove(context: &Context, arguments: &RemoveArgs) -> AppResult<Repl
     let connected = context.connected().await?;
     let files = connected.files();
     refuse_dots(&arguments.paths)?;
+    refuse_patterns_at_the_top(connected, &arguments.paths)?;
     // One operand at a time, so -f passes over only a pattern that matches nothing.
     let mut paths = Vec::new();
     for path in &arguments.paths {
@@ -79,6 +82,7 @@ pub async fn remove(context: &Context, arguments: &RemoveArgs) -> AppResult<Repl
                 "The top folder of the server cannot be deleted",
             ));
         }
+        refuse_own_folder(connected, &path)?;
         match files.stat(&path).await? {
             None if arguments.force => {}
             None => refused.push(missing(&path)),
@@ -144,6 +148,49 @@ pub async fn remove(context: &Context, arguments: &RemoveArgs) -> AppResult<Repl
     .with_failures(failed, total, all_failed))
 }
 
+/// `rm` and `mv` refuse the home folder and the folder the connection starts in, however they
+/// are spelled (`~`, `~/`, the whole path), as they refuse `.`.
+fn refuse_own_folder(connected: &Connected, path: &str) -> AppResult<()> {
+    let which = own_folder(
+        &protocol::normalize(path),
+        &protocol::normalize(&connected.info.home),
+        &protocol::normalize(&connected.info.initial_path),
+    );
+    match which {
+        Some(which) => Err(
+            AppError::invalid(format!("{path} is {which}; name what is inside it")).with_path(path),
+        ),
+        None => Ok(()),
+    }
+}
+
+fn own_folder(path: &str, home: &str, start: &str) -> Option<&'static str> {
+    if path == home {
+        Some("the home folder")
+    } else if path == start {
+        Some("the folder this connection starts in")
+    } else {
+        None
+    }
+}
+
+/// A pattern at the top of the server, such as the `/*` that `"$UNSET/*"` leaves, is refused
+/// rather than matched against everything there.
+fn refuse_patterns_at_the_top(connected: &Connected, paths: &[String]) -> AppResult<()> {
+    for path in paths {
+        let resolved = operand(connected, path)?;
+        if remote_path::parent(&resolved).as_deref() == Some("/")
+            && has_wildcards(remote_path::file_name(&resolved))
+        {
+            return Err(AppError::invalid(format!(
+                "{path} is a pattern at the top of the server; name the items to delete"
+            ))
+            .with_path(path.clone()));
+        }
+    }
+    Ok(())
+}
+
 /// `mv` and `cp`: into a folder that exists, or one item to a new name.
 pub async fn place(context: &Context, arguments: &PlaceArgs, moving: bool) -> AppResult<Reply> {
     let connected = context.connected().await?;
@@ -158,6 +205,9 @@ pub async fn place(context: &Context, arguments: &PlaceArgs, moving: bool) -> Ap
     let sources = distinct(expand(connected, sources).await?);
     let mut source_stats = Vec::with_capacity(sources.len());
     for source in &sources {
+        if moving {
+            refuse_own_folder(connected, source)?;
+        }
         source_stats.push(files.stat(source).await?.ok_or_else(|| missing(source))?);
     }
     let destination = operand(connected, destination)?;
@@ -726,6 +776,35 @@ mod tests {
     fn apply(text: &str, mode: u32) -> (u32, u32) {
         let (files, folders) = parse_mode_change(text).unwrap();
         (files.apply(mode), folders.apply(mode))
+    }
+
+    #[test]
+    fn the_home_and_start_folders_are_known_however_they_are_spelled() {
+        let own = |path: &str| {
+            let resolved = protocol::normalize(&protocol::resolve_against("/home/me", path));
+            own_folder(&resolved, "/home/me", "/srv/site")
+        };
+        for spelled in [
+            "~",
+            "~/",
+            "~/.",
+            " ~ ",
+            "/home/me",
+            "/home/me/",
+            "/home//me",
+        ] {
+            assert_eq!(own(spelled), Some("the home folder"), "{spelled}");
+        }
+        for spelled in ["/srv/site", "/srv/site/", "/srv/./site"] {
+            assert_eq!(
+                own(spelled),
+                Some("the folder this connection starts in"),
+                "{spelled}"
+            );
+        }
+        for spelled in ["~/notes", "/home", "/srv", "/srv/site/www", "notes"] {
+            assert_eq!(own(spelled), None, "{spelled}");
+        }
     }
 
     #[test]
