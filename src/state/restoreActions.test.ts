@@ -208,4 +208,52 @@ describe("restoring tabs", () => {
     expect(invoke).toHaveBeenCalledWith("disconnect", { sessionId: "after" });
     expect(useSessionStore.getState().sessions).toEqual({});
   });
+
+  it("keeps the session while another of its files is still being opened", async () => {
+    const restoring = (id: string, path: string): RestoringTab => ({
+      id,
+      kind: "editor",
+      documentId: `old-${id}`,
+      name: path.slice(path.lastIndexOf("/") + 1),
+      path,
+      origin: "web",
+      sessionId: "before",
+      restore: { server },
+    });
+    show(restoring("gone", "/var/www/gone.html"), restoring("page", "/var/www/index.html"), other);
+    useSessionStore.setState({
+      sessions: { after: { info: session("after"), profile: null, status: "connected" } },
+    });
+    let finish: () => void = () => undefined;
+    invoke.mockImplementation((command: string, args?: { location?: { path: string } }) => {
+      if (command !== "editor_open") return Promise.resolve();
+      if (args?.location?.path === "/var/www/gone.html") {
+        return Promise.reject({ kind: "notFound", message: "No such file" });
+      }
+      return new Promise<DocumentInfo>(
+        (resolve) =>
+          (finish = () =>
+            resolve({
+              id: "new-page",
+              name: "index.html",
+              path: "/var/www/index.html",
+              origin: "web",
+            })),
+      );
+    });
+    reopenWithSession("before", session("after"));
+    await flush();
+    expect(findTab(useLayoutStore.getState().root, "gone")).toBeNull();
+    expect(invoke).not.toHaveBeenCalledWith("disconnect", expect.anything());
+
+    finish();
+    await flush();
+    expect(findTab(useLayoutStore.getState().root, "page")).toMatchObject({
+      kind: "editor",
+      documentId: "new-page",
+      sessionId: "after",
+    });
+    expect(invoke).not.toHaveBeenCalledWith("disconnect", expect.anything());
+    expect(Object.keys(useSessionStore.getState().sessions)).toEqual(["after"]);
+  });
 });

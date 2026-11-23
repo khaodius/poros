@@ -55,30 +55,37 @@ function waitingFor(key: string): RestoringTab[] {
   );
 }
 
-/** Local files being opened, so a tab mounted twice opens its file once. */
-const openingFiles = new Set<string>();
+/**
+ * Files being opened, by tab, with the session each is opened on: a tab mounted twice opens its
+ * file once, and a session stays while a file is still being opened on it.
+ */
+const openingFiles = new Map<string, string | undefined>();
 
 async function reopenEditor(tab: RestoringTab, location: DocumentLocation): Promise<void> {
   if (tab.kind !== "editor" || openingFiles.has(tab.id)) return;
-  openingFiles.add(tab.id);
   const sessionId = location.side === "remote" ? location.sessionId : undefined;
+  openingFiles.set(tab.id, sessionId);
+  let opened = false;
   try {
     const document = await editor.open(location);
     const layout = useLayoutStore.getState();
     if (!findTab(layout.root, tab.id)) {
       void editor.close(document.id).catch(() => undefined);
-      if (sessionId) disconnectUnused(sessionId);
       return;
     }
     layout.replaceTab(tab.id, { ...editorTab(document, sessionId), id: tab.id });
+    opened = true;
   } catch (caught) {
     useToastStore
       .getState()
       .show("error", `Could not reopen ${tab.name}: ${toAppError(caught).message}`);
     useLayoutStore.getState().closeTab(tab.id);
-    if (sessionId) disconnectUnused(sessionId);
   } finally {
     openingFiles.delete(tab.id);
+    // The last of the files opened on a session to settle tells whether anything still uses it.
+    if (!opened && sessionId && ![...openingFiles.values()].includes(sessionId)) {
+      disconnectUnused(sessionId);
+    }
   }
 }
 
