@@ -113,3 +113,52 @@ fn refused(error: AppError) -> AppError {
         )),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::fake_server::{Behavior, FakeServer};
+    use super::*;
+
+    /// Each server gets its restart position right before its own transfer command, so a
+    /// server that forgets the position at any other command still continues the file.
+    #[tokio::test]
+    async fn a_direct_copy_continues_where_it_stopped_on_strict_servers() {
+        let contents: Vec<u8> = (0..5000u32).map(|index| (index % 251) as u8).collect();
+        let offset = 1000;
+        let source_server = FakeServer::start(Behavior::default()).await;
+        let target_server = FakeServer::start(Behavior::default()).await;
+        source_server.put_file("/large.bin", &contents);
+        let mut partial = contents[..offset].to_vec();
+        partial[..100].fill(0);
+        target_server.put_file("/copy.bin", &partial);
+        let source = source_server.connect(&source_server.profile()).await;
+        let target = target_server.connect(&target_server.profile()).await;
+        source_server.take_commands();
+        target_server.take_commands();
+
+        copy(
+            &source,
+            "/large.bin",
+            &target,
+            "/copy.bin",
+            offset as u64,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+        let mut expected = contents.clone();
+        expected[..100].fill(0);
+        assert_eq!(target_server.file("/copy.bin"), Some(expected));
+        assert_eq!(
+            source_server.take_commands(),
+            ["PASV", "REST 1000", "RETR /large.bin"]
+        );
+        let target_commands = target_server.take_commands();
+        assert!(
+            target_commands[0].starts_with("PORT "),
+            "{target_commands:?}"
+        );
+        assert_eq!(target_commands[1..], ["REST 1000", "STOR /copy.bin"]);
+    }
+}

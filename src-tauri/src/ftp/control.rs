@@ -638,9 +638,16 @@ impl Control {
         Ok(PreparedData::Active(listener))
     }
 
-    /// Sends a command that moves data and returns the open data connection.
-    pub async fn open_transfer(&mut self, command: &str) -> AppResult<DataStart> {
+    /// Sends a command that moves data and returns the open data connection. A file transfer
+    /// that starts partway names its `offset`.
+    pub async fn open_transfer(&mut self, command: &str, offset: u64) -> AppResult<DataStart> {
         let prepared = self.prepare_data().await?;
+        if offset > 0 {
+            // Right before the transfer, not before the data connection is set up: RFC 959
+            // lets a server forget the position at any other command, and some do, sending
+            // or replacing the file from its start.
+            self.expect(&format!("REST {offset}"), 3).await?;
+        }
         let reply = self.command(command).await?;
         match reply.class() {
             1 => {}
@@ -768,7 +775,7 @@ impl Control {
     pub async fn list(&mut self, directory: &str) -> AppResult<Vec<RawEntry>> {
         check_argument(directory)?;
         if self.features.mlsd {
-            match self.open_transfer(&format!("MLSD {directory}")).await {
+            match self.open_transfer(&format!("MLSD {directory}"), 0).await {
                 Ok(start) => {
                     let text = self.read_listing(start).await?;
                     return Ok(listing::parse_mlsd(&text));
@@ -780,8 +787,10 @@ impl Control {
         // LIST output is meant for people and its path argument is not always honored, so list
         // the working folder instead.
         self.change_directory(directory).await?;
-        let start = match self.open_transfer("LIST -a").await {
-            Err(error) if error.kind == ErrorKind::Unsupported => self.open_transfer("LIST").await,
+        let start = match self.open_transfer("LIST -a", 0).await {
+            Err(error) if error.kind == ErrorKind::Unsupported => {
+                self.open_transfer("LIST", 0).await
+            }
             other => other,
         }
         .map_err(|error| error.with_path(directory))?;
@@ -955,10 +964,7 @@ impl Control {
     /// Starts sending a file from `offset`.
     pub async fn retrieve(&mut self, path: &str, offset: u64) -> AppResult<DataStart> {
         check_argument(path)?;
-        if offset > 0 {
-            self.expect(&format!("REST {offset}"), 3).await?;
-        }
-        self.open_transfer(&format!("RETR {path}"))
+        self.open_transfer(&format!("RETR {path}"), offset)
             .await
             .map_err(|error| error.with_path(path))
     }
@@ -966,10 +972,7 @@ impl Control {
     /// Starts receiving a file, replacing it from `offset` on.
     pub async fn store(&mut self, path: &str, offset: u64) -> AppResult<DataStart> {
         check_argument(path)?;
-        if offset > 0 {
-            self.expect(&format!("REST {offset}"), 3).await?;
-        }
-        self.open_transfer(&format!("STOR {path}"))
+        self.open_transfer(&format!("STOR {path}"), offset)
             .await
             .map_err(|error| error.with_path(path))
     }
