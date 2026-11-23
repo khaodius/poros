@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { rangeStart } from "./selection";
+import { onlySelected, rangeStart } from "./selection";
 import type { FileEntry } from "./types";
 
 function entry(path: string): FileEntry {
@@ -35,5 +35,24 @@ describe("rangeStart", () => {
     expect(rangeStart(shown, "/hidden", "/b", "/e")).toBe("/b");
     expect(rangeStart(shown, "/hidden", "/hidden", "/e")).toBe("/e");
     expect(rangeStart(shown, null, "/hidden", "/e")).toBe("/e");
+  });
+});
+
+describe("onlySelected", () => {
+  const shown = ["/a.txt", "/b.txt", "/c.txt"].map(entry);
+
+  it("is the one row selected", () => {
+    expect(onlySelected(shown, new Set(["/b.txt"]))?.path).toBe("/b.txt");
+  });
+
+  it("is none with several rows selected, or none", () => {
+    expect(onlySelected(shown, new Set(["/a.txt", "/c.txt"]))).toBeUndefined();
+    expect(onlySelected(shown, new Set())).toBeUndefined();
+  });
+
+  it("counts only the rows on show, as with a hidden file also selected", () => {
+    expect(onlySelected(shown, new Set(["/.env", "/a.txt"]))?.path).toBe("/a.txt");
+    expect(onlySelected(shown, new Set(["/.env"]))).toBeUndefined();
+    expect(onlySelected(shown, new Set(["/.env", "/.cache", "/a.txt", "/b.txt"]))).toBeUndefined();
   });
 });

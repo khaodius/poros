@@ -17,3 +17,16 @@ export function rangeStart(
     path !== null && shown.some((entry) => entry.path === path);
   return [anchorPath, cursorPath].find(onShow) ?? toPath;
 }
+
+/**
+ * The entry a rename acts on: the one selected row on show, when just one is. Rows the filter or
+ * the hidden files switch keep out of sight stay selected but are left alone, as every other
+ * action leaves them.
+ */
+export function onlySelected(
+  shown: readonly FileEntry[],
+  selection: ReadonlySet<string>,
+): FileEntry | undefined {
+  const selected = shown.filter((entry) => selection.has(entry.path));
+  return selected.length === 1 ? selected[0] : undefined;
+}

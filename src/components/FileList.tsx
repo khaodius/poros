@@ -29,6 +29,7 @@ import {
   type DetailColumn,
 } from "../lib/columns";
 import { stemLength } from "../lib/path";
+import { onlySelected } from "../lib/selection";
 import type { DateFormat } from "../lib/settings";
 import { isDirLike, typeLabel, type SortKey } from "../lib/sort";
 import type { FileEntry } from "../lib/types";
@@ -683,8 +684,8 @@ export function FileList({
           if (pane.selection.size > 0) actions.onDelete();
           return true;
         case "F2": {
-          const [only] = pane.selectedEntries();
-          if (pane.selection.size === 1 && only) actions.onRename(only);
+          const only = onlySelected(entries, pane.selection);
+          if (only) actions.onRename(only);
           return true;
         }
         case "F4":
@@ -900,7 +901,7 @@ export function FileList({
       y: event.clientY,
       renames:
         selected &&
-        pane.selection.size === 1 &&
+        onlySelected(entries, pane.selection) !== undefined &&
         !modified &&
         event.pointerType !== "touch" &&
         !!(event.target as Element).closest(".file-name-text") &&
@@ -935,8 +936,8 @@ export function FileList({
     if (!pressed?.renames || pressed.path !== entry.path || event.detail !== 1 || slipped) return;
     renameTimer.current = window.setTimeout(() => {
       renameTimer.current = 0;
-      const { selection } = latestPane.current;
-      const stillAlone = selection.size === 1 && selection.has(entry.path);
+      const { visibleEntries, selection } = latestPane.current;
+      const stillAlone = onlySelected(visibleEntries, selection)?.path === entry.path;
       const stillFocused = document.hasFocus() && document.activeElement === scrollRef.current;
       if (stillAlone && stillFocused && !useDragStore.getState().payload) actions.onRename(entry);
     }, SLOW_CLICK_RENAME_MILLIS);
