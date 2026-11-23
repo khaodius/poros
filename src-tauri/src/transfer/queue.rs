@@ -535,6 +535,13 @@ pub struct Abandoned {
     pub path: String,
 }
 
+/// How a watched job stood when it left the queue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Ended {
+    pub state: JobState,
+    pub size: u64,
+}
+
 /// An unfinished job as it is saved between runs of the app.
 #[derive(Debug, Clone)]
 pub struct Unfinished {
@@ -565,6 +572,9 @@ pub struct Queue {
     /// Files that running jobs write. Two jobs writing one file would share its temporary
     /// file, so a job waits while another writes its target.
     writing: HashMap<WrittenFile, JobId>,
+    /// Jobs a caller follows to the end, and how those that left the queue ended.
+    watched: HashSet<JobId>,
+    ended: HashMap<JobId, Ended>,
     /// Jobs were added, removed, reordered or changed state since the queue was last saved.
     pub unsaved: bool,
     /// The number of the latest progress update sent to the windows.
@@ -1129,8 +1139,34 @@ impl Queue {
         ids.len()
     }
 
+    /// Keeps how these jobs end once they leave the queue, for `ended`.
+    pub fn watch(&mut self, ids: &[JobId]) {
+        self.watched.extend(ids);
+    }
+
+    pub fn ended(&self, id: JobId) -> Option<Ended> {
+        self.ended.get(&id).copied()
+    }
+
+    /// The caller no longer follows these jobs.
+    pub fn unwatch(&mut self, ids: &[JobId]) {
+        for id in ids {
+            self.watched.remove(id);
+            self.ended.remove(id);
+        }
+    }
+
     fn forget(&mut self, id: JobId) {
         if let Some(job) = self.jobs.remove(&id) {
+            if self.watched.remove(&id) {
+                self.ended.insert(
+                    id,
+                    Ended {
+                        state: job.state,
+                        size: job.spec.size,
+                    },
+                );
+            }
             self.pending.remove(&job.rank);
             self.dirty.remove(&id);
             self.removed.push(id);

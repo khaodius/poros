@@ -1793,6 +1793,75 @@ async fn sync_mirrors_folders_both_ways() {
     fixture.close().await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_synchronization_counts_only_the_files_it_copied() {
+    let Some(server) = server() else { return };
+    let fixture = TransferFixture::new(&server, "sync-count").await;
+    let local = fixture.local.path().join("site");
+    std::fs::create_dir_all(&local).unwrap();
+    for (seed, name) in ["a.bin", "b.bin", "c.bin"].into_iter().enumerate() {
+        std::fs::write(local.join(name), pattern(1000, seed as u64)).unwrap();
+    }
+    let sync = SyncManager::new(fixture.manager.clone(), Events::default());
+    // Completed jobs leave the queue, and the queue waits so that one can be removed first.
+    let transfers = fixture.transfers(TransferSettings {
+        keep_completed: false,
+        auto_start: false,
+        ..transfer_settings()
+    });
+    let request = sync_request(
+        &fixture,
+        &local,
+        &fixture.remote,
+        SyncDirection::Upload,
+        CompareMode::SizeAndTime,
+    );
+    let plan = sync.compare(request).await.unwrap();
+    assert_eq!(plan.items.len(), 3, "{:?}", planned(&plan));
+    let choices = plan
+        .items
+        .iter()
+        .map(|item| SyncChoice {
+            id: item.id,
+            action: item.action,
+        })
+        .collect();
+    let summary = sync
+        .run(
+            &transfers,
+            SyncRunRequest {
+                plan_id: plan.plan_id.clone(),
+                choices,
+            },
+        )
+        .await
+        .unwrap();
+    let list = transfers.list();
+    assert_eq!(list.jobs.len(), 3);
+    assert!(list.jobs.iter().all(|job| job.state == JobState::Queued));
+    let removed = list.jobs.iter().find(|job| job.name == "c.bin").unwrap().id;
+    transfers.remove(&[removed]);
+    transfers.set_paused(false);
+
+    let report = sync.finished(&summary.run_id).await.unwrap();
+    assert_eq!((report.copied, report.failed, report.bytes), (2, 0, 2000));
+    assert!(transfers.list().jobs.is_empty());
+    let fs = fixture
+        .manager
+        .get(&fixture.session.id)
+        .await
+        .unwrap()
+        .sftp()
+        .unwrap()
+        .clone();
+    for (name, there) in [("a.bin", true), ("b.bin", true), ("c.bin", false)] {
+        let path = remote_path_join(&fixture.remote, name);
+        assert_eq!(fs.stat(&path).await.unwrap().is_some(), there, "{name}");
+    }
+    drop(transfers);
+    fixture.close().await;
+}
+
 /// Links, permissions, --chmod, a missing target folder, filters typed as arguments, dry runs,
 /// backups, delayed deletions and --remove-source-files, against a real server.
 #[cfg(unix)]
