@@ -2,6 +2,7 @@ import {
   CircleDashed,
   ClockArrowDown,
   ClockArrowUp,
+  Diff,
   Equal,
   EqualNot,
   Plus,
@@ -17,9 +18,13 @@ export const COMPARE_GLYPHS: Record<MarkedState, LucideIcon> = {
   different: EqualNot,
   identical: Equal,
   both: CircleDashed,
+  differsInside: Diff,
 };
 
-/** The state's name in class names: `is-compare-newer` on a row, `is-newer` on a glyph. */
+/**
+ * The state's name in class names: `is-compare-newer` on a row, `is-newer` on a glyph. A folder
+ * that differs inside takes Different's color with a glyph of its own.
+ */
 export const COMPARE_CLASSES: Record<MarkedState, string> = {
   newer: "newer",
   older: "older",
@@ -27,4 +32,5 @@ export const COMPARE_CLASSES: Record<MarkedState, string> = {
   different: "different",
   identical: "identical",
   both: "both",
+  differsInside: "differs-inside",
 };

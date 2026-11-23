@@ -1,17 +1,25 @@
 import { describe, expect, it, vi } from "vitest";
 import type { CompareEntry } from "../lib/folderCompare";
 import { DEFAULT_SETTINGS, type FolderCompareSettings } from "../lib/settings";
-import type { FolderCompareRequest, FolderComparison, FolderSummary } from "../lib/types";
+import type {
+  FileEntry,
+  FolderCompareRequest,
+  FolderComparison,
+  FolderSummary,
+  SessionInfo,
+} from "../lib/types";
 import {
   createFolderCompare,
   isCompareMessage,
   moveBetween,
   paneKey,
+  snapshotOf,
   type BrowseMove,
   type ComparablePane,
   type CompareMessage,
   type FolderCompare,
   type PaneSnapshot,
+  type ShownFolder,
 } from "./folderCompare";
 
 function file(name: string, size: number, modified: number): CompareEntry {
@@ -265,6 +273,75 @@ describe("pairing two panes", () => {
   });
 });
 
+describe("what a pane gives the comparison", () => {
+  const info = (more: Partial<SessionInfo> = {}): SessionInfo => ({
+    id: "session-1",
+    label: "web.example.com",
+    host: "web.example.com",
+    port: 21,
+    username: "me",
+    home: "/",
+    initialPath: "/",
+    protocol: "ftp",
+    ...more,
+  });
+  const row: FileEntry = {
+    name: "index.html",
+    path: "/www/index.html",
+    kind: "file",
+    size: 5,
+    modified: 1_700_000_040,
+    permissions: null,
+    owner: null,
+    group: null,
+    hidden: false,
+  };
+  const shown = (more: Partial<ShownFolder> = {}): ShownFolder => ({
+    listing: { path: "/www", parent: "/", entries: [row] },
+    location: { kind: "remote", sessionId: "session-1" },
+    pathStyle: "posix",
+    info: info(),
+    lost: false,
+    covered: false,
+    ...more,
+  });
+
+  it("takes what the backend says of the session", () => {
+    expect(snapshotOf(shown({ info: info({ coarseTimes: true }) }))).toEqual({
+      location: { kind: "remote", sessionId: "session-1" },
+      pathStyle: "posix",
+      protocol: "ftp",
+      ignoresCase: false,
+      coarseTimes: true,
+      path: "/www",
+      parent: "/",
+      entries: [
+        { name: "index.html", shape: "file", size: 5, modified: 1_700_000_040, hidden: false },
+      ],
+    });
+    // Times on whole minutes are not a sign of coarse ones: only the backend can tell.
+    expect(snapshotOf(shown())?.coarseTimes).toBe(false);
+    expect(snapshotOf(shown({ info: info({ protocol: "oneDrive" }) }))?.ignoresCase).toBe(true);
+    const local = snapshotOf(shown({ location: { kind: "local" }, info: undefined }));
+    expect(local).toMatchObject({ protocol: undefined, coarseTimes: false, ignoresCase: false });
+  });
+
+  it("has nothing to compare while the server is out of reach or something covers the rows", () => {
+    expect(snapshotOf(shown({ lost: true }))).toBeNull();
+    expect(snapshotOf(shown({ covered: true }))).toBeNull();
+    expect(snapshotOf(shown({ listing: null }))).toBeNull();
+  });
+
+  it("takes the marks off both panes when a connection is lost", async () => {
+    const { main, pairId, state } = await comparedPair();
+    expect(state().comparisons[pairId]).not.toBeNull();
+    main.compare.publish("right", snapshotOf(shown({ lost: true })));
+    expect(state().comparisons[pairId]).toBeNull();
+    main.compare.publish("right", snapshotOf(shown()));
+    expect(states(state().comparisons[pairId]?.right)).toEqual({ "index.html": "onlyHere" });
+  });
+});
+
 describe("panes in two windows", () => {
   async function twoWindows() {
     const { opened, sent, close } = openWindows("main", "workspace-1");
@@ -400,6 +477,92 @@ describe("panes in two windows", () => {
     expect(isCompareMessage({ type: "seek", from: "a", seekId: "s" })).toBe(true);
   });
 
+  it("leaves out what is misshapen in a listing or a deep comparison from the other window", async () => {
+    const { main, pairId } = await twoWindows();
+    main.compare.publish("local", listed("/home/me/site", HERE));
+    const right = paneKey(main.compare.store.getState().pairs[pairId].right);
+    const snapshot = (value: unknown) => {
+      main.compare.receive({
+        type: "snapshot",
+        from: "workspace-1",
+        pairId,
+        tabId: "server",
+        snapshot: value,
+      });
+      return main.compare.store.getState().snapshots[right];
+    };
+    const good = listed("/var/www", THERE, { location: { kind: "remote", sessionId: "s-1" } });
+    expect(snapshot(good)).toEqual(good);
+    // Not a listing at all.
+    expect(snapshot({ ...good, location: { kind: "remote" } })).toBeNull();
+    expect(snapshot({ ...good, location: "local" })).toBeNull();
+    expect(snapshot({ ...good, pathStyle: "dos" })).toBeNull();
+    expect(snapshot({ ...good, entries: "docs" })).toBeNull();
+    expect(snapshot([good])).toBeNull();
+    // Flags that are not true are false, and entries that are not entries are left out.
+    expect(
+      snapshot({
+        ...good,
+        ignoresCase: "yes",
+        coarseTimes: 1,
+        parent: 7,
+        entries: [
+          { name: "a.txt", shape: "file", size: 1, modified: null, hidden: "no" },
+          { name: "b.txt", shape: "file", size: "1", modified: 5 },
+          { name: "c.txt", shape: "file", size: 1, modified: "5" },
+          { name: "d.txt", shape: "file", size: 1 },
+          { name: 4, shape: "file", size: 1, modified: 5 },
+          { name: "e", shape: "pipe", size: 1, modified: 5 },
+          null,
+          "f.txt",
+        ],
+      }),
+    ).toEqual({
+      ...good,
+      ignoresCase: false,
+      coarseTimes: false,
+      parent: null,
+      entries: [{ name: "a.txt", shape: "file", size: 1, modified: null, hidden: false }],
+    });
+    expect(states(main.compare.store.getState().comparisons[pairId]?.left)).toMatchObject({
+      docs: "onlyHere",
+    });
+
+    const deep = (value: unknown) => {
+      main.compare.receive({ type: "deep", from: "workspace-1", pairId, deep: value });
+      return main.compare.store.getState().deep[pairId];
+    };
+    const done = {
+      status: "done",
+      leftRoot: "/home/me/site",
+      rightRoot: "/var/www",
+      ignoreCase: false,
+      folders: [summary("docs", { identical: 1 })],
+      truncated: false,
+      options: "",
+    };
+    expect(deep(done)).toMatchObject({ status: "done" });
+    expect(deep({ ...done, folders: { docs: summary("docs") } })).toBeUndefined();
+    expect(deep({ ...done, folders: [summary("docs"), { identical: 1 }] })).toBeUndefined();
+    expect(deep({ ...done, folders: [summary("docs"), null] })).toBeUndefined();
+    expect(deep({ ...done, folders: [{ ...summary("docs"), path: 3 }] })).toBeUndefined();
+    expect(deep({ ...done, leftRoot: null })).toBeUndefined();
+    expect(deep({ status: "running" })).toBeUndefined();
+    expect(deep({ status: "paused" })).toBeUndefined();
+    // Counts that are not numbers count nothing.
+    expect(deep({ ...done, folders: [{ path: "docs", identical: "4", different: 2 }] })).toEqual({
+      status: "done",
+      comparison: {
+        leftRoot: "/home/me/site",
+        rightRoot: "/var/www",
+        ignoreCase: false,
+        folders: new Map([["docs", summary("docs", { different: 2 })]]),
+        truncated: false,
+      },
+      options: "",
+    });
+  });
+
   it("shows a deep comparison started in one window in the other", async () => {
     const { main, other, pairId } = await twoWindows();
     main.compare.publish("local", listed("/home/me/site", HERE));
@@ -478,12 +641,9 @@ describe("comparing what is below the folders", () => {
     expect(main.requests).toEqual([
       {
         requestId: expect.any(String),
-        left: { location: { kind: "local" }, path: "C:\\Site", coarseTimes: false },
-        right: {
-          location: { kind: "remote", sessionId: "session-1" },
-          path: "/var/www",
-          coarseTimes: true,
-        },
+        // The backend knows which listings give coarse times, so it is not told.
+        left: { location: { kind: "local" }, path: "C:\\Site" },
+        right: { location: { kind: "remote", sessionId: "session-1" }, path: "/var/www" },
         sizeOnly: true,
         timeToleranceSecs: 5,
         ignoreHourOffsets: true,
@@ -508,7 +668,7 @@ describe("comparing what is below the folders", () => {
     await started;
     expect(state().deep[pairId]).toMatchObject({ status: "done" });
     expect(state().comparisons[pairId]?.left.get("docs")).toEqual({
-      state: "different",
+      state: "differsInside",
       title: "Differs inside: 1 newer here, 2 identical",
     });
     expect(state().comparisons[pairId]?.right.get("docs")?.title).toBe(
@@ -546,6 +706,30 @@ describe("comparing what is below the folders", () => {
     expect(state().deep[pairId]).toMatchObject({ status: "done" });
     main.options = { ...main.options, includeHidden: false };
     main.compare.rulesChanged();
+    expect(state().deep[pairId]).toBeUndefined();
+  });
+
+  it("drops what it found, or stops looking, when a pane has nothing on show", async () => {
+    const { main, pairId, state } = await comparedPair();
+    const started = main.compare.startDeep("left");
+    main.finish(found([summary("docs", { identical: 2 })]));
+    await started;
+    expect(state().deep[pairId]).toMatchObject({ status: "done" });
+    // A vault locks, say, or the connection is lost.
+    main.compare.publish("right", null);
+    expect(state().deep[pairId]).toBeUndefined();
+    // Shown again, the folder has to be compared again for its marks.
+    main.compare.publish("right", listed("/var/www", THERE));
+    expect(state().comparisons[pairId]?.left.get("docs")?.state).toBe("both");
+
+    const running = main.compare.startDeep("left");
+    const requestId = main.requests[1].requestId;
+    main.compare.publish("left", null);
+    expect(main.cancelled).toEqual([requestId]);
+    expect(state().deep[pairId]).toBeUndefined();
+    // What it finds afterwards is not shown.
+    main.finish(found([summary("docs", { identical: 2 })]));
+    await running;
     expect(state().deep[pairId]).toBeUndefined();
   });
 

@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import type { FileSource } from "../lib/fileSource";
 import {
-  compareEntries,
-  hasCoarseTimes,
-  ignoresCase,
   legendCounts,
   namesIn,
   sizeOnlyIn,
@@ -13,7 +10,7 @@ import {
 } from "../lib/folderCompare";
 import type { FolderCompareSettings } from "../lib/settings";
 import { isDirLike } from "../lib/sort";
-import { paneKey, type DeepState, type PaneSnapshot } from "../state/folderCompare";
+import { paneKey, snapshotOf, type DeepState, type PaneSnapshot } from "../state/folderCompare";
 import {
   WINDOW_LABEL,
   connectFolderCompare,
@@ -113,12 +110,12 @@ export function useFolderCompare({
   );
   const options = useSettingsStore((state) => state.settings.interface.folderCompare);
   const syncCompare = useSettingsStore((state) => state.settings.sync.options.compare);
-  const protocol = useSessionStore((state) =>
-    sessionId ? state.sessions[sessionId]?.info.protocol : undefined,
+  const info = useSessionStore((state) =>
+    sessionId ? state.sessions[sessionId]?.info : undefined,
   );
-  // A vault's files are listed by its server, so their times are as coarse as the server's.
-  const serverProtocol = useSessionStore((state) =>
-    sessionId ? serverEntry(state.sessions, sessionId)?.info.protocol : undefined,
+  // A vault's files come from its server, so they are out of reach while the server is.
+  const lost = useSessionStore((state) =>
+    sessionId ? serverEntry(state.sessions, sessionId)?.status === "lost" : false,
   );
   const showToast = useToastStore((state) => state.show);
   const openDialog = useUiStore((state) => state.open);
@@ -133,30 +130,23 @@ export function useFolderCompare({
 
   const comparing = pairId !== undefined;
   const listing = pane.listing;
-  const snapshot = useMemo<PaneSnapshot | null>(() => {
-    if (!comparing || !listing || covered) return null;
-    const entries = compareEntries(listing.entries);
-    return {
-      location:
-        source.kind === "remote" && sessionId ? { kind: "remote", sessionId } : { kind: "local" },
-      pathStyle: source.pathStyle,
-      protocol,
-      ignoresCase: ignoresCase(source.pathStyle, protocol),
-      coarseTimes: hasCoarseTimes(serverProtocol, entries),
-      path: listing.path,
-      parent: listing.parent,
-      entries,
-    };
-  }, [
-    comparing,
-    listing,
-    covered,
-    source.kind,
-    source.pathStyle,
-    sessionId,
-    protocol,
-    serverProtocol,
-  ]);
+  const snapshot = useMemo<PaneSnapshot | null>(
+    () =>
+      comparing
+        ? snapshotOf({
+            listing,
+            location:
+              source.kind === "remote" && sessionId
+                ? { kind: "remote", sessionId }
+                : { kind: "local" },
+            pathStyle: source.pathStyle,
+            info,
+            lost,
+            covered,
+          })
+        : null,
+    [comparing, listing, covered, source.kind, source.pathStyle, sessionId, info, lost],
+  );
   // Before the browser paints, so a folder never shows with the marks of the one before it.
   useLayoutEffect(() => {
     if (pairId) folderCompare.publish(tabId, snapshot);

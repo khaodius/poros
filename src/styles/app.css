@@ -6094,8 +6094,10 @@ textarea::placeholder {
 }
 
 .file-row.is-compare-different,
+.file-row.is-compare-differs-inside,
 .folder-compare-chip.is-different,
-.folder-compare-glyph.is-different {
+.folder-compare-glyph.is-different,
+.folder-compare-glyph.is-differs-inside {
   --compare-color: var(--compare-different);
 }
 

@@ -127,6 +127,8 @@ export interface SessionInfo {
   protocol: Protocol;
   /** Set for the session of an unlocked vault, whose host, port and username are its server's. */
   vault?: VaultInfo;
+  /** Listings give times only to the minute, or to the day, as FTP's `LIST` does. */
+  coarseTimes?: boolean;
 }
 
 export type ErrorKind =
@@ -495,12 +497,10 @@ export interface SyncProgress {
   toCompare: number;
 }
 
-/** One of two compared folders: where it is, and whether its listings give coarse times. */
+/** One of two compared folders. The backend knows itself whether its listings' times are coarse. */
 export interface FolderRef {
   location: FileLocation;
   path: string;
-  /** Times are to the minute, and to the day for older files, as FTP `LIST` gives them. */
-  coarseTimes: boolean;
 }
 
 export interface FolderCompareRequest {

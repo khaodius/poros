@@ -6,9 +6,11 @@
 import { createStore } from "zustand/vanilla";
 import type { PathStyle } from "../lib/fileSource";
 import {
+  compareEntries,
   compareListings,
   compareRules,
   deepPrefix,
+  ignoresCase,
   rowMarks,
   sameEntries,
   type CompareEntry,
@@ -21,11 +23,13 @@ import { baseName, samePath } from "../lib/path";
 import type { FolderCompareSettings } from "../lib/settings";
 import type {
   CompareMode,
+  DirListing,
   FileLocation,
   FolderCompareRequest,
   FolderComparison,
   FolderSummary,
   Protocol,
+  SessionInfo,
   SyncProgress,
 } from "../lib/types";
 
@@ -47,6 +51,39 @@ export interface PaneSnapshot {
   path: string;
   parent: string | null;
   entries: readonly CompareEntry[];
+}
+
+/** What a file pane shows, as `snapshotOf` reads it. */
+export interface ShownFolder {
+  listing: Pick<DirListing, "path" | "parent" | "entries"> | null;
+  location: FileLocation;
+  pathStyle: PathStyle;
+  /** The session of a server's pane. */
+  info?: SessionInfo;
+  /** The connection to the server, a vault's server for a vault, is lost. */
+  lost: boolean;
+  /** Something stands in for the rows, as a locked vault's card does. */
+  covered: boolean;
+}
+
+/**
+ * What a pane shows, as far as comparing needs it. Null while there is nothing to compare: no
+ * listing, a card over it, or the last listing of a server that cannot be reached now, which
+ * says nothing about what the server holds.
+ */
+export function snapshotOf(shown: ShownFolder): PaneSnapshot | null {
+  const { listing, info, pathStyle } = shown;
+  if (!listing || shown.covered || shown.lost) return null;
+  return {
+    location: shown.location,
+    pathStyle,
+    protocol: info?.protocol,
+    ignoresCase: ignoresCase(pathStyle, info?.protocol),
+    coarseTimes: info?.coarseTimes === true,
+    path: listing.path,
+    parent: listing.parent,
+    entries: compareEntries(listing.entries),
+  };
 }
 
 /** Two compared panes. The left one is where the comparison was turned on. */
@@ -213,16 +250,88 @@ function asMove(value: unknown): BrowseMove | null {
     : null;
 }
 
-/** A listing as another window sent it, or null when it is not one. */
+const asRecord = (value: unknown) =>
+  value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+
+function asLocation(value: unknown): FileLocation | null {
+  const location = asRecord(value);
+  if (location?.kind === "local") return { kind: "local" };
+  return location?.kind === "remote" && typeof location.sessionId === "string"
+    ? { kind: "remote", sessionId: location.sessionId }
+    : null;
+}
+
+const SHAPES: readonly string[] = ["folder", "file", "other"] satisfies CompareEntry["shape"][];
+
+function asEntry(value: unknown): CompareEntry | null {
+  const entry = asRecord(value);
+  if (!entry || typeof entry.name !== "string" || !SHAPES.includes(entry.shape as string)) {
+    return null;
+  }
+  const size = entry.size;
+  const modified = entry.modified;
+  if (typeof size !== "number" || !Number.isFinite(size)) return null;
+  if (modified !== null && (typeof modified !== "number" || !Number.isFinite(modified))) {
+    return null;
+  }
+  return {
+    name: entry.name,
+    shape: entry.shape as CompareEntry["shape"],
+    size,
+    modified,
+    hidden: entry.hidden === true,
+  };
+}
+
+/**
+ * A listing as another window sent it, with what is misshapen in it left out, or null when it
+ * is not one at all.
+ */
 function asSnapshot(value: unknown): PaneSnapshot | null {
-  if (!value || typeof value !== "object") return null;
-  const snapshot = value as Partial<PaneSnapshot>;
-  const usable =
-    typeof snapshot.path === "string" &&
-    Array.isArray(snapshot.entries) &&
-    (snapshot.pathStyle === "posix" || snapshot.pathStyle === "windows") &&
-    !!snapshot.location;
-  return usable ? (snapshot as PaneSnapshot) : null;
+  const snapshot = asRecord(value);
+  if (!snapshot) return null;
+  const location = asLocation(snapshot.location);
+  const { path, pathStyle, entries } = snapshot;
+  if (!location || typeof path !== "string" || !Array.isArray(entries)) return null;
+  if (pathStyle !== "posix" && pathStyle !== "windows") return null;
+  return {
+    location,
+    pathStyle,
+    protocol: typeof snapshot.protocol === "string" ? (snapshot.protocol as Protocol) : undefined,
+    ignoresCase: snapshot.ignoresCase === true,
+    coarseTimes: snapshot.coarseTimes === true,
+    path,
+    parent: typeof snapshot.parent === "string" ? snapshot.parent : null,
+    entries: entries.map(asEntry).filter((entry) => entry !== null),
+  };
+}
+
+const COUNTS = [
+  "identical",
+  "newerLeft",
+  "newerRight",
+  "onlyLeft",
+  "onlyRight",
+  "different",
+  "notCompared",
+] as const satisfies readonly (keyof FolderSummary)[];
+
+function asSummary(value: unknown): FolderSummary | null {
+  const summary = asRecord(value);
+  if (!summary || typeof summary.path !== "string") return null;
+  const counted = (key: (typeof COUNTS)[number]) => {
+    const count = summary[key];
+    return typeof count === "number" && Number.isFinite(count) ? count : 0;
+  };
+  return {
+    path: summary.path,
+    ...(Object.fromEntries(COUNTS.map((key) => [key, counted(key)])) as Omit<
+      FolderSummary,
+      "path"
+    >),
+  };
 }
 
 /** The pane the user looked at last: one on screen before one in a hidden tab. */
@@ -599,6 +708,13 @@ export function createFolderCompare(env: CompareEnvironment) {
       // What was found below this folder may no longer hold.
       if (store.getState().deep[pair.id]?.status === "done") setDeep(pair.id, null);
     }
+    if (previous && !next) {
+      // Nothing is on show any more, as when a vault locks or a connection is lost: what was
+      // found below the folder goes too, decrypted names included.
+      const deep = store.getState().deep[pair.id];
+      if (deep?.status === "running") void env.cancel(deep.requestId).catch(() => undefined);
+      if (deep) setDeep(pair.id, null);
+    }
     if (moved && !mine(pane)) {
       // The partner in another window got where it was going, or went somewhere by itself.
       settling.delete(pair.id);
@@ -661,17 +777,34 @@ export function createFolderCompare(env: CompareEnvironment) {
     };
   }
 
-  function fromWire(deep: DeepWire | null): DeepState | null {
-    if (!deep || deep.status === "failed") return deep;
-    if (deep.status === "running") {
-      return { status: "running", requestId: deep.requestId, leftEntries: 0, rightEntries: 0 };
+  /** A deep comparison's state as another window sent it, or null when it is misshapen. */
+  function fromWire(value: unknown): DeepState | null {
+    const deep = asRecord(value);
+    if (deep?.status === "failed") {
+      return { status: "failed", message: typeof deep.message === "string" ? deep.message : "" };
     }
-    const { leftRoot, rightRoot, ignoreCase, truncated } = deep;
-    const folders = new Map(deep.folders.map((folder) => [folder.path, folder]));
+    if (deep?.status === "running") {
+      return typeof deep.requestId === "string"
+        ? { status: "running", requestId: deep.requestId, leftEntries: 0, rightEntries: 0 }
+        : null;
+    }
+    const { leftRoot, rightRoot, folders, options } = deep ?? {};
+    if (deep?.status !== "done" || !Array.isArray(folders)) return null;
+    if (typeof leftRoot !== "string" || typeof rightRoot !== "string") return null;
+    const summaries = folders.map(asSummary);
+    if (summaries.some((summary) => summary === null)) return null;
     return {
       status: "done",
-      comparison: { leftRoot, rightRoot, ignoreCase, folders, truncated },
-      options: deep.options,
+      comparison: {
+        leftRoot,
+        rightRoot,
+        ignoreCase: deep.ignoreCase === true,
+        folders: new Map(
+          summaries.map((summary) => [(summary as FolderSummary).path, summary as FolderSummary]),
+        ),
+        truncated: deep.truncated === true,
+      },
+      options: typeof options === "string" ? options : "",
     };
   }
 
@@ -706,8 +839,8 @@ export function createFolderCompare(env: CompareEnvironment) {
     try {
       const found = await env.compareFolders({
         requestId,
-        left: { location: left.location, path: left.path, coarseTimes: left.coarseTimes },
-        right: { location: right.location, path: right.path, coarseTimes: right.coarseTimes },
+        left: { location: left.location, path: left.path },
+        right: { location: right.location, path: right.path },
         sizeOnly: rules.sizeOnly,
         timeToleranceSecs: rules.toleranceSecs,
         ignoreHourOffsets: rules.ignoreHourOffsets,

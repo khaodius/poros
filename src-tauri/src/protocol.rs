@@ -196,6 +196,12 @@ pub trait RemoteFileSystem: Send + Sync {
 
     fn capabilities(&self) -> Capabilities;
 
+    /// Listings give times only to the minute, and to the day for older files, as FTP's `LIST`
+    /// does where a server has no machine-readable `MLSD`.
+    fn coarse_times(&self) -> bool {
+        false
+    }
+
     /// An absolute path for `path`, which may be relative to the home folder or start with `~`.
     fn resolve(&self, path: &str) -> String {
         resolve_against(self.home(), path)

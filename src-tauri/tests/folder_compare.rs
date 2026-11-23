@@ -289,7 +289,6 @@ fn local_folder(path: &Path) -> FolderRef {
     FolderRef {
         location: Location::Local,
         path: path.to_string_lossy().into_owned(),
-        coarse_times: false,
     }
 }
 
@@ -299,7 +298,6 @@ fn server_folder(session: &SessionInfo, path: &str) -> FolderRef {
             session_id: session.id.clone(),
         },
         path: path.to_string(),
-        coarse_times: false,
     }
 }
 
@@ -552,7 +550,6 @@ async fn a_folder_that_is_not_there_fails_plainly() {
             session_id: "no-such-session".into(),
         },
         path: "/".into(),
-        coarse_times: false,
     };
     assert!(sync
         .compare_folders(by_size(local_folder(temp.path()), unknown, true))
@@ -599,6 +596,9 @@ async fn a_local_folder_compares_with_a_folder_on_every_kind_of_server() {
         let (_config, manager) = new_manager();
         let sync = SyncManager::new(manager.clone(), Events::default());
         let (session, files, scratch) = open_scratch(&manager, &server, "local").await;
+        if !matches!(server.protocol, Protocol::Ftp | Protocol::Ftps) {
+            assert!(!session.coarse_times, "{label}");
+        }
         let temp = tempfile::tempdir().unwrap();
         write_local(temp.path(), LEFT);
         write_server(&files, &scratch, RIGHT).await;
@@ -650,6 +650,12 @@ async fn times_kept_by_an_sftp_server_compare_with_local_ones() {
     let folder = remote_path::join(&scratch, "times");
     files.ensure_dir(&folder).await.unwrap();
     std::fs::create_dir_all(temp.path().join("times")).unwrap();
+    // On a whole minute on both sides, as the one entry at the top of the comparison.
+    let top = temp.path().join("top.txt");
+    std::fs::write(&top, b"top").unwrap();
+    set_local_time(&top, BASE_TIME);
+    let top_there = remote_path::join(&scratch, "top.txt");
+    write_remote(&files, &top_there, b"top", Some(BASE_TIME)).await;
     // Here on the left, on the server on the right.
     let cases: &[TimedFile] = &[
         ("same.txt", (4, 0), (4, 0)),
@@ -697,15 +703,67 @@ async fn times_kept_by_an_sftp_server_compare_with_local_ones() {
     assert_eq!(summary(&zones, "times").identical, 3);
     assert_eq!(summary(&zones, "times").newer_right, 1);
 
-    // Listings to the minute: the seconds one side lacks do not make a file newer.
+    // The server keeps seconds, so times on whole minutes, as every one here is, are taken as
+    // they are: seconds apart below them still make a file newer.
+    assert!(!session.coarse_times);
     let late = temp.path().join("times/close.txt");
     set_local_time(&late, BASE_TIME + 45);
     let exact = sync.compare_folders(request(false)).await.unwrap();
     assert_eq!(summary(&exact, "times").newer_left, 2);
-    let mut coarse = request(false);
-    coarse.right.coarse_times = true;
-    let allowed = sync.compare_folders(coarse).await.unwrap();
-    assert_eq!(summary(&allowed, "times").newer_left, 1);
+
+    remove_scratch(&files, &scratch).await;
+    manager.disconnect(&session.id).await.unwrap();
+}
+
+#[tokio::test]
+async fn times_an_ftp_server_lists_to_the_minute_are_allowed_for() {
+    let Some(server) = ftp_server() else { return };
+    let (_config, manager) = new_manager();
+    let sync = SyncManager::new(manager.clone(), Events::default());
+    let (session, files, scratch) = open_scratch(&manager, &server, "ftp-times").await;
+    // The server of this suite has no `MLSD`, so its listings come from `LIST`: to the minute,
+    // and to the day for older files. The session says so, and the comparison needs no telling.
+    assert!(session.coarse_times);
+    let temp = tempfile::tempdir().unwrap();
+    let folder = remote_path::join(&scratch, "times");
+    files.ensure_dir(&folder).await.unwrap();
+    std::fs::create_dir_all(temp.path().join("times")).unwrap();
+    for name in ["close.txt", "later.txt"] {
+        let path = remote_path::join(&folder, name);
+        write_remote(&files, &path, b"four", Some(BASE_TIME)).await;
+    }
+    // Times here follow the ones listed there, whether the server kept the time it was given.
+    for entry in files.list_dir(&folder).await.unwrap().entries {
+        let listed = entry.modified.expect("a listed time");
+        let offset = if entry.name == "close.txt" {
+            45
+        } else {
+            3 * 86_400
+        };
+        let path = temp.path().join("times").join(&entry.name);
+        std::fs::write(&path, b"four").unwrap();
+        set_local_time(&path, listed + offset);
+    }
+    let found = sync
+        .compare_folders(FolderCompareRequest {
+            size_only: false,
+            ..by_size(
+                local_folder(temp.path()),
+                server_folder(&session, &scratch),
+                true,
+            )
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        *summary(&found, "times"),
+        FolderSummary {
+            path: "times".into(),
+            identical: 1,
+            newer_left: 1,
+            ..FolderSummary::default()
+        }
+    );
 
     remove_scratch(&files, &scratch).await;
     manager.disconnect(&session.id).await.unwrap();

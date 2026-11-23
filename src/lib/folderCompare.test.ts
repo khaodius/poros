@@ -7,7 +7,6 @@ import {
   decide,
   deepPrefix,
   describeSummary,
-  hasCoarseTimes,
   ignoresCase,
   legendCounts,
   namesIn,
@@ -190,13 +189,29 @@ describe("comparing two listings", () => {
     expect(folded.left.get("Docs")).toBe("both");
   });
 
-  it("prefers a name in its own spelling to one that differs in case", () => {
-    const here = [file("a.txt", 5, 900), file("A.txt", 5, 100)];
-    const there = [file("a.txt", 5, 900)];
+  it("does not compare names one side holds in two cases when case is ignored", () => {
+    const here = [file("a.txt", 5, 900), file("A.txt", 5, 100), folder("Docs"), folder("docs")];
+    const there = [file("a.txt", 5, 900), folder("DOCS"), file("b.txt", 1, 1)];
     const found = compareListings(here, there, { ...RULES, ignoreCase: true });
-    expect(found.left.get("a.txt")).toBe("identical");
-    expect(found.left.get("A.txt")).toBe("older");
-    expect(found.right.get("a.txt")).toBe("identical");
+    // Which of the two the other side's name stands for cannot be told, so neither gets a mark,
+    // as the synchronization passes all of them over.
+    expect(Object.fromEntries(found.left)).toEqual({
+      "a.txt": "passedOver",
+      "A.txt": "passedOver",
+      Docs: "passedOver",
+      docs: "passedOver",
+    });
+    expect(Object.fromEntries(found.right)).toEqual({
+      "a.txt": "passedOver",
+      DOCS: "passedOver",
+      "b.txt": "onlyHere",
+    });
+    expect(rowMarks(found.left, "left").size).toBe(0);
+    // Where case tells names apart, the two are separate names.
+    const exact = compareListings(here, there, RULES);
+    expect(exact.left.get("a.txt")).toBe("identical");
+    expect(exact.left.get("A.txt")).toBe("onlyHere");
+    expect(exact.right.get("DOCS")).toBe("onlyHere");
   });
 
   it("compares a hundred thousand entries in one pass each", () => {
@@ -236,17 +251,6 @@ describe("what the page knows of each side", () => {
     expect(compareEntry(entry({ kind: "symlink", linkTarget: "broken" })).shape).toBe("other");
     expect(compareEntry(entry({ kind: "symlink" })).shape).toBe("other");
     expect(compareEntry(entry({ kind: "other" })).shape).toBe("other");
-  });
-
-  it("takes an FTP listing with whole minutes only for a coarse one", () => {
-    const coarse = [file("a", 1, 1_700_000_040), file("b", 1, 1_700_006_400), file("c", 1, null)];
-    expect(hasCoarseTimes("ftp", coarse)).toBe(true);
-    expect(hasCoarseTimes("ftpsImplicit", coarse)).toBe(true);
-    expect(hasCoarseTimes("sftp", coarse)).toBe(false);
-    expect(hasCoarseTimes(undefined, coarse)).toBe(false);
-    expect(hasCoarseTimes("ftp", [...coarse, file("d", 1, 1_700_000_041)])).toBe(false);
-    expect(hasCoarseTimes("ftp", [file("c", 1, null)])).toBe(false);
-    expect(hasCoarseTimes("ftp", [])).toBe(false);
   });
 
   it("knows where case does not tell names apart", () => {
@@ -340,7 +344,7 @@ describe("folders compared below the ones on show", () => {
     const left = rowMarks(states, "left", { comparison: deep, prefix: "css" });
     expect(left.get("same")).toEqual({ state: "identical", title: "Identical inside: 4 files" });
     expect(left.get("mixed")).toEqual({
-      state: "different",
+      state: "differsInside",
       title: "Differs inside: 1 newer here, 3 only in the other pane, 1 different, 2 identical",
     });
     expect(left.get("unread")?.state).toBe("both");
@@ -400,5 +404,36 @@ describe("folders compared below the ones on show", () => {
     });
     expect([...namesIn(marks, ["newer", "onlyHere"])]).toEqual(["a", "b", ".e"]);
     expect([...namesIn(marks, ["different"])]).toEqual([]);
+  });
+
+  it("counts and picks a folder that differs inside apart from different rows", () => {
+    const deep = deepOf([
+      summary("mixed", { identical: 1, newerLeft: 1 }),
+      summary("same", { identical: 2 }),
+    ]);
+    const marks = rowMarks(
+      new Map([
+        ["mixed", "both"],
+        ["same", "both"],
+        ["kind", "different"],
+        ["file.txt", "different"],
+      ] as const),
+      "left",
+      { comparison: deep, prefix: "" },
+    );
+    expect(marks.get("mixed")).toEqual({
+      state: "differsInside",
+      title: "Differs inside: 1 newer here, 1 identical",
+    });
+    const shown = ["mixed", "same", "kind", "file.txt"].map((name) => ({ name }));
+    expect(legendCounts(shown, marks)).toEqual({
+      newer: 0,
+      older: 0,
+      onlyHere: 0,
+      different: 2,
+      identical: 1,
+    });
+    expect([...namesIn(marks, ["different"])]).toEqual(["kind", "file.txt"]);
+    expect([...namesIn(marks, ["differsInside"])]).toEqual(["mixed"]);
   });
 });

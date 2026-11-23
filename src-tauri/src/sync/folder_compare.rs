@@ -5,7 +5,8 @@
 //! that synchronizing would leave alone. The panes compare the two folders on show themselves,
 //! by the same rule (`src/lib/folderCompare.ts`); this fills in what is below them.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::btree_map::Entry;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
@@ -42,10 +43,6 @@ const MAX_ZONE_OFFSET_HOURS: i64 = 26;
 pub struct FolderRef {
     pub location: Location,
     pub path: String,
-    /// The side's listings give times to the minute, and to the day for older files, as FTP
-    /// servers without machine-readable listings do.
-    #[serde(default)]
-    pub coarse_times: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -156,15 +153,43 @@ fn align_times(left: &Tree, right: &mut Tree, rules: &TimeRules) {
     }
 }
 
-/// Spells every path in lower case, so names that differ only in case are one name.
+/// Spells every path in lower case, so names that differ only in case are one name. Where one
+/// side has two names that differ only in case, which of them the other side's file stands for
+/// is unknown: the first is kept and the name is passed over, so it is not compared at all, and
+/// the other's contents are left out with it.
 fn fold_case(tree: &mut Tree) {
-    tree.nodes = std::mem::take(&mut tree.nodes)
-        .into_iter()
-        .map(|(path, node)| (path.to_lowercase(), node))
-        .collect();
+    let mut folded = BTreeMap::new();
+    let mut dropped = HashSet::new();
+    for (path, node) in std::mem::take(&mut tree.nodes) {
+        if within(&dropped, &path) {
+            continue;
+        }
+        match folded.entry(path.to_lowercase()) {
+            Entry::Occupied(kept) => {
+                tree.passed_over.push(kept.key().clone());
+                dropped.insert(path);
+            }
+            Entry::Vacant(free) => {
+                free.insert(node);
+            }
+        }
+    }
+    tree.nodes = folded;
     for path in &mut tree.passed_over {
         *path = path.to_lowercase();
     }
+}
+
+/// Whether `path` is inside one of `folders`.
+fn within(folders: &HashSet<String>, path: &str) -> bool {
+    let mut current = path;
+    while let Some((parent, _)) = current.rsplit_once('/') {
+        if folders.contains(parent) {
+            return true;
+        }
+        current = parent;
+    }
+    false
 }
 
 /// How something that is not the same on both sides differs.
@@ -209,11 +234,21 @@ fn two_way_plan(left: &Tree, right: &mut Tree, size_only: bool, rules: &TimeRule
 
 /// Counts, for each folder both trees have, what the plan found in it at any depth.
 fn summarize(left: &Tree, right: &Tree, plan: &Plan) -> (Vec<FolderSummary>, bool) {
+    // A folder passed over, or inside one, was not compared, so nothing is said about it.
+    let passed_over: HashSet<String> = left
+        .passed_over
+        .iter()
+        .chain(&right.passed_over)
+        .cloned()
+        .collect();
     let mut folders: BTreeMap<&str, FolderSummary> = left
         .nodes
         .iter()
         .filter(|(path, node)| {
-            node.is_dir && right.nodes.get(*path).is_some_and(|other| other.is_dir)
+            node.is_dir
+                && right.nodes.get(*path).is_some_and(|other| other.is_dir)
+                && !passed_over.contains(*path)
+                && !within(&passed_over, path)
         })
         .map(|(path, _)| (path.as_str(), FolderSummary::default()))
         .collect();
@@ -280,6 +315,15 @@ enum Side {
 }
 
 impl Side {
+    /// Whether the side's listings give times only to the minute or the day. The backend knows,
+    /// from what the server offered, so the page is not asked.
+    fn coarse_times(&self) -> bool {
+        match self {
+            Self::Local { .. } | Self::Sftp { .. } => false,
+            Self::Server { files, .. } => files.coarse_times(),
+        }
+    }
+
     async fn open(sessions: &SessionManager, folder: &FolderRef) -> AppResult<Self> {
         let path = folder.path.trim();
         if path.is_empty() {
@@ -424,8 +468,9 @@ impl SyncManager {
         let rules = TimeRules {
             tolerance: i64::from(request.time_tolerance_secs.min(MAX_TIME_TOLERANCE_SECS)),
             ignore_hour_offsets: request.ignore_hour_offsets,
-            left_coarse: request.left.coarse_times,
-            right_coarse: request.right.coarse_times,
+            // Read after listing, which is when an FTP server may turn out to lack `MLSD`.
+            left_coarse: left_side.coarse_times(),
+            right_coarse: right_side.coarse_times(),
         };
         let plan = two_way_plan(&left, &mut right, request.size_only, &rules);
         let (folders, truncated) = summarize(&left, &right, &plan);
@@ -563,6 +608,45 @@ mod tests {
                 identical: 1,
                 ..FolderSummary::default()
             }]
+        );
+    }
+
+    #[test]
+    fn names_one_side_has_in_two_cases_are_not_compared() {
+        // A case-sensitive server against a Windows folder: which of README and readme the
+        // Windows file stands for is unknown, so neither is compared, nor the second Assets.
+        let mut left = tree(&[
+            ("docs", None),
+            ("docs/README", Some((9, 500))),
+            ("docs/readme", Some((3, 100))),
+            ("docs/notes.txt", Some((4, 100))),
+            ("docs/Assets", None),
+            ("docs/Assets/logo.svg", Some((5, 100))),
+            ("docs/assets", None),
+            ("docs/assets/icon.svg", Some((6, 100))),
+        ]);
+        let mut right = tree(&[
+            ("docs", None),
+            ("docs/readme", Some((3, 100))),
+            ("docs/notes.txt", Some((4, 100))),
+            ("docs/assets", None),
+            ("docs/assets/logo.svg", Some((5, 100))),
+        ]);
+        fold_case(&mut left);
+        fold_case(&mut right);
+        assert_eq!(left.passed_over, ["docs/assets", "docs/readme"]);
+        assert!(!left.nodes.contains_key("docs/assets/icon.svg"));
+        let found = summaries(&left, &mut right);
+        // Nothing is said about the folder that was passed over.
+        assert_eq!(found.len(), 1);
+        assert_eq!(
+            found[0],
+            FolderSummary {
+                path: "docs".into(),
+                identical: 1,
+                not_compared: 2,
+                ..FolderSummary::default()
+            }
         );
     }
 

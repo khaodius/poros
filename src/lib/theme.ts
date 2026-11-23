@@ -240,8 +240,8 @@ const BUILTIN_DEFINITIONS: Theme[] = [
       "text-faint": "#9a8f82",
       titlebar: "#efe9df",
       "icon-folder": "#c48a1c",
-      // Kept apart from the teal selection.
-      "compare-newer": "#2f7fd0",
+      // Kept apart from the teal selection, and dark enough for the cream panels.
+      "compare-newer": "#2a70b8",
     },
     radius: 8,
   },

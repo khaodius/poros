@@ -7,7 +7,6 @@
 import type { PathStyle } from "./fileSource";
 import { pluralize } from "./format";
 import { normalizedPath } from "./path";
-import { isFtp } from "./protocols";
 import type { FolderCompareSettings } from "./settings";
 import { isDirLike } from "./sort";
 import type { CompareMode, FileEntry, FolderSummary, Protocol } from "./types";
@@ -101,25 +100,6 @@ export function compareRules(
 /** Whether size alone decides: as set in the bar, or as Settings > Sync has it until then. */
 export function sizeOnlyIn(options: FolderCompareSettings, syncCompare: CompareMode): boolean {
   return options.sizeRule === "sync" ? syncCompare === "sizeOnly" : options.sizeRule === "sizeOnly";
-}
-
-/**
- * Whether a listing's times are as coarse as an FTP server's `LIST` gives them: to the minute for
- * recent files and to the day for older ones. Servers with machine-readable listings give
- * seconds, which shows in the times themselves.
- */
-export function hasCoarseTimes(
-  protocol: Protocol | undefined,
-  entries: readonly CompareEntry[],
-): boolean {
-  if (!protocol || !isFtp(protocol)) return false;
-  let timed = false;
-  for (const entry of entries) {
-    if (entry.modified === null) continue;
-    if (entry.modified % MINUTE !== 0) return false;
-    timed = true;
-  }
-  return timed;
 }
 
 /** Whether names that differ only in case are one name where the files are. */
@@ -227,17 +207,23 @@ interface NameIndex {
   exact: Map<string, CompareEntry>;
   /** By lower-case name, while case is ignored. */
   folded: Map<string, CompareEntry> | null;
+  /** Lower-case names two entries share, while case is ignored. */
+  collided: Set<string>;
 }
 
 function indexByName(entries: readonly CompareEntry[], rules: CompareRules): NameIndex {
   const exact = new Map<string, CompareEntry>();
   const folded = rules.ignoreCase ? new Map<string, CompareEntry>() : null;
+  const collided = new Set<string>();
   for (const entry of entries) {
     if (entry.hidden && !rules.includeHidden) continue;
     exact.set(entry.name, entry);
-    folded?.set(entry.name.toLowerCase(), entry);
+    if (!folded) continue;
+    const key = entry.name.toLowerCase();
+    if (folded.has(key)) collided.add(key);
+    else folded.set(key, entry);
   }
-  return { exact, folded };
+  return { exact, folded, collided };
 }
 
 /** The entry of that name, in its own spelling before another that differs only in case. */
@@ -248,7 +234,9 @@ function named(index: NameIndex, name: string): CompareEntry | undefined {
 /**
  * Compares two listings by name: one pass over each, with the other side found in a map, so a
  * folder of a hundred thousand entries is compared once when it is listed and never while
- * scrolling. Hidden entries are left out unless they count.
+ * scrolling. Hidden entries are left out unless they count. While case is ignored, a name one
+ * side has in two spellings is compared on neither side, since which of them the other side's
+ * entry stands for is unknown; the comparison of subfolders passes it over the same way.
  */
 export function compareListings(
   left: readonly CompareEntry[],
@@ -257,14 +245,23 @@ export function compareListings(
 ): ListingComparison {
   const leftIndex = indexByName(left, rules);
   const rightIndex = indexByName(right, rules);
+  const ambiguous = (name: string) => {
+    if (!rules.ignoreCase) return false;
+    const key = name.toLowerCase();
+    return leftIndex.collided.has(key) || rightIndex.collided.has(key);
+  };
   const leftStates = new Map<string, CompareState>();
   const rightStates = new Map<string, CompareState>();
   for (const entry of leftIndex.exact.values()) {
-    const outcome = decide(entry, named(rightIndex, entry.name), rules);
+    const outcome = ambiguous(entry.name)
+      ? "passedOver"
+      : decide(entry, named(rightIndex, entry.name), rules);
     leftStates.set(entry.name, SEEN_FROM[outcome].left);
   }
   for (const entry of rightIndex.exact.values()) {
-    const outcome = decide(named(leftIndex, entry.name), entry, rules);
+    const outcome = ambiguous(entry.name)
+      ? "passedOver"
+      : decide(named(leftIndex, entry.name), entry, rules);
     rightStates.set(entry.name, SEEN_FROM[outcome].right);
   }
   return { left: leftStates, right: rightStates };
@@ -284,11 +281,15 @@ export const STATE_LABELS: Record<LegendState, string> = {
   identical: "Identical",
 };
 
-/** The states a row shows; what is passed over gets no mark. */
-export type MarkedState = Exclude<CompareState, "passedOver">;
+/**
+ * The states a row shows; what is passed over gets no mark. `differsInside` is a folder in which
+ * the comparison of subfolders found differences: it is in none of the legend's states, so
+ * selecting by state never takes a whole folder for what is inside it.
+ */
+export type MarkedState = Exclude<CompareState, "passedOver"> | "differsInside";
 
 /** One mark per state, shared by every row in it, so rows are not drawn again for nothing. */
-const STATE_MARKS: Record<MarkedState, RowCompare> = {
+const STATE_MARKS: Record<Exclude<CompareState, "passedOver">, RowCompare> = {
   newer: { state: "newer", title: "Newer here" },
   older: { state: "older", title: "Older here" },
   onlyHere: { state: "onlyHere", title: "Only here" },
@@ -367,7 +368,8 @@ export function describeSummary(summary: FolderSummary, side: "left" | "right"):
 
 function folderMark(summary: FolderSummary, side: "left" | "right"): RowCompare {
   const found = describeSummary(summary, side);
-  if (differences(summary) > 0) return { state: "different", title: `Differs inside: ${found}` };
+  if (differences(summary) > 0)
+    return { state: "differsInside", title: `Differs inside: ${found}` };
   if (summary.notCompared > 0) {
     return { state: "both", title: `No differences found inside, but not all of it: ${found}` };
   }
@@ -407,6 +409,12 @@ export function rowMarks(
 
 export type LegendCounts = Record<LegendState, number>;
 
+const LEGEND_STATE_SET: ReadonlySet<MarkedState> = new Set(LEGEND_STATES);
+
+function isLegendState(state: MarkedState): state is LegendState {
+  return LEGEND_STATE_SET.has(state);
+}
+
 /** How many of `entries` are in each state, for the legend over the rows a pane can show. */
 export function legendCounts(
   entries: readonly { name: string }[],
@@ -415,7 +423,7 @@ export function legendCounts(
   const counts: LegendCounts = { newer: 0, older: 0, onlyHere: 0, different: 0, identical: 0 };
   for (const entry of entries) {
     const state = marks.get(entry.name)?.state;
-    if (state && state !== "both") counts[state] += 1;
+    if (state && isLegendState(state)) counts[state] += 1;
   }
   return counts;
 }
