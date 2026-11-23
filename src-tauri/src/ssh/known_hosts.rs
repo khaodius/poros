@@ -12,6 +12,8 @@ use hmac::{Hmac, Mac};
 use russh::keys::{Algorithm, HashAlg, PublicKey};
 use sha1::Sha1;
 
+use crate::storage;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostKeyStatus {
     Trusted,
@@ -176,14 +178,13 @@ impl KnownHosts {
         if let Some(parent) = self.app_file.parent() {
             fs::create_dir_all(parent)?;
         }
-        // A name of its own, so another process writing at once never shares it.
-        let mut temporary = self.app_file.as_os_str().to_owned();
-        temporary.push(format!(".{}.tmp", uuid::Uuid::new_v4().simple()));
-        let temporary = PathBuf::from(temporary);
+        let temporary = storage::temporary_beside(&self.app_file);
         let written =
             write_lines(&temporary, &kept).and_then(|()| fs::rename(&temporary, &self.app_file));
         if written.is_err() {
             let _ = fs::remove_file(&temporary);
+        } else {
+            storage::remove_left_temporaries(&self.app_file);
         }
         written
     }
@@ -352,6 +353,7 @@ fn glob_match(pattern: &str, text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     const KEY_A: &str = "AAAAC3NzaC1lZDI1NTE5AAAAIJdD7y3aLq454yWBdwLWbieU1ebz9/cu7/QEXn9OIeZJ";
     const KEY_B: &str = "AAAAC3NzaC1lZDI1NTE5AAAAIA6rWI3G1sz07DnfFlrouTcysQlj2P+jpNSOEWD9OJ3X";
@@ -609,6 +611,20 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn trusting_a_key_removes_the_temporary_files_writes_cut_short_left() {
+        let (dir, known_hosts) = store("", "");
+        let aged = |name: &str, age: u64| {
+            crate::storage::tests::file_aged(dir.path(), name, Duration::from_secs(age))
+        };
+        let id = || uuid::Uuid::new_v4().simple();
+        let left = aged(&format!("app_known_hosts.{}.tmp", id()), 120);
+        let written_now = aged(&format!("app_known_hosts.{}.tmp", id()), 0);
+        known_hosts.trust("first", 22, &key(KEY_A)).unwrap();
+        assert!(!left.exists());
+        assert!(written_now.exists());
     }
 
     #[test]
