@@ -56,7 +56,10 @@ function folderOf(path: string): string {
   return path.slice(0, path.lastIndexOf("/")) || "/";
 }
 
-/** Shows the change in every pane on the folder, with the file selected. */
+/**
+ * Shows the change in every pane on the folder, with the file selected, once the folder's
+ * remembered listing is forgotten in every window.
+ */
 function showChange(file: VersionedFile): void {
   refreshFolder(paneOrigin({ kind: "remote", sessionId: file.sessionId }), folderOf(file.path), [
     file.path,
@@ -215,8 +218,9 @@ export async function resolveDeleted(action: DeletedAction, request: DeletedEntr
       write("error", `${title}: ${error.message}`, sessionId);
     }
   } finally {
-    const focus =
-      action === "restore" ? entries.map((entry) => entry.path) : (request.focusPath ?? undefined);
-    refreshFolder(paneOrigin({ kind: "remote", sessionId }), folder, focus);
+    const paths = entries.map((entry) => entry.path);
+    const focus = action === "restore" ? paths : (request.focusPath ?? undefined);
+    // Listings remembered inside a folder brought back or removed are not what it holds now.
+    refreshFolder(paneOrigin({ kind: "remote", sessionId }), folder, focus, paths);
   }
 }

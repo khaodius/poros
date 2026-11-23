@@ -31,6 +31,7 @@ export function usePaneVersions(source: FileSource, sessionId: string | undefine
   const [showDeleted, setShown] = useState(false);
   // Read as the pane lists, which can be before the next render.
   const shownRef = useRef(false);
+  const views = useRef(0);
 
   const setShowDeleted = useCallback((shown: boolean) => {
     shownRef.current = shown;
@@ -42,10 +43,16 @@ export function usePaneVersions(source: FileSource, sessionId: string | undefine
       if (!available || !sessionId || !shownRef.current) return null;
       const key = versioningKey(sessionId, path);
       if (key === null || !keepsVersions(useVersioningStore.getState().known[key])) return null;
+      views.current += 1;
       return {
         source: {
           ...source,
-          key: `${source.key}#deleted`,
+          // A pane takes a listing from the same source as a newer state of the one on show and
+          // keeps the rows that look the same, which would keep a restored folder marked
+          // deleted: each listing with deleted files is one of its own.
+          key: `${source.key}#deleted-${views.current}`,
+          // Never remembered as the folder's listing, nor shown in place of one remembered.
+          listingScope: undefined,
           list: async (folder) => {
             try {
               const found = await versions.listWithDeleted(sessionId, folder);
