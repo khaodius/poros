@@ -785,15 +785,30 @@ mod tests {
         (copied, deleted)
     }
 
-    /// Rule sets whose meaning hangs on the order of their rules pick the files rsync picks.
-    /// rsync itself is the judge, run over the same folders; skipped where it is not installed.
-    #[test]
-    fn rules_pick_the_files_rsync_picks() {
-        let installed = std::process::Command::new("rsync")
+    /// Whether the `rsync` on the path is rsync 3, whose filters and itemized output the
+    /// comparison below expects, rather than none, an older one or openrsync.
+    fn rsync_3_installed() -> bool {
+        let Ok(output) = std::process::Command::new("rsync")
             .arg("--version")
             .output()
-            .is_ok_and(|output| output.status.success());
-        if !installed {
+        else {
+            return false;
+        };
+        let text = String::from_utf8_lossy(&output.stdout);
+        let mut words = text.lines().next().unwrap_or_default().split_whitespace();
+        output.status.success()
+            && words.next() == Some("rsync")
+            && words.next() == Some("version")
+            && words
+                .next()
+                .is_some_and(|version| version.starts_with("3."))
+    }
+
+    /// Rule sets whose meaning hangs on the order of their rules pick the files rsync picks.
+    /// rsync itself is the judge, run over the same folders; skipped where rsync 3 is missing.
+    #[test]
+    fn rules_pick_the_files_rsync_picks() {
+        if !rsync_3_installed() {
             return;
         }
         let folder = tempfile::tempdir().unwrap();
