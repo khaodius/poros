@@ -3,8 +3,10 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { EMPTY_DRAFT } from "./lib/connectDraft";
+import { editorTab, findTab } from "./lib/layout";
 import type { SessionInfo } from "./lib/types";
-import { askToSave } from "./state/editorActions";
+import { askToSave, closeEditorTab } from "./state/editorActions";
+import { useLayoutStore } from "./state/layoutStore";
 import { useUiStore } from "./state/uiStore";
 import { AppDialog } from "./App";
 
@@ -46,13 +48,19 @@ let container: HTMLElement;
 /** Answers the work the dialog on show started, which waits until then. */
 let answerSave: (saved: boolean) => void;
 let answerConnect: (result: { session: SessionInfo }) => void;
+/** Editor tabs opened for a test, to close after it. */
+let opened: string[] = [];
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // As the real one, closing the tabs that saved.
   editor.saveAndClose.mockImplementation(
-    () =>
+    (tabIds: string[]) =>
       new Promise<boolean>((resolve) => {
-        answerSave = resolve;
+        answerSave = (saved) => {
+          if (saved) tabIds.forEach(closeEditorTab);
+          resolve(saved);
+        };
       }),
   );
   connecting.connectInTab.mockImplementation(
@@ -68,7 +76,19 @@ afterEach(() => {
   act(() => root?.unmount());
   root = null;
   container.remove();
+  act(() => opened.forEach(closeEditorTab));
+  opened = [];
 });
+
+/** Opens a file with unsaved changes in an editor tab; its tab's id. */
+function editing(name: string): string {
+  const tab = editorTab({ id: `document-${name}`, name, path: `/srv/${name}`, origin: "Local" });
+  act(() => useLayoutStore.getState().openTab(tab));
+  opened.push(tab.id);
+  return tab.id;
+}
+
+const isOpen = (tabId: string) => Boolean(findTab(useLayoutStore.getState().root, tabId));
 
 async function host() {
   container = document.createElement("div");
@@ -99,32 +119,67 @@ const server = {
 describe("the unsaved changes question", () => {
   it("closes, and closes the window, when the window asked to close while the files saved", async () => {
     await host();
-    await act(async () => askToSave(["one"]));
+    const notes = editing("notes.txt");
+    await act(async () => askToSave([notes]));
     await press(/^Save/);
-    await act(async () => askToSave(["one"], true));
+    await act(async () => askToSave([notes], true));
     await act(async () => answerSave(true));
+    expect(isOpen(notes)).toBe(false);
     expect(shown()).toBeNull();
     expect(editor.closeWindowNow).toHaveBeenCalledTimes(1);
   });
 
   it("stays for a tab that joined while the files saved", async () => {
     await host();
-    await act(async () => askToSave(["one"]));
+    const notes = editing("notes.txt");
+    const todo = editing("todo.txt");
+    await act(async () => askToSave([notes]));
     await press(/^Save/);
-    await act(async () => askToSave(["one", "two"], true));
+    await act(async () => askToSave([notes, todo], true));
     await act(async () => answerSave(true));
-    expect(shown()).toEqual({ kind: "unsavedChanges", tabIds: ["one", "two"], closeWindow: true });
+    expect(shown()).toEqual({ kind: "unsavedChanges", tabIds: [notes, todo], closeWindow: true });
+    expect(container.querySelector("dialog[open] h2")?.textContent).toBe(
+      "Save changes to todo.txt?",
+    );
     expect(editor.closeWindowNow).not.toHaveBeenCalled();
   });
 
   it("leaves alone a dialog opened after it was dismissed", async () => {
     await host();
-    await act(async () => askToSave(["one"], true));
+    const notes = editing("notes.txt");
+    await act(async () => askToSave([notes], true));
     await press(/^Save/);
     await press("Close");
     await act(async () => useUiStore.getState().open({ kind: "saveConnection", sessionId: "x" }));
     await act(async () => answerSave(true));
     expect(shown()).toEqual({ kind: "saveConnection", sessionId: "x" });
+    expect(editor.closeWindowNow).not.toHaveBeenCalled();
+  });
+
+  it("closes the window asked for once a save from a question dismissed since closes its tab", async () => {
+    await host();
+    const notes = editing("notes.txt");
+    await act(async () => askToSave([notes]));
+    await press(/^Save/);
+    // Escape while the file saves, then the window's close button.
+    await press("Close");
+    await act(async () => askToSave([notes], true));
+    expect(shown()).toEqual({ kind: "unsavedChanges", tabIds: [notes], closeWindow: true });
+    await act(async () => answerSave(true));
+    expect(shown()).toBeNull();
+    expect(editor.closeWindowNow).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes, and leaves the window open, once that save closes the tab it was asked about", async () => {
+    await host();
+    const notes = editing("notes.txt");
+    await act(async () => askToSave([notes]));
+    await press(/^Save/);
+    await press("Close");
+    // The tab is closed again while it saves.
+    await act(async () => askToSave([notes]));
+    await act(async () => answerSave(true));
+    expect(shown()).toBeNull();
     expect(editor.closeWindowNow).not.toHaveBeenCalled();
   });
 });

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLatest } from "../hooks/useLatest";
 import { findTab } from "../lib/layout";
 import { closeEditorTab, closeWindowNow, saveAndClose } from "../state/editorActions";
@@ -31,10 +31,20 @@ export function UnsavedChangesDialog({ tabIds, closeWindow, onClose }: UnsavedCh
     return tab?.kind === "editor" ? [tab.name] : [];
   });
 
-  const finish = () => {
+  const finished = useRef(false);
+  const finish = useCallback(() => {
+    if (finished.current) return;
+    finished.current = true;
     latest.current.onClose();
     if (latest.current.closeWindow && shown.current) closeWindowNow();
-  };
+  }, [latest]);
+
+  // Its tabs closed meanwhile, as when a save started from a question dismissed since ends:
+  // nothing is left to ask about, and a window waiting on the answer closes.
+  const noneLeft = names.length === 0;
+  useEffect(() => {
+    if (noneLeft && !busy) finish();
+  }, [noneLeft, busy, finish]);
 
   const save = async () => {
     setBusy(true);

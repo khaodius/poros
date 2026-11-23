@@ -2,6 +2,8 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { editorTab, findTab } from "../lib/layout";
+import { useLayoutStore } from "../state/layoutStore";
 import { UnsavedChangesDialog } from "./UnsavedChangesDialog";
 
 const editor = vi.hoisted(() => ({
@@ -28,13 +30,30 @@ let root: Root | null = null;
 let container: HTMLElement;
 /** Answers the save the dialog started, which waits until then. */
 let answerSave: (saved: boolean) => void;
+/** The editor tab with unsaved changes the question is about. */
+const notes = editorTab({
+  id: "document-1",
+  name: "notes.txt",
+  path: "/srv/notes.txt",
+  origin: "Local",
+});
+const closeNotes = () => {
+  if (findTab(useLayoutStore.getState().root, notes.id)) {
+    useLayoutStore.getState().closeTab(notes.id);
+  }
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
+  act(() => useLayoutStore.getState().openTab(notes));
+  // As the real one, closing the tab once its file is saved.
   editor.saveAndClose.mockImplementation(
     () =>
       new Promise<boolean>((resolve) => {
-        answerSave = resolve;
+        answerSave = (saved) => {
+          if (saved) closeNotes();
+          resolve(saved);
+        };
       }),
   );
 });
@@ -43,6 +62,7 @@ afterEach(() => {
   act(() => root?.unmount());
   root = null;
   container.remove();
+  act(closeNotes);
 });
 
 async function askOnClosingWindow() {
@@ -52,7 +72,7 @@ async function askOnClosingWindow() {
   await act(async () =>
     root!.render(
       createElement(UnsavedChangesDialog, {
-        tabIds: ["one"],
+        tabIds: [notes.id],
         closeWindow: true,
         onClose: () => {},
       }),
@@ -62,7 +82,7 @@ async function askOnClosingWindow() {
 
 async function save() {
   const button = [...container.querySelectorAll("button")].find(
-    (candidate) => candidate.textContent === "Save all" || candidate.textContent === "Save",
+    (candidate) => candidate.textContent === "Save",
   );
   await act(async () => button!.click());
 }
