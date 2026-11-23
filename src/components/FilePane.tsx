@@ -53,11 +53,10 @@ import {
 } from "lucide-react";
 import { useBackForwardButtons } from "../hooks/useBackForwardButtons";
 import { useListingPrefetch } from "../hooks/useListingPrefetch";
-import { usePane, type PaneController } from "../hooks/usePane";
+import { usePane } from "../hooks/usePane";
 import { archiveFormatOf, isSingleFile, unpackedName } from "../lib/archives";
 import { COLUMN_LABELS, availableColumns, type DetailColumn } from "../lib/columns";
 import { entryAfterRemoval } from "../lib/cursor";
-import { entriesStillListed } from "../lib/deletion";
 import { sameFilesystem, toLocation, worksInPlace } from "../lib/fileOrigin";
 import type { FileSource } from "../lib/fileSource";
 import { PANE_KEYBOARD_TARGET } from "../lib/focus";
@@ -105,8 +104,8 @@ import { useUiStore } from "../state/uiStore";
 import { requestLockVault, vaultHandover } from "../state/vaultActions";
 import { workspaceChanged } from "../state/workspace";
 import { CompareDialog, type CompareSide } from "./CompareDialog";
-import { ConfirmDialog } from "./ConfirmDialog";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
+import { DeleteDialog } from "./DeleteDialog";
 import { FileList, type MenuPosition } from "./FileList";
 import { NewVaultDialog } from "./NewVaultDialog";
 import { PathBar } from "./PathBar";
@@ -1267,8 +1266,9 @@ export function FilePane({
       {dialog?.type === "delete" && (
         <DeleteDialog
           chosen={dialog.entries}
-          pane={pane}
-          where={where}
+          listing={pane.listing}
+          checking={pane.stale === "refreshing"}
+          summary={(entries) => <DeleteSummary entries={entries} where={where} />}
           onClose={() => setDialog(null)}
           onConfirm={async (entries) => {
             const removed = entries.map((entry) => entry.path);
@@ -1292,45 +1292,6 @@ export function FilePane({
         />
       )}
     </section>
-  );
-}
-
-interface DeleteDialogProps {
-  /** The entries picked to delete, as the listing had them then. */
-  chosen: FileEntry[];
-  pane: PaneController;
-  where: string;
-  onConfirm: (entries: FileEntry[]) => Promise<void>;
-  onClose: () => void;
-}
-
-/**
- * Asks before deleting. What it counts and deletes is what the folder lists now: over a
- * remembered listing it waits for the server's answer, which is one request away, before it
- * lets anything be deleted.
- */
-function DeleteDialog({ chosen, pane, where, onConfirm, onClose }: DeleteDialogProps) {
-  const entries = useMemo(
-    () => entriesStillListed(chosen, pane.listing?.entries ?? []),
-    [chosen, pane.listing],
-  );
-  const checking = pane.stale === "refreshing";
-  return (
-    <ConfirmDialog
-      title={entries.length === 1 ? "Delete item" : `Delete ${entries.length} items`}
-      confirmLabel="Delete"
-      danger
-      waiting={checking ? "Checking the folder..." : undefined}
-      disabled={entries.length === 0}
-      onClose={onClose}
-      onConfirm={() => onConfirm(entries)}
-    >
-      {entries.length > 0 ? (
-        <DeleteSummary entries={entries} where={where} />
-      ) : (
-        <p>{checking ? "Checking the folder..." : "These items are no longer in the folder."}</p>
-      )}
-    </ConfirmDialog>
   );
 }
 
