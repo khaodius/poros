@@ -120,6 +120,17 @@ describe("refusesLockedVault", () => {
     expect(toasts).toEqual([]);
   });
 
+  it("refuses the folder a pane shows when it cannot be listed to check", async () => {
+    const refreshing = pane("remote", "/srv/private", {
+      sessionId: "s1",
+      locked: false,
+      loading: () => true,
+    });
+    expect(await refusesLockedVault(refreshing, "/srv/private")).toBe(true);
+    expect(toasts).toEqual(["Could not check whether this folder is a vault."]);
+    expect(commands()).toEqual(["remote_list"]);
+  });
+
   it("goes by the card where the pane shows the vault's own folder", async () => {
     const locked = pane("remote", "/srv/private", { sessionId: "s1", locked: true });
     expect(await refusesLockedVault(locked, "/srv/private")).toBe(true);
