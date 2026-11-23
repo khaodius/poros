@@ -129,7 +129,7 @@ impl KnownHosts {
             .map(|(_, key)| key.algorithm())
             .collect();
         for file in self.files() {
-            let Ok(contents) = fs::read_to_string(file) else {
+            let Some(contents) = read_lines(file) else {
                 continue;
             };
             recorded.extend(
@@ -180,7 +180,7 @@ impl KnownHosts {
     /// Replaces any recorded key of the same algorithm for the host.
     pub fn trust(&self, host: &str, port: u16, key: &PublicKey) -> io::Result<()> {
         let host_port = host_pattern(host, port);
-        let existing = fs::read_to_string(&self.app_file).unwrap_or_default();
+        let existing = read_lines(&self.app_file).unwrap_or_default();
         let mut kept: Vec<&str> = existing
             .lines()
             .filter(|line| match parse_line(line) {
@@ -242,7 +242,7 @@ fn host_pattern(host: &str, port: u16) -> String {
 }
 
 fn check_file(path: &Path, host_port: &str, key: &PublicKey) -> Record {
-    let Ok(contents) = fs::read_to_string(path) else {
+    let Some(contents) = read_lines(path) else {
         return Record::NotListed;
     };
     let mut record = Record::NotListed;
@@ -267,9 +267,16 @@ fn check_file(path: &Path, host_port: &str, key: &PublicKey) -> Record {
     record
 }
 
+/// A known_hosts file's text. A byte that is not UTF-8, as in a comment written in another
+/// encoding, costs only its own character, never the lines around it.
+fn read_lines(path: &Path) -> Option<String> {
+    let bytes = fs::read(path).ok()?;
+    Some(String::from_utf8_lossy(&bytes).into_owned())
+}
+
 /// Whether a `@revoked` line in the file names `key` for the host.
 fn revokes(path: &Path, host_port: &str, key: &PublicKey) -> bool {
-    let Ok(contents) = fs::read_to_string(path) else {
+    let Some(contents) = read_lines(path) else {
         return false;
     };
     contents.lines().filter_map(parse_line).any(|entry| {
@@ -514,6 +521,25 @@ mod tests {
         let contents = fs::read_to_string(&known_hosts.app_file).unwrap();
         assert!(contents.starts_with(&marked), "{contents}");
         assert!(contents.contains(&format!("web.example.com ssh-ed25519 {KEY_B}")));
+    }
+
+    #[test]
+    fn a_byte_that_is_not_utf8_hides_no_line() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let system_file = temp_dir.path().join("known_hosts");
+        let mut contents = b"# Schl\xfcssel des Servers\n".to_vec();
+        contents.extend_from_slice(format!("web.example.com ssh-ed25519 {KEY_A}\n").as_bytes());
+        contents.extend_from_slice(format!("@revoked * ssh-ed25519 {KEY_B}\n").as_bytes());
+        fs::write(&system_file, contents).unwrap();
+        let known_hosts = KnownHosts::new(temp_dir.path().join("app"), vec![system_file]);
+        assert_eq!(
+            known_hosts.check("web.example.com", 22, &key(KEY_A)),
+            HostKeyStatus::Trusted
+        );
+        assert_eq!(
+            known_hosts.check("web.example.com", 22, &key(KEY_B)),
+            HostKeyStatus::Revoked
+        );
     }
 
     #[test]
