@@ -229,6 +229,8 @@ async fn every_key_format_authenticates() {
     files.push(("pem-rsa".into(), None));
     files.push(("pem-rsa-enc".into(), Some("poros-test".into())));
     files.push(("pkcs8-ecdsa".into(), None));
+    files.push(("pkcs8-ecdsa-enc".into(), Some("poros-test".into())));
+    files.push(("pkcs8-ecdsa-scrypt-enc".into(), Some("poros-test".into())));
 
     for (file, passphrase) in files {
         let auth = AuthMethod::PublicKey {

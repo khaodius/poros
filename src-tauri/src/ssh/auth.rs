@@ -51,7 +51,11 @@ pub(super) async fn authenticate(
                 LogLevel::Info,
                 format!("Trying public key {}", path.display()),
             );
-            let key = keys::load_private_key(&path, passphrase.as_deref())?;
+            let passphrase = passphrase.clone();
+            let key = tokio::task::spawn_blocking(move || {
+                keys::load_private_key(&path, passphrase.as_deref())
+            })
+            .await??;
             let hash = if key.algorithm().is_rsa() {
                 handle.best_supported_rsa_hash().await?.flatten()
             } else {
