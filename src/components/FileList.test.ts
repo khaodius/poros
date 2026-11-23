@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { usePane, type PaneController } from "../hooks/usePane";
 import type { FileSource } from "../lib/fileSource";
-import type { FileEntry } from "../lib/types";
+import type { DirListing, FileEntry } from "../lib/types";
 import { FileList, RenameField, type FileListActions } from "./FileList";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(), Channel: class {} }));
@@ -70,6 +70,21 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+const field = () => container.querySelector<HTMLInputElement>(".rename-field")!;
+
+/** Types `text` in place of what is selected in the field, as a key press does. */
+async function type(text: string) {
+  const input = field();
+  const start = input.selectionStart ?? 0;
+  const value = input.value.slice(0, start) + text + input.value.slice(input.selectionEnd ?? 0);
+  const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+  await act(async () => {
+    setValue.call(input, value);
+    input.setSelectionRange(start + text.length, start + text.length);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
 async function render(element: ReactElement) {
   if (!root) {
     container = document.createElement("div");
@@ -90,20 +105,6 @@ describe("RenameField", () => {
     onRenameCancel: () => {},
   };
   const show = (entry: FileEntry) => render(createElement(RenameField, { entry, events }));
-  const field = () => container.querySelector("input")!;
-
-  /** Types `text` in place of what is selected, as a key press does. */
-  async function type(text: string) {
-    const input = field();
-    const start = input.selectionStart ?? 0;
-    const value = input.value.slice(0, start) + text + input.value.slice(input.selectionEnd ?? 0);
-    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-    await act(async () => {
-      setValue.call(input, value);
-      input.setSelectionRange(start + text.length, start + text.length);
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-  }
 
   it("selects the name before the extension to start with", async () => {
     await show(report);
@@ -161,8 +162,8 @@ describe("FileList", () => {
   const noRows: ReadonlySet<string> = new Set();
   let pane: PaneController;
 
-  function Listed({ renaming }: { renaming: string | null }) {
-    pane = usePane(source, { showHiddenByDefault: true });
+  function Listed({ renaming, results }: { renaming: string | null; results: DirListing | null }) {
+    pane = usePane(source, { showHiddenByDefault: true, results });
     return createElement(FileList, {
       ...actions,
       pane,
@@ -180,7 +181,20 @@ describe("FileList", () => {
     });
   }
 
-  const list = (renaming: string | null = null) => render(createElement(Listed, { renaming }));
+  const list = (renaming: string | null = null, results: DirListing | null = null) =>
+    render(createElement(Listed, { renaming, results }));
+  /** Search results found so far in the folder, each a new entry as a search hands them over. */
+  const found = (resultNames: string[]): DirListing => ({
+    path: FOLDER,
+    parent: null,
+    entries: resultNames.map(file),
+  });
+  /** The pane showing `results`, a step in its history as a search makes them. */
+  async function showResults(results: DirListing, renaming: string | null = null) {
+    await list(renaming, results);
+    if (!pane.showingResults) await onPane((pane) => pane.showResults(FOLDER));
+    expect(pane.showingResults).toBe(true);
+  }
   const body = () => container.querySelector<HTMLElement>(".file-list-body")!;
   const nameOf = (name: string) =>
     container.querySelector(`.file-row[data-path="${FOLDER}/${name}"] .file-name-text`)!;
@@ -241,5 +255,47 @@ describe("FileList", () => {
     await onPane((pane) => pane.refresh());
     expect(pane.visibleEntries.findIndex((entry) => entry.name === "file-50.txt")).toBe(42);
     expect(scrolledTo.length).toBe(scrolledAtStart);
+  });
+
+  describe("showing search results", () => {
+    const manyResults = Array.from({ length: 60 }, (_, index) => `found-${index + 10}.txt`);
+
+    it("keeps what is typed in a result's rename field as more results arrive", async () => {
+      names.splice(0, Infinity, "notes.txt");
+      await list();
+      await showResults(found(manyResults));
+      await list(`${FOLDER}/found-30.txt`, found(manyResults));
+      await type("summary");
+      await list(`${FOLDER}/found-30.txt`, found(["found-00.txt", ...manyResults]));
+      await type("-2026");
+      expect(field().value).toBe("summary-2026.txt");
+    });
+
+    it("brings a result being renamed into view once, not again as results arrive above it", async () => {
+      names.splice(0, Infinity, "notes.txt");
+      await list();
+      await showResults(found(manyResults));
+      scrolledTo = [];
+      await list(`${FOLDER}/found-50.txt`, found(manyResults));
+      expect(scrolledTo.length).toBeGreaterThan(0);
+      const scrolledAtStart = scrolledTo.length;
+      await list(`${FOLDER}/found-50.txt`, found(["found-00.txt", "found-01.txt", ...manyResults]));
+      expect(pane.visibleEntries.findIndex((entry) => entry.name === "found-50.txt")).toBe(42);
+      expect(scrolledTo.length).toBe(scrolledAtStart);
+    });
+
+    it("renames with F2 the one selected result on show, though the filter hides another", async () => {
+      names.splice(0, Infinity, "notes.txt");
+      await list();
+      await showResults(found(["a-notes.txt", "b-draft.txt", "c-notes.txt"]));
+      await onPane((pane) => pane.selectOnly(`${FOLDER}/a-notes.txt`));
+      await onPane((pane) => pane.toggleSelected(`${FOLDER}/b-draft.txt`));
+      await onPane((pane) => pane.setFilter("notes"));
+      await act(async () => body().focus());
+      await act(async () => {
+        body().dispatchEvent(new KeyboardEvent("keydown", { key: "F2", bubbles: true }));
+      });
+      expect(onRename).toHaveBeenCalledWith(expect.objectContaining({ name: "a-notes.txt" }));
+    });
   });
 });
