@@ -11,7 +11,7 @@ use super::conflict::FileFacts;
 use super::copy;
 use super::limiter::RateLimiter;
 use super::published;
-use super::queue::{JobRun, RunOutcome};
+use super::queue::{JobRun, RunOutcome, SourceStamp};
 use super::verify::{self, Checked, Copies};
 use super::worker::{
     self, keep_local_backup, local_permissions, set_local_permissions, JobContext,
@@ -73,6 +73,14 @@ pub(super) async fn try_upload(
     let sent = attempt(context, async {
         let channel = context.command_channel().await?;
         let report = rsync::upload(channel, &request, &pace).await?;
+        // rsync sends the file as it reads it, so one that changed meanwhile arrives torn.
+        if worker::local_source_differs(&spec.source, source, Some(SourceStamp::of(metadata)))
+            .await?
+        {
+            return Err(context
+                .job()
+                .restart(format!("{} changed while it was being uploaded", spec.name)));
+        }
         let copies = Copies {
             remote: &spec.target,
             local: &spec.source,
@@ -118,6 +126,15 @@ pub(super) async fn try_download(
     let received = attempt(context, async {
         let channel = context.command_channel().await?;
         let (report, file) = rsync::download(channel, &request, &pace).await?;
+        // rsync on the server sends the file as it reads it, so one that changed meanwhile
+        // arrives torn.
+        let now = context.fs.stat(&spec.source).await?;
+        if !now.is_some_and(|now| now.size == source.size && now.modified == source.modified) {
+            return Err(context.job().restart(format!(
+                "{} changed on the server while it was being downloaded",
+                spec.name
+            )));
+        }
         let output = partial.to_string_lossy();
         let copies = Copies {
             remote: &spec.source,
@@ -198,7 +215,9 @@ async fn attempt<T>(
     };
     match result {
         Ok(value) => Ok(Some(value)),
-        Err(error) if stops_the_job(&error) => Err(error),
+        // A source that changed under rsync would fail a whole-file copy of the same start
+        // too, so the job starts over instead.
+        Err(error) if stops_the_job(&error) || run.restart.load(Ordering::Relaxed) => Err(error),
         Err(error) => {
             run.delta.store(false, Ordering::Relaxed);
             run.delta_bytes.store(0, Ordering::Relaxed);
