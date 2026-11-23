@@ -5,7 +5,7 @@ import { windows } from "../lib/ipc";
 import { parseLayout, persistableLayout, type LayoutNode, type SavedServer } from "../lib/layout";
 import { useLayoutStore } from "./layoutStore";
 import { getPane } from "./paneRegistry";
-import { savedServerOf, useSessionStore } from "./sessionStore";
+import { savedServerOf, useSessionStore, vaultOf } from "./sessionStore";
 import { useSettingsStore } from "./settingsStore";
 
 const SAVE_DELAY_MILLIS = 400;
@@ -40,6 +40,7 @@ function snapshot(): SavedLayout | null {
   const layout = persistableLayout(useLayoutStore.getState().root, {
     folderOf: (tabId) => getPane(tabId)?.path() ?? null,
     serverOf: (sessionId) => savedServerOf(sessionId) ?? knownServers.get(sessionId) ?? null,
+    vaultOf,
   });
   return layout && { kind: "workspace", layout };
 }

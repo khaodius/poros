@@ -41,6 +41,14 @@ export const PROTOCOLS: ProtocolInfo[] = [
   { value: "box", label: "Box", shortLabel: "Box", defaultPort: 443, provider: "box" },
 ];
 
+/** An unlocked vault's session. Opened from a server's pane, so no list to connect from has it. */
+const VAULT_PROTOCOL: ProtocolInfo = {
+  value: "cryptomator",
+  label: "Cryptomator vault",
+  shortLabel: "Vault",
+  defaultPort: 0,
+};
+
 export const PROVIDER_NAMES: Record<CloudProvider, string> = {
   google: "Google",
   microsoft: "Microsoft",
@@ -48,7 +56,13 @@ export const PROVIDER_NAMES: Record<CloudProvider, string> = {
 };
 
 export function protocolInfo(protocol: Protocol): ProtocolInfo {
+  if (isVault(protocol)) return VAULT_PROTOCOL;
   return PROTOCOLS.find((info) => info.value === protocol) ?? PROTOCOLS[0];
+}
+
+/** The session of an unlocked vault, rather than of a server or a cloud account. */
+export function isVault(protocol: Protocol): boolean {
+  return protocol === "cryptomator";
 }
 
 /** The account signs in through the browser instead of with a password or key. */

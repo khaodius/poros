@@ -9,7 +9,8 @@
 //! transfer and reports the median, and `POROS_BENCH_CHECKS` picks the integrity checks:
 //! `default` (all on), `off`, `checksums` or `flush` (only that one on). With
 //! `POROS_BENCH_DROP_CACHES=1`, run as root on Linux, the page cache is dropped before each
-//! transfer.
+//! transfer. With `POROS_BENCH_VAULT=1` the files go into a new Cryptomator vault on the server
+//! and come back out of it.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -30,6 +31,7 @@ const KIBIBYTE: usize = 1024;
 const MEBIBYTE: usize = 1024 * 1024;
 const DEFAULT_WORKER_COUNTS: &str = "1,4,8";
 const FOLDERS: usize = 36;
+const VAULT_PASSWORD: &str = "benchmark vault";
 
 fn profile() -> ConnectProfile {
     let port = std::env::var("POROS_TEST_SSH_PORT")
@@ -247,12 +249,30 @@ async fn main() {
     let repeats: usize = std::env::var("POROS_BENCH_RUNS").ok().map_or(1, |runs| {
         runs.parse().expect("POROS_BENCH_RUNS is a number")
     });
+    let in_vault = std::env::var("POROS_BENCH_VAULT").as_deref() == Ok("1");
     for workers in worker_counts {
         let mut uploads = Vec::new();
         let mut downloads = Vec::new();
         for _ in 0..repeats {
             let scratch = format!("poros-benchmark-{}", std::process::id());
-            let remote = fs.make_dir("~", &scratch).await.unwrap();
+            let scratch_folder = fs.make_dir("~", &scratch).await.unwrap();
+            // Deriving the vault's key from its password is not part of what is timed.
+            let (session, remote) = if in_vault {
+                let vault = manager
+                    .create_vault(
+                        &session.id,
+                        &scratch_folder,
+                        "vault",
+                        VAULT_PASSWORD.to_string(),
+                        OWNER,
+                    )
+                    .await
+                    .unwrap();
+                let root = vault.home.clone();
+                (vault, root)
+            } else {
+                (session.clone(), scratch_folder.clone())
+            };
             uploads.push(
                 run(
                     &manager,
@@ -285,7 +305,12 @@ async fn main() {
                 .await,
             );
 
-            fs.delete(std::slice::from_ref(&remote)).await.unwrap();
+            if in_vault {
+                manager.disconnect(&session.id).await.unwrap();
+            }
+            fs.delete(std::slice::from_ref(&scratch_folder))
+                .await
+                .unwrap();
             std::fs::remove_dir_all(&downloaded).unwrap();
         }
         report("upload", workers, files, bytes, uploads);

@@ -1,9 +1,11 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  type KeyboardEvent,
   type MouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
@@ -33,12 +35,16 @@ import {
   Home,
   Info,
   ListTree,
+  Lock,
+  LockKeyhole,
   PackageOpen,
   Pencil,
   RefreshCw,
   RotateCcw,
   Scissors,
   Search,
+  ShieldCheck,
+  ShieldPlus,
   SquareTerminal,
   Trash2,
   Upload,
@@ -51,12 +57,14 @@ import { COLUMN_LABELS, availableColumns, type DetailColumn } from "../lib/colum
 import { entryAfterRemoval } from "../lib/cursor";
 import { sameFilesystem, toLocation, worksInPlace } from "../lib/fileOrigin";
 import type { FileSource } from "../lib/fileSource";
+import { PANE_KEYBOARD_TARGET } from "../lib/focus";
 import { toAppError } from "../lib/ipc";
 import { formatSize, pluralize } from "../lib/format";
-import { exampleFileName } from "../lib/path";
+import { baseName, exampleFileName, samePath } from "../lib/path";
 import { groupOfTab } from "../lib/layout";
 import { isDirLike, type SortKey, type SortSpec } from "../lib/sort";
 import type { FileEntry, PlaceMode } from "../lib/types";
+import { sessionShowing, vaultSessions, vaultSign } from "../lib/vaults";
 import { archivesAmong, extractArchives } from "../state/archiveActions";
 import { useClipboardStore } from "../state/clipboardStore";
 import { beginDrag, useDragStore, type DropHandler } from "../state/dragStore";
@@ -90,19 +98,23 @@ import { openTerminal } from "../state/terminalActions";
 import { useToastStore } from "../state/toastStore";
 import { transferFromPane, transferToOtherSide } from "../state/transferActions";
 import { useUiStore } from "../state/uiStore";
+import { requestLockVault, vaultHandover } from "../state/vaultActions";
 import { workspaceChanged } from "../state/workspace";
 import { CompareDialog, type CompareSide } from "./CompareDialog";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { FileList, type MenuPosition } from "./FileList";
+import { NewVaultDialog } from "./NewVaultDialog";
 import { PathBar } from "./PathBar";
 import { PromptDialog } from "./PromptDialog";
 import { PropertiesDialog } from "./PropertiesDialog";
+import { VaultUnlockCard } from "./VaultUnlockCard";
 import { serverCommandsMenu } from "./commandMenu";
 
 type PaneDialog =
   | { type: "newFolder" }
   | { type: "newFile"; example: string }
+  | { type: "newVault" }
   | { type: "delete"; entries: FileEntry[] }
   | { type: "placeTo"; mode: PlaceMode; entries: FileEntry[] }
   | { type: "properties"; entries: FileEntry[] }
@@ -132,7 +144,7 @@ interface OpenMenu {
 /** Moves keyboard focus to the next file list on screen, left to right, then top to bottom. */
 function focusNextPane(from: HTMLElement | null) {
   const lists = [
-    ...document.querySelectorAll<HTMLElement>(".tab-panel:not([hidden]) .file-list-body"),
+    ...document.querySelectorAll<HTMLElement>(`.tab-panel:not([hidden]) ${PANE_KEYBOARD_TARGET}`),
   ]
     .map((list) => ({ list, bounds: list.getBoundingClientRect() }))
     .sort(
@@ -201,12 +213,19 @@ export function FilePane({
   const fontSize = useSettingsStore((state) => state.settings.appearance.fontSize);
   const groupSetting = source.kind === "local" ? "groupLocalByDate" : "groupRemoteByDate";
   const groupByDate = useSettingsStore((state) => state.settings.appearance[groupSetting]);
+  // A server and its unlocked vaults share their paths: wherever the pane goes, the path tells
+  // which of their sessions lists it, and the tab takes that session.
+  const handover = useCallback(
+    (path: string) => (sessionId ? vaultHandover(tabId, sessionId, path) : null),
+    [tabId, sessionId],
+  );
   const pane = usePane(source, {
     showHiddenByDefault,
     initialSort: useSettingsStore.getState().settings.interface.sort,
     foldersFirst,
     groupByDate,
     onSortChange: rememberSort,
+    handover,
   });
   const [dialog, setDialog] = useState<PaneDialog | null>(null);
   /** The entry whose row shows the name field. */
@@ -225,10 +244,16 @@ export function FilePane({
   const protocol = useSessionStore((state) =>
     sessionId ? state.sessions[sessionId]?.info.protocol : undefined,
   );
+  /** The unlocked vault the pane is in, when its session is a vault's. */
+  const vault = useSessionStore((state) =>
+    sessionId ? state.sessions[sessionId]?.info.vault : undefined,
+  );
   const where = source.kind === "remote" ? "remote" : "local";
-  // Moving, copying and comparing in place, and Properties, run over SFTP.
+  // Moving, copying and comparing in place, and Properties, run over SFTP, which reaches a
+  // vault's encrypted files only.
   const overSftp = protocol === "sftp";
   const worksHere = source.kind === "local" || overSftp;
+  const needsSftp = vault ? "not in a vault" : "SFTP only";
   const paneRef = useRef(pane);
   useLayoutEffect(() => {
     paneRef.current = pane;
@@ -238,7 +263,7 @@ export function FilePane({
   /** Back to the file list, so the keyboard works on files again after typing a path or filter. */
   const focusList = () =>
     sectionRef.current
-      ?.querySelector<HTMLElement>(".file-list-body")
+      ?.querySelector<HTMLElement>(PANE_KEYBOARD_TARGET)
       ?.focus({ preventScroll: true });
 
   useEffect(
@@ -250,6 +275,7 @@ export function FilePane({
         label: title,
         path: () => paneRef.current.listing?.path ?? null,
         refresh: (focus) => void paneRef.current.refresh(focus),
+        clear: () => paneRef.current.clear(),
         selected: () => paneRef.current.selectedEntries(),
         entries: () => paneRef.current.listing?.entries ?? [],
         visible: false,
@@ -267,6 +293,34 @@ export function FilePane({
   useEffect(() => {
     if (listedPath) workspaceChanged();
   }, [listedPath]);
+
+  // What a server's folder is by its listing: a locked vault, one too old to open, or neither.
+  // An unlocked vault lists its decrypted files, among which nothing marks a vault.
+  const listedEntries = pane.listing?.entries;
+  const sign = useMemo(
+    () => (source.kind === "remote" && !vault && listedEntries ? vaultSign(listedEntries) : "none"),
+    [source.kind, vault, listedEntries],
+  );
+  /** The locked vault whose encrypted files the user asked to see, for as long as it shows. */
+  const [revealedVault, setRevealedVault] = useState<string | null>(null);
+  if (revealedVault !== null && revealedVault !== listedPath) setRevealedVault(null);
+  /** The card asking for a locked vault's password stands in for the file list. */
+  const lockedCard = sign === "locked" && revealedVault === null;
+  useEffect(() => {
+    updatePane(tabId, { locked: lockedCard });
+  }, [tabId, lockedCard]);
+
+  // The card takes the keyboard with it as it leaves, so the file list gets it back.
+  const hadLockedCard = useRef(lockedCard);
+  useEffect(() => {
+    const left = hadLockedCard.current && !lockedCard;
+    hadLockedCard.current = lockedCard;
+    if (left && active && document.activeElement === document.body) {
+      sectionRef.current
+        ?.querySelector<HTMLElement>(PANE_KEYBOARD_TARGET)
+        ?.focus({ preventScroll: true });
+    }
+  }, [lockedCard, active]);
 
   const dropFolder = useDragStore((state) => {
     const { payload, target, copy } = state;
@@ -307,6 +361,75 @@ export function FilePane({
   const openNewFolder = () => pane.listing && setDialog({ type: "newFolder" });
   const openNewFile = () =>
     pane.listing && setDialog({ type: "newFile", example: exampleFileName() });
+  /** A vault goes on a server, in a folder that is not a vault's own. */
+  const canMakeVault = source.kind === "remote" && Boolean(sessionId) && !vault;
+  const openNewVault = () => pane.listing && sign === "none" && setDialog({ type: "newVault" });
+
+  /** Shows the vault at `root` once it is unlocked: the path is the vault's from then on, so
+   * going there gives the tab the vault's session. */
+  const enterVault = async (root: string) => {
+    if (!(await pane.navigate(root))) await pane.refresh(root);
+  };
+
+  /** Set while this pane unlocks a vault and goes into it by itself. */
+  const unlocking = useRef(false);
+  const unlockVault = async (password: string) => {
+    if (!sessionId || !pane.listing) return;
+    const folder = pane.listing.path;
+    unlocking.current = true;
+    try {
+      const info = await useSessionStore.getState().unlockVault(sessionId, folder, password);
+      writeLog("info", `Unlocked vault ${info.vault?.root ?? folder}`, sessionId);
+      await enterVault(info.vault?.root ?? folder);
+    } finally {
+      unlocking.current = false;
+    }
+  };
+
+  // A vault unlocked from another pane holds the folder on show here from then on, so this
+  // pane goes into the vault too, instead of asking for a password that is no longer needed.
+  const unlockedElsewhere = useSessionStore((state) => {
+    if (!sessionId || !listedPath) return undefined;
+    const showing = sessionShowing(state.sessions, sessionId, listedPath);
+    return showing === sessionId ? undefined : state.sessions[showing]?.info.vault?.root;
+  });
+  useEffect(() => {
+    if (unlockedElsewhere === undefined || unlocking.current) return;
+    void paneRef.current.navigate(unlockedElsewhere);
+  }, [unlockedElsewhere]);
+
+  const createVault = async (name: string, password: string) => {
+    if (!sessionId || !pane.listing) return;
+    const folder = pane.listing.path;
+    const info = await useSessionStore.getState().createVault(sessionId, folder, name, password);
+    writeLog("info", `Created vault ${info.vault?.root ?? name} in ${folder}`, sessionId);
+    if (info.vault) await enterVault(info.vault.root);
+  };
+
+  /** The session of the vault to lock from here: the one the pane is in, or the unlocked one
+   * whose folder `entry` is in the server's own listing. */
+  const lockableVault = (entry: FileEntry | null): string | undefined => {
+    if (!sessionId) return undefined;
+    if (vault) return sessionId;
+    if (!entry) return undefined;
+    return vaultSessions(useSessionStore.getState().sessions, sessionId).find((info) =>
+      samePath(info.vault.root, entry.path, "posix"),
+    )?.id;
+  };
+
+  /** The pane's shortcuts for going elsewhere, from the card that stands in for the file list. */
+  const handleCardKey = (event: KeyboardEvent<HTMLElement>) => {
+    if (!event.altKey) return;
+    const go = {
+      ArrowLeft: pane.goBack,
+      ArrowRight: pane.goForward,
+      ArrowUp: pane.goUp,
+      Home: pane.goHome,
+    }[event.key];
+    if (!go) return;
+    event.preventDefault();
+    go();
+  };
   const renameEntry = async (entry: FileEntry, newName: string): Promise<boolean> => {
     try {
       const renamed = await source.rename(entry.path, newName);
@@ -415,7 +538,7 @@ export function FilePane({
     // Synchronization runs over SSH.
     const synchronizable = source.kind === "local" || protocol === "sftp";
     return {
-      label: synchronizable ? "Synchronize folder..." : "Synchronize folder (SFTP only)",
+      label: synchronizable ? "Synchronize folder..." : `Synchronize folder (${needsSftp})`,
       icon: <FolderSync size={14} />,
       disabled: !folder || !synchronizable,
       onSelect: () =>
@@ -532,7 +655,7 @@ export function FilePane({
     }
     if (!worksHere) {
       return {
-        label: "Compare (SFTP only)",
+        label: `Compare (${needsSftp})`,
         icon: <FileDiff size={14} />,
         disabled: true,
         onSelect: () => undefined,
@@ -588,13 +711,13 @@ export function FilePane({
       onSelect: () => pasteInto(entry),
     },
     {
-      label: worksHere ? "Move to..." : "Move to (SFTP only)",
+      label: worksHere ? "Move to..." : `Move to (${needsSftp})`,
       icon: <FolderInput size={14} />,
       disabled: targets.length === 0 || !worksHere,
       onSelect: () => setDialog({ type: "placeTo", mode: "move", entries: targets }),
     },
     {
-      label: worksHere ? "Copy to..." : "Copy to (SFTP only)",
+      label: worksHere ? "Copy to..." : `Copy to (${needsSftp})`,
       icon: <CopyPlus size={14} />,
       disabled: targets.length === 0 || !worksHere,
       onSelect: () => setDialog({ type: "placeTo", mode: "copy", entries: targets }),
@@ -608,7 +731,7 @@ export function FilePane({
     if (!worksHere) {
       return [
         {
-          label: "Extract (SFTP only)",
+          label: `Extract (${needsSftp})`,
           icon: <PackageOpen size={14} />,
           disabled: true,
           onSelect: () => undefined,
@@ -647,6 +770,7 @@ export function FilePane({
     const targets = entry ? (pane.selection.has(entry.path) ? selected : [entry]) : [];
     const compare = compareMenuItem(targets);
     const extract = extractMenuItems(targets);
+    const lockable = lockableVault(targets.length > 1 ? null : entry);
     return [
       ...(targets.length > 0 ? [transferMenuItem(targets), "separator" as const] : []),
       ...(entry && isDirLike(entry)
@@ -688,6 +812,25 @@ export function FilePane({
         shortcut: "Shift+F4",
         onSelect: openNewFile,
       },
+      ...(canMakeVault
+        ? [
+            {
+              label: "New vault...",
+              icon: <ShieldPlus size={14} />,
+              disabled: sign !== "none",
+              onSelect: openNewVault,
+            },
+          ]
+        : []),
+      ...(lockable
+        ? [
+            {
+              label: "Lock vault",
+              icon: <Lock size={14} />,
+              onSelect: () => void requestLockVault(lockable),
+            },
+          ]
+        : []),
       ...(entry ? [] : [sortMenu(), groupMenu()]),
       syncMenuItem(entry),
       // Commands run over SSH.
@@ -713,7 +856,7 @@ export function FilePane({
       ...(source.kind === "remote" && targets.length > 0
         ? [
             {
-              label: overSftp ? "Properties" : "Properties (SFTP only)",
+              label: overSftp ? "Properties" : `Properties (${needsSftp})`,
               icon: <Info size={14} />,
               shortcut: overSftp ? "Alt+Enter" : undefined,
               disabled: !overSftp,
@@ -739,7 +882,8 @@ export function FilePane({
       className={["pane", active && "is-active", dropFolder === "" && "is-drop-target"]
         .filter(Boolean)
         .join(" ")}
-      data-drop-pane={tabId}
+      // Nothing is dropped unseen among a locked vault's encrypted files.
+      data-drop-pane={lockedCard ? undefined : tabId}
       onMouseDown={markActive}
     >
       <header className="pane-header">
@@ -748,6 +892,20 @@ export function FilePane({
           <span title={title}>{title}</span>
         </div>
         <div className="pane-toolbar">
+          {vault && sessionId && (
+            <>
+              <button
+                type="button"
+                className="toolbar-action"
+                title="Lock vault"
+                onClick={() => void requestLockVault(sessionId)}
+              >
+                <Lock size={14} />
+                Lock
+              </button>
+              <span className="toolbar-divider" />
+            </>
+          )}
           {unsaved && sessionId && (
             <ToolbarButton
               label="Save this connection"
@@ -793,12 +951,29 @@ export function FilePane({
             <RefreshCw size={15} className={pane.loading ? "spin" : ""} />
           </ToolbarButton>
           <span className="toolbar-divider" />
-          <ToolbarButton label="New folder (F7)" onClick={openNewFolder} disabled={!pane.listing}>
+          <ToolbarButton
+            label="New folder (F7)"
+            onClick={openNewFolder}
+            disabled={!pane.listing || lockedCard}
+          >
             <FolderPlus size={15} />
           </ToolbarButton>
-          <ToolbarButton label="New file (Shift+F4)" onClick={openNewFile} disabled={!pane.listing}>
+          <ToolbarButton
+            label="New file (Shift+F4)"
+            onClick={openNewFile}
+            disabled={!pane.listing || lockedCard}
+          >
             <FilePlus size={15} />
           </ToolbarButton>
+          {canMakeVault && (
+            <ToolbarButton
+              label="New vault"
+              onClick={openNewVault}
+              disabled={!pane.listing || sign !== "none"}
+            >
+              <ShieldPlus size={15} />
+            </ToolbarButton>
+          )}
           <ToolbarButton
             label={pane.showHidden ? "Hide hidden files (Ctrl+H)" : "Show hidden files (Ctrl+H)"}
             onClick={pane.toggleHidden}
@@ -810,9 +985,19 @@ export function FilePane({
       </header>
 
       <div className="pane-locationbar">
+        {vault && (
+          <span
+            className="vault-chip"
+            title={`Files here are encrypted in the vault ${vault.name} before they reach the server`}
+          >
+            <ShieldCheck size={13} />
+            Encrypted
+          </span>
+        )}
         <PathBar
           path={pane.listing?.path ?? null}
           pathStyle={source.pathStyle}
+          vaultRoot={vault?.root}
           editRequest={pathEditRequest}
           onNavigate={pane.navigate}
           onDone={focusList}
@@ -846,44 +1031,73 @@ export function FilePane({
         </label>
       </div>
 
-      {pane.listing ? (
-        <FileList
-          pane={pane}
-          side={side}
+      {pane.listing && lockedCard ? (
+        <VaultUnlockCard
+          key={pane.listing.path}
+          name={baseName(pane.listing.path)}
           active={active}
-          rowHeight={Math.max(rowHeight, fontSize + MIN_ROW_PADDING)}
-          hiddenColumns={hiddenColumns}
-          columnWidths={columnWidths}
-          onColumnWidthsChange={(widths, done) => {
-            if (done) void saveSettingsSection("interface", { columnWidths: widths });
-            else previewSettingsSection("interface", { columnWidths: widths });
-          }}
-          dateFormat={dateFormat}
-          striped={stripedRows}
-          fontSize={fontSize}
-          dropFolder={dropFolder}
-          cutPaths={cutPaths}
-          onActivate={markActive}
-          onContextMenu={showContextMenu}
-          onHeaderContextMenu={showHeaderMenu}
-          onDelete={openDelete}
-          renaming={renaming}
-          onRename={(entry) => setRenaming(entry.path)}
-          onRenameSubmit={renameEntry}
-          onRenameCancel={() => setRenaming(null)}
-          onEdit={edit}
-          onNewFolder={openNewFolder}
-          onNewFile={openNewFile}
-          onEditPath={() => setPathEditRequest((count) => count + 1)}
-          onFocusFilter={() => filterRef.current?.focus()}
-          onSwitchPane={(from) => focusNextPane(from)}
-          onRowPointerDown={startDrag}
-          onFileActivate={activateFile}
-          onCut={() => cutOrCopy("move", pane.selectedEntries())}
-          onCopy={() => cutOrCopy("copy", pane.selectedEntries())}
-          onPaste={() => pasteInto(null)}
-          onProperties={() => openProperties(pane.selectedEntries())}
+          onUnlock={unlockVault}
+          onShowEncrypted={() => setRevealedVault(pane.listing?.path ?? null)}
+          onKeyDown={handleCardKey}
         />
+      ) : pane.listing ? (
+        <>
+          {sign === "locked" && (
+            <p className="pane-notice">
+              <LockKeyhole size={13} />
+              <span>This folder is a locked Cryptomator vault.</span>
+              <button type="button" className="link-button" onClick={() => setRevealedVault(null)}>
+                Unlock
+              </button>
+            </p>
+          )}
+          {sign === "outdated" && (
+            <p className="pane-notice">
+              <Info size={13} />
+              <span>
+                This vault uses an older Cryptomator format. Open it once in Cryptomator 1.6 or
+                later to upgrade it.
+              </span>
+            </p>
+          )}
+          <FileList
+            pane={pane}
+            side={side}
+            active={active}
+            rowHeight={Math.max(rowHeight, fontSize + MIN_ROW_PADDING)}
+            hiddenColumns={hiddenColumns}
+            columnWidths={columnWidths}
+            onColumnWidthsChange={(widths, done) => {
+              if (done) void saveSettingsSection("interface", { columnWidths: widths });
+              else previewSettingsSection("interface", { columnWidths: widths });
+            }}
+            dateFormat={dateFormat}
+            striped={stripedRows}
+            fontSize={fontSize}
+            dropFolder={dropFolder}
+            cutPaths={cutPaths}
+            onActivate={markActive}
+            onContextMenu={showContextMenu}
+            onHeaderContextMenu={showHeaderMenu}
+            onDelete={openDelete}
+            renaming={renaming}
+            onRename={(entry) => setRenaming(entry.path)}
+            onRenameSubmit={renameEntry}
+            onRenameCancel={() => setRenaming(null)}
+            onEdit={edit}
+            onNewFolder={openNewFolder}
+            onNewFile={openNewFile}
+            onEditPath={() => setPathEditRequest((count) => count + 1)}
+            onFocusFilter={() => filterRef.current?.focus()}
+            onSwitchPane={(from) => focusNextPane(from)}
+            onRowPointerDown={startDrag}
+            onFileActivate={activateFile}
+            onCut={() => cutOrCopy("move", pane.selectedEntries())}
+            onCopy={() => cutOrCopy("copy", pane.selectedEntries())}
+            onPaste={() => pasteInto(null)}
+            onProperties={() => openProperties(pane.selectedEntries())}
+          />
+        </>
       ) : (
         <div className="pane-empty">
           {pane.error ? (
@@ -904,8 +1118,8 @@ export function FilePane({
 
       <footer className="pane-footer">
         <span>
-          {pluralize(pane.entryCount, "item")}
-          {pane.hiddenCount > 0 && `, ${pane.hiddenCount} hidden`}
+          {lockedCard ? "Locked vault" : pluralize(pane.entryCount, "item")}
+          {!lockedCard && pane.hiddenCount > 0 && `, ${pane.hiddenCount} hidden`}
         </span>
         {selected.length > 0 && (
           <span>
@@ -945,6 +1159,14 @@ export function FilePane({
             writeLog("info", `Created ${where} file ${created}`);
             await pane.refresh(created);
           }}
+        />
+      )}
+
+      {dialog?.type === "newVault" && pane.listing && (
+        <NewVaultDialog
+          folder={pane.listing.path}
+          onCreate={createVault}
+          onClose={() => setDialog(null)}
         />
       )}
 

@@ -57,6 +57,26 @@ function pane(
   );
 }
 
+/** A pane inside the vault unlocked at `root` on the server of `parentSessionId`. */
+function vaultPane(
+  tabId: string,
+  path: string,
+  sessionId: string,
+  parentSessionId: string,
+  root: string,
+) {
+  pane(tabId, "remote", path, sessionId, "cryptomator");
+  useSessionStore.setState((state) => {
+    const entry = state.sessions[sessionId];
+    const info = {
+      ...entry.info,
+      host: `${parentSessionId}.example.com`,
+      vault: { parentSessionId, root, name: root.slice(root.lastIndexOf("/") + 1) },
+    };
+    return { sessions: { ...state.sessions, [sessionId]: { ...entry, info } } };
+  });
+}
+
 afterEach(() => {
   unregister.splice(0).forEach((remove) => remove());
   useSessionStore.setState({ sessions: {} });
@@ -123,6 +143,69 @@ describe("dropAction", () => {
       kind: "transfer",
       direction: "relay",
       folder: "/srv",
+    });
+  });
+
+  it("copies into an unlocked vault through the vault, also from its server's pane", () => {
+    pane("server", "remote", "/srv", "s1");
+    pane("beside", "remote", "/srv", "s1");
+    vaultPane("vault", "/srv/private/letters", "v1", "s1", "/srv/private");
+    const files = [entry("/srv/a.txt")];
+    const relay = { kind: "transfer", direction: "relay" };
+    expect(dropAction("server", files, onPane("vault", null), false)).toEqual({
+      ...relay,
+      folder: "/srv/private/letters",
+    });
+    expect(dropAction("server", files, onPane("server", "/srv/private"), false)).toEqual({
+      ...relay,
+      folder: "/srv/private",
+    });
+    expect(dropAction("beside", files, onPane("server", "/srv/private"), false)).toEqual({
+      ...relay,
+      folder: "/srv/private",
+    });
+    // A folder beside the vault is the server's own.
+    expect(dropAction("server", files, onPane("server", "/srv/public"), false)).toMatchObject({
+      kind: "place",
+    });
+  });
+
+  it("copies out of a vault to its server", () => {
+    pane("server", "remote", "/srv", "s1");
+    vaultPane("vault", "/srv/private", "v1", "s1", "/srv/private");
+    const files = [entry("/srv/private/letter.txt")];
+    expect(dropAction("vault", files, onPane("server", null), false)).toEqual({
+      kind: "transfer",
+      direction: "relay",
+      folder: "/srv",
+    });
+  });
+
+  it("keeps the folder a vault is in out of the vault", () => {
+    pane("server", "remote", "/srv", "s1");
+    pane("above", "remote", "/", "s1");
+    vaultPane("vault", "/srv/private/letters", "v1", "s1", "/srv/private");
+    const vaultFolder = [entry("/srv/private", "dir")];
+    expect(dropAction("server", vaultFolder, onPane("server", "/srv/private"), false)).toBeNull();
+    expect(dropAction("server", vaultFolder, onPane("vault", null), false)).toMatchObject({
+      kind: "blocked",
+    });
+    expect(dropAction("above", [entry("/srv", "dir")], onPane("vault", null), false)).toMatchObject(
+      { kind: "blocked" },
+    );
+  });
+
+  it("moves nothing inside a vault", () => {
+    vaultPane("vault", "/srv/private", "v1", "s1", "/srv/private");
+    vaultPane("other", "/srv/private/letters", "v1", "s1", "/srv/private");
+    const files = [entry("/srv/private/a.txt")];
+    expect(dropAction("vault", files, onPane("vault", "/srv/private/letters"), false)).toEqual({
+      kind: "blocked",
+      reason: "Files cannot be moved inside a vault",
+    });
+    expect(dropAction("vault", files, onPane("other", null), false)).toMatchObject({
+      kind: "transfer",
+      direction: "relay",
     });
   });
 

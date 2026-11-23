@@ -184,6 +184,38 @@ pub async fn disconnect(
     sessions.disconnect(&session_id).await
 }
 
+/// Opens the Cryptomator vault in the folder `path` on a session's server. The vault gets a
+/// session of its own, which a vault that is open already answers with; closing that session
+/// locks the vault.
+#[tauri::command]
+pub async fn vault_unlock(
+    window: WebviewWindow,
+    sessions: State<'_, Arc<SessionManager>>,
+    session_id: String,
+    path: String,
+    password: String,
+) -> AppResult<SessionInfo> {
+    sessions
+        .unlock_vault(&session_id, &path, password, window.label())
+        .await
+}
+
+/// Makes the new folder `name` in `parent` on a session's server a Cryptomator vault, and opens
+/// it like `vault_unlock`.
+#[tauri::command]
+pub async fn vault_create(
+    window: WebviewWindow,
+    sessions: State<'_, Arc<SessionManager>>,
+    session_id: String,
+    parent: String,
+    name: String,
+    password: String,
+) -> AppResult<SessionInfo> {
+    sessions
+        .create_vault(&session_id, &parent, &name, password, window.label())
+        .await
+}
+
 #[tauri::command]
 pub async fn remote_list(
     sessions: State<'_, Arc<SessionManager>>,

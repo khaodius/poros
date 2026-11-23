@@ -1,7 +1,6 @@
 import { Fragment, useEffect, useRef, useState, type MouseEvent } from "react";
 import {
   AppWindow,
-  Cloud,
   Columns2,
   CornerUpLeft,
   Plus,
@@ -12,7 +11,7 @@ import {
 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { findTab, isRestoring, welcomeTab, type GroupNode, type PaneTab } from "../lib/layout";
-import { isCloud } from "../lib/protocols";
+import { isLost } from "../lib/vaults";
 import { beginDrag, isLifted, markedDrop, tabDrag, useDragStore } from "../state/dragStore";
 import { useUnsavedStore } from "../state/editorRegistry";
 import { useLayoutStore } from "../state/layoutStore";
@@ -32,7 +31,7 @@ import {
   tearOutTab,
 } from "../state/tabActions";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
-import { TAB_ICONS } from "./tabIcons";
+import { CONNECTION_ICONS, TAB_ICONS, connectionKind } from "./tabIcons";
 
 interface TabMenu {
   x: number;
@@ -218,19 +217,15 @@ function TabButton({
   const activateTab = useLayoutStore((state) => state.activateTab);
   const restoring = isRestoring(tab);
   const lost = useSessionStore((state) =>
-    tab.kind === "remote" && !restoring
-      ? state.sessions[tab.sessionId]?.status !== "connected"
-      : false,
+    tab.kind === "remote" && !restoring ? isLost(state.sessions, tab.sessionId) : false,
   );
   const unsaved = useUnsavedStore((state) => Boolean(state.tabs[tab.id]));
-  const cloud = useSessionStore((state) => {
-    const protocol =
-      tab.kind === "remote"
-        ? (state.sessions[tab.sessionId]?.info.protocol ?? tab.restore?.server?.protocol)
-        : null;
-    return protocol ? isCloud(protocol) : false;
-  });
-  const Icon = cloud ? Cloud : TAB_ICONS[tab.kind];
+  const protocol = useSessionStore((state) =>
+    tab.kind === "remote"
+      ? (state.sessions[tab.sessionId]?.info.protocol ?? tab.restore?.server?.protocol)
+      : undefined,
+  );
+  const Icon = protocol ? CONNECTION_ICONS[connectionKind(protocol)] : TAB_ICONS[tab.kind];
   const tabRef = useRef<HTMLDivElement>(null);
 
   // A tab chosen with the keyboard, or opened past the end of a full bar, scrolls into view.

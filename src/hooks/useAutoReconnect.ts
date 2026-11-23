@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { toAppError } from "../lib/ipc";
 import type { AppError, ErrorKind, SessionInfo } from "../lib/types";
 import { useSessionStore } from "../state/sessionStore";
@@ -58,13 +58,11 @@ export interface AutoReconnect {
 }
 
 /**
- * Reconnects a lost session on its own, with growing delays, for as long as transfers wait for
- * a lost server. Gives up early on answers only the user can change, such as a wrong password.
+ * Reconnects a lost server's session on its own, with growing delays, for as long as transfers
+ * wait for a lost server. Gives up early on answers only the user can change, such as a wrong
+ * password. Once it is back, the session store shows the new session in the tabs.
  */
-export function useAutoReconnect(
-  sessionId: string,
-  onReconnected: (session: SessionInfo) => void,
-): AutoReconnect {
+export function useAutoReconnect(sessionId: string): AutoReconnect {
   const enabled = useSettingsStore((state) => state.settings.connection.autoReconnect);
   const windowMinutes = useSettingsStore((state) => state.settings.transfers.reconnectMinutes);
   const [stopped, setStopped] = useState(false);
@@ -72,10 +70,6 @@ export function useAutoReconnect(
     failures: 0,
     secondsLeft: retryDelaySecs(0),
     lastError: null as string | null,
-  });
-  const callback = useRef(onReconnected);
-  useLayoutEffect(() => {
-    callback.current = onReconnected;
   });
   const active = enabled && windowMinutes > 0 && !stopped;
 
@@ -97,8 +91,7 @@ export function useAutoReconnect(
       nextAttemptAt = 0;
       setProgress({ failures, lastError, secondsLeft: 0 });
       try {
-        const session = await reconnectOnce(sessionId);
-        if (!cancelled) callback.current(session);
+        await reconnectOnce(sessionId);
       } catch (caught) {
         if (cancelled) return;
         const error = toAppError(caught);

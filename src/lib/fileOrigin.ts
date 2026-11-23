@@ -8,6 +8,8 @@ export interface ServerIdentity {
   host: string;
   port: number;
   username: string;
+  /** For an unlocked vault: its folder, as two vaults on one server are two filesystems. */
+  vaultRoot?: string;
 }
 
 export interface FileOrigin {
@@ -30,13 +32,19 @@ export function sameFilesystem(first: FileOrigin, second: FileOrigin): boolean {
     one.protocol === other.protocol &&
     one.host.toLowerCase() === other.host.toLowerCase() &&
     one.port === other.port &&
-    one.username === other.username
+    one.username === other.username &&
+    one.vaultRoot === other.vaultRoot
   );
 }
 
 /** Files move and copy where they are on this computer, and on servers reached over SFTP. */
 export function worksInPlace(origin: FileOrigin): boolean {
   return origin.kind === "local" || origin.server?.protocol === "sftp";
+}
+
+/** Whether the files are those of an unlocked vault. */
+export function isInsideVault(origin: FileOrigin): boolean {
+  return origin.server?.vaultRoot !== undefined;
 }
 
 export function toLocation(origin: FileOrigin): FileLocation {

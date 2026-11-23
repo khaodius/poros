@@ -19,6 +19,7 @@ import {
   type PaneTab,
 } from "../lib/layout";
 import type { ConnectProfile, SessionInfo } from "../lib/types";
+import { serverSessionId, sessionFamily } from "../lib/vaults";
 import { landingCorner, landingCornerHere, type ScreenPoint } from "../lib/windowAreas";
 import type { DropTarget } from "./dragStore";
 import { askToSave, closeEditorTab } from "./editorActions";
@@ -65,7 +66,10 @@ export function tornOutFrame(pointer: Point): Rect {
 /** What a window hands another when tabs move: a layout and its sessions' profiles. */
 export interface TabHandoff {
   layout: unknown;
+  /** Every session the tabs come with: each one's server, and that server's unlocked vaults. */
   sessions: Record<string, ConnectProfile | null>;
+  /** The sessions each file tab comes with, its server's first, by the session the tab shows. */
+  families?: Record<string, string[]>;
 }
 
 /**
@@ -147,8 +151,19 @@ export function splitTab(tabId: string, side: DropSide): void {
   useLayoutStore.getState().dockTab(sibling.id, owner.id, side);
 }
 
-/** Closes a tab, disconnecting its session; asks first when transfers for it are queued or
- * the file it edits has unsaved changes. */
+/** The session of the server a session in this window belongs to: a vault's server, or itself. */
+function serverOf(sessionId: string): string {
+  const info = useSessionStore.getState().sessions[sessionId]?.info;
+  return info ? serverSessionId(info) : sessionId;
+}
+
+/** A server's session and its unlocked vaults', the server's first, given any one of them. */
+export function familyOf(sessionId: string): string[] {
+  return sessionFamily(useSessionStore.getState().sessions, sessionId);
+}
+
+/** Closes a tab, disconnecting its server and locking that server's vaults; asks first when
+ * transfers for them are queued or the file it edits has unsaved changes. */
 export async function requestCloseTab(tabId: string): Promise<void> {
   const layout = useLayoutStore.getState();
   const tab = findTab(layout.root, tabId);
@@ -170,42 +185,52 @@ export async function requestCloseTab(tabId: string): Promise<void> {
     layout.closeTab(tabId);
     return;
   }
-  const entry = useSessionStore.getState().sessions[tab.sessionId];
+  const [serverId, ...vaultIds] = familyOf(tab.sessionId);
+  const server = useSessionStore.getState().sessions[serverId];
   const confirm = useSettingsStore.getState().settings.interface.confirmCloseWithTransfers;
-  const pendingTransfers = confirm ? await transfers.sessionJobs(tab.sessionId).catch(() => 0) : 0;
-  if (pendingTransfers > 0) {
+  const jobsOf = (sessionId: string) => transfers.sessionJobs(sessionId).catch(() => 0);
+  const [serverTransfers, ...transfersOfVaults] = confirm
+    ? await Promise.all([serverId, ...vaultIds].map(jobsOf))
+    : [0];
+  const vaultTransfers = transfersOfVaults.reduce((total, jobs) => total + jobs, 0);
+  if (serverTransfers + vaultTransfers > 0) {
     useUiStore.getState().open({
       kind: "closeTab",
       tabId,
       sessionId: tab.sessionId,
-      label: entry?.info.label ?? "this server",
-      pendingTransfers,
+      label: server?.info.label ?? "this server",
+      pendingTransfers: serverTransfers + vaultTransfers,
+      vaultTransfers,
     });
     return;
   }
   closeRemoteTab(tabId, tab.sessionId);
 }
 
+/** Closes a server tab and its server's session, whose unlocked vaults close with it. */
 export function closeRemoteTab(tabId: string, sessionId: string): void {
   useLayoutStore.getState().closeTab(tabId);
-  void useSessionStore.getState().disconnect(sessionId);
+  void useSessionStore.getState().disconnect(serverOf(sessionId));
 }
 
 function handoffFor(tab: PaneTab): TabHandoff {
-  const sessions: TabHandoff["sessions"] = {};
+  const handoff: TabHandoff = { layout: group([tab]), sessions: {}, families: {} };
   if (tab.kind === "remote" && !isRestoring(tab)) {
-    sessions[tab.sessionId] = withoutSecrets(
-      useSessionStore.getState().sessions[tab.sessionId]?.profile ?? null,
-    );
+    const family = familyOf(tab.sessionId);
+    const { sessions } = useSessionStore.getState();
+    for (const sessionId of family) {
+      handoff.sessions[sessionId] = withoutSecrets(sessions[sessionId]?.profile ?? null);
+    }
+    handoff.families = { [tab.sessionId]: family };
   }
-  return { layout: group([tab]), sessions };
+  return handoff;
 }
 
 /** Hands a tab to this window's caller-chosen destination and forgets it here. */
 function detach(tab: PaneTab): void {
   useLayoutStore.getState().closeTab(tab.id);
   if (tab.kind === "remote" && !isRestoring(tab)) {
-    useSessionStore.getState().release(tab.sessionId);
+    useSessionStore.getState().release(serverOf(tab.sessionId));
   }
 }
 
@@ -300,6 +325,7 @@ export async function adoptHandoff(handoff: unknown): Promise<PaneTab[]> {
   const layout = parseLayout(value?.layout);
   if (!layout) return [];
   const sessions = value?.sessions ?? {};
+  const families = value?.families ?? {};
   const adopted: PaneTab[] = [];
   for (const tab of allTabs(layout)) {
     // A tab still waiting for its server connects again in the window it lands in.
@@ -307,12 +333,26 @@ export async function adoptHandoff(handoff: unknown): Promise<PaneTab[]> {
       adopted.push(tab);
       continue;
     }
+    // The server before its unlocked vaults, which need it in this window to show anything.
+    const [serverId, ...vaultIds] = families[tab.sessionId] ?? [tab.sessionId];
+    const adopt = (sessionId: string) =>
+      useSessionStore.getState().adopt(sessionId, sessions[sessionId] ?? null);
     try {
-      await useSessionStore.getState().adopt(tab.sessionId, sessions[tab.sessionId] ?? null);
-      adopted.push(tab);
+      await adopt(serverId);
     } catch {
       adopted.push({ id: tab.id, kind: "welcome" });
+      continue;
     }
+    const lockedSince: string[] = [];
+    for (const vaultId of vaultIds) {
+      await adopt(vaultId).catch(() => lockedSince.push(vaultId));
+    }
+    // A vault locked on the way over leaves its tab on the server.
+    adopted.push(
+      lockedSince.includes(tab.sessionId)
+        ? { id: tab.id, kind: "remote", sessionId: serverId }
+        : tab,
+    );
   }
   return adopted;
 }

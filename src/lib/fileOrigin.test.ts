@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  isInsideVault,
   sameFilesystem,
   toLocation,
   worksInPlace,
@@ -47,6 +48,26 @@ describe("sameFilesystem", () => {
         { kind: "remote", sessionId: "b", server: { ...server, protocol: "ftps" } },
       ),
     ).toBe(false);
+  });
+
+  it("tells a vault from its server and from another vault there", () => {
+    const vault: ServerIdentity = { ...server, protocol: "cryptomator", vaultRoot: "/srv/private" };
+    const inVault: FileOrigin = { kind: "remote", sessionId: "v", server: vault };
+    expect(sameFilesystem(inVault, { kind: "remote", sessionId: "a", server })).toBe(false);
+    expect(
+      sameFilesystem(inVault, {
+        kind: "remote",
+        sessionId: "w",
+        server: { ...vault, vaultRoot: "/srv/ledger" },
+      }),
+    ).toBe(false);
+    expect(sameFilesystem(inVault, { kind: "remote", sessionId: "w", server: { ...vault } })).toBe(
+      true,
+    );
+    expect(isInsideVault(inVault)).toBe(true);
+    expect(isInsideVault({ kind: "remote", sessionId: "a", server })).toBe(false);
+    expect(isInsideVault({ kind: "local" })).toBe(false);
+    expect(worksInPlace(inVault)).toBe(false);
   });
 
   it("works in place on this computer and over SFTP only", () => {

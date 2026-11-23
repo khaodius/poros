@@ -1,2 +1,4 @@
 /target/
 /gen/
+/tests/cryptomator-harness/target/
+/tests/cryptomator-harness/target-latest/

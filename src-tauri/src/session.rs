@@ -10,10 +10,11 @@ use tokio::sync::RwLock;
 
 use crate::cloud;
 use crate::connections::SecretScope;
+use crate::cryptomator::VaultFs;
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::events::{Events, LogLevel};
 use crate::ftp::FtpFs;
-use crate::protocol::{Protocol, RemoteFileSystem};
+use crate::protocol::{self, Protocol, RemoteFileSystem};
 use crate::sftp::RemoteFs;
 use crate::ssh::known_hosts::KnownHosts;
 use crate::ssh::{self, ConnectProfile, HostKeyApproval, SshHandle};
@@ -29,7 +30,8 @@ pub type GrantSink = Arc<dyn Fn(&str, &str) + Send + Sync>;
 
 pub struct Session {
     pub id: String,
-    /// Kept (with credentials) so transfer workers can open more connections.
+    /// Kept (with credentials) so transfer workers can open more connections. An unlocked
+    /// vault's is that of the server it is on.
     pub profile: ConnectProfile,
     /// The SSH host key or FTPS certificate the server proved it holds; extra connections pin
     /// it.
@@ -47,6 +49,13 @@ enum Link {
         fs: Arc<RemoteFs>,
     },
     Direct(Arc<dyn RemoteFileSystem>),
+    /// An unlocked vault, reached over the connection of the session of the server it is on.
+    /// The session shows the vault's decrypted files and nothing else of that server, so
+    /// nothing that takes a session can write past the vault's encryption.
+    Vault {
+        files: Arc<VaultFs>,
+        server_session: String,
+    },
 }
 
 impl Session {
@@ -55,18 +64,38 @@ impl Session {
         match &self.link {
             Link::Ssh { fs, .. } => fs.clone(),
             Link::Direct(files) => files.clone(),
+            Link::Vault { files, .. } => files.clone(),
         }
     }
 
     pub fn protocol(&self) -> Protocol {
-        self.profile.protocol
+        match &self.link {
+            Link::Vault { .. } => Protocol::Cryptomator,
+            _ => self.profile.protocol,
+        }
+    }
+
+    /// The unlocked vault this session shows, if it is a vault's.
+    pub fn vault(&self) -> Option<&Arc<VaultFs>> {
+        match &self.link {
+            Link::Vault { files, .. } => Some(files),
+            _ => None,
+        }
+    }
+
+    /// The session of the server a vault is on, for a vault's session.
+    pub fn server_session(&self) -> Option<&str> {
+        match &self.link {
+            Link::Vault { server_session, .. } => Some(server_session),
+            _ => None,
+        }
     }
 
     /// The SFTP channel of an SSH session, for what only SFTP can do.
     pub fn sftp(&self) -> AppResult<&Arc<RemoteFs>> {
         match &self.link {
             Link::Ssh { fs, .. } => Ok(fs),
-            Link::Direct(_) => Err(self.needs_ssh()),
+            Link::Direct(_) | Link::Vault { .. } => Err(self.needs_ssh()),
         }
     }
 
@@ -75,7 +104,7 @@ impl Session {
     pub async fn open_channel(&self) -> AppResult<RemoteFs> {
         match &self.link {
             Link::Ssh { handle, .. } => open_sftp(handle).await,
-            Link::Direct(_) => Err(self.needs_ssh()),
+            Link::Direct(_) | Link::Vault { .. } => Err(self.needs_ssh()),
         }
     }
 
@@ -83,7 +112,7 @@ impl Session {
     pub async fn open_command_channel(&self) -> AppResult<Channel<Msg>> {
         match &self.link {
             Link::Ssh { handle, .. } => Ok(handle.channel_open_session().await?),
-            Link::Direct(_) => Err(self.needs_ssh()),
+            Link::Direct(_) | Link::Vault { .. } => Err(self.needs_ssh()),
         }
     }
 
@@ -100,6 +129,8 @@ impl Session {
             Link::Ssh { handle, .. } => handle.is_closed(),
             // FTP connections reopen by themselves, and HTTP services have no connection to lose.
             Link::Direct(_) => false,
+            // A vault has no connection of its own: it is lost and back with its server's.
+            Link::Vault { .. } => false,
         }
     }
 
@@ -110,6 +141,7 @@ impl Session {
                 ssh::disconnect(handle).await;
             }
             Link::Direct(files) => files.close().await,
+            Link::Vault { files, .. } => files.lock(),
         }
     }
 
@@ -117,6 +149,7 @@ impl Session {
         RemoteTarget {
             session_id: self.id.clone(),
             label: self.info.label.clone(),
+            protocol: self.protocol(),
             profile: self.profile.clone(),
             host_key_fingerprint: self.host_key_fingerprint.clone(),
         }
@@ -129,18 +162,28 @@ impl Session {
 pub struct RemoteTarget {
     pub session_id: String,
     pub label: String,
+    /// The session's protocol, which for an unlocked vault is not its server's.
+    protocol: Protocol,
     profile: ConnectProfile,
     host_key_fingerprint: String,
 }
 
 impl RemoteTarget {
     pub fn protocol(&self) -> Protocol {
-        self.profile.protocol
+        self.protocol
     }
 
     /// A connection of its own that accepts the same host key the session did, logging nothing
     /// but failures. `purpose` tells its log lines and close events apart from the session's.
     pub async fn connect(&self, known_hosts: &KnownHosts, purpose: &str) -> AppResult<SshHandle> {
+        // A connection to a vault's server would reach around the vault's encryption.
+        if self.protocol != Protocol::Sftp {
+            return Err(AppError::unsupported(format!(
+                "This needs an SFTP connection; {} uses {}",
+                self.label,
+                self.protocol.display_name()
+            )));
+        }
         let approval = (!self.host_key_fingerprint.is_empty()).then(|| HostKeyApproval {
             fingerprint: self.host_key_fingerprint.clone(),
             remember: false,
@@ -171,6 +214,22 @@ pub struct SessionInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub saved_connection_id: Option<String>,
     pub protocol: Protocol,
+    /// Set for the session of an unlocked vault, whose host, port and username are its
+    /// server's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vault: Option<VaultInfo>,
+}
+
+/// An unlocked Cryptomator vault, as its session describes it. Mirrored in `src/lib/types.ts`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultInfo {
+    /// The session of the server the vault's files are on.
+    pub parent_session_id: String,
+    /// The vault's folder on that server. The decrypted files have this path and those below.
+    pub root: String,
+    /// That folder's name.
+    pub name: String,
 }
 
 pub struct SessionManager {
@@ -266,6 +325,11 @@ impl SessionManager {
             None => self.lost.read().await.get(id).cloned(),
         }
         .ok_or_else(AppError::session_not_found)?;
+        if previous.vault().is_some() {
+            return Err(AppError::invalid(
+                "A vault comes back with its server: reconnect the server",
+            ));
+        }
         let approval = approval.or_else(|| {
             (!previous.host_key_fingerprint.is_empty()).then(|| HostKeyApproval {
                 fingerprint: previous.host_key_fingerprint.clone(),
@@ -275,9 +339,123 @@ impl SessionManager {
         let info = self
             .connect(previous.profile.clone(), approval, owner)
             .await?;
+        self.move_vaults(id, &info.id).await;
         if self.lost.write().await.remove(id).is_some() {
             previous.close().await;
         }
+        Ok(info)
+    }
+
+    /// Hands the vaults unlocked on one session of a server to another session of the same
+    /// server, keys and all, so they stay open over a reconnect. Their own sessions keep their
+    /// ids.
+    async fn move_vaults(&self, from: &str, to: &str) {
+        let mut sessions = self.sessions.write().await;
+        let Some(server) = sessions.get(to).cloned() else {
+            return;
+        };
+        let moving: Vec<Arc<Session>> = sessions
+            .values()
+            .filter(|session| session.server_session() == Some(from))
+            .cloned()
+            .collect();
+        for vault_session in moving {
+            let Some(files) = vault_session.vault().cloned() else {
+                continue;
+            };
+            files.reattach(server.files());
+            let owner = vault_session.owner.lock().unwrap().clone();
+            let mut moved = vault_session_of(&vault_session.id, &server, files, &owner);
+            moved.opened_at = vault_session.opened_at;
+            sessions.insert(vault_session.id.clone(), Arc::new(moved));
+        }
+    }
+
+    /// The session of a server on which a vault can be opened: not itself a vault's.
+    async fn server_for_vault(&self, session_id: &str) -> AppResult<Arc<Session>> {
+        let server = self.get(session_id).await?;
+        if server.vault().is_some() {
+            return Err(AppError::invalid(
+                "A vault cannot be opened inside another vault",
+            ));
+        }
+        Ok(server)
+    }
+
+    /// Opens the vault in the folder `path` on a session's server with its password. The vault
+    /// gets a session of its own, which a vault that is open already answers with.
+    pub async fn unlock_vault(
+        &self,
+        session_id: &str,
+        path: &str,
+        password: String,
+        owner: &str,
+    ) -> AppResult<SessionInfo> {
+        let server = self.server_for_vault(session_id).await?;
+        let files = server.files();
+        let root = protocol::normalize(&files.resolve(path));
+        if let Some(open) = self.open_vault(&server.id, &root).await {
+            return Ok(open.info.clone());
+        }
+        let vault = VaultFs::unlock(files, &root, password).await?;
+        self.add_vault(&server, vault, owner).await
+    }
+
+    /// Makes the new folder `name` in `parent` on a session's server a vault that `password`
+    /// opens, and opens it in a session of its own.
+    pub async fn create_vault(
+        &self,
+        session_id: &str,
+        parent: &str,
+        name: &str,
+        password: String,
+        owner: &str,
+    ) -> AppResult<SessionInfo> {
+        let server = self.server_for_vault(session_id).await?;
+        let vault = VaultFs::create(server.files(), parent, name, password).await?;
+        self.add_vault(&server, vault, owner).await
+    }
+
+    /// The session of the vault in `root` that is unlocked on a server's session, if one is.
+    async fn open_vault(&self, server_session: &str, root: &str) -> Option<Arc<Session>> {
+        self.sessions
+            .read()
+            .await
+            .values()
+            .find(|session| {
+                session.server_session() == Some(server_session)
+                    && session.vault().is_some_and(|vault| vault.root() == root)
+            })
+            .cloned()
+    }
+
+    async fn add_vault(
+        &self,
+        server: &Session,
+        vault: Arc<VaultFs>,
+        owner: &str,
+    ) -> AppResult<SessionInfo> {
+        let mut sessions = self.sessions.write().await;
+        // Deriving the vault's key takes a moment, in which the same vault may have been
+        // unlocked by another request or its server closed.
+        let unlocked_meanwhile = sessions.values().find(|session| {
+            session.server_session() == Some(server.id.as_str())
+                && session
+                    .vault()
+                    .is_some_and(|open| open.root() == vault.root())
+        });
+        if let Some(open) = unlocked_meanwhile {
+            vault.lock();
+            return Ok(open.info.clone());
+        }
+        if !sessions.contains_key(&server.id) {
+            vault.lock();
+            return Err(AppError::session_not_found());
+        }
+        let id = uuid::Uuid::new_v4().to_string();
+        let session = vault_session_of(&id, server, vault, owner);
+        let info = session.info.clone();
+        sessions.insert(id, Arc::new(session));
         Ok(info)
     }
 
@@ -289,6 +467,7 @@ impl SessionManager {
         owner: &str,
     ) -> AppResult<SessionInfo> {
         let (link, host_key_fingerprint) = match profile.protocol {
+            Protocol::Cryptomator => return Err(crate::cryptomator::not_a_connection()),
             Protocol::Sftp => {
                 let ssh::Connection {
                     handle,
@@ -329,6 +508,7 @@ impl SessionManager {
         let files = match &link {
             Link::Ssh { fs, .. } => fs.clone() as Arc<dyn RemoteFileSystem>,
             Link::Direct(files) => files.clone(),
+            Link::Vault { files, .. } => files.clone(),
         };
 
         let initial_path = match profile.initial_path.as_deref().map(str::trim) {
@@ -361,6 +541,7 @@ impl SessionManager {
             initial_path,
             saved_connection_id: profile.saved_connection_id.clone(),
             protocol: profile.protocol,
+            vault: None,
         };
         let session = Arc::new(Session {
             id: id.to_string(),
@@ -376,16 +557,27 @@ impl SessionManager {
     }
 
     pub async fn get(&self, id: &str) -> AppResult<Arc<Session>> {
-        let session = self
-            .sessions
-            .read()
-            .await
-            .get(id)
-            .cloned()
-            .ok_or_else(AppError::session_not_found)?;
-        if session.is_closed() {
-            if let Some(session) = self.sessions.write().await.remove(id) {
-                self.lost.write().await.insert(id.to_string(), session);
+        let (session, connection) = {
+            let sessions = self.sessions.read().await;
+            let session = sessions
+                .get(id)
+                .cloned()
+                .ok_or_else(AppError::session_not_found)?;
+            // A vault's connection is that of its server's session.
+            let connection = match session.server_session() {
+                Some(server_session) => sessions.get(server_session).cloned(),
+                None => Some(session.clone()),
+            };
+            (session, connection)
+        };
+        if connection
+            .as_ref()
+            .is_none_or(|carrier| carrier.is_closed())
+        {
+            if let Some(carrier) = connection {
+                if let Some(lost) = self.sessions.write().await.remove(&carrier.id) {
+                    self.lost.write().await.insert(carrier.id.clone(), lost);
+                }
             }
             return Err(AppError::new(
                 ErrorKind::Disconnected,
@@ -395,17 +587,23 @@ impl SessionManager {
         Ok(session)
     }
 
-    /// Whether the session is open and its connection still up.
+    /// Whether the session is open and its connection, or for a vault its server's, still up.
     pub async fn is_live(&self, id: &str) -> bool {
-        self.sessions
-            .read()
-            .await
-            .get(id)
-            .is_some_and(|session| !session.is_closed())
+        let sessions = self.sessions.read().await;
+        let Some(session) = sessions.get(id) else {
+            return false;
+        };
+        match session.server_session() {
+            Some(server_session) => sessions
+                .get(server_session)
+                .is_some_and(|server| !server.is_closed()),
+            None => !session.is_closed(),
+        }
     }
 
     /// An open session to the same account on the same server over the same protocol, if there
-    /// is one, opened after `opened_after` when given.
+    /// is one, opened after `opened_after` when given. Never a vault's session, which shows
+    /// other files than its server does.
     pub async fn find_live(
         &self,
         like: &ConnectProfile,
@@ -416,30 +614,69 @@ impl SessionManager {
             .await
             .values()
             .find(|session| {
-                let profile = &session.profile;
-                profile.protocol == like.protocol
-                    && profile.host == like.host
-                    && profile.port == like.port
-                    && profile.username == like.username
+                session.vault().is_none()
+                    && same_account(&session.profile, like)
                     && opened_after.is_none_or(|since| session.opened_at > since)
                     && !session.is_closed()
             })
             .cloned()
     }
 
-    /// The session's details, for a window taking over a tab; the window becomes its owner.
+    /// The session of the vault in the folder `root` on the server `like` connects to, if the
+    /// vault is unlocked. A vault that was locked comes back in a new session.
+    pub async fn find_vault(&self, like: &ConnectProfile, root: &str) -> Option<Arc<Session>> {
+        self.sessions
+            .read()
+            .await
+            .values()
+            .find(|session| {
+                same_account(&session.profile, like)
+                    && session
+                        .vault()
+                        .is_some_and(|vault| vault.root() == root && !vault.is_locked())
+            })
+            .cloned()
+    }
+
+    /// The session's details, for a window taking over a tab; the window becomes its owner,
+    /// and the owner of the vaults unlocked on it.
     pub async fn adopt(&self, id: &str, owner: &str) -> AppResult<SessionInfo> {
         let session = self.get(id).await?;
         *session.owner.lock().unwrap() = owner.to_string();
+        for vault_session in self.sessions.read().await.values() {
+            if vault_session.server_session() == Some(id) {
+                *vault_session.owner.lock().unwrap() = owner.to_string();
+            }
+        }
         Ok(session.info.clone())
     }
 
+    /// Closes a session. The vaults unlocked on a server are locked with it, and a vault's own
+    /// session closes by locking the vault.
     pub async fn disconnect(&self, id: &str) -> AppResult<()> {
-        let session = self.sessions.write().await.remove(id);
+        let (session, vault_sessions) = {
+            let mut sessions = self.sessions.write().await;
+            let session = sessions.remove(id);
+            let on_it: Vec<String> = sessions
+                .values()
+                .filter(|vault_session| vault_session.server_session() == Some(id))
+                .map(|vault_session| vault_session.id.clone())
+                .collect();
+            let vault_sessions: Vec<Arc<Session>> = on_it
+                .iter()
+                .filter_map(|vault_id| sessions.remove(vault_id))
+                .collect();
+            (session, vault_sessions)
+        };
         self.lost.write().await.remove(id);
+        for vault_session in vault_sessions {
+            vault_session.close().await;
+        }
         if let Some(session) = session {
             session.close().await;
-            self.events.log(LogLevel::Info, Some(id), "Disconnected");
+            if session.vault().is_none() {
+                self.events.log(LogLevel::Info, Some(id), "Disconnected");
+            }
         }
         Ok(())
     }
@@ -464,6 +701,46 @@ impl SessionManager {
         for id in ids {
             let _ = self.disconnect(&id).await;
         }
+    }
+}
+
+/// Whether two profiles sign in to the same account on the same server over the same protocol.
+fn same_account(profile: &ConnectProfile, like: &ConnectProfile) -> bool {
+    profile.protocol == like.protocol
+        && profile.host == like.host
+        && profile.port == like.port
+        && profile.username == like.username
+}
+
+/// The session of an unlocked vault on `server`.
+fn vault_session_of(id: &str, server: &Session, files: Arc<VaultFs>, owner: &str) -> Session {
+    let info = SessionInfo {
+        id: id.to_string(),
+        label: format!("{} on {}", files.name(), server.info.label),
+        host: server.info.host.clone(),
+        port: server.info.port,
+        username: server.info.username.clone(),
+        home: files.root().to_string(),
+        initial_path: files.root().to_string(),
+        saved_connection_id: None,
+        protocol: Protocol::Cryptomator,
+        vault: Some(VaultInfo {
+            parent_session_id: server.id.clone(),
+            root: files.root().to_string(),
+            name: files.name().to_string(),
+        }),
+    };
+    Session {
+        id: id.to_string(),
+        profile: server.profile.clone(),
+        host_key_fingerprint: server.host_key_fingerprint.clone(),
+        owner: Mutex::new(owner.to_string()),
+        info,
+        link: Link::Vault {
+            files,
+            server_session: server.id.clone(),
+        },
+        opened_at: Instant::now(),
     }
 }
 

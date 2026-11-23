@@ -1,18 +1,27 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, LockKeyhole } from "lucide-react";
 import type { PathStyle } from "../lib/fileSource";
-import { breadcrumbs } from "../lib/path";
+import { breadcrumbs, samePath } from "../lib/path";
 
 interface PathBarProps {
   path: string | null;
   pathStyle: PathStyle;
+  /** The folder of the unlocked vault the path is in, whose crumb is marked. */
+  vaultRoot?: string;
   editRequest: number;
   onNavigate: (path: string) => Promise<boolean>;
   /** After Enter or Escape ends an edit. */
   onDone: () => void;
 }
 
-export function PathBar({ path, pathStyle, editRequest, onNavigate, onDone }: PathBarProps) {
+export function PathBar({
+  path,
+  pathStyle,
+  vaultRoot,
+  editRequest,
+  onNavigate,
+  onDone,
+}: PathBarProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [handledEditRequest, setHandledEditRequest] = useState(editRequest);
@@ -87,21 +96,26 @@ export function PathBar({ path, pathStyle, editRequest, onNavigate, onDone }: Pa
       title="Click to type or copy the path (Ctrl+L)"
     >
       <div ref={crumbsRef} className={`crumbs ${clipped ? "is-clipped" : ""}`}>
-        {crumbs.map((crumb, index) => (
-          <span key={crumb.path} className="crumb-group">
-            {index > 0 && <ChevronRight size={12} className="crumb-separator" />}
-            <button
-              type="button"
-              className="crumb"
-              onClick={(event) => {
-                event.stopPropagation();
-                void onNavigate(crumb.path);
-              }}
-            >
-              {crumb.label}
-            </button>
-          </span>
-        ))}
+        {crumbs.map((crumb, index) => {
+          const opensVault = vaultRoot !== undefined && samePath(crumb.path, vaultRoot, pathStyle);
+          return (
+            <span key={crumb.path} className="crumb-group">
+              {index > 0 && <ChevronRight size={12} className="crumb-separator" />}
+              <button
+                type="button"
+                className={`crumb ${opensVault ? "crumb-vault" : ""}`}
+                title={opensVault ? "Unlocked vault" : undefined}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void onNavigate(crumb.path);
+                }}
+              >
+                {opensVault && <LockKeyhole size={11} />}
+                <span>{crumb.label}</span>
+              </button>
+            </span>
+          );
+        })}
       </div>
     </div>
   );

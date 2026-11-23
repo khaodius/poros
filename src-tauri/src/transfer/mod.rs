@@ -36,6 +36,7 @@ pub use queue::{
 pub(crate) use worker::is_partial_name;
 pub(crate) use worker::{ensure_remote_folders, keep_local_backup, keep_remote_backup};
 
+use crate::cryptomator::VaultFs;
 use crate::error::{AppError, AppResult};
 use crate::events::{Events, LogLevel};
 use crate::format::{format_duration, format_size};
@@ -176,6 +177,10 @@ pub(crate) struct Login {
     /// That session's files for protocols other than SFTP. Cloud workers share them, and FTP
     /// workers fall back to them when the server refuses more connections.
     pub browsing_files: Option<Arc<dyn RemoteFileSystem>>,
+    /// The unlocked vault the session shows, for a vault's session. Its profile is that of the
+    /// server the vault is on, and every connection a worker opens with it is put inside the
+    /// vault before anything is read or written.
+    pub vault: Option<Arc<VaultFs>>,
 }
 
 impl Login {
@@ -185,6 +190,14 @@ impl Login {
             host_key_fingerprint: session.host_key_fingerprint.clone(),
             browsing_session: session.id.clone(),
             browsing_files: (session.protocol() != Protocol::Sftp).then(|| session.files()),
+            vault: session.vault().cloned(),
+        }
+    }
+
+    fn label(&self) -> String {
+        match &self.vault {
+            Some(vault) => format!("{} on {}", vault.name(), self.profile.label()),
+            None => self.profile.label(),
         }
     }
 }
@@ -193,7 +206,7 @@ impl SessionTarget {
     fn new(session_id: String, login: Login, restored: bool) -> Self {
         Self {
             session_id,
-            label: login.profile.label(),
+            label: login.label(),
             login: Mutex::new(login),
             channels_only: AtomicBool::new(false),
             rsync: tokio::sync::Mutex::new(None),
@@ -214,8 +227,14 @@ impl SessionTarget {
         self.login.lock().unwrap().clone()
     }
 
+    /// The protocol of the server, which for a vault is the server the vault is on.
     pub fn protocol(&self) -> Protocol {
         self.login.lock().unwrap().profile.protocol
+    }
+
+    /// Whether the session shows an unlocked vault instead of its server's own files.
+    pub fn is_vault(&self) -> bool {
+        self.login.lock().unwrap().vault.is_some()
     }
 
     pub fn browsing_files(&self) -> AppResult<Arc<dyn RemoteFileSystem>> {
@@ -254,9 +273,21 @@ impl SessionTarget {
 
     /// Takes over a session the user has open to the same server when the browsing session
     /// is gone, for its connection, or this target was restored, for its password, sign-in and
-    /// host key.
+    /// host key. A vault that was locked takes over the session it was unlocked in again.
     pub async fn adopt_live_session(&self, sessions: &SessionManager) {
         let login = self.login();
+        // A vault is reached through its own session only, which outlives a reconnect of its
+        // server. Another session of that server shows the encrypted files, not the vault's.
+        if let Some(vault) = &login.vault {
+            if vault.is_locked() {
+                // Unlocked again since, the vault takes these transfers up in its new session.
+                let unlocked = sessions.find_vault(&login.profile, vault.root()).await;
+                if let Some(unlocked) = unlocked {
+                    *self.login.lock().unwrap() = Login::of(&unlocked);
+                }
+            }
+            return;
+        }
         let restored = self.is_restored();
         if !restored && sessions.is_live(&login.browsing_session).await {
             return;
@@ -1125,6 +1156,7 @@ mod tests {
             host_key_fingerprint: String::new(),
             browsing_session: "restored".into(),
             browsing_files: None,
+            vault: None,
         }
     }
 

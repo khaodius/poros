@@ -155,6 +155,19 @@ export const remote = {
   remove: (sessionId: string, paths: string[]) => call<void>("remote_delete", { sessionId, paths }),
 };
 
+/** Cryptomator vaults kept in a folder of a session's server. */
+export const vaults = {
+  /**
+   * Opens the vault in the folder `path`. The vault gets a session of its own, which a vault that
+   * is open already answers with.
+   */
+  unlock: (sessionId: string, path: string, password: string) =>
+    call<SessionInfo>("vault_unlock", { sessionId, path, password }),
+  /** Makes the new folder `name` in `parent` a vault, and opens it. */
+  create: (sessionId: string, parent: string, name: string, password: string) =>
+    call<SessionInfo>("vault_create", { sessionId, parent, name, password }),
+};
+
 export const fileOperations = {
   /** The names among `names` already taken in `directory`. */
   conflicts: (location: FileLocation, names: string[], directory: string) =>

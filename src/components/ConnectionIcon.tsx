@@ -1,6 +1,5 @@
-import { Cloud, Server } from "lucide-react";
-import { isCloud } from "../lib/protocols";
 import type { Protocol } from "../lib/types";
+import { CONNECTION_ICONS, connectionKind } from "./tabIcons";
 
 export function ConnectionIcon({
   protocol,
@@ -11,6 +10,6 @@ export function ConnectionIcon({
   size: number;
   className?: string;
 }) {
-  const Icon = isCloud(protocol) ? Cloud : Server;
+  const Icon = CONNECTION_ICONS[connectionKind(protocol)];
   return <Icon size={size} className={className} />;
 }

@@ -79,6 +79,9 @@ jobs:
           cat src-tauri/tests/fixtures/keys/*.pub | sudo -u poros tee /home/poros/.ssh/authorized_keys > /dev/null
           sudo chmod 700 /home/poros/.ssh
           sudo chmod 600 /home/poros/.ssh/authorized_keys
+          # The vault tests have Cryptomator read, where the server keeps them, the vaults
+          # they upload.
+          sudo chmod 755 /home/poros
           sshd_dir="$RUNNER_TEMP/sshd"
           mkdir -p "$sshd_dir"
           sudo ssh-keygen -q -t ed25519 -N '' -f "$sshd_dir/host_ed25519"
@@ -212,6 +215,21 @@ jobs:
             echo "POROS_TEST_WEBDAVS_PORT=8443"
             echo "POROS_TEST_S3_PORT=9000"
           } >> "$GITHUB_ENV"
+
+      # Cryptomator's own libraries, which the vault tests read and change vaults with.
+      - uses: actions/setup-java@v5
+        if: runner.os == 'Linux'
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+          cache-dependency-path: src-tauri/tests/cryptomator-harness/pom.xml
+
+      - name: Build the Cryptomator harness for the vault tests
+        if: runner.os == 'Linux'
+        run: |
+          mvn -B -q -f src-tauri/tests/cryptomator-harness/pom.xml clean package
+          echo "POROS_TEST_CRYPTOMATOR_JAR=$GITHUB_WORKSPACE/src-tauri/tests/cryptomator-harness/target/harness.jar" >> "$GITHUB_ENV"
 
       - name: Test
         run: cargo test --manifest-path ${{ env.MANIFEST }} --locked

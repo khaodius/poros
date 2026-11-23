@@ -3,11 +3,9 @@ import { HardDrive, RotateCw, Unplug } from "lucide-react";
 import { localSource, remoteSource, startingAt } from "../lib/fileSource";
 import { isRestoring, type PaneTab } from "../lib/layout";
 import { attemptUnderWay, useAutoReconnect } from "../hooks/useAutoReconnect";
-import type { SessionInfo } from "../lib/types";
 import { reconnectWithPrompts } from "../state/connectFlow";
 import { useLayoutStore } from "../state/layoutStore";
-import { getPane } from "../state/paneRegistry";
-import { useSessionStore } from "../state/sessionStore";
+import { serverEntry, useSessionStore } from "../state/sessionStore";
 import { ConnectionIcon } from "./ConnectionIcon";
 import { FilePane } from "./FilePane";
 import { RestoringPane } from "./RestoringPane";
@@ -61,10 +59,12 @@ function RemoteTab({ tab, visible, active }: TabContentProps) {
   const sessionId = tab.kind === "remote" ? tab.sessionId : "";
   const path = tab.kind === "remote" ? tab.path : undefined;
   const entry = useSessionStore((state) => state.sessions[sessionId]);
+  // An unlocked vault is reached over its server's connection: lost and back with it.
+  const server = useSessionStore((state) => serverEntry(state.sessions, sessionId));
   const base = entry ? remoteSource(entry.info) : null;
   const source = useMemo(() => base && startingAt(base, path), [base, path]);
 
-  if (!entry || !source) return <ClosedSession tabId={tab.id} />;
+  if (!entry || !server || !source) return <ClosedSession tabId={tab.id} />;
   return (
     <FilePane
       tabId={tab.id}
@@ -75,8 +75,8 @@ function RemoteTab({ tab, visible, active }: TabContentProps) {
       visible={visible}
       active={active}
       overlay={
-        entry.status === "lost" && (
-          <LostSession tabId={tab.id} sessionId={sessionId} reason={entry.lostReason} />
+        server.status === "lost" && (
+          <LostSession sessionId={server.info.id} reason={server.lostReason} />
         )
       }
     />
@@ -98,23 +98,15 @@ function ClosedSession({ tabId }: { tabId: string }) {
   );
 }
 
-function LostSession({
-  tabId,
-  sessionId,
-  reason,
-}: {
-  tabId: string;
-  sessionId: string;
-  reason?: string;
-}) {
+/**
+ * Covers a pane whose server is out of reach, and reconnects to that server. The session store
+ * then shows the new session in the tabs that showed the lost one, and reloads the panes in its
+ * unlocked vaults, so the overlay only has to leave.
+ */
+function LostSession({ sessionId, reason }: { sessionId: string; reason?: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const replaceTab = useLayoutStore((state) => state.replaceTab);
-  const showSession = (session: SessionInfo) => {
-    const path = getPane(tabId)?.path() ?? undefined;
-    replaceTab(tabId, { id: tabId, kind: "remote", sessionId: session.id, path });
-  };
-  const automatic = useAutoReconnect(sessionId, showSession);
+  const automatic = useAutoReconnect(sessionId);
 
   const reconnect = async () => {
     automatic.stop();
@@ -123,11 +115,7 @@ function LostSession({
     const underWay = await attemptUnderWay(sessionId)?.catch(() => null);
     const result = underWay ? { session: underWay } : await reconnectWithPrompts(sessionId);
     setBusy(false);
-    if ("error" in result) {
-      setError(result.error.message);
-      return;
-    }
-    showSession(result.session);
+    if ("error" in result) setError(result.error.message);
   };
 
   const shownError = error ?? automatic.lastError;

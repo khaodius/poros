@@ -1670,6 +1670,178 @@ form.path-bar {
   margin-bottom: auto;
 }
 
+/* Vaults */
+
+.toolbar-action {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 8px;
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+  font-weight: 500;
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-small);
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.toolbar-action:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.toolbar-action:active {
+  background: var(--surface-pressed);
+}
+
+/* Beside the path of a pane inside an unlocked vault. */
+.vault-chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 8px;
+  color: var(--success);
+  font-size: var(--font-size-small);
+  font-weight: 500;
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--success) 32%, transparent);
+  border-radius: var(--radius-small);
+}
+
+.crumb-group .crumb.crumb-vault {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--success);
+}
+
+.crumb-vault > svg {
+  flex: none;
+}
+
+.crumb-vault > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A line above the file list about the folder on show. */
+.pane-notice {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+  background: var(--accent-softer);
+  border-bottom: 1px solid var(--border);
+}
+
+.pane-notice > svg {
+  flex: none;
+  color: var(--accent);
+}
+
+.pane-notice > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.pane-notice .link-button {
+  flex: none;
+}
+
+/* Where the file list would be, while the folder is a locked vault. Centered while it fits,
+   scrolled from the top in a pane too short for it. */
+.vault-locked {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  padding: 24px;
+  overflow-y: auto;
+}
+
+.vault-card {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  max-width: 360px;
+  margin: auto;
+  padding: 24px;
+  text-align: center;
+  background: var(--surface-base);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-large);
+}
+
+.vault-card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 50%;
+}
+
+.vault-card-detail {
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.vault-card-detail strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.vault-card-unlock {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+  margin-top: 6px;
+}
+
+.vault-card-unlock input {
+  flex: 1;
+}
+
+.vault-card .form-error {
+  width: 100%;
+  text-align: left;
+}
+
+.vault-card .vault-card-quiet {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+}
+
+.vault-card .vault-card-quiet:hover {
+  color: var(--text);
+}
+
+.field-hint.is-error {
+  color: var(--danger);
+}
+
+.vault-warning {
+  color: var(--warning);
+  font-size: var(--font-size-small);
+}
+
 /* File list */
 
 .file-list {

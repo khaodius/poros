@@ -23,6 +23,7 @@ import {
   type PaneTab,
   type SavedServer,
 } from "./layout";
+import type { VaultInfo } from "./types";
 
 const remote = (id: string): PaneTab => ({ id, kind: "remote", sessionId: `session-${id}` });
 
@@ -39,14 +40,19 @@ const server = (label: string): SavedServer => ({
   },
 });
 
-/** A window whose panes show `folders` and whose sessions are connected to `servers`. */
+/**
+ * A window whose panes show `folders`, and whose sessions are connected to `servers` or have
+ * unlocked `vaults`.
+ */
 function current(
   folders: Record<string, string> = {},
   servers: Record<string, SavedServer> = {},
+  vaults: Record<string, VaultInfo> = {},
 ): CurrentState {
   return {
     folderOf: (tabId) => folders[tabId] ?? null,
     serverOf: (sessionId) => servers[sessionId] ?? null,
+    vaultOf: (sessionId) => vaults[sessionId] ?? null,
   };
 }
 
@@ -256,6 +262,39 @@ describe("layout", () => {
     expect(parseLayout({ type: "group", id: "g", tabs: [serverless] })).toBeNull();
     const badServer = { ...serverless, restore: { server: { label: "srv" } } };
     expect(parseLayout({ type: "group", id: "g", tabs: [badServer] })).toBeNull();
+  });
+
+  it("reopens a tab showing a vault on the vault's folder on its server", () => {
+    const vault: VaultInfo = { parentSessionId: "s", root: "/srv/private", name: "private" };
+    const inVault: PaneTab = { id: "v", kind: "remote", sessionId: "vault-1" };
+    const decrypted: PaneTab = {
+      ...editorTab(
+        { id: "doc-3", name: "plan.md", path: "/srv/private/plan.md", origin: "private" },
+        "vault-1",
+      ),
+      id: "e3",
+    };
+    const root = group([inVault, decrypted]);
+    const state = current(
+      { v: "/srv/private/letters" },
+      { s: server("srv") },
+      { "vault-1": vault },
+    );
+
+    // The vault is locked by then, so a file from inside it has nothing to reopen from.
+    expect(throughStorage(root, state)).toMatchObject({
+      tabs: [
+        {
+          id: "v",
+          kind: "remote",
+          sessionId: "s",
+          path: "/srv/private",
+          restore: { server: server("srv") },
+        },
+      ],
+    });
+    // Without its server the vault's tab cannot come back either.
+    expect(throughStorage(root, current({}, {}, { "vault-1": vault }))).toBeNull();
   });
 
   it("keeps tabs still waiting for their server for the next start", () => {

@@ -3,6 +3,33 @@
 Installers for every version are attached to its
 [release](https://github.com/khaodius/poros/releases), with SHA-256 checksums.
 
+## 0.7.0 - 2026-11-23
+
+- **Encrypted vaults on any server.** A folder on a server can now hold a
+  [Cryptomator](https://cryptomator.org) vault: its file names, folder names and contents are
+  encrypted before they leave this computer, and only its password opens it. New vault, on a
+  server pane's toolbar and in its right-click menu, makes one. Opening a vault's folder shows a
+  card asking for the password where the files would be, and once unlocked the same pane lists
+  the decrypted files, marked Encrypted, in a tab named after the vault. Lock on the toolbar
+  forgets the keys again, as does closing the server's tab. The password is never saved.
+- **The same vaults as the Cryptomator apps.** Poros reads and writes vault format 8, which
+  Cryptomator 1.6 and later use on Windows, macOS, Linux, Android and iOS, with both of its
+  ciphers, AES-GCM and the older AES-CTR with HMAC. A vault made in Poros opens there and a vault
+  made there opens in Poros, long names, Unicode names and passwords included. The tests hold
+  Poros against Cryptomator's own libraries in both directions.
+- **Vaults in every transfer.** Uploads, downloads and copies between servers go through an
+  unlocked vault like any other folder, each worker encrypting and decrypting on its own
+  connection, so they run in parallel. The editor opens and saves files in a vault, and files
+  can be made, renamed and deleted there. Every chunk of a file is authenticated as it is read,
+  and with the integrity checks on, uploads into a vault on SFTP, FTP and WebDAV servers are
+  read back, decrypted and compared with their source. Files dropped or pasted onto a locked
+  vault's folder are refused, so nothing lands unencrypted among its files.
+- **What vaults leave out.** An interrupted upload into a vault starts over rather than
+  resuming, transfers for a vault are not kept across a restart, and symbolic links in a vault
+  are listed but not followed. Folder sync, Properties, comparing, extracting on the server and
+  the terminal work on a server's own files, and `poros-cli` does not open vaults. Vaults older
+  than format 8 are upgraded by opening them once in Cryptomator.
+
 ## 0.6.5 - 2026-11-18
 
 - **Tabs and windows come back after a restart.** Remember tabs and layout only brought back local

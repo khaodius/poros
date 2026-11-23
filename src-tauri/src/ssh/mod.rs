@@ -172,6 +172,7 @@ impl ConnectProfile {
 
     pub fn validate(&self) -> AppResult<()> {
         match self.protocol {
+            Protocol::Cryptomator => return Err(crate::cryptomator::not_a_connection()),
             Protocol::BackblazeB2 if self.username.trim().is_empty() => {
                 return Err(AppError::invalid("Application key ID is required"))
             }
