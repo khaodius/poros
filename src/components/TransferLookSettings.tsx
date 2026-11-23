@@ -1,15 +1,20 @@
-import { useRef, useState } from "react";
+import { useRef, useState, type CSSProperties } from "react";
 import { Play, RotateCcw } from "lucide-react";
 import { boxCenter, type Box } from "../lib/fileFlight";
 import {
   DEFAULT_PROGRESS_BARS,
   PROGRESS_HEIGHT_LIMITS,
+  PROGRESS_PRESETS,
+  fillTakesShape,
+  matchingPreset,
+  progressBarStyle,
   progressLabel,
   type ProgressBarSettings,
   type ProgressColoring,
   type ProgressFill,
   type ProgressLabel,
   type ProgressMotion,
+  type ProgressShape,
 } from "../lib/progressBars";
 import type { IconSubject } from "../lib/systemIcons";
 import type { Direction, JobState } from "../lib/types";
@@ -30,15 +35,32 @@ import {
   SwitchSetting,
 } from "./settingsFields";
 
-const FILLS: { value: ProgressFill; label: string }[] = [
-  { value: "solid", label: "Solid" },
-  { value: "gradient", label: "Gradient" },
-  { value: "striped", label: "Striped" },
-  { value: "segmented", label: "Segmented" },
-  { value: "glow", label: "Glowing" },
+interface Choice<T extends string> {
+  value: T;
+  label: string;
+}
+
+const FILLS: (Choice<ProgressFill> & { hint: string })[] = [
+  { value: "solid", label: "Solid", hint: "One flat color." },
+  { value: "gradient", label: "Gradient", hint: "Fades in from the start of the bar." },
+  { value: "striped", label: "Striped", hint: "Faint diagonal stripes." },
+  { value: "segmented", label: "Segmented", hint: "Cut into short pieces." },
+  { value: "glow", label: "Glowing", hint: "Lit from above, with a glow around it." },
+  { value: "candy", label: "Candy", hint: "Wide stripes in two tones." },
+  { value: "chevrons", label: "Chevrons", hint: "Arrowheads that point the way the bar grows." },
+  { value: "aurora", label: "Aurora", hint: "The color drifts to the hues beside it." },
+  { value: "neon", label: "Neon", hint: "An outlined tube with a faint light inside." },
+  {
+    value: "wave",
+    label: "Wave",
+    hint: "A liquid. Its surface ripples on bars 9 px and thicker.",
+  },
+  { value: "line", label: "Line", hint: "A thin line led by a round head." },
+  { value: "dots", label: "Dots", hint: "Beads that light up one at a time." },
+  { value: "blocks", label: "Blocks", hint: "Cells that light up one at a time." },
 ];
 
-const COLORINGS: { value: ProgressColoring; label: string }[] = [
+const COLORINGS: Choice<ProgressColoring>[] = [
   { value: "theme", label: "The theme's" },
   { value: "direction", label: "By direction" },
   { value: "custom", label: "Custom" },
@@ -50,14 +72,26 @@ const COLORING_HINTS: Record<ProgressColoring, string> = {
   custom: "The same color for every bar.",
 };
 
-const MOTIONS: { value: ProgressMotion; label: string }[] = [
+const SHAPES: Choice<ProgressShape>[] = [
+  { value: "pill", label: "Round" },
+  { value: "soft", label: "Soft" },
+  { value: "square", label: "Square" },
+  { value: "slanted", label: "Slanted" },
+];
+
+const MOTIONS: Choice<ProgressMotion>[] = [
   { value: "none", label: "Nothing" },
   { value: "stripes", label: "Moving stripes" },
   { value: "shimmer", label: "Shimmer" },
   { value: "pulse", label: "Pulse" },
+  { value: "scan", label: "Scan" },
+  { value: "ripple", label: "Ripple" },
+  { value: "comet", label: "Comet" },
+  { value: "sparkle", label: "Sparkle" },
+  { value: "breathe", label: "Breathing glow" },
 ];
 
-const LABELS: { value: ProgressLabel; label: string }[] = [
+const LABELS: Choice<ProgressLabel>[] = [
   { value: "percent", label: "Percent" },
   { value: "bytes", label: "Transferred and size" },
   { value: "remaining", label: "Time left" },
@@ -68,10 +102,14 @@ const MIB = 1024 * 1024;
 
 interface SampleTransfer {
   name: string;
-  direction: Direction;
+  /** The file whose icon the row shows, when the name says more than the file's. */
+  file?: string;
+  /** None for work that is not a transfer, whose bar takes the plain color. */
+  direction?: Direction;
   state: JobState;
   size: number;
-  fraction: number;
+  /** Null for work of unknown length. */
+  fraction: number | null;
   speed: number;
 }
 
@@ -101,6 +139,14 @@ const SAMPLES: SampleTransfer[] = [
     speed: 0,
   },
   {
+    name: "clip.mp4",
+    direction: "download",
+    state: "failed",
+    size: 260 * MIB,
+    fraction: 0.55,
+    speed: 0,
+  },
+  {
     name: "notes.md",
     direction: "download",
     state: "done",
@@ -108,7 +154,28 @@ const SAMPLES: SampleTransfer[] = [
     fraction: 1,
     speed: 0,
   },
+  {
+    name: "Unpacking site.zip",
+    file: "site.zip",
+    state: "running",
+    size: 0,
+    fraction: null,
+    speed: 0,
+  },
 ];
+
+/** The text a miniature shows on its bar, for looks that put text there. */
+const MINIATURE_TEXT: Record<ProgressLabel, string> = {
+  percent: "62%",
+  bytes: "62 MB",
+  remaining: "2m left",
+  none: "",
+};
+
+const MINIATURE_FRACTION = 0.62;
+/** Thick enough for every fill to show what sets it apart. */
+const SWATCH_HEIGHT = 10;
+const MOTION_SWATCH_HEIGHTS = { min: 6, max: 12 };
 
 const pixels = (value: number) => `${value} px`;
 
@@ -123,10 +190,11 @@ function ProgressPreview({ bars }: { bars: ProgressBarSettings }) {
   return (
     <div className="progress-preview" aria-label="Preview">
       {SAMPLES.map((sample) => {
+        const fraction = sample.fraction ?? 0;
         const job = {
           state: sample.state,
           size: sample.size,
-          transferred: sample.size * sample.fraction,
+          transferred: sample.size * fraction,
           speed: sample.speed,
         };
         return (
@@ -136,13 +204,13 @@ function ProgressPreview({ bars }: { bars: ProgressBarSettings }) {
             data-direction={sample.direction}
           >
             <span className="progress-sample-name">
-              <FileIcon entry={{ name: sample.name, kind: "file" }} />
+              <FileIcon entry={{ name: sample.file ?? sample.name, kind: "file" }} />
               {sample.name}
             </span>
             <span className="progress-sample-bar">
               <ProgressBar
                 fraction={sample.fraction}
-                label={progressLabel(job, bars.label, sample.fraction)}
+                label={sample.fraction === null ? "" : progressLabel(job, bars.label, fraction)}
                 labelKind={bars.label}
                 labelInside={bars.labelInside}
                 still={sample.state !== "running"}
@@ -155,6 +223,118 @@ function ProgressPreview({ bars }: { bars: ProgressBarSettings }) {
   );
 }
 
+interface LookSampleProps {
+  look: ProgressBarSettings;
+  /** Drawn on the bar. */
+  text?: string;
+  still?: boolean;
+}
+
+/** One running bar in a look of its own, whatever the look of the bars around it. */
+function LookSample({ look, text = "", still = false }: LookSampleProps) {
+  const { properties, attributes } = progressBarStyle(look);
+  return (
+    <span
+      className="progress-look state-running"
+      data-direction="upload"
+      style={properties as CSSProperties}
+      {...attributes}
+    >
+      <ProgressBar
+        fraction={MINIATURE_FRACTION}
+        label={text}
+        labelKind={text === "" ? "none" : look.label}
+        labelInside={text !== ""}
+        still={still}
+      />
+    </span>
+  );
+}
+
+interface LookSwatchesProps<T extends string> {
+  label: string;
+  value: T;
+  options: Choice<T>[];
+  /** The look a choice is drawn in. */
+  lookOf: (value: T) => ProgressBarSettings;
+  /** The swatches hold still, for choices that are not about motion. */
+  still?: boolean;
+  disabled?: boolean;
+  /** Fewer, wider swatches to a row. */
+  wide?: boolean;
+  onChange: (value: T) => void;
+}
+
+/** A choice shown as bars drawn each way rather than as a list of names. */
+function LookSwatches<T extends string>({
+  label,
+  value,
+  options,
+  lookOf,
+  still = false,
+  disabled = false,
+  wide = false,
+  onChange,
+}: LookSwatchesProps<T>) {
+  return (
+    <div className={`look-grid ${wide ? "is-wide" : ""}`} role="group" aria-label={label}>
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          className="look-card"
+          aria-pressed={option.value === value}
+          disabled={disabled}
+          onClick={() => onChange(option.value)}
+        >
+          <LookSample look={lookOf(option.value)} still={still} />
+          <span className="look-card-name">{option.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+interface PresetsProps {
+  bars: ProgressBarSettings;
+  onPick: (change: Partial<ProgressBarSettings>) => void;
+}
+
+/** The named looks, each drawn as itself, and the current one when it is none of them. */
+function Presets({ bars, onPick }: PresetsProps) {
+  const current = matchingPreset(bars);
+  return (
+    <div className="look-grid is-presets" role="group" aria-label="Presets">
+      {PROGRESS_PRESETS.map((preset) => (
+        <button
+          key={preset.id}
+          type="button"
+          className="look-card"
+          aria-pressed={preset === current}
+          onClick={() => onPick(preset.look)}
+        >
+          <LookSample
+            look={{ ...preset.look, color: bars.color }}
+            text={preset.look.labelInside ? MINIATURE_TEXT[preset.look.label] : ""}
+          />
+          <span className="look-card-name">{preset.name}</span>
+        </button>
+      ))}
+      <div
+        className={`look-card look-card-custom ${current ? "" : "is-current"}`}
+        title={current ? "Change anything below to make a look of your own" : undefined}
+      >
+        {current ? (
+          <span className="look-card-blank" />
+        ) : (
+          <LookSample look={bars} text={bars.labelInside ? MINIATURE_TEXT[bars.label] : ""} />
+        )}
+        <span className="look-card-name">Custom</span>
+      </div>
+    </div>
+  );
+}
+
 export function ProgressBarGroup() {
   const bars = useSettingsStore((state) => state.settings.appearance.progressBars);
   const latest = () => useSettingsStore.getState().settings.appearance.progressBars;
@@ -162,17 +342,34 @@ export function ProgressBarGroup() {
     void saveSettingsSection("appearance", { progressBars: { ...latest(), ...change } });
   const preview = (change: Partial<ProgressBarSettings>) =>
     previewSettingsSection("appearance", { progressBars: { ...latest(), ...change } });
+  /** The current look with one thing changed, and without text. */
+  const swatchLook = (change: Partial<ProgressBarSettings>): ProgressBarSettings => ({
+    ...bars,
+    label: "none",
+    labelInside: false,
+    ...change,
+  });
+  const shaped = fillTakesShape(bars.fill);
+  const fill = FILLS.find((option) => option.value === bars.fill);
 
   return (
     <SettingGroup title="Progress bars">
       <ProgressPreview bars={bars} />
-      <SelectSetting
+
+      <LookHeading title="Presets" hint="One click sets everything below." />
+      <Presets bars={bars} onPick={save} />
+
+      <LookHeading title="Fill" hint={fill?.hint} />
+      <LookSwatches
         label="Fill"
-        hint="How the filled part of every progress bar is drawn."
         value={bars.fill}
         options={FILLS}
-        onChange={(fill) => save({ fill })}
+        lookOf={(value) => swatchLook({ fill: value, motion: "none", height: SWATCH_HEIGHT })}
+        still
+        onChange={(value) => save({ fill: value })}
       />
+
+      <LookHeading title="Color" />
       <SettingRow label="Bar color" hint={COLORING_HINTS[bars.coloring]}>
         <span className="progress-color">
           {bars.coloring === "custom" && (
@@ -203,6 +400,23 @@ export function ProgressBarGroup() {
         checked={bars.stateColors}
         onChange={(stateColors) => save({ stateColors })}
       />
+
+      <LookHeading title="Shape" />
+      <SettingRow
+        label="Ends"
+        hint={shaped ? undefined : `${fill?.label ?? "This fill"} keeps its own shape.`}
+        disabled={!shaped}
+      >
+        <LookSwatches
+          label="Ends"
+          value={bars.shape}
+          options={SHAPES}
+          lookOf={(value) => swatchLook({ shape: value, motion: "none", height: SWATCH_HEIGHT })}
+          still
+          disabled={!shaped}
+          onChange={(value) => save({ shape: value })}
+        />
+      </SettingRow>
       <RangeSetting
         label="Thickness"
         hint="Of the bars in the transfer list."
@@ -213,18 +427,29 @@ export function ProgressBarGroup() {
         onPreview={(height) => preview({ height })}
         onCommit={(height) => save({ height })}
       />
-      <SwitchSetting
-        label="Rounded ends"
-        checked={bars.rounded}
-        onChange={(rounded) => save({ rounded })}
-      />
-      <SelectSetting
-        label="While running"
+
+      <LookHeading
+        title="Motion"
         hint="Plays on bars whose work is under way, and holds still when the system asks for less motion."
+      />
+      <LookSwatches
+        label="Motion"
         value={bars.motion}
         options={MOTIONS}
-        onChange={(motion) => save({ motion })}
+        lookOf={(value) =>
+          swatchLook({
+            motion: value,
+            height: Math.min(
+              MOTION_SWATCH_HEIGHTS.max,
+              Math.max(MOTION_SWATCH_HEIGHTS.min, bars.height),
+            ),
+          })
+        }
+        wide
+        onChange={(value) => save({ motion: value })}
       />
+
+      <LookHeading title="Text" />
       <SelectSetting
         label="Transfer text"
         hint="What each transfer shows beside its bar."
@@ -251,6 +476,16 @@ export function ProgressBarGroup() {
         </button>
       </div>
     </SettingGroup>
+  );
+}
+
+/** Names a part of the progress bar settings, which are too many for one list. */
+function LookHeading({ title, hint }: { title: string; hint?: string }) {
+  return (
+    <div className="look-heading">
+      <h4>{title}</h4>
+      {hint && <span className="setting-hint">{hint}</span>}
+    </div>
   );
 }
 

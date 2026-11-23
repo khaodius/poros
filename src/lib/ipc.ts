@@ -49,6 +49,8 @@ import type {
   PreviewPlacement,
   PreviewSupport,
   QueueFinished,
+  RenameRequest,
+  RenameSummary,
   SaveOutcome,
   SaveRequest,
   SavedConnection,
@@ -184,6 +186,8 @@ export const fileOperations = {
     call<OperationSummary>("files_move_or_copy", { request }),
   /** Deletes on an SFTP server, reporting progress like the other operations. */
   delete: (request: DeleteRequest) => call<DeleteSummary>("files_delete", { request }),
+  /** Renames items of one folder in the order given, wherever the folder is. */
+  rename: (request: RenameRequest) => call<RenameSummary>("files_rename", { request }),
   cancel: (operationId: string) => call<void>("files_cancel", { operationId }),
   details: (sessionId: string, path: string) =>
     call<FileDetails>("files_details", { sessionId, path }),

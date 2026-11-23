@@ -112,6 +112,16 @@ fn quoted(value: &str) -> String {
     format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'"))
 }
 
+/// How many files a search by name may answer with: spellings of the name in other cases can
+/// come back too, and the one asked for has to be among them.
+const CHILD_MATCHES: &str = "100";
+
+/// The first of `files` named exactly `name`. Drive's `name =` can match without regard to
+/// case, so a search for `REPORT.TXT` may also find `report.txt`, which is another name.
+fn exactly_named(files: Vec<DriveFile>, name: &str) -> Option<DriveFile> {
+    files.into_iter().find(|file| file.name == name)
+}
+
 pub struct DriveFs {
     api: Api,
     root: DriveFile,
@@ -158,11 +168,11 @@ impl DriveFs {
                     ("q", query.as_str()),
                     ("fields", LIST_FIELDS),
                     ("orderBy", ORDER),
-                    ("pageSize", "10"),
+                    ("pageSize", CHILD_MATCHES),
                 ])
             })
             .await?;
-        Ok(list.files.into_iter().next())
+        Ok(exactly_named(list.files, name))
     }
 
     /// The id of the folder at `path`, or `None` when no folder is there.
@@ -630,6 +640,30 @@ fn received_bytes(response: &Response) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn drive_file(id: &str, name: &str) -> DriveFile {
+        DriveFile {
+            id: id.to_string(),
+            name: name.to_string(),
+            mime_type: "text/plain".to_string(),
+            size: None,
+            modified_time: None,
+        }
+    }
+
+    #[test]
+    fn takes_only_the_file_with_exactly_the_name_asked_for() {
+        // What Drive answers to `name = 'REPORT.TXT'` in a folder that holds report.txt: the
+        // file a case-only rename is about, which must not count as the new name being taken.
+        let found = || vec![drive_file("1", "report.txt"), drive_file("2", "Report.txt")];
+        assert!(exactly_named(found(), "REPORT.TXT").is_none());
+        assert_eq!(exactly_named(found(), "Report.txt").unwrap().id, "2");
+        assert_eq!(exactly_named(found(), "report.txt").unwrap().id, "1");
+        assert!(exactly_named(Vec::new(), "report.txt").is_none());
+        // Of two files that have the very name, the first in Drive's order.
+        let twins = vec![drive_file("3", "scan.pdf"), drive_file("4", "scan.pdf")];
+        assert_eq!(exactly_named(twins, "scan.pdf").unwrap().id, "3");
+    }
 
     #[test]
     fn quotes_search_values() {

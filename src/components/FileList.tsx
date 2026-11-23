@@ -63,6 +63,8 @@ export interface FileListActions {
   onDelete: () => void;
   /** Shows the name field in the entry's row. */
   onRename: (entry: FileEntry) => void;
+  /** Rename asked for with several entries selected. */
+  onRenameSeveral: () => void;
   /** Renames the entry; false when it could not be, which the pane has said why. */
   onRenameSubmit: (entry: FileEntry, newName: string) => Promise<boolean>;
   onRenameCancel: () => void;
@@ -729,6 +731,7 @@ export function FileList({
         case "F2": {
           const [only] = pane.selectedEntries();
           if (pane.selection.size === 1 && only) actions.onRename(only);
+          else if (pane.selection.size > 1) actions.onRenameSeveral();
           return true;
         }
         case "F4":
