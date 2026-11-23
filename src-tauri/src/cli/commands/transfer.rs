@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{absolute_local, expand, make_dirs, missing};
+use super::{absolute_local, expand, make_dirs, missing, operand};
 use crate::cli::args::TransferArgs;
 use crate::cli::context::Context;
 use crate::cli::output::Reply;
@@ -73,7 +73,7 @@ pub async fn upload(context: &Context, arguments: &TransferArgs) -> AppResult<Re
     }
     let connected = context.connected().await?;
     let files = connected.files();
-    let target = connected.resolve(destination);
+    let target = operand(connected, destination)?;
     let found = match files.stat(&target).await? {
         Some(stat) if stat.is_dir => Destination::Folder,
         Some(_) => Destination::File,

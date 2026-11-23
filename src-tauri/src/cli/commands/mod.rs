@@ -171,12 +171,37 @@ fn matches_wildcards(pattern: &str, name: &str) -> bool {
         .all(|character| *character == '*')
 }
 
+/// A server path a command acts on. An empty one, which is what an unset shell variable
+/// leaves, is refused rather than taken as the connection's own folder, which `.` names.
+fn operand(connected: &Connected, path: &str) -> AppResult<String> {
+    if path.trim().is_empty() {
+        return Err(AppError::invalid(
+            "A path is empty; write . for the connection's own folder",
+        ));
+    }
+    Ok(connected.resolve(path))
+}
+
+/// `rm` and `mv` refuse a path whose last part is `.` or `..`, as POSIX `rm` does.
+fn refuse_dots(paths: &[String]) -> AppResult<()> {
+    for path in paths {
+        let last = path.trim().trim_end_matches('/').rsplit('/').next();
+        if matches!(last, Some("." | "..")) {
+            return Err(AppError::invalid(format!(
+                "{path} ends in . or ..; name the folder itself"
+            ))
+            .with_path(path.clone()));
+        }
+    }
+    Ok(())
+}
+
 /// Server paths with `*` or `?` in their last part become the entries they match, as a shell
 /// would expand them. Hidden names match only a pattern that starts with a dot.
 async fn expand(connected: &Connected, paths: &[String]) -> AppResult<Vec<String>> {
     let mut expanded = Vec::with_capacity(paths.len());
     for path in paths {
-        let resolved = connected.resolve(path);
+        let resolved = operand(connected, path)?;
         let name = remote_path::file_name(&resolved);
         if !has_wildcards(name) {
             expanded.push(resolved);
@@ -234,6 +259,17 @@ mod tests {
         assert!(matches_wildcards("*", ""));
         assert!(!matches_wildcards("?", ""));
         assert!(has_wildcards("*.txt") && !has_wildcards("plain.txt"));
+    }
+
+    #[test]
+    fn paths_ending_in_dots_are_refused() {
+        let refused = |path: &str| refuse_dots(&[path.to_string()]).is_err();
+        for path in [".", "..", "./", "keep/..", "a/./", " .. ", "/srv/www/."] {
+            assert!(refused(path), "{path}");
+        }
+        for path in ["/", "keep", ".hidden", "...", "a.b/c", "~", "../keep"] {
+            assert!(!refused(path), "{path}");
+        }
     }
 
     #[test]

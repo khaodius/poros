@@ -4,7 +4,7 @@
 
 use serde_json::json;
 
-use super::{each, expand, make_dirs, missing};
+use super::{each, expand, make_dirs, missing, operand, refuse_dots};
 use crate::cli::args::{ChmodArgs, ChownArgs, Conflict, MakeDirArgs, PlaceArgs, RemoveArgs};
 use crate::cli::context::{Connected, Context};
 use crate::cli::exit::Exit;
@@ -28,6 +28,9 @@ fn operation_id() -> String {
 pub async fn make_dirs_command(context: &Context, arguments: &MakeDirArgs) -> AppResult<Reply> {
     let connected = context.connected().await?;
     let files = connected.files();
+    for path in &arguments.paths {
+        operand(connected, path)?;
+    }
     each(&arguments.paths, |path| {
         let path = connected.resolve(path);
         let files = files.clone();
@@ -57,6 +60,7 @@ pub async fn make_dirs_command(context: &Context, arguments: &MakeDirArgs) -> Ap
 pub async fn remove(context: &Context, arguments: &RemoveArgs) -> AppResult<Reply> {
     let connected = context.connected().await?;
     let files = connected.files();
+    refuse_dots(&arguments.paths)?;
     let paths = match expand(connected, &arguments.paths).await {
         Err(error) if arguments.force && error.kind == ErrorKind::NotFound => Vec::new(),
         result => result?,
@@ -141,13 +145,16 @@ pub async fn place(context: &Context, arguments: &PlaceArgs, moving: bool) -> Ap
         .paths
         .split_last()
         .ok_or_else(|| AppError::invalid("Name what to move and where"))?;
+    if moving {
+        refuse_dots(sources)?;
+    }
     let sources = expand(connected, sources).await?;
     for source in &sources {
         if files.stat(source).await?.is_none() {
             return Err(missing(source));
         }
     }
-    let destination = connected.resolve(destination);
+    let destination = operand(connected, destination)?;
     let found = files.stat(&destination).await?;
     let verb = if moving { "Moved" } else { "Copied" };
 

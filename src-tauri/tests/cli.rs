@@ -143,6 +143,24 @@ impl Run {
         format!("{}/{path}", self.remote)
     }
 
+    /// Writes a file in the scratch folder on the server.
+    fn write(&self, path: &str, contents: &str) {
+        let written = self.with_input(&["write", &self.remote(path)], contents.as_bytes());
+        assert_eq!(status(&written), 0, "{written:?}");
+    }
+
+    /// The names in a folder of the scratch folder on the server, hidden ones included.
+    fn names(&self, path: &str) -> Vec<String> {
+        let (code, listed) = self.json(&["ls", "-a", &self.remote(path)]);
+        assert_eq!(code, 0, "{listed}");
+        listed["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["name"].as_str().unwrap().to_string())
+            .collect()
+    }
+
     fn local(&self, path: &str) -> PathBuf {
         self.local.path().join(path)
     }
@@ -440,4 +458,108 @@ fn batch_answers_every_line_in_order() {
     assert_eq!(answers[4]["exitCode"], 7);
     assert_eq!(answers[5]["exitCode"], 2);
     assert_eq!(answers[6]["error"]["kind"], "invalidInput");
+}
+
+#[test]
+fn an_empty_path_is_never_the_folder_the_connection_starts_in() {
+    let Some(run) = Run::online("empty") else {
+        return;
+    };
+    let (_, info) = run.json(&["info"]);
+    let user = info["username"].as_str().unwrap().to_string();
+    let start = format!(
+        "{}/{}/start",
+        info["home"].as_str().unwrap().trim_end_matches('/'),
+        run.remote
+    );
+    let (code, _) = run.json(&["mkdir", "-p", &run.remote("start/keep")]);
+    assert_eq!(code, 0);
+    run.write("start/keep/file.txt", "kept\n");
+    write_tree(
+        run.local.path(),
+        &[
+            ("local.txt", b"local\n"),
+            ("folder/inside.txt", b"inside\n"),
+        ],
+    );
+    // Every command from here on starts in `start`, as with a saved connection's own folder.
+    let connection = format!("{}{start}", run.connection);
+    let inside = |arguments: &[&str]| {
+        let output = run
+            .command(&[&["--json"], arguments].concat())
+            .env("POROS_CONNECTION", &connection)
+            .output()
+            .unwrap();
+        (status(&output), parsed(&output))
+    };
+
+    // What a script leaves when a variable is unset, and the dots `rm` and `mv` refuse.
+    let refused: [&[&str]; 20] = [
+        &["rm", "-rf", ""],
+        &["rm", "-r", " "],
+        &["rm", "-rf", "keep", ""],
+        &["rm", "-r", "."],
+        &["rm", "-rf", "./"],
+        &["rm", "-r", ".."],
+        &["rm", "-r", "keep/.."],
+        &["chmod", "-R", "700", ""],
+        &["chown", "-R", user.as_str(), ""],
+        &["mv", "", "elsewhere"],
+        &["mv", ".", "elsewhere"],
+        &["mv", "keep", ""],
+        &["cp", "", "elsewhere"],
+        &["cp", "keep/file.txt", ""],
+        &["mkdir", "-p", ""],
+        &["write", ""],
+        &["get", "", "downloaded"],
+        &["put", "local.txt", ""],
+        &["sync", "-d", "up", "--delete", "folder", ""],
+        &["exec", "--cwd", "", "--", "rm", "-rf", "keep"],
+    ];
+    for arguments in refused {
+        let (code, value) = inside(arguments);
+        assert_eq!(code, 2, "{arguments:?}: {value}");
+        assert_eq!(value["error"]["kind"], "invalidInput", "{arguments:?}");
+        assert_eq!(run.names(""), ["start"], "{arguments:?}");
+        assert_eq!(run.names("start"), ["keep"], "{arguments:?}");
+        assert_eq!(run.names("start/keep"), ["file.txt"], "{arguments:?}");
+    }
+    assert!(!run.local("downloaded").exists());
+    let (_, kept) = run.json(&["stat", &run.remote("start")]);
+    assert_eq!(kept["mode"], "0755", "{kept}");
+
+    let mut batch = run
+        .command(&["batch"])
+        .env("POROS_CONNECTION", &connection)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    batch
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"[\"rm\", \"-rf\", \"\"]\n")
+        .unwrap();
+    let answer: Value = serde_json::from_slice(&batch.wait_with_output().unwrap().stdout).unwrap();
+    assert_eq!(answer["exitCode"], 2, "{answer}");
+    assert_eq!(run.names("start"), ["keep"]);
+
+    // The folder itself is listed with no path at all, and named with a dot.
+    for arguments in [
+        &["ls"][..],
+        &["ls", "."],
+        &["ls", ""],
+        &["stat", "."],
+        &["du", "."],
+        &["chmod", "750", "."],
+        &["cp", "keep/file.txt", "."],
+        &["put", "local.txt", "."],
+    ] {
+        let (code, value) = inside(arguments);
+        assert_eq!(code, 0, "{arguments:?}: {value}");
+    }
+    assert_eq!(run.names("start"), ["file.txt", "keep", "local.txt"]);
+    let (_, changed) = run.json(&["stat", &run.remote("start")]);
+    assert_eq!(changed["mode"], "0750", "{changed}");
 }
