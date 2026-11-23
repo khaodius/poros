@@ -12,6 +12,7 @@ import {
   type FileOrigin,
 } from "../lib/fileOrigin";
 import { pluralize } from "../lib/format";
+import { folderOf } from "../lib/search";
 import { fileOperations, toAppError } from "../lib/ipc";
 import { baseName, breadcrumbs, childPath, isWithin, samePath } from "../lib/path";
 import type {
@@ -98,6 +99,26 @@ export function refreshFolder(
   }
 }
 
+/**
+ * Reloads the panes showing the folders `entries` are in, as search results from several
+ * folders have them, forgetting the remembered listings of those folders and of the entries.
+ * `reloaded` is a folder already reloaded, left out.
+ */
+export function refreshFoldersOf(
+  origin: FileOrigin,
+  entries: readonly FileEntry[],
+  reloaded?: string,
+): void {
+  const style = pathStyleOf(origin);
+  const folders = new Map<string, string[]>();
+  for (const entry of entries) {
+    const folder = folderOf(entry, style);
+    if (reloaded !== undefined && samePath(folder, reloaded, style)) continue;
+    folders.set(folder, [...(folders.get(folder) ?? []), entry.path]);
+  }
+  for (const [folder, paths] of folders) refreshFolder(origin, folder, undefined, paths);
+}
+
 const METHOD_NOTES: Partial<Record<OperationMethod, string>> = {
   rename: "renamed in place",
   copyData: "copied by the server",
@@ -162,10 +183,13 @@ export async function placeEntries(request: PlaceRequest): Promise<boolean> {
   const target = paneWritingTo(request.target, targetFolder);
   const targetOrigin = paneOrigin(target);
 
+  const style = pathStyleOf(origin);
+  // Entries are in `sourceFolder`, or, found by a search, each in a folder of its own.
+  const inTarget = (entry: FileEntry) => samePath(folderOf(entry, style), targetFolder, style);
+
   if (!placesInPlace(origin, target)) {
-    const style = pathStyleOf(origin);
     // A transfer into the folder the files came from would write each file over itself.
-    if (sameFilesystem(origin, targetOrigin) && samePath(sourceFolder, targetFolder, style)) {
+    if (sameFilesystem(origin, targetOrigin) && entries.some(inTarget)) {
       showToast(
         "info",
         isInsideVault(origin)
@@ -200,14 +224,14 @@ export async function placeEntries(request: PlaceRequest): Promise<boolean> {
   }
 
   if (await refusesLockedVault(target, targetFolder)) return false;
-  const style = pathStyleOf(origin);
-  const inPlace = samePath(sourceFolder, targetFolder, style);
+  const inPlace = entries.every(inTarget);
   if (inPlace && mode === "move") return false;
   const location = toLocation(targetOrigin);
   let conflict: NameClash = "keepBoth";
   try {
     if (!inPlace) {
-      const names = entries.map((entry) => entry.name);
+      // Those already in the folder are left there, or copied under a new name, unasked.
+      const names = entries.filter((entry) => !inTarget(entry)).map((entry) => entry.name);
       const taken = await fileOperations.conflicts(location, names, targetFolder);
       if (taken.length > 0) {
         const choice = await askNameClash({
@@ -270,6 +294,8 @@ export async function placeEntries(request: PlaceRequest): Promise<boolean> {
     if (mode === "move") {
       const moved = entries.map((entry) => entry.path);
       refreshFolder(origin, sourceFolder, undefined, moved);
+      // Search results moved out of the folders they were found in.
+      refreshFoldersOf(origin, entries, sourceFolder);
     }
   }
 }
@@ -341,6 +367,8 @@ export async function deleteOnServer(request: DeleteOnServer): Promise<void> {
     // Whatever went before a failure or cancel shows too.
     const deleted = entries.map((entry) => entry.path);
     refreshFolder(origin, folder, focusPath, deleted);
+    // Search results deleted from the folders they were found in.
+    refreshFoldersOf(origin, entries, folder);
   }
 }
 
@@ -371,7 +399,9 @@ export function dropAction(
   }
   if (source.tabId === destination.tabId && target.folder === null) return null;
   const style = pathStyleOf(origin);
-  const sourceFolder = source.path();
+  // Each entry is where its path says: search results come from many folders, not only the
+  // one the source pane stands for.
+  const inFolder = (entry: FileEntry) => samePath(folderOf(entry, style), folder, style);
   const destinationOrigin = paneOrigin(destination);
   const sameFiles = sameFilesystem(origin, destinationOrigin);
   if (sharesFolders(origin, destinationOrigin)) {
@@ -391,20 +421,20 @@ export function dropAction(
           : "Moving on this server needs SFTP",
       };
     }
-    if (sameFiles && sourceFolder && samePath(folder, sourceFolder, style)) return null;
+    if (sameFiles && entries.every(inFolder)) return null;
+    if (sameFiles && entries.some(inFolder)) {
+      return { kind: "blocked", reason: "Some of these are in that folder already" };
+    }
     return { kind: "transfer", direction: "relay", folder };
   }
   // As in Windows Explorer, dragging to another drive copies.
+  const drive = (path: string) => breadcrumbs(path, style)[0]?.path ?? "";
   const otherDrive =
     style === "windows" &&
-    !!sourceFolder &&
-    !samePath(
-      breadcrumbs(folder, style)[0]?.path ?? "",
-      breadcrumbs(sourceFolder, style)[0]?.path ?? "",
-      style,
-    );
+    entries.some((entry) => !samePath(drive(folder), drive(entry.path), style));
   const mode = copy || otherDrive ? "copy" : "move";
-  if (mode === "move" && sourceFolder && samePath(folder, sourceFolder, style)) return null;
+  // Those already there stay where they are; the others move.
+  if (mode === "move" && entries.every(inFolder)) return null;
   return { kind: "place", mode, source, target: destination, folder };
 }
 
