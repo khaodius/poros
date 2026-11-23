@@ -59,6 +59,7 @@ import { entryAfterRemoval } from "../lib/cursor";
 import { sameFilesystem, toLocation, worksInPlace } from "../lib/fileOrigin";
 import type { FileSource } from "../lib/fileSource";
 import { PANE_KEYBOARD_TARGET } from "../lib/focus";
+import { FOCUS_PREVIEW_SHORTCUT, isFocusPreviewKey, nextPane } from "../lib/paneFocus";
 import { toAppError } from "../lib/ipc";
 import { formatSize, pluralize } from "../lib/format";
 import { baseName, exampleFileName, samePath } from "../lib/path";
@@ -146,24 +147,25 @@ interface OpenMenu {
 }
 
 /**
- * Moves keyboard focus to the next file list or open preview on screen, left to right, then
- * top to bottom.
+ * Moves keyboard focus to the next file list on screen, left to right, then top to bottom.
+ * Previews are not on the way: from one, focus goes on to the next pane's list.
  */
 function focusNextPane(from: HTMLElement | null) {
   const lists = [
-    ...document.querySelectorAll<HTMLElement>(
-      `.tab-panel:not([hidden]) :is(${PANE_KEYBOARD_TARGET}, .preview)`,
-    ),
-  ]
-    .map((list) => ({ list, bounds: list.getBoundingClientRect() }))
-    .sort(
-      (first, second) =>
-        first.bounds.left - second.bounds.left || first.bounds.top - second.bounds.top,
-    )
-    .map(({ list }) => list);
-  if (lists.length < 2) return;
-  const current = lists.findIndex((list) => list === from || list.contains(from));
-  lists[(current + 1) % lists.length].focus();
+    ...document.querySelectorAll<HTMLElement>(`.tab-panel:not([hidden]) ${PANE_KEYBOARD_TARGET}`),
+  ];
+  const leavingPreview = Boolean(from?.closest(".preview"));
+  const own = lists.find(
+    (list) =>
+      list === from ||
+      list.contains(from) ||
+      (leavingPreview && Boolean(list.closest(".pane")?.contains(from))),
+  );
+  const stops = lists.map((list) => {
+    const bounds = list.getBoundingClientRect();
+    return { pane: list, left: bounds.left, top: bounds.top };
+  });
+  nextPane(stops, own ?? null, leavingPreview)?.focus();
 }
 
 /** A regular file, or a link to one: what compare can read. */
@@ -468,6 +470,25 @@ export function FilePane({
     togglePreview(tabId);
     if (leaving) focusList();
   };
+
+  /** The preview takes the keyboard as soon as it is open, when it was opened to take it. */
+  const previewWantsFocus = useRef(false);
+  const focusPreview = () =>
+    sectionRef.current?.querySelector<HTMLElement>(".preview")?.focus({ preventScroll: true });
+  /** Gives the keyboard to the preview, opening it first if it is closed. */
+  const goToPreview = () => {
+    if (previewOpen) {
+      focusPreview();
+      return;
+    }
+    previewWantsFocus.current = true;
+    togglePreview(tabId);
+  };
+  useEffect(() => {
+    if (!previewOpen || !previewWantsFocus.current) return;
+    previewWantsFocus.current = false;
+    focusPreview();
+  }, [previewOpen]);
 
   const startDrag = (event: ReactPointerEvent<HTMLElement>, entry: FileEntry) => {
     const wasSelected = pane.selection.has(entry.path);
@@ -905,10 +926,12 @@ export function FilePane({
       onKeyDown={(event) => {
         // Not from a dialog the pane opened, whose keys reach here without being inside it.
         const inPane = event.currentTarget.contains(event.target as Node);
+        if (!inPane) return;
         const plain = !(event.ctrlKey || event.metaKey || event.altKey || event.shiftKey);
-        if (event.key !== "F3" || !plain || !inPane) return;
+        if (event.key === "F3" && plain) switchPreview();
+        else if (isFocusPreviewKey(event)) goToPreview();
+        else return;
         event.preventDefault();
-        switchPreview();
       }}
     >
       <header className="pane-header">
@@ -1006,7 +1029,11 @@ export function FilePane({
           >
             {pane.showHidden ? <Eye size={15} /> : <EyeOff size={15} />}
           </ToolbarButton>
-          <ToolbarButton label="Preview (F3)" onClick={switchPreview} pressed={previewOpen}>
+          <ToolbarButton
+            label={`Preview (F3), focus it (${FOCUS_PREVIEW_SHORTCUT})`}
+            onClick={switchPreview}
+            pressed={previewOpen}
+          >
             <PanelRight size={15} />
           </ToolbarButton>
         </div>
