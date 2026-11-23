@@ -6126,6 +6126,218 @@ textarea::placeholder {
   gap: 10px;
 }
 
+/* Compare folders: the bar over a compared pane, and the stripe, tint and glyph of the rows
+   compared with the other pane */
+
+.file-row.is-compare-newer,
+.folder-compare-chip.is-newer,
+.folder-compare-glyph.is-newer {
+  --compare-color: var(--compare-newer);
+}
+
+.file-row.is-compare-older,
+.folder-compare-chip.is-older,
+.folder-compare-glyph.is-older {
+  --compare-color: var(--compare-older);
+}
+
+.file-row.is-compare-only,
+.folder-compare-chip.is-only,
+.folder-compare-glyph.is-only {
+  --compare-color: var(--compare-only);
+}
+
+.file-row.is-compare-different,
+.file-row.is-compare-differs-inside,
+.folder-compare-chip.is-different,
+.folder-compare-glyph.is-different,
+.folder-compare-glyph.is-differs-inside {
+  --compare-color: var(--compare-different);
+}
+
+.file-row.is-compare-identical,
+.folder-compare-chip.is-identical,
+.folder-compare-glyph.is-identical {
+  --compare-color: var(--compare-identical);
+}
+
+/* The stripe along the row's start, over the tint. The row's own background stays below both,
+   so stripes, hover and the cursor's outline show as on any row. */
+.file-row.is-compared {
+  --compare-tint: color-mix(in srgb, var(--compare-color) 14%, transparent);
+  background-image:
+    linear-gradient(var(--compare-color), var(--compare-color)),
+    linear-gradient(var(--compare-tint), var(--compare-tint));
+  background-repeat: no-repeat;
+  background-size:
+    3px 100%,
+    100% 100%;
+}
+
+.file-row.is-compared:hover {
+  --compare-tint: color-mix(in srgb, var(--compare-color) 24%, transparent);
+}
+
+/* A selected row keeps the selection's color whole; the stripe and the glyph still tell its
+   state. */
+.file-list .file-row.is-compared.is-selected {
+  background-image: linear-gradient(var(--compare-color), var(--compare-color));
+  background-repeat: no-repeat;
+  background-size: 3px 100%;
+}
+
+/* A folder files are dragged over looks as it does in any list. */
+.file-list .file-row.is-compared.is-drop-folder {
+  background-image: none;
+}
+
+.folder-compare-glyph {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  margin-left: auto;
+  color: var(--compare-color, var(--text-faint));
+}
+
+.folder-compare-bar {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+  border-bottom: 1px solid var(--border);
+}
+
+.folder-compare-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 6px 2px 10px;
+}
+
+.folder-compare-partner {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.folder-compare-partner > svg {
+  flex: none;
+  color: var(--accent);
+}
+
+.folder-compare-with {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.folder-compare-with strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.folder-compare-path {
+  flex: 0 10 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-faint);
+  text-overflow: ellipsis;
+}
+
+.folder-compare-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+  padding: 0 10px 6px;
+  list-style: none;
+}
+
+.folder-compare-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 6px;
+  color: var(--text);
+  font-size: var(--font-size-tiny);
+  white-space: nowrap;
+  background: color-mix(in srgb, var(--compare-color) 14%, transparent);
+  border-radius: var(--radius-small);
+}
+
+.folder-compare-chip > svg {
+  flex: none;
+  color: var(--compare-color);
+}
+
+.folder-compare-count {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.folder-compare-chip.is-empty {
+  color: var(--text-faint);
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.folder-compare-chip.is-empty > svg {
+  color: inherit;
+}
+
+.folder-compare-chip > .folder-compare-concealed {
+  color: var(--text-muted);
+}
+
+.folder-compare-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.folder-compare-actions .icon-button {
+  width: 24px;
+  height: 24px;
+}
+
+.folder-compare-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0 10px 5px;
+}
+
+.folder-compare-status > svg {
+  flex: none;
+  color: var(--accent);
+}
+
+.folder-compare-status.is-failed > svg {
+  color: var(--danger);
+}
+
+.folder-compare-status.is-outdated > svg {
+  color: var(--warning);
+}
+
+.folder-compare-status > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.folder-compare-status .link-button {
+  flex: none;
+}
+
 /*
  * Progress bar looks
  *
