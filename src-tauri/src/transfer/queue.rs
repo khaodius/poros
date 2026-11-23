@@ -89,19 +89,21 @@ impl JobSpec {
 
     /// The file a file job writes, told apart from the files other jobs write.
     fn written_file(&self) -> Option<WrittenFile> {
-        if self.kind != JobKind::File {
-            return None;
-        }
-        Some(match self.direction {
+        (self.kind == JobKind::File).then(|| self.file_at(&self.target))
+    }
+
+    /// `path` on the side this job writes to, told apart from the files other jobs write.
+    fn file_at(&self, path: &str) -> WrittenFile {
+        match self.direction {
             Direction::Download => WrittenFile {
                 session_id: None,
-                path: local_file(&self.target),
+                path: local_file(path),
             },
             Direction::Upload | Direction::Relay => WrittenFile {
                 session_id: Some(self.session_id.clone()),
-                path: self.target.clone(),
+                path: path.to_string(),
             },
-        })
+        }
     }
 }
 
@@ -559,6 +561,30 @@ pub struct Abandoned {
     pub path: String,
 }
 
+/// A temporary file a job left, until the caller takes it to delete.
+#[derive(Debug)]
+struct Left {
+    partial: Abandoned,
+    /// The file as other jobs writing it would name it.
+    file: WrittenFile,
+    /// The target it was written beside.
+    beside: Option<WrittenFile>,
+}
+
+impl Left {
+    fn new(spec: &JobSpec, path: String) -> Self {
+        Self {
+            file: spec.file_at(&path),
+            beside: spec.written_file(),
+            partial: Abandoned {
+                session_id: spec.session_id.clone(),
+                direction: spec.direction,
+                path,
+            },
+        }
+    }
+}
+
 /// How a watched job stood when it left the queue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ended {
@@ -592,7 +618,7 @@ pub struct Queue {
     removed: Vec<JobId>,
     changed_directories: Vec<ChangedDirectory>,
     outages: HashMap<String, Outage>,
-    abandoned: Vec<Abandoned>,
+    abandoned: Vec<Left>,
     /// Files that running jobs write. Two jobs writing one file would share its temporary
     /// file, so a job waits while another writes its target.
     writing: HashMap<WrittenFile, JobId>,
@@ -904,25 +930,19 @@ impl Queue {
                 job.error = None;
                 job.resume = None;
                 // Moved into place, unless this attempt wrote through another temporary file.
-                if let Some(stale) = job.stale_partial.take() {
-                    let moved = run
-                        .as_ref()
+                let stale = job.stale_partial.take().filter(|stale| {
+                    !run.as_ref()
                         .and_then(|run| run.plan.get())
-                        .is_some_and(|plan| plan.target == stale);
-                    if !moved {
-                        self.abandoned.push(Abandoned {
-                            session_id: session_id.clone(),
-                            direction: job.spec.direction,
-                            path: stale,
-                        });
-                    }
-                }
+                        .is_some_and(|plan| plan.target == *stale)
+                });
+                let left = stale.map(|stale| Left::new(&job.spec, stale));
                 if let Some(end) = run.as_ref().and_then(|run| run.end()) {
                     job.spec.size = end;
                     job.transferred = end;
                 }
                 let changed = changed_directory(&job.spec);
                 self.changed_directories.push(changed);
+                self.abandoned.extend(left);
                 if !settings.keep_completed {
                     self.forget(id);
                 }
@@ -1200,18 +1220,48 @@ impl Queue {
                 .stale_partial
                 .filter(|stale| partial.as_ref() != Some(stale));
             for path in partial.into_iter().chain(stale) {
-                self.abandoned.push(Abandoned {
-                    session_id: job.spec.session_id.clone(),
-                    direction: job.spec.direction,
-                    path,
-                });
+                self.abandoned.push(Left::new(&job.spec, path));
             }
         }
     }
 
-    /// Temporary files of jobs that left the queue, for the caller to delete.
+    /// Temporary files of jobs that left the queue, for the caller to delete: each once, and
+    /// none that a job still in the queue writes or keeps to continue from.
     pub fn take_abandoned(&mut self) -> Vec<Abandoned> {
+        if self.abandoned.is_empty() {
+            return Vec::new();
+        }
+        let mut held = HashSet::new();
+        // Running jobs that have not yet chosen where to write: one writing the same target
+        // would choose the same temporary file.
+        let mut preparing = HashSet::new();
+        for job in self.jobs.values() {
+            let planned = job
+                .run
+                .as_ref()
+                .map(|run| run.plan.get().map(|plan| plan.target.as_str()));
+            if planned == Some(None) {
+                preparing.extend(job.spec.written_file());
+            }
+            let partial = job
+                .resume
+                .as_ref()
+                .and_then(|resume| resume.partial.as_deref());
+            let stale = job.stale_partial.as_deref();
+            for path in planned.flatten().into_iter().chain(partial).chain(stale) {
+                held.insert(job.spec.file_at(path));
+            }
+        }
         std::mem::take(&mut self.abandoned)
+            .into_iter()
+            .filter(|left| {
+                left.beside
+                    .as_ref()
+                    .is_none_or(|target| !preparing.contains(target))
+                    && held.insert(left.file.clone())
+            })
+            .map(|left| left.partial)
+            .collect()
     }
 
     pub fn pause(&mut self, ids: &[JobId]) {
@@ -2186,6 +2236,55 @@ mod tests {
         finish(&mut queue, id, RunOutcome::Completed);
         queue.clear(&[JobState::Done]);
         assert!(queue.take_abandoned().is_empty());
+    }
+
+    #[test]
+    fn a_temporary_file_another_job_writes_is_not_deleted() {
+        let no_retries = TransferSettings {
+            retry_attempts: 0,
+            ..settings()
+        };
+        let mut queue = Queue::new();
+        let failed = queue.add(file("live.log", 100));
+        fail_check(&mut queue, failed, &no_retries);
+        assert!(queue.take_abandoned().is_empty());
+
+        // The same file queued again and running.
+        let again = queue.add(file("live.log", 100));
+        let claim = queue.claim(Instant::now()).unwrap();
+        assert_eq!(claim.id, again);
+        queue.clear(&[JobState::Failed]);
+        assert!(queue.take_abandoned().is_empty());
+
+        // Paused part-way, it holds the file to continue from.
+        let failed = queue.add(file("live.log", 100));
+        claim
+            .run
+            .plan
+            .set(Plan {
+                rename_to: Some("/remote/live.log".into()),
+                ..plan("/remote/.live.log.poros-part", 100)
+            })
+            .unwrap();
+        claim.run.start_pieces(Pieces::new(0, 100, 10));
+        let piece = claim.run.claim_piece().unwrap();
+        claim.run.complete_piece(piece.start);
+        queue.pause(&[again]);
+        finish(&mut queue, again, RunOutcome::Stopped);
+        fail_check(&mut queue, failed, &no_retries);
+        queue.clear(&[JobState::Failed]);
+        assert!(queue.take_abandoned().is_empty());
+
+        // Once nothing holds it, it goes with the last job.
+        queue.remove(&[again]);
+        assert_eq!(
+            queue.take_abandoned(),
+            vec![Abandoned {
+                session_id: "session".into(),
+                direction: Direction::Upload,
+                path: "/remote/.live.log.poros-part".into(),
+            }]
+        );
     }
 
     #[test]
