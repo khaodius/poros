@@ -2,10 +2,12 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import { Download, FileDiff, FileText, History, RotateCcw, Trash2 } from "lucide-react";
 import { formatSize, pluralize } from "../lib/format";
 import { toAppError, versions } from "../lib/ipc";
-import type { FileEntry, ObjectVersion, Versioning } from "../lib/types";
+import type { DirListing, FileEntry, ObjectVersion, Versioning } from "../lib/types";
 import {
   NO_VERSIONS,
   STATUS_LABELS,
+  afterDeleting,
+  entriesStillDeleted,
   formatVersionTime,
   shortTag,
   versionActions,
@@ -291,7 +293,12 @@ export function VersionsDialog({ file, nearGroupId, onClose }: VersionsDialogPro
             setReloads((count) => count + 1);
           }}
         >
-          <DeleteVersionSummary name={name} version={asking.version} when={when(asking.version)} />
+          <DeleteVersionSummary
+            name={name}
+            version={asking.version}
+            history={entries}
+            when={when(asking.version)}
+          />
         </ConfirmDialog>
       )}
 
@@ -310,26 +317,23 @@ export function VersionsDialog({ file, nearGroupId, onClose }: VersionsDialogPro
 function DeleteVersionSummary({
   name,
   version,
+  history,
   when,
 }: {
   name: string;
   version: ObjectVersion;
+  history: readonly ObjectVersion[];
   when: string;
 }) {
   const marker = version.kind === "deleteMarker";
+  const outcome = afterDeleting(version, history);
   return (
     <>
       <p>
         {marker ? "Remove the delete marker" : "Delete the version"} of <strong>{name}</strong> from{" "}
         {when} for good? This cannot be undone.
       </p>
-      {version.latest && (
-        <p>
-          {marker
-            ? "The file comes back as its newest version."
-            : "The version before it becomes the current file."}
-        </p>
-      )}
+      {outcome && <p>{outcome}</p>}
     </>
   );
 }
@@ -369,31 +373,48 @@ function VersionComparison({
 }
 
 interface PurgeDeletedDialogProps {
-  entries: FileEntry[];
-  onConfirm: () => Promise<void>;
+  /** The deleted entries picked, as the listing had them then. */
+  chosen: readonly FileEntry[];
+  /** The folder's listing on show now. */
+  listing: DirListing | null;
+  onConfirm: (entries: FileEntry[]) => Promise<void>;
   onClose: () => void;
 }
 
-/** Asks before deleted files and folders go for good, with every version they still have. */
-export function PurgeDeletedDialog({ entries, onConfirm, onClose }: PurgeDeletedDialogProps) {
+/**
+ * Asks before deleted files and folders go for good, with every version they still have. It
+ * acts only on those the folder still lists as deleted: one written again since is left alone.
+ */
+export function PurgeDeletedDialog({
+  chosen,
+  listing,
+  onConfirm,
+  onClose,
+}: PurgeDeletedDialogProps) {
+  const entries = useMemo(() => entriesStillDeleted(chosen, listing), [chosen, listing]);
   const folders = entries.some((entry) => entry.kind === "dir");
   return (
     <ConfirmDialog
       title="Delete for good"
       confirmLabel="Delete for good"
       danger
+      disabled={entries.length === 0}
       onClose={onClose}
-      onConfirm={onConfirm}
+      onConfirm={() => onConfirm(entries)}
     >
-      <p>
-        Remove{" "}
-        {entries.length === 1 ? (
-          <strong>{entries[0].name}</strong>
-        ) : (
-          pluralize(entries.length, "deleted item")
-        )}{" "}
-        and every version kept of it for good? This cannot be undone.
-      </p>
+      {entries.length === 0 ? (
+        <p>{chosen.length === 1 ? `${chosen[0].name} is` : "These items are"} no longer deleted.</p>
+      ) : (
+        <p>
+          Remove{" "}
+          {entries.length === 1 ? (
+            <strong>{entries[0].name}</strong>
+          ) : (
+            pluralize(entries.length, "deleted item")
+          )}{" "}
+          and every version kept of it for good? This cannot be undone.
+        </p>
+      )}
       {folders && (
         <p className="warning-text">
           Everything deleted under a folder goes too. Files still in it are not touched.

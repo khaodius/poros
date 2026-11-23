@@ -185,6 +185,10 @@ pub trait ObjectVersions: Send + Sync {
     /// Removes one version or delete marker for good.
     async fn delete_version(&self, path: &str, version_id: &str) -> AppResult<()>;
 
+    /// Deletes `paths` as `RemoteFileSystem::delete` does, with this difference: a bucket among
+    /// them goes with every older version and delete marker it keeps.
+    async fn delete_with_versions(&self, paths: &[String]) -> AppResult<()>;
+
     /// Removes many versions, in as few requests as the service allows, and returns the ones it
     /// could not remove.
     async fn delete_versions(&self, versions: &[VersionRef]) -> Vec<(VersionRef, AppError)> {
@@ -244,6 +248,19 @@ pub fn marker_has_no_content(path: &str) -> AppError {
     AppError::invalid("This entry marks a delete and has no content").with_path(path)
 }
 
+/// Deletes `paths` for good. With `all_versions`, a bucket among them goes with the older
+/// versions and delete markers it keeps, which otherwise keep S3 from deleting it.
+pub async fn delete(
+    files: &dyn RemoteFileSystem,
+    paths: &[String],
+    all_versions: bool,
+) -> AppResult<()> {
+    match files.as_versioned() {
+        Some(versioned) if all_versions => versioned.delete_with_versions(paths).await,
+        _ => files.delete(paths).await,
+    }
+}
+
 /// The history ability of a connection, or why it has none.
 pub fn of(files: &dyn RemoteFileSystem) -> AppResult<&dyn ObjectVersions> {
     files.as_versioned().ok_or_else(|| {
@@ -288,21 +305,40 @@ pub fn reachable(key: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct HiddenFiles {
     histories: BTreeMap<String, Vec<ObjectVersion>>,
+    /// The entries of the page before's last file, not yet known to be hidden: its history can
+    /// go on in the next page, where its newest entry may come.
+    trailing: Option<(String, Vec<ObjectVersion>)>,
 }
 
 impl HiddenFiles {
-    /// Takes the next page. A file's newest entry comes no later than its older ones, so
-    /// entries of a file not yet known to be hidden belong to one that is still there.
-    pub fn add_page(&mut self, records: Vec<HistoryRecord>) {
+    /// Takes the next page. Pages are cut between keys in key order, whatever order a service
+    /// lists a page's entries in, so only the page's last key can go on in the next one. Any
+    /// other file whose newest entry is not a marker is still there, and its entries go.
+    pub fn add_page(&mut self, mut records: Vec<HistoryRecord>) {
+        if let Some((key, earlier)) = self.trailing.take() {
+            let earlier = earlier.into_iter().map(|version| HistoryRecord {
+                key: key.clone(),
+                version,
+            });
+            records.splice(0..0, earlier);
+        }
         for record in &records {
             if record.version.latest && record.version.is_marker() && reachable(&record.key) {
                 self.histories.entry(record.key.clone()).or_default();
             }
         }
+        // Keys sort as their bytes do, as S3 and B2 sort them.
+        let last = records.iter().map(|record| &record.key).max().cloned();
+        let mut trailing = Vec::new();
         for record in records {
             if let Some(history) = self.histories.get_mut(&record.key) {
                 history.push(record.version);
+            } else if Some(&record.key) == last.as_ref() {
+                trailing.push(record.version);
             }
+        }
+        if let Some(key) = last.filter(|_| !trailing.is_empty()) {
+            self.trailing = Some((key, trailing));
         }
     }
 
@@ -632,6 +668,37 @@ mod tests {
         assert_eq!(ids(&files[0].history), ["a-marker", "a-older-marker", "a1"]);
         // Both markers sit over the version, so both go when the file comes back.
         assert_eq!(files[0].marker_references().len(), 2);
+    }
+
+    #[test]
+    fn keeps_a_files_versions_from_the_page_before_its_newest_marker() {
+        let mut hidden = HiddenFiles::default();
+        // A service that lists a page's versions before its markers can end a page between a
+        // file's versions and the marker over them.
+        hidden.add_page(vec![
+            version("a.txt", "a1", true, 100, 1),
+            version("c.txt", "c2", false, 300, 3),
+            version("c.txt", "c1", false, 200, 2),
+            marker("b.txt", "b-marker", true, 150),
+        ]);
+        hidden.add_page(vec![
+            version("d.txt", "d1", true, 100, 4),
+            marker("c.txt", "c-marker", true, 400),
+        ]);
+        hidden.add_page(vec![version("e.txt", "e1", true, 100, 5)]);
+        let files = hidden.finish("bucket");
+        let found: Vec<(&str, Vec<&str>)> = files
+            .iter()
+            .map(|file| (file.path.as_str(), ids(&file.history)))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("/bucket/b.txt", vec!["b-marker"]),
+                ("/bucket/c.txt", vec!["c-marker", "c2", "c1"]),
+            ]
+        );
+        assert_eq!(files[1].newest_version().unwrap().size, 3);
     }
 
     #[test]

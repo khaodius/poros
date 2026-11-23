@@ -104,7 +104,7 @@ import { useToastStore } from "../state/toastStore";
 import { transferFromPane, transferToOtherSide } from "../state/transferActions";
 import { useUiStore } from "../state/uiStore";
 import { requestLockVault, vaultHandover } from "../state/vaultActions";
-import { resolveDeleted } from "../state/versionActions";
+import { bucketsKeepingVersions, resolveDeleted } from "../state/versionActions";
 import { workspaceChanged } from "../state/workspace";
 import { CompareDialog, type CompareSide } from "./CompareDialog";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
@@ -1343,14 +1343,15 @@ export function FilePane({
 
       {dialog?.type === "purgeDeleted" && sessionId && listedPath && (
         <PurgeDeletedDialog
-          entries={dialog.entries}
+          chosen={dialog.entries}
+          listing={pane.listing}
           onClose={() => setDialog(null)}
-          onConfirm={async () => {
-            const removed = new Set(dialog.entries.map((entry) => entry.path));
+          onConfirm={async (entries) => {
+            const removed = new Set(entries.map((entry) => entry.path));
             void resolveDeleted("purge", {
               sessionId,
               folder: listedPath,
-              entries: dialog.entries,
+              entries,
               focusPath: entryAfterRemoval(pane.visibleEntries, removed, pane.cursorPath),
             });
           }}
@@ -1362,7 +1363,13 @@ export function FilePane({
           chosen={dialog.entries}
           listing={pane.listing}
           checking={pane.stale === "refreshing"}
-          summary={(entries) => <DeleteSummary entries={entries} where={where} />}
+          summary={(entries) => (
+            <DeleteSummary
+              entries={entries}
+              where={where}
+              buckets={bucketsKeepingVersions(sessionId, protocol, entries)}
+            />
+          )}
           onClose={() => setDialog(null)}
           onConfirm={async (entries) => {
             const removed = entries.map((entry) => entry.path);
@@ -1389,7 +1396,14 @@ export function FilePane({
   );
 }
 
-function DeleteSummary({ entries, where }: { entries: FileEntry[]; where: string }) {
+interface DeleteSummaryProps {
+  entries: FileEntry[];
+  where: string;
+  /** Buckets among `entries` that may keep older versions and deleted files. */
+  buckets?: number;
+}
+
+function DeleteSummary({ entries, where, buckets = 0 }: DeleteSummaryProps) {
   const folders = entries.filter((entry) => entry.kind === "dir").length;
   const preview = entries.slice(0, 5);
   return (
@@ -1405,6 +1419,12 @@ function DeleteSummary({ entries, where }: { entries: FileEntry[]; where: string
       </p>
       {folders > 0 && (
         <p className="warning-text">Folders are deleted with everything inside them.</p>
+      )}
+      {buckets > 0 && (
+        <p className="warning-text">
+          Every older version and deleted file kept in the {buckets === 1 ? "bucket" : "buckets"}{" "}
+          goes too.
+        </p>
       )}
       {entries.length > 1 && (
         <ul className="delete-preview">

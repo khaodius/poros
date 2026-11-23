@@ -129,17 +129,16 @@ async fn find(
         path: path.to_string(),
         history: versioned.list_versions(path).await?,
     };
-    if action == DeletedAction::Restore {
-        if file.markers().next().is_none() {
-            return Err(AppError::invalid(format!(
-                "{} is not deleted",
-                remote_path::file_name(path)
-            ))
-            .with_path(path));
-        }
-        if file.newest_version().is_none() {
-            return Err(versions::nothing_to_restore(path));
-        }
+    // Whatever the page sends: a file written again since it was listed as deleted keeps its
+    // history, current version and all.
+    if file.markers().next().is_none() {
+        return Err(
+            AppError::invalid(format!("{} is not deleted", remote_path::file_name(path)))
+                .with_path(path),
+        );
+    }
+    if action == DeletedAction::Restore && file.newest_version().is_none() {
+        return Err(versions::nothing_to_restore(path));
     }
     Ok(vec![file])
 }

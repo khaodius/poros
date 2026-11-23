@@ -802,6 +802,88 @@ impl S3Fs {
     fn bucket_and_key(&self, path: &str) -> (Option<String>, String) {
         split(&self.resolve(path))
     }
+
+    /// Deletes for good. A bucket is emptied first, and with `with_versions` rid of the older
+    /// versions and delete markers too, without which S3 refuses to delete a bucket that kept
+    /// any.
+    pub(crate) async fn delete_paths(
+        &self,
+        paths: &[String],
+        with_versions: bool,
+    ) -> AppResult<()> {
+        let resolved: Vec<String> = paths.iter().map(|path| self.resolve(path)).collect();
+        for path in protocol::outermost(&resolved) {
+            let (Some(bucket), key) = split(&path) else {
+                return Err(AppError::invalid("Refusing to delete /"));
+            };
+            let prefix = match key.as_str() {
+                "" => String::new(),
+                key => format!("{key}/"),
+            };
+            if !key.is_empty() {
+                self.delete_object(&bucket, &key).await?;
+            }
+            let keys: Vec<String> = self
+                .list_all(&bucket, &prefix)
+                .await?
+                .into_iter()
+                .map(|object| object.key)
+                .collect();
+            self.delete_keys(&bucket, &keys).await?;
+            if key.is_empty() {
+                self.delete_bucket(&bucket, &path, with_versions).await?;
+            }
+            self.folders.forget(&path);
+        }
+        Ok(())
+    }
+
+    async fn delete_bucket(&self, bucket: &str, path: &str, with_versions: bool) -> AppResult<()> {
+        let (refused, code) = match self.delete_empty_bucket(bucket, path).await {
+            Ok(()) => return Ok(()),
+            Err(refusal) => refusal,
+        };
+        // Only a bucket that is not empty, emptied as it was of its files, still holds versions.
+        if !with_versions || code != "BucketNotEmpty" {
+            return Err(refused);
+        }
+        match self.purge_versions(bucket).await {
+            Ok(()) => self
+                .delete_empty_bucket(bucket, path)
+                .await
+                .map_err(|(error, _)| error),
+            // What keeps it is something other than versions, which the service does not list.
+            Err(error) if error.kind == ErrorKind::Unsupported => Err(refused),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Deletes a bucket. A refusal comes with the service's error code, which tells a bucket that
+    /// is not empty from other conflicts.
+    async fn delete_empty_bucket(
+        &self,
+        bucket: &str,
+        path: &str,
+    ) -> Result<(), (AppError, String)> {
+        let request = S3Request::new(Method::DELETE, Some(bucket), "");
+        let response = self
+            .send(&request)
+            .await
+            .map_err(|error| (error, String::new()))?;
+        let status = response.status();
+        let body = api::body_bytes(response)
+            .await
+            .map_err(|error| (error, String::new()))?;
+        let error = match status.is_success() {
+            true => match xml::embedded_error(&body) {
+                Some(error) => error,
+                None => return Ok(()),
+            },
+            false => xml::embedded_error(&body).unwrap_or_default(),
+        };
+        let code = error.code.clone();
+        Err((service_error(status, error, path), code))
+    }
 }
 
 fn header_text(headers: &HeaderMap, name: &str) -> Option<String> {
@@ -1061,43 +1143,9 @@ impl RemoteFileSystem for S3Fs {
     }
 
     /// Deletes for good: S3 has no recycle bin, though a versioned bucket keeps old versions.
-    /// Deleting a bucket empties it first.
+    /// Deleting a bucket empties it first; one that keeps versions is refused as not empty.
     async fn delete(&self, paths: &[String]) -> AppResult<()> {
-        let resolved: Vec<String> = paths.iter().map(|path| self.resolve(path)).collect();
-        for path in protocol::outermost(&resolved) {
-            let (Some(bucket), key) = split(&path) else {
-                return Err(AppError::invalid("Refusing to delete /"));
-            };
-            let prefix = match key.as_str() {
-                "" => String::new(),
-                key => format!("{key}/"),
-            };
-            if !key.is_empty() {
-                self.delete_object(&bucket, &key).await?;
-            }
-            let keys: Vec<String> = self
-                .list_all(&bucket, &prefix)
-                .await?
-                .into_iter()
-                .map(|object| object.key)
-                .collect();
-            self.delete_keys(&bucket, &keys).await?;
-            if key.is_empty() {
-                let request = S3Request::new(Method::DELETE, Some(&bucket), "");
-                match self.send_for_body(&request, &path).await {
-                    // A versioned bucket still holds the old versions and the delete markers.
-                    Err(error) if error.kind == ErrorKind::AlreadyExists => {
-                        self.purge_versions(&bucket).await?;
-                        self.send_for_body(&request, &path).await?;
-                    }
-                    deleted => {
-                        deleted?;
-                    }
-                }
-            }
-            self.folders.forget(&path);
-        }
-        Ok(())
+        self.delete_paths(paths, false).await
     }
 
     async fn stat(&self, path: &str) -> AppResult<Option<RemoteStat>> {

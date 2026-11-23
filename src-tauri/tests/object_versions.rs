@@ -100,7 +100,9 @@ impl Scratch {
         let bucket = format!("poros-object-versions-{name}-{}", std::process::id());
         let root = format!("/{bucket}");
         if files.stat(&root).await.unwrap().is_some() {
-            files.delete(std::slice::from_ref(&root)).await.unwrap();
+            versions::delete(files.as_ref(), std::slice::from_ref(&root), true)
+                .await
+                .unwrap();
         }
         files.make_dir("/", &bucket).await.unwrap();
         Some(Self {
@@ -222,8 +224,7 @@ impl Scratch {
     /// Deletes the bucket with every version in it and closes the session.
     async fn close(self) {
         let root = format!("/{}", self.bucket);
-        self.files
-            .delete(std::slice::from_ref(&root))
+        versions::delete(self.files.as_ref(), std::slice::from_ref(&root), true)
             .await
             .unwrap();
         assert!(self.files.stat(&root).await.unwrap().is_none());
@@ -610,6 +611,28 @@ async fn restores_and_purges_deleted_folders_as_one_operation() {
     assert_eq!(partly.failures[0].path, scratch.path("site/index.html"));
     assert_eq!(partly.failures[0].message, "index.html is not deleted");
 
+    // A file written again since a pane listed it as deleted is not removed for good: the
+    // whole of its history stays, its current version included.
+    scratch.write("site/index.html", b"written again").await;
+    let history_before = scratch.history("site/index.html").await;
+    assert_eq!(history_before.len(), 2);
+    let refused = operations
+        .restore_or_purge_deleted(DeletedRequest {
+            operation_id: "purge-live".into(),
+            session_id: scratch.session.id.clone(),
+            action: DeletedAction::Purge,
+            items: vec![DeletedItem {
+                path: scratch.path("site/index.html"),
+                is_dir: false,
+            }],
+        })
+        .await
+        .unwrap();
+    assert_eq!((refused.files, refused.failed), (0, 1));
+    assert_eq!(refused.failures[0].message, "index.html is not deleted");
+    assert_eq!(scratch.history("site/index.html").await, history_before);
+    assert_eq!(scratch.read("site/index.html").await, b"written again");
+
     // Deleting for good leaves nothing of the folder behind, and nothing of the files kept.
     scratch.delete("site/archive").await;
     scratch.delete("site/gone.txt").await;
@@ -648,10 +671,59 @@ async fn restores_and_purges_deleted_folders_as_one_operation() {
         .unwrap()
         .iter()
         .all(|file| file.newest_version().is_none()));
-    for key in kept {
-        assert_eq!(scratch.read(key).await, key.as_bytes());
-    }
+    assert_eq!(scratch.read("site/index.html").await, b"written again");
+    assert_eq!(
+        scratch.read("site/live/now.txt").await,
+        b"site/live/now.txt"
+    );
 
+    scratch.close().await;
+}
+
+#[tokio::test]
+async fn a_bucket_that_keeps_versions_goes_with_them_only_when_asked() {
+    let Some(scratch) = Scratch::open("bucket").await else {
+        return;
+    };
+    scratch.enable_versioning();
+    scratch.write("a.txt", b"one").await;
+    scratch.write("a.txt", b"two").await;
+    scratch.write("docs/b.txt", b"b").await;
+    let root = format!("/{}", scratch.bucket);
+
+    // As in 0.7.0: the files go, under delete markers, and the bucket stays with their history.
+    let refused = scratch
+        .files
+        .delete(std::slice::from_ref(&root))
+        .await
+        .unwrap_err();
+    assert_eq!(refused.kind, ErrorKind::AlreadyExists, "{refused:?}");
+    assert!(scratch.files.stat(&root).await.unwrap().is_some());
+    assert!(scratch
+        .files
+        .list_dir(&root)
+        .await
+        .unwrap()
+        .entries
+        .is_empty());
+    let history = scratch.history("a.txt").await;
+    assert_eq!(history.len(), 3);
+    assert!(history[0].kind == VersionKind::DeleteMarker && history[0].latest);
+
+    // Deleting a bucket that keeps no versions needs nothing more.
+    let plain = format!("{}-plain", scratch.bucket);
+    scratch.files.make_dir("/", &plain).await.unwrap();
+    let plain_root = format!("/{plain}");
+    versions::delete(
+        scratch.files.as_ref(),
+        std::slice::from_ref(&plain_root),
+        true,
+    )
+    .await
+    .unwrap();
+    assert!(scratch.files.stat(&plain_root).await.unwrap().is_none());
+
+    // Asked to, it goes with every version and marker: what `close` checks.
     scratch.close().await;
 }
 

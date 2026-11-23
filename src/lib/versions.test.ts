@@ -2,12 +2,15 @@ import { describe, expect, it } from "vitest";
 import type { DeletedEntry, DirListing, FileEntry, ObjectVersion } from "./types";
 import {
   EDITOR_MAX_BYTES,
+  afterDeleting,
   bucketOf,
   deletedAsEntry,
   deletedItems,
   deletionsIn,
+  entriesStillDeleted,
   formatVersionTime,
   hasVersions,
+  isBucket,
   isTextName,
   keepsVersions,
   mergeDeleted,
@@ -81,6 +84,41 @@ describe("bucketOf", () => {
   });
 });
 
+describe("isBucket", () => {
+  it("is true for a bucket itself only", () => {
+    expect(isBucket("/photos")).toBe(true);
+    expect(isBucket("/photos/")).toBe(true);
+    expect(isBucket("/photos/2024")).toBe(false);
+    expect(isBucket("/")).toBe(false);
+  });
+});
+
+describe("afterDeleting", () => {
+  const current = version("v3", { latest: true });
+  const marker = version("m1", { kind: "deleteMarker" });
+  const older = version("v1");
+
+  it("tells what the file shows once the current version goes, from the entry under it", () => {
+    expect(afterDeleting(current, [current, older])).toBe(
+      "The version before it becomes the current file.",
+    );
+    expect(afterDeleting(current, [current, marker, older])).toMatch(/show as deleted/);
+    expect(afterDeleting(current, [current])).toMatch(/only version: the file will be gone/);
+  });
+
+  it("tells whether removing the marker on top brings the file back", () => {
+    const top = version("m2", { kind: "deleteMarker", latest: true });
+    expect(afterDeleting(top, [top, older])).toBe("The file comes back as its newest version.");
+    expect(afterDeleting(top, [top, marker, older])).toMatch(/stays deleted/);
+    expect(afterDeleting(top, [top])).toBe("Nothing of the file is left after it.");
+  });
+
+  it("says nothing for an older entry, whose going changes nothing", () => {
+    expect(afterDeleting(older, [current, older])).toBeNull();
+    expect(afterDeleting(marker, [current, marker, older])).toBeNull();
+  });
+});
+
 describe("keepsVersions", () => {
   it("offers versions unless the bucket is known to keep none", () => {
     expect(keepsVersions("enabled")).toBe(true);
@@ -114,6 +152,21 @@ describe("mergeDeleted", () => {
   it("knows of no deletions in a listing it did not make", () => {
     expect(deletionsIn(listing([entry("a.jpg")])).size).toBe(0);
     expect(deletionsIn(null).size).toBe(0);
+  });
+});
+
+describe("entriesStillDeleted", () => {
+  it("keeps only what the listing on show still has as deleted", () => {
+    const before = mergeDeleted(listing([entry("kept.jpg")]), [deleted("a.jpg"), deleted("b.jpg")]);
+    const chosen = before.entries.filter((item) => deletionsIn(before).has(item.path));
+    // a.jpg was written again since, and b.jpg was removed for good.
+    const now = mergeDeleted(listing([entry("kept.jpg"), entry("a.jpg")]), []);
+    expect(entriesStillDeleted(chosen, now)).toEqual([]);
+    const still = mergeDeleted(listing([entry("kept.jpg")]), [deleted("b.jpg")]);
+    expect(entriesStillDeleted(chosen, still).map((item) => item.name)).toEqual(["b.jpg"]);
+    expect(entriesStillDeleted(chosen, null)).toEqual([]);
+    // A listing without deleted files shows nothing as deleted.
+    expect(entriesStillDeleted(chosen, listing([entry("a.jpg"), entry("b.jpg")]))).toEqual([]);
   });
 });
 

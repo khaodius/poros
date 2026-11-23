@@ -160,6 +160,16 @@ fn history_records(
     (records, folders)
 }
 
+/// A path's bucket and file name, with the trailing slash kept of a name that has one, as the
+/// placeholders tools write for folders do.
+fn name_keeping_slash(path: &str) -> (Option<String>, String) {
+    let (bucket, mut name) = split(&protocol::normalize(path));
+    if path.ends_with('/') && !name.is_empty() {
+        name.push('/');
+    }
+    (bucket, name)
+}
+
 fn prefix_of(key: &str) -> String {
     match key {
         "" => String::new(),
@@ -179,8 +189,9 @@ impl B2Fs {
 
     /// The bucket and name of a file, which a version belongs to.
     fn file_named(&self, path: &str) -> AppResult<(String, String, String)> {
-        let path = protocol::normalize(&self.resolve(path));
-        match split(&path) {
+        let resolved = self.resolve(path);
+        let path = protocol::normalize(&resolved);
+        match name_keeping_slash(&resolved) {
             (Some(bucket), key) if !key.is_empty() => Ok((bucket, key, path)),
             _ => Err(AppError::invalid("Versions belong to files inside a bucket").with_path(path)),
         }
@@ -394,14 +405,16 @@ impl ObjectVersions for B2Fs {
         let (_, key, path) = self.file_named(path)?;
         self.permit(Need::Delete, &key, &path)?;
         let body = delete_request(&key, version_id);
-        match self
-            .call::<serde_json::Value>("b2_delete_file_version", body, &path, false)
+        // B2 answers the same for a version already gone and for a name that is not the
+        // version's, so neither counts as done.
+        self.call::<serde_json::Value>("b2_delete_file_version", body, &path, false)
             .await
-        {
-            // Already gone.
-            Err(error) if error.kind == ErrorKind::NotFound => Ok(()),
-            deleted => deleted.map(drop),
-        }
+            .map(drop)
+    }
+
+    /// B2 deletes a bucket with every version in it already.
+    async fn delete_with_versions(&self, paths: &[String]) -> AppResult<()> {
+        RemoteFileSystem::delete(self, paths).await
     }
 }
 
@@ -474,6 +487,26 @@ mod tests {
         assert_eq!(files[0].path, "/bucket/docs/a.txt");
         assert_eq!(files[0].deleted(), Some(1_710_000_003));
         assert_eq!(files[0].newest_version().unwrap().version_id, "4_v2");
+    }
+
+    #[test]
+    fn keeps_the_slash_of_a_folder_placeholder() {
+        assert_eq!(
+            name_keeping_slash("/photos/2024/"),
+            (Some("photos".into()), "2024/".into())
+        );
+        assert_eq!(
+            name_keeping_slash("/photos/2024/a.txt"),
+            (Some("photos".into()), "2024/a.txt".into())
+        );
+        assert_eq!(
+            name_keeping_slash("/photos/"),
+            (Some("photos".into()), String::new())
+        );
+        assert_eq!(
+            delete_request("2024/", "4_hidden")["fileName"],
+            serde_json::json!("2024/")
+        );
     }
 
     #[test]

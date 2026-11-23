@@ -112,7 +112,7 @@ impl Run {
             format!("/poros-cli-{name}-{}", std::process::id()),
         );
         run.options.push("--s3-path-style");
-        run.run(&["rm", "-rf", &run.remote]);
+        run.run(&["rm", "-rf", "--all-versions", &run.remote]);
         let made = run.run(&["mkdir", &run.remote]);
         assert_eq!(status(&made), 0, "{made:?}");
         Some((run, port))
@@ -171,7 +171,7 @@ impl Run {
 impl Drop for Run {
     fn drop(&mut self) {
         if !self.remote.is_empty() {
-            self.run(&["rm", "-rf", &self.remote]);
+            self.run(&["rm", "-rf", "--all-versions", &self.remote]);
         }
     }
 }
@@ -537,10 +537,35 @@ fn versions_lists_restores_and_downloads_old_versions() {
     );
     let (code, value) = run.json(&["versions", &file, "--get", "no-such-version", "x"]);
     assert_eq!(code, 7, "{value}");
+    // Transfer options do nothing but with --get, so they are refused elsewhere.
+    for line in [
+        &["versions", &file, "-w", "2"][..],
+        &["versions", &file, "--restore", &oldest, "--no-verify"],
+    ] {
+        let (code, value) = run.json(line);
+        assert_eq!(code, 2, "{value}");
+        assert!(value["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("--get"));
+    }
+    assert_eq!(run.run(&["cat", &file]).stdout, b"one\n");
 
-    // A delete leaves a marker, and ls --deleted shows what it hid.
-    let (code, value) = run.json(&["rm", &file]);
+    // A delete leaves a marker, and ls --deleted shows what it hid, dot-files with -a only.
+    let hidden = run.remote("notes/.env");
+    let written = run.with_input(&["write", &hidden], b"KEY=1\n");
+    assert_eq!(status(&written), 0, "{written:?}");
+    let (code, value) = run.json(&["rm", &file, &hidden]);
     assert_eq!(code, 0, "{value}");
+    let (code, value) = run.json(&["ls", "--deleted", "-a", &run.remote("notes")]);
+    assert_eq!(code, 0, "{value}");
+    let names: Vec<&str> = value["deleted"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, [".env", "report.txt"]);
     let (code, value) = run.json(&["ls", "--deleted", &run.remote("notes")]);
     assert_eq!(code, 0, "{value}");
     assert_eq!(value["entries"].as_array().unwrap().len(), 0);
@@ -566,6 +591,22 @@ fn versions_lists_restores_and_downloads_old_versions() {
     let (code, value) = run.json(&["versions", &file, "--restore", &second]);
     assert_eq!(code, 0, "{value}");
     assert_eq!(run.run(&["cat", &file]).stdout, b"two two\n");
+
+    // As in 0.7.0, a bucket that keeps versions is refused as not empty, its history intact,
+    // unless --all-versions says to delete that too.
+    let (code, value) = run.json(&["rm", "-r", &run.remote]);
+    assert_ne!(code, 0, "{value}");
+    let message = value["error"]["message"].as_str().unwrap();
+    assert!(message.contains("--all-versions"), "{message}");
+    // Six entries before, and the marker the emptying left.
+    let (code, value) = run.json(&["versions", &file]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(value["versions"][0]["kind"], "deleteMarker");
+    assert_eq!(value["versions"].as_array().unwrap().len(), 7);
+    let (code, value) = run.json(&["rm", "-r", "--all-versions", &run.remote]);
+    assert_eq!(code, 0, "{value}");
+    let (code, value) = run.json(&["ls", &run.remote]);
+    assert_eq!(code, 7, "{value}");
 }
 
 #[test]

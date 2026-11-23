@@ -6341,3 +6341,12 @@ textarea::placeholder {
   background: var(--surface-sunken);
   border-radius: 999px;
 }
+
+.editor-status-button:disabled {
+  cursor: default;
+}
+
+.editor-status-button:disabled:hover {
+  color: var(--text-muted);
+  background: none;
+}

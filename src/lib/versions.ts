@@ -1,7 +1,7 @@
 // The history versioned S3 buckets and Backblaze B2 keep of each file: what the Versions dialog
 // offers for each entry, and how deleted files join a folder's listing.
 
-import { formatCount } from "./deletion";
+import { entriesStillListed, formatCount } from "./deletion";
 import { formatDate } from "./format";
 import type { DateFormat } from "./settings";
 import type {
@@ -32,6 +32,11 @@ export function hasVersions(protocol: Protocol | undefined): boolean {
 export function bucketOf(path: string): string | null {
   const [bucket] = path.split("/").filter(Boolean);
   return bucket ?? null;
+}
+
+/** Whether a path names a bucket itself, as the top of an S3 or B2 server lists them. */
+export function isBucket(path: string): boolean {
+  return path.split("/").filter(Boolean).length === 1;
 }
 
 /** Whether to offer versions: everywhere but a bucket known never to keep any. */
@@ -70,6 +75,19 @@ export function mergeDeleted(listing: DirListing, deleted: DeletedEntry[]): DirL
 /** The deleted entries of a listing `mergeDeleted` made, by path; none for any other. */
 export function deletionsIn(listing: DirListing | null): ReadonlyMap<string, DeletedEntry> {
   return (listing && deletions.get(listing)) ?? NONE;
+}
+
+/**
+ * The entries among `chosen` that `listing` still shows as deleted, as it shows them now. One
+ * written again since it was picked is left out, so nothing removes it with its history.
+ */
+export function entriesStillDeleted(
+  chosen: readonly FileEntry[],
+  listing: DirListing | null,
+): FileEntry[] {
+  if (!listing) return [];
+  const deleted = deletionsIn(listing);
+  return entriesStillListed(chosen, listing.entries).filter((entry) => deleted.has(entry.path));
 }
 
 export function deletedItems(entries: readonly FileEntry[]): DeletedItem[] {
@@ -148,6 +166,29 @@ export function versionActions(
     current.size <= EDITOR_MAX_BYTES;
   if (readable && comparable) actions.add("compare");
   return actions;
+}
+
+/**
+ * What deleting one entry of a file's history, newest first in `history`, does to the file as
+ * it shows, from the entry under it; null for an older entry, whose going changes nothing.
+ */
+export function afterDeleting(
+  version: ObjectVersion,
+  history: readonly ObjectVersion[],
+): string | null {
+  if (!version.latest) return null;
+  const index = history.findIndex((entry) => entry.versionId === version.versionId);
+  const next = index < 0 ? undefined : history[index + 1];
+  if (version.kind === "deleteMarker") {
+    if (!next) return "Nothing of the file is left after it.";
+    return next.kind === "version"
+      ? "The file comes back as its newest version."
+      : "The file stays deleted: another delete marker is under this one.";
+  }
+  if (!next) return "This is the only version: the file will be gone.";
+  return next.kind === "version"
+    ? "The version before it becomes the current file."
+    : "The file will show as deleted: the entry before it is a delete marker.";
 }
 
 const localeWithSeconds = new Intl.DateTimeFormat(undefined, {

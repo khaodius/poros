@@ -167,6 +167,9 @@ pub async fn list(context: &Context, arguments: &ListArgs) -> AppResult<Reply> {
                 .sort_by(|left, right| left.name.cmp(&right.name));
         }
         if let Some(deleted) = &mut deleted {
+            if !arguments.all {
+                deleted.retain(|entry| !entry.name.starts_with('.'));
+            }
             deleted.sort_by(|left, right| left.name.cmp(&right.name));
         }
         listings.push(ListingView { listing, deleted });

@@ -440,6 +440,10 @@ impl ObjectVersions for S3Fs {
         }
     }
 
+    async fn delete_with_versions(&self, paths: &[String]) -> AppResult<()> {
+        self.delete_paths(paths, true).await
+    }
+
     async fn delete_versions(&self, versions: &[VersionRef]) -> Vec<(VersionRef, AppError)> {
         let mut by_bucket: HashMap<String, Vec<(String, String)>> = HashMap::new();
         let mut paths: HashMap<(String, String, String), &VersionRef> = HashMap::new();

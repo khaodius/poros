@@ -14,8 +14,9 @@ use crate::file_ops::{
     self, DeleteRequest, FileOperations, Location, Mode, ModeChange, MoveCopyRequest,
     PermissionRequest,
 };
-use crate::protocol::{self, Protocol};
+use crate::protocol::{self, Protocol, RemoteFileSystem};
 use crate::remote_path;
+use crate::versions::{self, Versioning};
 
 fn operations(context: &Context) -> FileOperations {
     FileOperations::new(context.sessions.clone(), context.events.clone())
@@ -52,6 +53,35 @@ pub async fn make_dirs_command(context: &Context, arguments: &MakeDirArgs) -> Ap
         }
     })
     .await
+}
+
+/// A bucket refused as not empty because it keeps versions says how to delete it all the same.
+async fn name_all_versions(
+    files: &dyn RemoteFileSystem,
+    error: AppError,
+    all_versions: bool,
+) -> AppError {
+    let Some(bucket) = error.path.as_deref() else {
+        return error;
+    };
+    let refused_bucket = error.kind == ErrorKind::AlreadyExists
+        && remote_path::parent(bucket).as_deref() == Some("/");
+    let Some(versioned) = files
+        .as_versioned()
+        .filter(|_| refused_bucket && !all_versions)
+    else {
+        return error;
+    };
+    match versioned.versioning(bucket).await {
+        Ok(Versioning::Enabled | Versioning::Suspended) => AppError {
+            message: format!(
+                "{}. The bucket keeps older versions and deleted files: add --all-versions to delete them with it",
+                error.message.trim_end_matches('.')
+            ),
+            ..error
+        },
+        _ => error,
+    }
 }
 
 pub async fn remove(context: &Context, arguments: &RemoveArgs) -> AppResult<Reply> {
@@ -94,7 +124,10 @@ pub async fn remove(context: &Context, arguments: &RemoveArgs) -> AppResult<Repl
             .await?;
         (summary.deleted, summary.failures)
     } else {
-        files.delete(&doomed).await?;
+        let deleted = versions::delete(files.as_ref(), &doomed, arguments.all_versions).await;
+        if let Err(error) = deleted {
+            return Err(name_all_versions(files.as_ref(), error, arguments.all_versions).await);
+        }
         (doomed.len() as u64, Vec::new())
     };
     let all_failed = refused

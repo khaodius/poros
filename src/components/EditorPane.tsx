@@ -465,7 +465,8 @@ export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
             <button
               type="button"
               className="editor-status-button"
-              title="Encoding used when saving"
+              title={readOnly ? "Encoding of this older version" : "Encoding used when saving"}
+              disabled={readOnly}
               onClick={(event) => showMenu(event, encodingMenu())}
             >
               {ENCODING_LABELS[format.encoding]}
@@ -473,7 +474,10 @@ export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
             <button
               type="button"
               className="editor-status-button"
-              title="Line endings used when saving"
+              title={
+                readOnly ? "Line endings of this older version" : "Line endings used when saving"
+              }
+              disabled={readOnly}
               onClick={(event) => showMenu(event, lineEndingMenu())}
             >
               {LINE_ENDING_LABELS[format.lineEnding]}

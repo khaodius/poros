@@ -282,12 +282,9 @@ pub async fn remote_delete(
     session_id: String,
     paths: Vec<String>,
 ) -> AppResult<()> {
-    sessions
-        .get(&session_id)
-        .await?
-        .files()
-        .delete(&paths)
-        .await
+    let files = sessions.get(&session_id).await?.files();
+    // The page says before deleting a bucket that its versions go with it.
+    versions::delete(files.as_ref(), &paths, true).await
 }
 
 #[tauri::command]

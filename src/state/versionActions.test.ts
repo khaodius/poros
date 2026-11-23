@@ -4,7 +4,13 @@ import { listingScope } from "../lib/listingCache";
 import type { DirListing, FileEntry, ObjectVersion, SessionInfo } from "../lib/types";
 import { listingShare } from "./listings";
 import { useSessionStore } from "./sessionStore";
-import { deleteVersion, resolveDeleted, restoreVersion } from "./versionActions";
+import {
+  bucketsKeepingVersions,
+  deleteVersion,
+  resolveDeleted,
+  restoreVersion,
+  useVersioningStore,
+} from "./versionActions";
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke, Channel: class {} }));
@@ -96,5 +102,28 @@ describe("what changes a bucket", () => {
     expect(cache.has(scope, "/bucket/reports")).toBe(false);
     expect(cache.has(scope, "/bucket/reports/old")).toBe(false);
     expect(cache.has(scope, "/bucket/other")).toBe(true);
+  });
+});
+
+describe("deleting buckets", () => {
+  const folder = (path: string): FileEntry => ({
+    name: path.split("/").pop() ?? path,
+    path,
+    kind: "dir",
+    size: 0,
+    modified: null,
+    permissions: null,
+    owner: null,
+    group: null,
+    hidden: false,
+  });
+
+  it("counts the S3 buckets not known to keep no versions", () => {
+    useVersioningStore.setState({ known: { "s1\nplain": "off", "s1\nkept": "enabled" } });
+    const entries = ["/kept", "/plain", "/unasked", "/kept/inside"].map(folder);
+    expect(bucketsKeepingVersions("s1", "s3", entries)).toBe(2);
+    expect(bucketsKeepingVersions("s1", "s3", [folder("/plain")])).toBe(0);
+    expect(bucketsKeepingVersions("s1", "backblazeB2", entries)).toBe(0);
+    expect(bucketsKeepingVersions(undefined, "s3", entries)).toBe(0);
   });
 });

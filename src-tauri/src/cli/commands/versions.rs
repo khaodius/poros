@@ -17,6 +17,11 @@ use crate::transfer::{TransferManager, VersionDownload};
 use crate::versions::{self, ObjectVersion, ObjectVersions, VersionKind, Versioning};
 
 pub async fn versions(context: &Context, arguments: &VersionsArgs) -> AppResult<Reply> {
+    if arguments.get.is_none() && arguments.options.any_given() {
+        return Err(AppError::invalid(
+            "Transfer options go with --get, which downloads a version",
+        ));
+    }
     let connected = context.connected().await?;
     let files = connected.files();
     let versioned = versions::of(files.as_ref())?;
