@@ -827,7 +827,120 @@ pub(super) fn trim_trailing_slash(path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
+    use crate::events::Events;
+    use crate::protocol::Protocol;
+    use crate::session::{SessionInfo, SessionManager};
+    use crate::ssh::{AuthMethod, ConnectProfile, HostKeyApproval, Route};
+
+    /// Signed in to the SSH test server that `tests/sftp_server.rs` describes; `None` unless
+    /// `POROS_TEST_SSH_PORT` is set.
+    async fn test_server(
+        known_hosts: &std::path::Path,
+    ) -> Option<(Arc<SessionManager>, SessionInfo)> {
+        let port = std::env::var("POROS_TEST_SSH_PORT").ok()?.parse().ok()?;
+        let profile = || ConnectProfile {
+            protocol: Protocol::Sftp,
+            host: "127.0.0.1".into(),
+            port,
+            username: std::env::var("POROS_TEST_SSH_USER").unwrap_or_else(|_| "poros".into()),
+            auth: AuthMethod::Password {
+                password: std::env::var("POROS_TEST_SSH_PASSWORD")
+                    .unwrap_or_else(|_| "poros-pass".into()),
+            },
+            initial_path: None,
+            timeout_secs: Some(10),
+            keepalive_secs: None,
+            compression: false,
+            receive_buffer_kib: None,
+            send_buffer_kib: None,
+            saved_connection_id: None,
+            ftp_active: false,
+            bypass_proxy: false,
+            jump_connection_id: None,
+            rsync_path: None,
+            s3: Default::default(),
+            route: Route::default(),
+        };
+        let manager = Arc::new(SessionManager::new(
+            known_hosts.join("known_hosts"),
+            Events::default(),
+        ));
+        let info = match manager.connect(profile(), None, "main").await {
+            Ok(info) => info,
+            Err(error) => {
+                let host_key = error.host_key.expect("only the host key may be unknown");
+                let approval = HostKeyApproval {
+                    fingerprint: host_key.fingerprint,
+                    remember: true,
+                };
+                manager
+                    .connect(profile(), Some(approval), "main")
+                    .await
+                    .unwrap()
+            }
+        };
+        Some((manager, info))
+    }
+
+    async fn write(fs: &RemoteFs, path: &str, contents: &[u8]) {
+        let handle = fs.open_for_write(path, true, Some(0o644)).await.unwrap();
+        fs.write_chunk(&handle, 0, contents.to_vec()).await.unwrap();
+        fs.close_handle(handle).await.unwrap();
+    }
+
+    /// A rename to another disk fails the way a rename onto a taken name does. Should the name
+    /// found free have been taken since, neither `mv` nor a copy may write over it.
+    #[tokio::test]
+    async fn a_move_that_falls_back_never_writes_over_a_name_taken_meanwhile() {
+        let known_hosts = tempfile::tempdir().unwrap();
+        let Some((manager, info)) = test_server(known_hosts.path()).await else {
+            return;
+        };
+        let session = manager.get(&info.id).await.unwrap();
+        let fs = session.sftp().unwrap();
+        let scratch = format!(
+            "{}/poros-fileops-guard-{}",
+            info.home.trim_end_matches('/'),
+            std::process::id()
+        );
+        let _ = fs.delete(std::slice::from_ref(&scratch)).await;
+        fs.make_dir_at(&scratch, None).await.unwrap();
+        let (source, taken) = (
+            format!("{scratch}/moved.txt"),
+            format!("{scratch}/taken.txt"),
+        );
+        write(fs, &source, b"moved").await;
+        write(fs, &taken, b"kept").await;
+
+        for commands in [true, false] {
+            let features = ServerFeatures {
+                copy_data: true,
+                commands,
+            };
+            let (cancel, progress) = (CancellationToken::new(), Progress::default());
+            let work = Work::new(&session, features, &cancel, &progress)
+                .await
+                .unwrap();
+            let stat = work.fs.lstat_entry(&source).await.unwrap().unwrap();
+            let rename_error = AppError::new(ErrorKind::Sftp, "Failure");
+            let error = work
+                .move_across_disks(
+                    &source,
+                    stat,
+                    &Destination::Fresh(taken.clone()),
+                    rename_error,
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(error.kind, ErrorKind::AlreadyExists, "commands: {commands}");
+            assert_eq!(fs.read_to_end(&taken, 64).await.unwrap(), b"kept");
+            assert_eq!(fs.read_to_end(&source, 64).await.unwrap(), b"moved");
+        }
+        fs.delete(std::slice::from_ref(&scratch)).await.unwrap();
+    }
 
     #[test]
     fn folders_contain_their_descendants_only() {
