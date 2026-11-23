@@ -185,6 +185,7 @@ impl Fixture {
                 sources: sources.iter().map(|source| self.path(source)).collect(),
                 target_directory: self.path(target),
                 conflict,
+                target_name: None,
             })
             .await
             .unwrap()
@@ -880,6 +881,7 @@ async fn moves_across_disks() {
                 sources: vec![fixture.path(&folder)],
                 target_directory: other_disk.clone(),
                 conflict: Conflict::KeepBoth,
+                target_name: None,
             })
             .await
             .unwrap();
@@ -950,6 +952,7 @@ async fn moving_across_disks_keeps_what_could_not_be_copied() {
             sources: vec![fixture.path("photos")],
             target_directory: other_disk.clone(),
             conflict: Conflict::KeepBoth,
+            target_name: None,
         })
         .await
         .unwrap();

@@ -5,7 +5,7 @@ pub mod archive;
 mod compare;
 mod delete;
 mod local_ops;
-mod names;
+pub(crate) mod names;
 mod permissions;
 mod server;
 
@@ -70,6 +70,9 @@ pub struct MoveCopyRequest {
     pub target_directory: String,
     #[serde(default)]
     pub conflict: Conflict,
+    /// The name the one item takes in the target folder, when not its own.
+    #[serde(default)]
+    pub target_name: Option<String>,
 }
 
 /// How an operation did its work.
@@ -432,6 +435,12 @@ impl FileOperations {
     }
 
     pub async fn move_or_copy(&self, request: MoveCopyRequest) -> AppResult<OperationSummary> {
+        if let Some(name) = &request.target_name {
+            if request.sources.len() != 1 {
+                return Err(AppError::invalid("Only one item can be given a new name"));
+            }
+            crate::protocol::validate_name(name)?;
+        }
         let running = self.begin(&request.operation_id);
         match &request.location {
             Location::Local => {

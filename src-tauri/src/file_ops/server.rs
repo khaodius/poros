@@ -150,13 +150,18 @@ impl<'a> Work<'a> {
         let results = stream::iter(request.sources.iter().cloned())
             .map(|source| {
                 let source = trim_trailing_slash(&self.fs.resolve(&source));
-                let name = remote_path::file_name(&source);
+                let name = match &request.target_name {
+                    Some(name) => name.clone(),
+                    None => remote_path::file_name(&source).to_string(),
+                };
                 // Claimed in the order the items are given, so of two items with one name the
                 // first keeps it.
-                let name_is_ours = self.claim(&remote_path::join(&directory, name));
+                let name_is_ours = self.claim(&remote_path::join(&directory, &name));
                 let target = &target;
                 async move {
-                    let result = self.place(&source, target, name_is_ours, request).await;
+                    let result = self
+                        .place(&source, target, &name, name_is_ours, request)
+                        .await;
                     (source, result)
                 }
             })
@@ -182,20 +187,22 @@ impl<'a> Work<'a> {
         }
     }
 
-    /// Moves or copies one item into the target folder; `None` when it was skipped.
-    /// `name_is_ours` is false when another item of the operation goes to its name.
+    /// Moves or copies one item into the target folder under `name`; `None` when it was
+    /// skipped. `name_is_ours` is false when another item of the operation goes to that name.
     async fn place(
         &self,
         source: &str,
         target: &Target<'_>,
+        name: &str,
         name_is_ours: bool,
         request: &MoveCopyRequest,
     ) -> AppResult<Option<String>> {
         self.check_cancelled()?;
         let directory = target.directory;
-        let name = remote_path::file_name(source).to_string();
+        let own_name = remote_path::file_name(source);
         let stat = self.fs.lstat_entry(source).await?.ok_or_else(|| {
-            AppError::new(ErrorKind::NotFound, format!("{name} no longer exists")).with_path(source)
+            AppError::new(ErrorKind::NotFound, format!("{own_name} no longer exists"))
+                .with_path(source)
         })?;
         if stat.kind == EntryKind::Dir && self.goes_into_itself(source, target).await {
             let verb = if request.mode == Mode::Move {
@@ -204,19 +211,20 @@ impl<'a> Work<'a> {
                 "copy"
             };
             return Err(AppError::invalid(format!(
-                "Cannot {verb} the folder {name} into itself"
+                "Cannot {verb} the folder {own_name} into itself"
             )));
         }
-        let in_place = remote_path::parent(source).as_deref() == Some(directory);
+        let in_place =
+            remote_path::parent(source).as_deref() == Some(directory) && name == own_name;
         let destination = match (request.mode, in_place) {
             (Mode::Move, true) => return Ok(None),
             (Mode::Copy, true) => Some(Destination::Fresh(
-                self.free_name(directory, &name, stat.kind).await?,
+                self.free_name(directory, name, stat.kind).await?,
             )),
             _ if !name_is_ours => match request.conflict {
                 Conflict::Skip => None,
                 Conflict::KeepBoth => Some(Destination::Fresh(
-                    self.free_name(directory, &name, stat.kind).await?,
+                    self.free_name(directory, name, stat.kind).await?,
                 )),
                 Conflict::Replace => {
                     return Err(AppError::new(
@@ -227,7 +235,7 @@ impl<'a> Work<'a> {
                 }
             },
             _ => {
-                self.destination(directory, &name, stat.kind, request.conflict)
+                self.destination(directory, name, stat.kind, request.conflict)
                     .await?
             }
         };

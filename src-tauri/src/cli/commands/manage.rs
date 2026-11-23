@@ -11,11 +11,13 @@ use crate::cli::exit::Exit;
 use crate::cli::output::{plural, Reply};
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::file_ops::{
-    self, DeleteRequest, FileOperations, Location, Mode, ModeChange, MoveCopyRequest,
+    self, names, DeleteRequest, FileOperations, Location, Mode, ModeChange, MoveCopyRequest,
     PermissionRequest,
 };
-use crate::protocol::{self, Protocol};
+use crate::protocol::{self, Protocol, RemoteFileSystem};
 use crate::remote_path;
+
+const MAX_FREE_NAME_ATTEMPTS: usize = 10_000;
 
 fn operations(context: &Context) -> FileOperations {
     FileOperations::new(context.sessions.clone(), context.events.clone())
@@ -153,10 +155,9 @@ pub async fn place(context: &Context, arguments: &PlaceArgs, moving: bool) -> Ap
         refuse_dots(sources)?;
     }
     let sources = expand(connected, sources).await?;
+    let mut source_stats = Vec::with_capacity(sources.len());
     for source in &sources {
-        if files.stat(source).await?.is_none() {
-            return Err(missing(source));
-        }
+        source_stats.push(files.stat(source).await?.ok_or_else(|| missing(source))?);
     }
     let destination = operand(connected, destination)?;
     let found = files.stat(&destination).await?;
@@ -178,25 +179,39 @@ pub async fn place(context: &Context, arguments: &PlaceArgs, moving: bool) -> Ap
                     format!("Skipped: {destination} exists"),
                 ))
             }
-            Conflict::Replace => {
-                files.delete(std::slice::from_ref(&destination)).await?;
-                split(&destination)?
+            Conflict::Replace if sources[0] == destination => {
+                return Err(AppError::invalid(format!(
+                    "{destination} would be replaced with itself"
+                ))
+                .with_path(destination))
             }
-            Conflict::KeepBoth => (split(&destination)?.0, None),
+            Conflict::Replace if source_stats[0].is_dir => {
+                return Err(AppError::new(
+                    ErrorKind::AlreadyExists,
+                    format!("{destination} is a file, and a folder cannot replace it"),
+                )
+                .with_path(destination))
+            }
+            Conflict::Replace | Conflict::KeepBoth => split(&destination)?,
         },
         None => split(&destination)?,
     };
 
-    if moving || connected.info.protocol != Protocol::Sftp {
-        if let Some(renamed) = rename_in_place(connected, &sources, &folder, &new_name).await? {
-            return Ok(renamed);
+    if connected.info.protocol != Protocol::Sftp {
+        if !moving {
+            return Err(AppError::unsupported(format!(
+                "{} cannot copy on the server; copying needs SFTP",
+                connected.info.protocol.display_name()
+            )));
         }
-    }
-    if !moving && connected.info.protocol != Protocol::Sftp {
-        return Err(AppError::unsupported(format!(
-            "{} cannot copy on the server; copying needs SFTP",
-            connected.info.protocol.display_name()
-        )));
+        let ([source], [stat], Some(name)) = (&sources[..], &source_stats[..], &new_name) else {
+            return Err(unsupported_elsewhere(connected));
+        };
+        if remote_path::parent(source).as_deref() != Some(folder.as_str()) {
+            return Err(unsupported_elsewhere(connected));
+        }
+        let clash = found.map(|_| arguments.conflict);
+        return rename_in_place(&*files, source, stat.is_dir, &folder, name, clash).await;
     }
     let names: Vec<String> = sources
         .iter()
@@ -204,8 +219,8 @@ pub async fn place(context: &Context, arguments: &PlaceArgs, moving: bool) -> Ap
         .collect();
     let operations = operations(context);
     let conflict = match arguments.conflict {
-        // Placing under a new name goes through a free name first, then the rename.
-        _ if new_name.is_some() => file_ops::Conflict::KeepBoth,
+        // Nothing has the new name. Should something take it meanwhile, both are kept.
+        Conflict::Fail if new_name.is_some() => file_ops::Conflict::KeepBoth,
         Conflict::Fail => {
             let taken = operations
                 .conflicts(
@@ -232,7 +247,7 @@ pub async fn place(context: &Context, arguments: &PlaceArgs, moving: bool) -> Ap
         Conflict::Skip => file_ops::Conflict::Skip,
         Conflict::KeepBoth => file_ops::Conflict::KeepBoth,
     };
-    let mut summary = operations
+    let summary = operations
         .move_or_copy(MoveCopyRequest {
             operation_id: operation_id(),
             location: Location::Remote {
@@ -242,13 +257,9 @@ pub async fn place(context: &Context, arguments: &PlaceArgs, moving: bool) -> Ap
             sources: sources.clone(),
             target_directory: folder,
             conflict,
+            target_name: new_name,
         })
         .await?;
-    if let (Some(name), Some(placed)) = (&new_name, summary.placed.first_mut()) {
-        if remote_path::file_name(placed) != name {
-            *placed = files.rename(placed, name).await?;
-        }
-    }
     let mut text = summary
         .placed
         .iter()
@@ -283,35 +294,84 @@ fn split(path: &str) -> AppResult<(String, Option<String>)> {
     Ok((folder, Some(remote_path::file_name(path).to_string())))
 }
 
-/// A move that stays in its folder is a rename, the only move protocols other than SFTP offer.
-/// `None` when the move is of another kind.
+/// A move that stays in `folder` is a rename, the only move protocols other than SFTP offer.
+/// `clash` is what to do about the file that has the new name, when one does.
 async fn rename_in_place(
-    connected: &Connected,
-    sources: &[String],
+    files: &dyn RemoteFileSystem,
+    source: &str,
+    is_dir: bool,
     folder: &str,
-    new_name: &Option<String>,
-) -> AppResult<Option<Reply>> {
-    let ([source], Some(name)) = (sources, new_name) else {
-        return unsupported_elsewhere(connected).map(|()| None);
+    name: &str,
+    clash: Option<Conflict>,
+) -> AppResult<Reply> {
+    let placed = match clash {
+        Some(Conflict::Replace) => {
+            replace_by_renaming(files, source, &remote_path::join(folder, name)).await?
+        }
+        Some(Conflict::KeepBoth) => {
+            let free = free_name(files, folder, name, is_dir).await?;
+            files.rename(source, &free).await?
+        }
+        _ => files.rename(source, name).await?,
     };
-    if remote_path::parent(source).as_deref() != Some(folder) {
-        return unsupported_elsewhere(connected).map(|()| None);
-    }
-    let placed = connected.files().rename(source, name).await?;
-    Ok(Some(Reply::new(
+    Ok(Reply::new(
         json!({ "placed": [placed], "skipped": 0, "failures": [], "methods": ["rename"] }),
         format!("Moved to {placed}"),
-    )))
+    ))
 }
 
-fn unsupported_elsewhere(connected: &Connected) -> AppResult<()> {
-    match connected.info.protocol {
-        Protocol::Sftp => Ok(()),
-        protocol => Err(AppError::unsupported(format!(
-            "{} can only rename within a folder; moving to another folder needs SFTP",
-            protocol.display_name()
-        ))),
+/// Puts `source` in the place of the file `target` with renames alone, since these protocols
+/// never rename over a file. The old one is moved aside first, and deleted only once the new
+/// one is in place, or put back when the rename fails.
+async fn replace_by_renaming(
+    files: &dyn RemoteFileSystem,
+    source: &str,
+    target: &str,
+) -> AppResult<String> {
+    let name = remote_path::file_name(target);
+    let aside = files.rename(target, &names::temporary(name)).await?;
+    let placed = match files.rename(source, name).await {
+        Ok(placed) => placed,
+        Err(error) => {
+            if let Err(problem) = files.rename(&aside, name).await {
+                log::warn!("{target} is left as {aside}: {}", problem.message);
+            }
+            return Err(error);
+        }
+    };
+    if let Err(problem) = files.delete(std::slice::from_ref(&aside)).await {
+        log::warn!("The old {target} is left as {aside}: {}", problem.message);
     }
+    Ok(placed)
+}
+
+/// A numbered name for `name` that nothing in `folder` has.
+async fn free_name(
+    files: &dyn RemoteFileSystem,
+    folder: &str,
+    name: &str,
+    is_dir: bool,
+) -> AppResult<String> {
+    for candidate in names::numbered(name, is_dir).take(MAX_FREE_NAME_ATTEMPTS) {
+        if files
+            .stat(&remote_path::join(folder, &candidate))
+            .await?
+            .is_none()
+        {
+            return Ok(candidate);
+        }
+    }
+    Err(AppError::new(
+        ErrorKind::AlreadyExists,
+        format!("Every name like {name} is taken in {folder}"),
+    ))
+}
+
+fn unsupported_elsewhere(connected: &Connected) -> AppError {
+    AppError::unsupported(format!(
+        "{} can only rename within a folder; moving to another folder needs SFTP",
+        connected.info.protocol.display_name()
+    ))
 }
 
 /// Octal (`644`) or symbolic (`u+x,go-w`) permissions, as changes for files and for folders;

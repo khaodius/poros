@@ -93,10 +93,28 @@ impl Run {
         );
         let trusted = run.run(&["--trust-new-host", "--save-host-key", "info"]);
         assert_eq!(status(&trusted), 0, "{trusted:?}");
-        run.run(&["rm", "-rf", &run.remote]);
-        let made = run.run(&["mkdir", "-p", &run.remote]);
-        assert_eq!(status(&made), 0, "{made:?}");
+        run.empty_scratch_folder();
         Some(run)
+    }
+
+    /// The same on the plain FTP server `ftp_server.rs` describes, for what a server does
+    /// without SFTP. Skipped unless `POROS_TEST_FTP_PORT` is set.
+    fn online_over_ftp(name: &str) -> Option<Self> {
+        let port: u16 = std::env::var("POROS_TEST_FTP_PORT").ok()?.parse().ok()?;
+        let user = std::env::var("POROS_TEST_FTP_USER").unwrap_or_else(|_| "poros".into());
+        let run = Self::new(
+            format!("ftp://{user}@127.0.0.1:{port}"),
+            std::env::var("POROS_TEST_FTP_PASSWORD").unwrap_or_else(|_| "poros-pass".into()),
+            format!("poros-cli-{name}-{}", std::process::id()),
+        );
+        run.empty_scratch_folder();
+        Some(run)
+    }
+
+    fn empty_scratch_folder(&self) {
+        self.run(&["rm", "-rf", &self.remote]);
+        let made = self.run(&["mkdir", "-p", &self.remote]);
+        assert_eq!(status(&made), 0, "{made:?}");
     }
 
     fn command(&self, arguments: &[&str]) -> Command {
@@ -147,6 +165,12 @@ impl Run {
     fn write(&self, path: &str, contents: &str) {
         let written = self.with_input(&["write", &self.remote(path)], contents.as_bytes());
         assert_eq!(status(&written), 0, "{written:?}");
+    }
+
+    /// What a file in the scratch folder on the server holds; `None` when it is not there.
+    fn read(&self, path: &str) -> Option<String> {
+        let shown = self.run(&["cat", &self.remote(path)]);
+        (status(&shown) == 0).then(|| String::from_utf8(shown.stdout).unwrap())
     }
 
     /// The names in a folder of the scratch folder on the server, hidden ones included.
@@ -458,6 +482,212 @@ fn batch_answers_every_line_in_order() {
     assert_eq!(answers[4]["exitCode"], 7);
     assert_eq!(answers[5]["exitCode"], 2);
     assert_eq!(answers[6]["error"]["kind"], "invalidInput");
+}
+
+#[test]
+fn replacing_keeps_the_old_file_until_the_new_one_is_in_place() {
+    let Some(run) = Run::online("replace") else {
+        return;
+    };
+    // One file under two spellings is not replaced with itself.
+    run.write("notes.txt", "notes\n");
+    for command in ["mv", "cp"] {
+        let (code, value) = run.json(&[
+            command,
+            "--conflict",
+            "replace",
+            &run.remote("notes.txt"),
+            &run.remote("./notes.txt"),
+        ]);
+        assert_eq!(code, 2, "{command}: {value}");
+        assert_eq!(
+            run.read("notes.txt").as_deref(),
+            Some("notes\n"),
+            "{command}"
+        );
+    }
+
+    // A copy that cannot be made leaves the file it was to replace.
+    run.write("unreadable.txt", "unreadable\n");
+    run.write("report.txt", "old\n");
+    let (code, _) = run.json(&["chmod", "000", &run.remote("unreadable.txt")]);
+    assert_eq!(code, 0);
+    let (code, value) = run.json(&[
+        "cp",
+        "--conflict",
+        "replace",
+        &run.remote("unreadable.txt"),
+        &run.remote("report.txt"),
+    ]);
+    assert_ne!(code, 0, "{value}");
+    assert_eq!(run.read("report.txt").as_deref(), Some("old\n"));
+    // Nor is the copy it was writing left behind.
+    assert_eq!(run.names(""), ["notes.txt", "report.txt", "unreadable.txt"]);
+
+    // So does a move that cannot be made: nothing leaves a folder that cannot be written.
+    let (code, _) = run.json(&["mkdir", &run.remote("locked")]);
+    assert_eq!(code, 0);
+    run.write("locked/new.txt", "new\n");
+    let (code, _) = run.json(&["chmod", "555", &run.remote("locked")]);
+    assert_eq!(code, 0);
+    let (code, value) = run.json(&[
+        "mv",
+        "--conflict",
+        "replace",
+        &run.remote("locked/new.txt"),
+        &run.remote("report.txt"),
+    ]);
+    run.json(&["chmod", "755", &run.remote("locked")]);
+    assert_ne!(code, 0, "{value}");
+    assert_eq!(run.read("report.txt").as_deref(), Some("old\n"));
+    assert_eq!(run.read("locked/new.txt").as_deref(), Some("new\n"));
+
+    // Replacing puts the new contents under the old name, in the same folder or another.
+    run.write("draft.txt", "draft\n");
+    let (code, value) = run.json(&[
+        "cp",
+        "--conflict",
+        "replace",
+        &run.remote("draft.txt"),
+        &run.remote("report.txt"),
+    ]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(run.read("report.txt").as_deref(), Some("draft\n"));
+    assert_eq!(run.read("draft.txt").as_deref(), Some("draft\n"));
+    let (code, value) = run.json(&[
+        "mv",
+        "--conflict",
+        "replace",
+        &run.remote("draft.txt"),
+        &run.remote("notes.txt"),
+    ]);
+    assert_eq!(code, 0, "{value}");
+    assert!(value["placed"][0].as_str().unwrap().ends_with("/notes.txt"));
+    assert_eq!(run.read("notes.txt").as_deref(), Some("draft\n"));
+    assert_eq!(run.read("draft.txt"), None);
+    let (code, value) = run.json(&[
+        "mv",
+        "--conflict",
+        "replace",
+        &run.remote("notes.txt"),
+        &run.remote("locked/new.txt"),
+    ]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(run.read("locked/new.txt").as_deref(), Some("draft\n"));
+    assert_eq!(run.read("notes.txt"), None);
+
+    // A folder does not replace a file.
+    let (code, value) = run.json(&[
+        "mv",
+        "--conflict",
+        "replace",
+        &run.remote("locked"),
+        &run.remote("report.txt"),
+    ]);
+    assert_eq!(code, 9, "{value}");
+    assert_eq!(run.read("report.txt").as_deref(), Some("draft\n"));
+    assert_eq!(run.names("locked"), ["new.txt"]);
+}
+
+#[test]
+fn keeping_both_numbers_the_name_asked_for() {
+    let Some(run) = Run::online("keepboth") else {
+        return;
+    };
+    run.write("a.txt", "a\n");
+    run.write("b.txt", "b\n");
+    let (code, value) = run.json(&[
+        "cp",
+        "--conflict",
+        "keep-both",
+        &run.remote("a.txt"),
+        &run.remote("b.txt"),
+    ]);
+    assert_eq!(code, 0, "{value}");
+    assert!(value["placed"][0].as_str().unwrap().ends_with("/b (2).txt"));
+    assert_eq!(run.read("b (2).txt").as_deref(), Some("a\n"));
+
+    let (code, value) = run.json(&[
+        "mv",
+        "--conflict",
+        "keep-both",
+        &run.remote("a.txt"),
+        &run.remote("b.txt"),
+    ]);
+    assert_eq!(code, 0, "{value}");
+    assert!(value["placed"][0].as_str().unwrap().ends_with("/b (3).txt"));
+    assert_eq!(run.read("b (3).txt").as_deref(), Some("a\n"));
+    assert_eq!(run.read("b.txt").as_deref(), Some("b\n"));
+    assert_eq!(run.names(""), ["b (2).txt", "b (3).txt", "b.txt"]);
+}
+
+#[test]
+fn renaming_without_sftp_replaces_safely() {
+    let Some(run) = Run::online_over_ftp("ftp-replace") else {
+        return;
+    };
+    run.write("notes.txt", "notes\n");
+    let (code, value) = run.json(&[
+        "mv",
+        "--conflict",
+        "replace",
+        &run.remote("notes.txt"),
+        &run.remote("./notes.txt"),
+    ]);
+    assert_eq!(code, 2, "{value}");
+    assert_eq!(run.read("notes.txt").as_deref(), Some("notes\n"));
+
+    run.write("draft.txt", "draft\n");
+    let (code, value) = run.json(&[
+        "mv",
+        "--conflict",
+        "replace",
+        &run.remote("draft.txt"),
+        &run.remote("notes.txt"),
+    ]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(run.read("notes.txt").as_deref(), Some("draft\n"));
+    // Neither the source nor the file moved aside is left behind.
+    assert_eq!(run.names(""), ["notes.txt"]);
+
+    run.write("more.txt", "more\n");
+    let (code, value) = run.json(&[
+        "mv",
+        "--conflict",
+        "keep-both",
+        &run.remote("more.txt"),
+        &run.remote("notes.txt"),
+    ]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(run.read("notes (2).txt").as_deref(), Some("more\n"));
+    assert_eq!(run.names(""), ["notes (2).txt", "notes.txt"]);
+
+    // A folder does not replace a file.
+    let (code, _) = run.json(&["mkdir", &run.remote("folder")]);
+    assert_eq!(code, 0);
+    let (code, value) = run.json(&[
+        "mv",
+        "--conflict",
+        "replace",
+        &run.remote("folder"),
+        &run.remote("notes.txt"),
+    ]);
+    assert_eq!(code, 9, "{value}");
+    assert_eq!(run.read("notes.txt").as_deref(), Some("draft\n"));
+}
+
+#[test]
+fn copying_without_sftp_is_refused_and_renames_nothing() {
+    let Some(run) = Run::online_over_ftp("ftp-copy") else {
+        return;
+    };
+    run.write("one.txt", "one\n");
+    let (code, value) = run.json(&["cp", &run.remote("one.txt"), &run.remote("two.txt")]);
+    assert_eq!(code, 12, "{value}");
+    assert_eq!(run.names(""), ["one.txt"]);
+    let (code, value) = run.json(&["mv", &run.remote("one.txt"), &run.remote("two.txt")]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(run.names(""), ["two.txt"]);
 }
 
 #[test]

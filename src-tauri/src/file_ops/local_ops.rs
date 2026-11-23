@@ -82,6 +82,7 @@ pub fn move_or_copy(
                 .place(
                     Path::new(source),
                     &directory,
+                    request.target_name.as_deref(),
                     request.mode,
                     request.conflict,
                 )
@@ -106,10 +107,12 @@ impl Work<'_> {
         }
     }
 
+    /// Moves or copies one item into `directory`, under `target_name` when it is given.
     fn place(
         &self,
         source: &Path,
         directory: &Path,
+        target_name: Option<&str>,
         mode: Mode,
         conflict: Conflict,
     ) -> AppResult<Option<PathBuf>> {
@@ -118,7 +121,7 @@ impl Work<'_> {
             .symlink_metadata()
             .map_err(|error| with_path(error, source))?;
         let kind = Kind::of(&metadata);
-        let name = source
+        let own_name = source
             .file_name()
             .ok_or_else(|| AppError::invalid("Cannot move or copy a filesystem root"))?
             .to_string_lossy()
@@ -126,10 +129,11 @@ impl Work<'_> {
         if kind == Kind::Dir && is_inside(directory, source) {
             let verb = if mode == Mode::Move { "move" } else { "copy" };
             return Err(AppError::invalid(format!(
-                "Cannot {verb} the folder {name} into itself"
+                "Cannot {verb} the folder {own_name} into itself"
             )));
         }
-        let in_place = source.parent() == Some(directory);
+        let name = target_name.map_or_else(|| own_name.clone(), str::to_string);
+        let in_place = source.parent() == Some(directory) && name == own_name;
         let destination = match (mode, in_place) {
             (Mode::Move, true) => return Ok(None),
             (Mode::Copy, true) => Some(Destination::Fresh(free_name(directory, &name, kind)?)),
@@ -434,6 +438,7 @@ mod tests {
             sources: sources.iter().map(|path| display(path)).collect(),
             target_directory: display(target),
             conflict,
+            target_name: None,
         }
     }
 
@@ -589,6 +594,26 @@ mod tests {
             assert!(root.join("photos/a.jpg").exists());
             assert_eq!(fs::read_dir(root.join("photos/inside")).unwrap().count(), 0);
         }
+    }
+
+    #[test]
+    fn takes_the_name_asked_for() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let root = temp_dir.path();
+        fs::write(root.join("a.txt"), b"a").unwrap();
+        fs::write(root.join("b.txt"), b"b").unwrap();
+        let named = |mode, conflict| MoveCopyRequest {
+            target_name: Some("b.txt".into()),
+            ..request(mode, &[&root.join("a.txt")], root, conflict)
+        };
+
+        let kept = run(&named(Mode::Copy, Conflict::KeepBoth));
+        assert_eq!(kept.placed, [display(&root.join("b (2).txt"))]);
+        assert_eq!(fs::read(root.join("b (2).txt")).unwrap(), b"a");
+        let replaced = run(&named(Mode::Move, Conflict::Replace));
+        assert_eq!(replaced.placed, [display(&root.join("b.txt"))]);
+        assert_eq!(fs::read(root.join("b.txt")).unwrap(), b"a");
+        assert!(!root.join("a.txt").exists());
     }
 
     #[test]
