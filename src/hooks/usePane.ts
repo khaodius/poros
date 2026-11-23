@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { FileSource } from "../lib/fileSource";
-import { entryLeadingTo } from "../lib/cursor";
+import { entryLeadingTo, placeAfterListing } from "../lib/cursor";
 import {
   dateGroupFinder,
   firstDayOfWeek,
@@ -10,6 +10,7 @@ import {
 } from "../lib/dateGroups";
 import { toAppError } from "../lib/ipc";
 import { ListingLoads } from "../lib/listingLoads";
+import { rangeStart } from "../lib/selection";
 import { filterEntries, isDirLike, sortEntries, type SortKey, type SortSpec } from "../lib/sort";
 import type { AppError, DirListing, FileEntry } from "../lib/types";
 import { useToday } from "./useToday";
@@ -239,12 +240,9 @@ export function usePane(
             ? new Set([...current].filter((path) => existing.has(path)))
             : new Set<string>();
         });
-        setCursorPath((current) => {
-          if (focus) return focus;
-          if (sameDirectory && current && existing.has(current)) return current;
-          return null;
-        });
-        setAnchorPath(focus ?? null);
+        // A reload keeps both, so a range can still be selected from where the last click was.
+        setCursorPath((current) => placeAfterListing(current, focus, sameDirectory, existing));
+        setAnchorPath((current) => placeAfterListing(current, focus, sameDirectory, existing));
         setError(null);
         setHistory((current) => {
           const entries = [...current.entries];
@@ -424,22 +422,23 @@ export function usePane(
 
   const selectRangeTo = useCallback(
     (path: string) => {
-      setSelection(rangeBetween(anchorPath, path));
-      if (!anchorPath) setAnchorPath(path);
+      const anchor = rangeStart(visibleEntries, anchorPath, cursorPath, path);
+      setSelection(rangeBetween(anchor, path));
+      setAnchorPath(anchor);
       setCursorPath(path);
     },
-    [anchorPath, rangeBetween],
+    [visibleEntries, anchorPath, cursorPath, rangeBetween],
   );
 
   const addRangeTo = useCallback(
     (path: string) => {
-      const anchor = anchorPath ?? cursorPath ?? path;
+      const anchor = rangeStart(visibleEntries, anchorPath, cursorPath, path);
       const range = rangeBetween(anchor, path);
       setSelection((current) => new Set([...current, ...range]));
       setAnchorPath(anchor);
       setCursorPath(path);
     },
-    [anchorPath, cursorPath, rangeBetween],
+    [visibleEntries, anchorPath, cursorPath, rangeBetween],
   );
 
   const selectAll = useCallback(() => {
@@ -457,7 +456,7 @@ export function usePane(
       const clamped = Math.max(0, Math.min(visibleEntries.length - 1, index));
       const path = visibleEntries[clamped].path;
       if (extendSelection) {
-        const anchor = anchorPath ?? cursorPath ?? path;
+        const anchor = rangeStart(visibleEntries, anchorPath, cursorPath, path);
         setSelection(rangeBetween(anchor, path));
         setAnchorPath(anchor);
         setCursorPath(path);

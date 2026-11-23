@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { entryAfterRemoval, entryLeadingTo } from "./cursor";
+import { entryAfterRemoval, entryLeadingTo, placeAfterListing } from "./cursor";
 import type { FileEntry } from "./types";
 
 function entry(path: string): FileEntry {
@@ -66,5 +66,30 @@ describe("entryAfterRemoval", () => {
     expect(
       entryAfterRemoval(entries, new Set(entries.map((item) => item.path)), "/a"),
     ).toBeUndefined();
+  });
+});
+
+describe("placeAfterListing", () => {
+  const listed = new Set(["/a", "/b", "/c"]);
+
+  it("goes to the entry the listing was asked to select", () => {
+    expect(placeAfterListing("/a", "/c", true, listed)).toBe("/c");
+    expect(placeAfterListing(null, "/b", false, listed)).toBe("/b");
+  });
+
+  it("stays where it was when the same folder is listed again", () => {
+    expect(placeAfterListing("/b", undefined, true, listed)).toBe("/b");
+  });
+
+  it("is given up with an entry the folder no longer lists", () => {
+    expect(placeAfterListing("/gone", undefined, true, listed)).toBeNull();
+  });
+
+  it("is given up in another folder, even one that lists the same path", () => {
+    expect(placeAfterListing("/b", undefined, false, listed)).toBeNull();
+  });
+
+  it("stays nowhere when it was nowhere", () => {
+    expect(placeAfterListing(null, undefined, true, listed)).toBeNull();
   });
 });
