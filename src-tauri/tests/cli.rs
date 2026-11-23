@@ -955,3 +955,35 @@ fn verify_names_what_it_could_not_compare() {
     assert_eq!(value["different"][0]["path"], "index.html");
     assert_eq!(value["notCompared"], serde_json::json!(["photos"]));
 }
+
+#[test]
+fn one_item_that_cannot_be_placed_exits_with_its_own_status() {
+    let Some(run) = Run::online("single") else {
+        return;
+    };
+    for folder in ["locked", "open"] {
+        let (code, _) = run.json(&["mkdir", &run.remote(folder)]);
+        assert_eq!(code, 0);
+    }
+    run.write("locked/a.txt", "a\n");
+    run.write("open/b.txt", "b\n");
+    let (code, _) = run.json(&["chmod", "555", &run.remote("locked")]);
+    assert_eq!(code, 0);
+    let renamed = run.json(&[
+        "mv",
+        &run.remote("locked/a.txt"),
+        &run.remote("locked/c.txt"),
+    ]);
+    let moved = run.json(&["mv", &run.remote("locked/a.txt"), &run.remote("open")]);
+    let copied = run.json(&["cp", &run.remote("open/b.txt"), &run.remote("locked")]);
+    run.json(&["chmod", "755", &run.remote("locked")]);
+    for (what, (code, value)) in [("rename", renamed), ("move", moved), ("copy", copied)] {
+        assert_eq!(code, 8, "{what}: {value}");
+        assert_eq!(
+            value["error"]["kind"], "permissionDenied",
+            "{what}: {value}"
+        );
+    }
+    assert_eq!(run.names("locked"), ["a.txt"]);
+    assert_eq!(run.names("open"), ["b.txt"]);
+}

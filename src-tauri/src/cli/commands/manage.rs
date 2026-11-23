@@ -113,6 +113,7 @@ pub async fn remove(context: &Context, arguments: &RemoveArgs) -> AppResult<Repl
     failures.extend(refused.into_iter().map(|error| file_ops::Failure {
         path: error.path.clone().unwrap_or_default(),
         message: error.message,
+        kind: error.kind,
     }));
     let failed_paths: Vec<&str> = failures
         .iter()
@@ -273,6 +274,18 @@ pub async fn place(context: &Context, arguments: &PlaceArgs, moving: bool) -> Ap
             target_name: new_name,
         })
         .await?;
+    // One item that could not be placed is the command's error, with its own status, as with
+    // the other commands given one path.
+    if let ([_], [], 0, [failure]) = (
+        &sources[..],
+        &summary.placed[..],
+        summary.skipped,
+        &summary.failures[..],
+    ) {
+        return Err(
+            AppError::new(failure.kind, failure.message.clone()).with_path(failure.path.clone())
+        );
+    }
     let mut text = summary
         .placed
         .iter()
