@@ -35,7 +35,8 @@ import type { FileEntry } from "../lib/types";
 import { useDragStore } from "../state/dragStore";
 import { rowKeyOf, useArriving, type FileSide } from "../state/fileFlight";
 import { FileIcon } from "./FileIcon";
-import { COMPARE_CLASSES, FolderCompareGlyph } from "./FolderCompareGlyph";
+import { FolderCompareGlyph } from "./FolderCompareGlyph";
+import { COMPARE_CLASSES } from "./folderCompareMarks";
 
 /** Matches `--scrollbar-size`: the list always shows its vertical scrollbar. */
 const SCROLLBAR_GUTTER = 8;

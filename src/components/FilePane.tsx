@@ -106,11 +106,8 @@ import { CompareDialog, type CompareSide } from "./CompareDialog";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { FileList, type MenuPosition } from "./FileList";
-import {
-  COMPARE_FOLDERS_SHORTCUT,
-  FolderCompareBar,
-  folderCompareMenuItems,
-} from "./FolderCompareBar";
+import { FolderCompareBar } from "./FolderCompareBar";
+import { COMPARE_FOLDERS_SHORTCUT, folderCompareMenuItems } from "./folderCompareMenu";
 import { NewVaultDialog } from "./NewVaultDialog";
 import { PathBar } from "./PathBar";
 import { PromptDialog } from "./PromptDialog";

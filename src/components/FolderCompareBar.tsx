@@ -9,93 +9,16 @@ import {
   SlidersHorizontal,
   X,
 } from "lucide-react";
-import type { FolderCompareBarModel, FolderCompareControls } from "../hooks/useFolderCompare";
+import type { FolderCompareBarModel } from "../hooks/useFolderCompare";
 import { LEGEND_STATES, STATE_LABELS } from "../lib/folderCompare";
 import type { MenuItem } from "./ContextMenu";
-import { COMPARE_CLASSES, COMPARE_GLYPHS } from "./FolderCompareGlyph";
-
-export const COMPARE_FOLDERS_SHORTCUT = "Ctrl+Shift+D";
-const DEEP_LABEL = "Compare contents of subfolders";
-
-function selectItems(bar: FolderCompareBarModel): MenuItem[] {
-  const counts = bar.counts;
-  return [
-    {
-      label: "Select newer and only here",
-      icon: <ListChecks size={14} />,
-      disabled: !counts || counts.newer + counts.onlyHere === 0,
-      onSelect: () => bar.select(["newer", "onlyHere"]),
-    },
-    {
-      label: "Select different",
-      icon: <ListChecks size={14} />,
-      disabled: !counts || counts.different === 0,
-      onSelect: () => bar.select(["different"]),
-    },
-  ];
-}
-
-function optionItems(bar: FolderCompareBarModel): MenuItem[] {
-  const { options } = bar;
-  return [
-    {
-      label: "Hide identical items",
-      checked: options.hideIdentical,
-      onSelect: () => bar.setOptions({ hideIdentical: !options.hideIdentical }),
-    },
-    {
-      label: "Compare by size only",
-      checked: bar.sizeOnly,
-      onSelect: () => bar.setOptions({ sizeRule: bar.sizeOnly ? "sizeAndTime" : "sizeOnly" }),
-    },
-    {
-      label: "Ignore time zone offsets (whole hours)",
-      checked: options.ignoreHourOffsets,
-      onSelect: () => bar.setOptions({ ignoreHourOffsets: !options.ignoreHourOffsets }),
-    },
-    {
-      label: "Include hidden files",
-      checked: options.includeHidden,
-      onSelect: () => bar.setOptions({ includeHidden: !options.includeHidden }),
-    },
-    "separator",
-    {
-      label: "Browse both panes together",
-      checked: options.browseTogether,
-      onSelect: () => bar.setOptions({ browseTogether: !options.browseTogether }),
-    },
-  ];
-}
-
-/**
- * What Compare folders adds to a pane's context menu: the toggle on empty space, and while the
- * pane is compared, the ways to select by state.
- */
-export function folderCompareMenuItems(
-  compare: FolderCompareControls,
-  onEmptySpace: boolean,
-): MenuItem[] {
-  const { bar } = compare;
-  const toggle: MenuItem = {
-    label: "Compare folders",
-    icon: <GitCompareArrows size={14} />,
-    shortcut: COMPARE_FOLDERS_SHORTCUT,
-    checked: compare.comparing,
-    onSelect: compare.toggle,
-  };
-  const deep: MenuItem[] =
-    bar && onEmptySpace
-      ? [
-          {
-            label: DEEP_LABEL,
-            icon: <FolderTree size={14} />,
-            disabled: !bar.counts || bar.deep?.status === "running",
-            onSelect: bar.startDeep,
-          },
-        ]
-      : [];
-  return [...(onEmptySpace ? [toggle] : []), ...deep, ...(bar ? selectItems(bar) : [])];
-}
+import {
+  COMPARE_FOLDERS_SHORTCUT,
+  DEEP_COMPARE_LABEL,
+  optionItems,
+  selectItems,
+} from "./folderCompareMenu";
+import { COMPARE_CLASSES, COMPARE_GLYPHS } from "./folderCompareMarks";
 
 interface FolderCompareBarProps {
   bar: FolderCompareBarModel;
@@ -151,7 +74,7 @@ export function FolderCompareBar({ bar, onMenu }: FolderCompareBarProps) {
         </ul>
         <span className="folder-compare-actions">
           <BarButton
-            label={done ? `${DEEP_LABEL} again` : DEEP_LABEL}
+            label={done ? `${DEEP_COMPARE_LABEL} again` : DEEP_COMPARE_LABEL}
             pressed={done}
             disabled={!counts || running}
             onClick={bar.startDeep}
