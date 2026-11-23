@@ -5,7 +5,9 @@ import {
   dateTimeInputValue,
   describeTrigger,
   epochFromDateTimeInput,
+  expandFolderPattern,
   intervalMinutes,
+  isoWeek,
   minuteOfDayFrom,
   newTask,
   sameTask,
@@ -14,7 +16,10 @@ import {
   syncAction,
   taskOptions,
   timeInputValue,
+  transferAction,
   weekdayOf,
+  withDirection,
+  withTaskItems,
 } from "./schedule";
 
 describe("intervals", () => {
@@ -156,5 +161,109 @@ describe("sameTask", () => {
     };
     expect(sameTask(task, reordered)).toBe(true);
     expect(sameTask(task, { ...reordered, enabled: false })).toBe(false);
+  });
+});
+
+describe("folder patterns", () => {
+  // Mirrors the tests of `expand_folder_pattern` in automation/schedule.rs.
+  const expand = (pattern: string, now = new Date(2026, 10, 23, 2, 5)) => {
+    const result = expandFolderPattern(pattern, now);
+    if ("error" in result) throw new Error(result.error);
+    return result.folder;
+  };
+  const refused = (pattern: string) => {
+    const result = expandFolderPattern(pattern, new Date(2026, 10, 23, 2, 5));
+    return "error" in result ? result.error : "";
+  };
+
+  it("takes the local date and time of the run", () => {
+    // 2026-11-23 is a Monday in ISO week 48.
+    expect(expand("backup-{date}")).toBe("backup-2026-11-23");
+    expect(expand(" /{year}/{month}/site-{day}/ ")).toBe("2026/11/site-23");
+    expect(expand("{date}_{time}")).toBe("2026-11-23_0205");
+    expect(expand("{hour}h{minute}")).toBe("02h05");
+    expect(expand("weekly/{weekday}")).toBe("weekly/Mon");
+    expect(expand("week-{week}")).toBe("week-48");
+    expect(expand("plain folder")).toBe("plain folder");
+    expect(expand("")).toBe("");
+    expect(expand(" / ")).toBe("");
+    expect(expand("{date}-{weekday}", new Date(2026, 11, 31, 23, 30))).toBe("2026-12-31-Thu");
+  });
+
+  it("refuses what cannot name a folder", () => {
+    expect(refused("backup-{dat}")).toContain("{dat}");
+    expect(refused("backup-{dat}")).toContain("{date}");
+    expect(refused("backup-{date")).toContain("brace");
+    expect(refused("backup-date}")).toContain("brace");
+    expect(refused("{{date}}")).toContain("brace");
+    expect(refused("../outside")).toContain('".."');
+    expect(refused("a/../../b")).toContain("cannot be a folder name");
+    expect(refused("a//b")).toContain("cannot be a folder name");
+    expect(refused("C:\\backups")).toContain("cannot be a folder name");
+    expect(refused("what?")).toContain("cannot be a folder name");
+    expect(refused("line\nbreak")).toContain("cannot be a folder name");
+    expect(refused("trailing./x")).toContain("cannot be a folder name");
+    expect(refused("x".repeat(201))).toContain("longer");
+  });
+
+  it("counts ISO weeks from the week with the year's first Thursday", () => {
+    expect(isoWeek(new Date(2026, 0, 1))).toBe(1);
+    expect(isoWeek(new Date(2026, 11, 31))).toBe(53);
+    expect(isoWeek(new Date(2027, 0, 3))).toBe(53);
+    expect(isoWeek(new Date(2027, 0, 4))).toBe(1);
+    expect(isoWeek(new Date(2024, 11, 30))).toBe(1);
+  });
+});
+
+describe("transfer tasks", () => {
+  const upload = transferAction("web", "upload", {
+    items: [
+      { path: "/home/me/site", isDir: true },
+      { path: "/home/me/notes.txt", isDir: false },
+    ],
+    destination: "/var/www",
+  });
+
+  it("suggests a name from the items", () => {
+    expect(suggestedName(transferAction("web"))).toBe("");
+    expect(suggestedName({ ...upload, items: upload.items.slice(0, 1) })).toBe("Upload site");
+    expect(suggestedName(withDirection(upload, "relay"))).toBe("");
+    expect(suggestedName({ ...upload, direction: "relay" })).toBe("Copy 2 items");
+  });
+
+  it("keeps what still means the same when the direction changes", () => {
+    const relay = withDirection(upload, "relay");
+    // The items were on this computer; the destination is on a server either way.
+    expect(relay).toMatchObject({ connectionId: "web", items: [], destination: "/var/www" });
+    const download = withDirection(
+      { ...relay, sourceConnectionId: "old", items: [{ path: "/srv/a", isDir: true }] },
+      "download",
+    );
+    // The server copied from is the one downloaded from, with the same items.
+    expect(download).toMatchObject({
+      connectionId: "old",
+      sourceConnectionId: null,
+      items: [{ path: "/srv/a", isDir: true }],
+      destination: "",
+    });
+    expect(withDirection(download, "relay")).toMatchObject({
+      connectionId: "",
+      sourceConnectionId: "old",
+      items: [{ path: "/srv/a", isDir: true }],
+    });
+    expect(withDirection(download, "download")).toBe(download);
+  });
+
+  it("adds each path once", () => {
+    const items = withTaskItems(upload.items, [
+      { path: " /home/me/site ", isDir: true },
+      { path: "/home/me/other.txt" },
+      { path: "  " },
+    ]);
+    expect(items.map((item) => item.path)).toEqual([
+      "/home/me/site",
+      "/home/me/notes.txt",
+      "/home/me/other.txt",
+    ]);
   });
 });

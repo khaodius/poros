@@ -223,6 +223,8 @@ export interface JobSnapshot {
   direct?: boolean;
   /** Queued while its server is out of reach after a dropped connection. */
   reconnecting?: boolean;
+  /** What queued the job when it was not the user: a scheduled task's name. */
+  label?: string;
 }
 
 export interface QueueCounts {
@@ -704,7 +706,29 @@ export type TaskAction =
       /** rsync arguments applied over the options. */
       arguments: string;
     } & SyncOptions)
-  | { type: "command"; connectionId: string; command: string; directory?: string | null };
+  | { type: "command"; connectionId: string; command: string; directory?: string | null }
+  | {
+      type: "transfer";
+      /** The server written to, or read from by a download. */
+      connectionId: string;
+      /** The server a copy between two servers reads from. */
+      sourceConnectionId?: string | null;
+      direction: Direction;
+      items: TaskItem[];
+      /** The folder the items go into: on the server, or on this computer for a download. */
+      destination: string;
+      /** Never "ask": no one is there to answer. */
+      exists: ExistsAction;
+      /** A folder inside the destination named from the time of each run, or empty. */
+      subfolder: string;
+    };
+
+/** A file or folder a transfer task copies; a folder goes with everything in it. */
+export interface TaskItem {
+  path: string;
+  /** As it was when it was added, for the icon. A run looks again. */
+  isDir?: boolean;
+}
 
 export interface LastRun {
   /** Seconds since the Unix epoch. */

@@ -15,6 +15,7 @@ import {
   ArrowLeftRight,
   ArrowUp,
   ArrowUpToLine,
+  CalendarClock,
   ClipboardCopy,
   Folder,
   Pause,
@@ -29,6 +30,7 @@ import { transfers } from "../lib/ipc";
 import { progressLabel, type ProgressBarSettings } from "../lib/progressBars";
 import { jobProgress, jobsIn, VIEW_STATES, type TransferViewKind } from "../lib/transfers";
 import type { Direction, JobSnapshot } from "../lib/types";
+import { scheduleJobs } from "../state/scheduleActions";
 import { useSettingsStore } from "../state/settingsStore";
 import { useTransferStore } from "../state/transferStore";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
@@ -204,6 +206,11 @@ export function TransferView({
         icon: <ClipboardCopy size={14} />,
         onSelect: () => void navigator.clipboard.writeText(paths),
       },
+      {
+        label: selectedJobs.length > 1 ? "Schedule these..." : "Schedule this...",
+        icon: <CalendarClock size={14} />,
+        onSelect: () => scheduleJobs(selectedJobs),
+      },
       "separator",
       {
         label: "Remove",
@@ -340,7 +347,7 @@ const TransferRow = memo(function TransferRow({
       data-direction={job.direction}
       role="row"
       aria-selected={selected}
-      title={`${job.source}\nto ${job.target}`}
+      title={`${job.source}\nto ${job.target}${job.label ? `\nQueued by the task ${job.label}` : ""}`}
       onClick={(event) => onClick(event, job)}
       onContextMenu={(event) => onContextMenu(event, job)}
     >
@@ -348,6 +355,7 @@ const TransferRow = memo(function TransferRow({
         <DirectionIcon size={13} className={`transfer-direction direction-${job.direction}`} />
         {job.kind === "folder" && <Folder size={14} className="file-icon file-icon-folder" />}
         <span className="transfer-name-text">{job.name}</span>
+        {job.label && <span className="transfer-tag">{job.label}</span>}
         <span className="transfer-target">{job.targetDirectory}</span>
       </span>
       <span className="align-end">{job.kind === "file" ? formatSize(job.size) : ""}</span>
