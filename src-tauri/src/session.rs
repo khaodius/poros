@@ -221,6 +221,9 @@ pub struct SessionInfo {
     /// server's.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vault: Option<VaultInfo>,
+    /// Listings give times only to the minute, or to the day, as FTP's `LIST` does.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub coarse_times: bool,
 }
 
 /// An unlocked Cryptomator vault, as its session describes it. Mirrored in `src/lib/types.ts`.
@@ -545,6 +548,7 @@ impl SessionManager {
             saved_connection_id: profile.saved_connection_id.clone(),
             protocol: profile.protocol,
             vault: None,
+            coarse_times: files.coarse_times(),
         };
         let session = Arc::new(Session {
             id: id.to_string(),
@@ -792,6 +796,7 @@ fn vault_session_of(id: &str, server: &Session, files: Arc<VaultFs>, owner: &str
             root: files.root().to_string(),
             name: files.name().to_string(),
         }),
+        coarse_times: files.coarse_times(),
     };
     Session {
         id: id.to_string(),
@@ -924,6 +929,7 @@ mod tests {
                 saved_connection_id: profile.saved_connection_id.clone(),
                 protocol: profile.protocol,
                 vault: None,
+                coarse_times: NoFiles.coarse_times(),
             },
             profile,
             host_key_fingerprint: host_key.to_string(),

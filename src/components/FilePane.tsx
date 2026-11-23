@@ -32,6 +32,7 @@ import {
   FolderPlus,
   FolderSearch,
   FolderSync,
+  GitCompareArrows,
   HardDrive,
   Home,
   Info,
@@ -54,6 +55,7 @@ import {
   X,
 } from "lucide-react";
 import { useBackForwardButtons } from "../hooks/useBackForwardButtons";
+import { useFolderCompare, useHiddenIdentical } from "../hooks/useFolderCompare";
 import { useListingPrefetch } from "../hooks/useListingPrefetch";
 import { usePane, type Focus } from "../hooks/usePane";
 import { useSearch, type SearchView } from "../hooks/useSearch";
@@ -129,6 +131,8 @@ import { CompareDialog, type CompareSide } from "./CompareDialog";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { DeleteDialog } from "./DeleteDialog";
 import { FileList, type MenuPosition } from "./FileList";
+import { FolderCompareBar } from "./FolderCompareBar";
+import { COMPARE_FOLDERS_SHORTCUT, folderCompareMenuItems } from "./folderCompareMenu";
 import { NewVaultDialog } from "./NewVaultDialog";
 import { PathBar } from "./PathBar";
 import { PromptDialog } from "./PromptDialog";
@@ -275,6 +279,7 @@ export function FilePane({
     (path: string) => (sessionId ? vaultHandover(tabId, sessionId, path) : null),
     [tabId, sessionId],
   );
+  const hiddenIdentical = useHiddenIdentical(tabId);
   /** The entry whose row shows the name field. */
   const [renaming, setRenaming] = useState<string | null>(null);
   const [menu, setMenu] = useState<OpenMenu | null>(null);
@@ -309,6 +314,7 @@ export function FilePane({
     groupByDate,
     onSortChange: rememberSort,
     handover,
+    hideNames: hiddenIdentical,
     results: searchResults,
     // This computer's folders list at once, so only a server's are remembered.
     listings: sessionId && cachedListings ? paneListings : undefined,
@@ -416,6 +422,16 @@ export function FilePane({
   useEffect(() => {
     updatePane(tabId, { locked: lockedCard });
   }, [tabId, lockedCard]);
+  const folderCompare = useFolderCompare({
+    tabId,
+    source,
+    sessionId,
+    pane,
+    covered: lockedCard,
+    focusList,
+  });
+  /** Rows left out because they are identical in the pane this one is compared with. */
+  const identicalHidden = hiddenIdentical ? (folderCompare.bar?.counts?.identical ?? 0) : 0;
 
   // The card takes the keyboard with it as it leaves, so the file list gets it back.
   const hadLockedCard = useRef(lockedCard);
@@ -918,7 +934,7 @@ export function FilePane({
     }
     if (!worksHere) {
       return {
-        label: `Compare (${needsSftp})`,
+        label: `Compare files (${needsSftp})`,
         icon: <FileDiff size={14} />,
         disabled: true,
         onSelect: () => undefined,
@@ -938,7 +954,9 @@ export function FilePane({
     }
     const other = counterpartFile(tabId);
     return {
-      label: other ? `Compare with ${other.entry.name}` : "Compare (select a file in another tab)",
+      label: other
+        ? `Compare with ${other.entry.name}`
+        : "Compare files (select a file in another tab)",
       icon: <FileDiff size={14} />,
       disabled: !other,
       onSelect: () =>
@@ -1133,6 +1151,7 @@ export function FilePane({
         : []),
       ...(entry ? [] : [sortMenu(), groupMenu()]),
       syncMenuItem(entry),
+      ...folderCompareMenuItems(folderCompare, entry === null),
       // Commands run over SSH.
       ...(sessionId && protocol === "sftp" && pane.listing
         ? [commandsMenuItem(sessionId, pane.listing.path, targets)]
@@ -1192,6 +1211,14 @@ export function FilePane({
       // Nothing is dropped unseen among a locked vault's encrypted files.
       data-drop-pane={lockedCard ? undefined : tabId}
       onMouseDown={markActive}
+      onKeyDown={(event) => {
+        // From anywhere in the pane; the file list handles it itself while it has the keyboard.
+        const primary = event.ctrlKey || event.metaKey;
+        if (!primary || !event.shiftKey || event.altKey || event.key.toLowerCase() !== "d") return;
+        if (dialog || menu) return;
+        event.preventDefault();
+        folderCompare.toggle();
+      }}
     >
       <header className="pane-header">
         <div className="pane-title">
@@ -1298,6 +1325,14 @@ export function FilePane({
             disabled={!pane.listing || lockedCard}
           >
             <FolderSearch size={15} />
+          </ToolbarButton>
+          <ToolbarButton
+            label={`Compare folders (${COMPARE_FOLDERS_SHORTCUT})`}
+            onClick={folderCompare.toggle}
+            pressed={folderCompare.comparing}
+            disabled={!pane.listing && !folderCompare.comparing}
+          >
+            <GitCompareArrows size={15} />
           </ToolbarButton>
         </div>
       </header>
@@ -1406,6 +1441,12 @@ export function FilePane({
               </button>
             </p>
           )}
+          {folderCompare.bar && (
+            <FolderCompareBar
+              bar={folderCompare.bar}
+              onMenu={(anchor, items) => setMenu({ x: anchor.left, y: anchor.bottom + 4, items })}
+            />
+          )}
           <FileList
             pane={listPane}
             side={side}
@@ -1422,6 +1463,7 @@ export function FilePane({
             fontSize={fontSize}
             dropFolder={dropFolder}
             cutPaths={cutPaths}
+            compareMarks={folderCompare.marks}
             onActivate={markActive}
             onContextMenu={showContextMenu}
             onHeaderContextMenu={showHeaderMenu}
@@ -1444,9 +1486,16 @@ export function FilePane({
             onCopy={() => cutOrCopy("copy", pane.selectedEntries())}
             onPaste={() => pasteInto(null)}
             onProperties={() => openProperties(pane.selectedEntries())}
+            onCompareFolders={folderCompare.toggle}
             onSearch={() => (lockedCard ? undefined : openSearch())}
             folderOf={inResults ? folderLabel : undefined}
-            emptyMessage={inResults ? searchEmptyMessage(searchView) : undefined}
+            emptyMessage={
+              inResults
+                ? searchEmptyMessage(searchView)
+                : identicalHidden > 0
+                  ? "Everything here is identical in both panes"
+                  : undefined
+            }
           />
         </>
       ) : (
@@ -1485,6 +1534,7 @@ export function FilePane({
         <span>
           {lockedCard ? "Locked vault" : pluralize(pane.entryCount, inResults ? "result" : "item")}
           {!lockedCard && pane.hiddenCount > 0 && `, ${pane.hiddenCount} hidden`}
+          {!lockedCard && identicalHidden > 0 && `, ${identicalHidden} identical not shown`}
         </span>
         {selected.length > 0 && (
           <span>

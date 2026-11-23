@@ -29,12 +29,15 @@ import {
   type DetailColumn,
 } from "../lib/columns";
 import { stemLength } from "../lib/path";
+import type { RowCompare } from "../lib/folderCompare";
 import type { DateFormat } from "../lib/settings";
 import { isDirLike, typeLabel, type SortKey } from "../lib/sort";
 import type { FileEntry } from "../lib/types";
 import { useDragStore } from "../state/dragStore";
 import { rowKeyOf, useArriving, type FileSide } from "../state/fileFlight";
 import { FileIcon } from "./FileIcon";
+import { FolderCompareGlyph } from "./FolderCompareGlyph";
+import { COMPARE_CLASSES } from "./folderCompareMarks";
 
 /** Matches `--scrollbar-size`: the list always shows its vertical scrollbar. */
 const SCROLLBAR_GUTTER = 8;
@@ -82,6 +85,8 @@ export interface FileListActions {
   onCopy: () => void;
   onPaste: () => void;
   onProperties: () => void;
+  /** Ctrl+Shift+D: compares this pane with the other one looked at last, or stops. */
+  onCompareFolders: () => void;
   /** Ctrl+Shift+F: searches the folder and the folders inside it. */
   onSearch?: () => void;
 }
@@ -204,6 +209,8 @@ interface FileRowProps {
   renaming: boolean;
   /** Names the row for files flying to it, which keep it hidden until they land. */
   arrivalKey: string;
+  /** How the entry compares with the one of its name in the pane this one is compared with. */
+  compare?: RowCompare;
   events: RowEvents;
 }
 
@@ -224,6 +231,7 @@ const FileRow = memo(function FileRow({
   dropTarget,
   renaming,
   arrivalKey,
+  compare,
   events,
 }: FileRowProps) {
   const folder = isDirLike(entry);
@@ -239,6 +247,8 @@ const FileRow = memo(function FileRow({
         cut && "is-cut",
         dropTarget && "is-drop-folder",
         arriving && "is-arriving",
+        compare && compare.state !== "both" && "is-compared",
+        compare && `is-compare-${COMPARE_CLASSES[compare.state]}`,
       ]
         .filter(Boolean)
         .join(" ")}
@@ -267,6 +277,7 @@ const FileRow = memo(function FileRow({
             ) : (
               <span className="file-name-text">{entry.name}</span>
             )}
+            {compare && <FolderCompareGlyph mark={compare} />}
           </span>
         ) : (
           <span
@@ -440,6 +451,8 @@ interface FileListProps extends FileListActions {
   cutPaths?: ReadonlySet<string>;
   /** The entry whose row shows the name field. */
   renaming?: string | null;
+  /** While the pane is compared with another: the mark of each compared row, by name. */
+  compareMarks?: ReadonlyMap<string, RowCompare>;
   /** Where each entry is, for entries from several folders such as search results; shows a
    * Folder column. */
   folderOf?: (entry: FileEntry) => string;
@@ -471,6 +484,7 @@ export function FileList({
   dropFolder,
   cutPaths,
   renaming,
+  compareMarks,
   folderOf,
   emptyMessage: givenEmptyMessage,
   heldPaths = NO_HELD_PATHS,
@@ -797,6 +811,10 @@ export function FileList({
       }
       if (primary && event.shiftKey && event.key.toLowerCase() === "n") {
         actions.onNewFolder();
+        return true;
+      }
+      if (primary && event.shiftKey && event.key.toLowerCase() === "d") {
+        actions.onCompareFolders();
         return true;
       }
       if (!primary && !event.altKey && event.key.length === 1) {
@@ -1229,6 +1247,7 @@ export function FileList({
                 dropTarget={isDirLike(entry) && dropFolder === entry.path}
                 renaming={renaming === entry.path}
                 arrivalKey={rowKeyOf(side, entry.path)}
+                compare={compareMarks?.get(entry.name)}
                 events={rowEvents}
               />
             );
