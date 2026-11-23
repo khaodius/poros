@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { findTab } from "../lib/layout";
 import { closeEditorTab, closeWindowNow, saveAndClose } from "../state/editorActions";
 import { useLayoutStore } from "../state/layoutStore";
@@ -14,6 +14,14 @@ interface UnsavedChangesDialogProps {
 export function UnsavedChangesDialog({ tabIds, closeWindow, onClose }: UnsavedChangesDialogProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Dismissed while the files save, the question leaves the window open.
+  const shown = useRef(true);
+  useEffect(() => {
+    shown.current = true;
+    return () => {
+      shown.current = false;
+    };
+  }, []);
   const root = useLayoutStore((state) => state.root);
   const names = tabIds.flatMap((tabId) => {
     const tab = findTab(root, tabId);
@@ -22,18 +30,16 @@ export function UnsavedChangesDialog({ tabIds, closeWindow, onClose }: UnsavedCh
 
   const finish = () => {
     onClose();
-    if (closeWindow) closeWindowNow();
+    if (closeWindow && shown.current) closeWindowNow();
   };
 
   const save = async () => {
     setBusy(true);
     setError(null);
-    if (await saveAndClose(tabIds)) {
-      finish();
-      return;
-    }
+    const saved = await saveAndClose(tabIds);
     setBusy(false);
-    setError("Some files could not be saved. Their tabs say why.");
+    if (saved) finish();
+    else setError("Some files could not be saved. Their tabs say why.");
   };
 
   const discard = () => {

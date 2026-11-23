@@ -363,6 +363,10 @@ export function FilePane({
     0,
   );
 
+  /** Closes `shown` only, so a dialog that finishes its work after it was dismissed leaves alone
+   * the one opened since. */
+  const closeDialog = (shown: PaneDialog) => () =>
+    setDialog((current) => (current === shown ? null : current));
   const openNewFolder = () => pane.listing && setDialog({ type: "newFolder" });
   const openNewFile = () =>
     pane.listing && setDialog({ type: "newFile", example: exampleFileName() });
@@ -1143,7 +1147,7 @@ export function FilePane({
           title="New folder"
           label={`Create in ${pane.listing.path}`}
           confirmLabel="Create"
-          onClose={() => setDialog(null)}
+          onClose={closeDialog(dialog)}
           onSubmit={async (name) => {
             const created = await source.mkdir(pane.listing!.path, name);
             writeLog("info", `Created ${where} folder ${created}`);
@@ -1158,7 +1162,7 @@ export function FilePane({
           label={`Create in ${pane.listing.path}`}
           placeholder={dialog.example}
           confirmLabel="Create"
-          onClose={() => setDialog(null)}
+          onClose={closeDialog(dialog)}
           onSubmit={async (name) => {
             const created = await source.makeFile(pane.listing!.path, name);
             writeLog("info", `Created ${where} file ${created}`);
@@ -1171,7 +1175,7 @@ export function FilePane({
         <NewVaultDialog
           folder={pane.listing.path}
           onCreate={createVault}
-          onClose={() => setDialog(null)}
+          onClose={closeDialog(dialog)}
         />
       )}
 
@@ -1185,7 +1189,7 @@ export function FilePane({
           } into`}
           initialValue={pane.listing.path}
           confirmLabel={dialog.mode === "move" ? "Move" : "Copy"}
-          onClose={() => setDialog(null)}
+          onClose={closeDialog(dialog)}
           onSubmit={async (folder) => {
             const self = getPane(tabId);
             if (!self || !pane.listing) return;
@@ -1206,7 +1210,7 @@ export function FilePane({
           sessionId={sessionId}
           folder={pane.listing.path}
           entries={dialog.entries}
-          onClose={() => setDialog(null)}
+          onClose={closeDialog(dialog)}
           onApplied={() => void pane.refresh()}
         />
       )}
@@ -1222,7 +1226,7 @@ export function FilePane({
           }
           confirmLabel="Delete"
           danger
-          onClose={() => setDialog(null)}
+          onClose={closeDialog(dialog)}
           onConfirm={async () => {
             const removed = dialog.entries.map((entry) => entry.path);
             const next = entryAfterRemoval(pane.visibleEntries, new Set(removed), pane.cursorPath);
