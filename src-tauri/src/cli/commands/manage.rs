@@ -253,9 +253,9 @@ pub async fn place(context: &Context, arguments: &PlaceArgs, moving: bool) -> Ap
                     .with_path(folder));
                 }
             }
-            // Nothing is in the way. Should something take one of the names meanwhile, both
-            // are kept rather than one replaced.
-            file_ops::Conflict::KeepBoth
+            // Checked again as each item is placed, links that lead nowhere included, since
+            // something may take a name meanwhile.
+            file_ops::Conflict::Fail
         }
         Conflict::Replace => file_ops::Conflict::Replace,
         Conflict::Skip => file_ops::Conflict::Skip,

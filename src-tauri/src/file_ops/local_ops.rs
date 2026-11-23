@@ -367,6 +367,11 @@ fn destination(
     let existing_is_dir = Kind::of(&existing) == Kind::Dir;
     match conflict {
         Conflict::Skip => Ok(None),
+        Conflict::Fail => Err(AppError::new(
+            ErrorKind::AlreadyExists,
+            format!("{name} already exists"),
+        )
+        .with_path(display(&path))),
         Conflict::KeepBoth => Ok(Some(Destination::Fresh(free_name(directory, name, kind)?))),
         Conflict::Replace => {
             match (kind == Kind::Dir, existing_is_dir) {
@@ -614,6 +619,28 @@ mod tests {
         assert_eq!(replaced.placed, [display(&root.join("b.txt"))]);
         assert_eq!(fs::read(root.join("b.txt")).unwrap(), b"a");
         assert!(!root.join("a.txt").exists());
+    }
+
+    #[test]
+    fn failing_on_a_taken_name_leaves_both_items() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let root = temp_dir.path();
+        fs::create_dir(root.join("into")).unwrap();
+        fs::write(root.join("a.txt"), b"a").unwrap();
+        fs::write(root.join("into/a.txt"), b"kept").unwrap();
+        for mode in [Mode::Move, Mode::Copy] {
+            let summary = run(&request(
+                mode,
+                &[&root.join("a.txt")],
+                &root.join("into"),
+                Conflict::Fail,
+            ));
+            assert!(summary.placed.is_empty(), "{mode:?}");
+            assert_eq!(summary.failures.len(), 1, "{mode:?}");
+            assert_eq!(summary.failures[0].kind, ErrorKind::AlreadyExists);
+            assert_eq!(fs::read(root.join("into/a.txt")).unwrap(), b"kept");
+            assert_eq!(fs::read(root.join("a.txt")).unwrap(), b"a");
+        }
     }
 
     #[test]

@@ -57,6 +57,9 @@ pub enum Conflict {
     /// The item gets a free name such as `name (2).txt`.
     #[default]
     KeepBoth,
+    /// The item is refused, and never given another name: what the command line asks for
+    /// when nothing should be in the way.
+    Fail,
 }
 
 #[derive(Debug, Clone, Deserialize)]

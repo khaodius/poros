@@ -987,3 +987,38 @@ fn one_item_that_cannot_be_placed_exits_with_its_own_status() {
     assert_eq!(run.names("locked"), ["a.txt"]);
     assert_eq!(run.names("open"), ["b.txt"]);
 }
+
+#[test]
+fn a_link_that_leads_nowhere_still_takes_its_name() {
+    let Some(run) = Run::online("dangling") else {
+        return;
+    };
+    run.write("one.txt", "one\n");
+    let (code, _) = run.json(&["mkdir", &run.remote("sub")]);
+    assert_eq!(code, 0);
+    for link in ["dangling.txt", "sub/one.txt"] {
+        let (code, value) = run.json(&[
+            "exec",
+            "--cwd",
+            &run.remote(""),
+            "--",
+            "ln",
+            "-s",
+            "nowhere",
+            link,
+        ]);
+        assert_eq!(code, 0, "{value}");
+    }
+    // Without --conflict, nothing that is there is replaced or renamed around.
+    for command in ["mv", "cp"] {
+        for destination in ["dangling.txt", "sub", "sub/one.txt"] {
+            let (code, value) =
+                run.json(&[command, &run.remote("one.txt"), &run.remote(destination)]);
+            assert_eq!(code, 9, "{command} {destination}: {value}");
+            assert_eq!(value["error"]["kind"], "alreadyExists", "{command}");
+            assert_eq!(run.names(""), ["dangling.txt", "one.txt", "sub"]);
+            assert_eq!(run.names("sub"), ["one.txt"]);
+        }
+    }
+    assert_eq!(run.read("one.txt").as_deref(), Some("one\n"));
+}

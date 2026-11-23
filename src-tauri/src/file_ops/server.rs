@@ -226,7 +226,7 @@ impl<'a> Work<'a> {
                 Conflict::KeepBoth => Some(Destination::Fresh(
                     self.free_name(directory, name, stat.kind).await?,
                 )),
-                Conflict::Replace => {
+                Conflict::Replace | Conflict::Fail => {
                     return Err(AppError::new(
                         ErrorKind::AlreadyExists,
                         format!("Another item named {name} goes there too"),
@@ -276,6 +276,7 @@ impl<'a> Work<'a> {
         };
         match conflict {
             Conflict::Skip => Ok(None),
+            Conflict::Fail => Err(crate::protocol::already_exists(&path)),
             Conflict::KeepBoth => Ok(Some(Destination::Fresh(
                 self.free_name(directory, name, kind).await?,
             ))),
