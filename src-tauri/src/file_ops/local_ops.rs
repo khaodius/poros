@@ -1,5 +1,6 @@
 //! Moving and copying on this computer's disks. Runs on a blocking thread.
 
+use std::ffi::OsStr;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -64,6 +65,12 @@ pub fn move_or_copy(
     cancel: &CancellationToken,
     progress: &Progress,
 ) -> AppResult<OperationSummary> {
+    if let Some(name) = &request.target_name {
+        // The server's rule for names allows `..\x` and `C:\x`, which are paths on Windows.
+        if Path::new(name).file_name() != Some(OsStr::new(name)) {
+            return Err(AppError::invalid(format!("{name} is not a name")));
+        }
+    }
     let directory = PathBuf::from(&request.target_directory);
     if !directory.is_dir() {
         return Err(AppError::new(
@@ -696,6 +703,34 @@ mod tests {
             assert_eq!(fs::read(root.join("into/a.txt")).unwrap(), b"kept");
             assert_eq!(fs::read(root.join("a.txt")).unwrap(), b"a");
         }
+    }
+
+    #[test]
+    fn a_new_name_is_never_a_path() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let root = temp_dir.path();
+        fs::create_dir(root.join("into")).unwrap();
+        fs::write(root.join("a.txt"), b"a").unwrap();
+        let mut paths = vec!["../a.txt", "into/b.txt", "b/"];
+        if cfg!(windows) {
+            paths.extend(["..\\a.txt", "C:\\a.txt", "C:a.txt"]);
+        }
+        for name in paths {
+            let request = MoveCopyRequest {
+                target_name: Some(name.into()),
+                ..request(
+                    Mode::Copy,
+                    &[&root.join("a.txt")],
+                    &root.join("into"),
+                    Conflict::Fail,
+                )
+            };
+            let refused = move_or_copy(&request, &CancellationToken::new(), &Progress::default())
+                .unwrap_err();
+            assert_eq!(refused.kind, ErrorKind::InvalidInput, "{name}");
+        }
+        assert_eq!(fs::read_dir(root.join("into")).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(root).unwrap().count(), 2);
     }
 
     #[test]
