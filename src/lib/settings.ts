@@ -3,6 +3,7 @@
 // stored as given, so they are checked here.
 
 import { CUSTOM_ARGUMENTS_EXAMPLE, type ExtractorSettings } from "./archives";
+import { sanitizeFindHistory, type FindHistoryEntry } from "./bulkRename";
 import {
   DETAIL_COLUMNS,
   sanitizeColumnWidths,
@@ -12,6 +13,7 @@ import {
 import {
   DEFAULT_PROGRESS_BARS,
   sanitizeProgressBars,
+  storableProgressBars,
   type ProgressBarSettings,
 } from "./progressBars";
 import { DEFAULT_SYNC_OPTIONS, legacySyncOptions, sanitizeSyncOptions } from "./rsyncOptions";
@@ -151,6 +153,8 @@ export interface InterfaceSettings {
   prefetchListings: boolean;
   /** Does so on cloud storage too, which counts and limits requests. */
   prefetchOnCloud: boolean;
+  /** The latest find and replace patterns of bulk renames, newest first. */
+  renameHistory: FindHistoryEntry[];
 }
 
 export interface AppearanceSettings {
@@ -334,6 +338,7 @@ export const DEFAULT_SETTINGS: Settings = {
     cachedListings: true,
     prefetchListings: true,
     prefetchOnCloud: false,
+    renameHistory: [],
   },
   appearance: {
     theme: "builtin:system",
@@ -441,6 +446,7 @@ export function sanitizeSettings(stored: unknown): Settings {
   }
   options.hiddenColumns = DETAIL_COLUMNS.filter((column) => options.hiddenColumns.includes(column));
   options.columnWidths = sanitizeColumnWidths(asSection(source.interface).columnWidths);
+  options.renameHistory = sanitizeFindHistory(asSection(source.interface).renameHistory);
 
   const appearance = settings.appearance;
   const storedAppearance = asSection(source.appearance);
@@ -456,7 +462,10 @@ export function sanitizeSettings(stored: unknown): Settings {
     appearance.rowHeight = COMPACT_ROW_HEIGHT;
   }
   appearance.rowHeight = clamp(appearance.rowHeight, ROW_HEIGHT_LIMITS.min, ROW_HEIGHT_LIMITS.max);
-  appearance.progressBars = sanitizeProgressBars(appearance.progressBars);
+  appearance.progressBars = sanitizeProgressBars(
+    appearance.progressBars,
+    asSection(storedAppearance.progressBars),
+  );
   settings.log.maxLines = clamp(settings.log.maxLines, LOG_LINE_LIMITS.min, LOG_LINE_LIMITS.max);
 
   settings.updates.skippedVersion = settings.updates.skippedVersion.trim();
@@ -473,6 +482,15 @@ export function sanitizeSettings(stored: unknown): Settings {
   }
   automation.commands = sanitizeCommands(automation.commands);
   return settings;
+}
+
+/** The settings as written to disk, with what older versions read beside the newer fields. */
+export function storableSettings(settings: Settings): Settings {
+  const appearance = settings.appearance;
+  return {
+    ...settings,
+    appearance: { ...appearance, progressBars: storableProgressBars(appearance.progressBars) },
+  };
 }
 
 /**

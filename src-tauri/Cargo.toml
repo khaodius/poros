@@ -137,6 +137,7 @@ scrypt = { version = "0.12", default-features = false }
 zeroize = "1"
 # File names and passwords are normalized (NFC) before they are encrypted, as Cryptomator does.
 unicode-normalization = "0.1"
+regex = "1"
 
 [target.'cfg(windows)'.dependencies]
 # Rounded window corners on Windows 11, showing the drag preview without taking focus, and the
