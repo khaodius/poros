@@ -1354,6 +1354,63 @@ b8QN6w9nN4iHOGzT0ZtAWu0ompwKIV0AbzYpASmLBK/h/eoAYgEHHv1o8tnMS49ecYBqp8a2A9O1g2hb
             .any(|message| message == "signed.bin has a good minisign signature (file:test)"),
         "{log:#?}"
     );
+
+    fixture.close().await;
+}
+
+/// A folder that may be entered but not listed, as with mode 0311, publishes nothing that can
+/// be found, and the files in it still download.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn files_download_from_folders_that_cannot_be_listed() {
+    let Some(server) = server() else { return };
+    let fixture = TransferFixture::new(&server, "unlisted").await;
+    let session = fixture.manager.get(&fixture.session.id).await.unwrap();
+    let fs = session.sftp().unwrap();
+    let source = fixture.local.path().join("closed");
+    std::fs::create_dir_all(&source).unwrap();
+    let bytes = pattern(300_000, 31);
+    std::fs::write(source.join("inside.bin"), &bytes).unwrap();
+    let transfers = fixture.transfers(transfer_settings());
+    fixture
+        .upload(&transfers, std::slice::from_ref(&source), &fixture.remote)
+        .await;
+    assert_all_done(&wait_until_settled(&transfers).await.0);
+    drop(transfers);
+    let closed = remote_path_join(&fixture.remote, "closed");
+    fs.set_permissions(&closed, 0o311).await.unwrap();
+    assert!(fs.list_dir(&closed).await.is_err());
+
+    let downloads = fixture.local.path().join("downloads");
+    std::fs::create_dir_all(&downloads).unwrap();
+    let events = Events::keeping_startup_log();
+    let transfers =
+        TransferManager::new(fixture.manager.clone(), events.clone(), transfer_settings());
+    // Typed in or bookmarked: the folder cannot be listed to find the file.
+    fixture
+        .enqueue(
+            &transfers,
+            Direction::Download,
+            &downloads.to_string_lossy(),
+            vec![TransferItem {
+                path: remote_path_join(&closed, "inside.bin"),
+                name: "inside.bin".into(),
+                is_dir: false,
+                size: bytes.len() as u64,
+            }],
+        )
+        .await;
+    let (list, _) = wait_until_settled(&transfers).await;
+    drop(transfers);
+    fs.set_permissions(&closed, 0o755).await.unwrap();
+    assert_all_done(&list);
+    assert_eq!(std::fs::read(downloads.join("inside.bin")).unwrap(), bytes);
+    let log = log_messages(&events);
+    assert!(
+        log.iter().any(|message| message.starts_with(&format!(
+            "Could not list {closed} to look for published checksums and signatures"
+        ))),
+        "{log:#?}"
+    );
     fixture.close().await;
 }
 

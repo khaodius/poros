@@ -231,7 +231,25 @@ pub(super) async fn check(
     let folder = target
         .published
         .cell(&folder_path)
-        .get_or_try_init(|| async { read_folder(&source, &folder_path).await.map(Arc::new) })
+        .get_or_try_init(|| async {
+            match read_folder(&source, &folder_path).await {
+                Ok(folder) => Ok(Arc::new(folder)),
+                // A folder that may be entered but not listed publishes nothing to be found.
+                // A dropped connection still fails the attempt, which is then retried.
+                Err(error) if !error.is_retryable() && error.kind != ErrorKind::Cancelled => {
+                    log(
+                        job,
+                        LogLevel::Info,
+                        format!(
+                            "Could not list {folder_path} to look for published checksums and signatures: {}",
+                            error.message
+                        ),
+                    );
+                    Ok(Arc::new(Folder::default()))
+                }
+                Err(error) => Err(error),
+            }
+        })
         .await?
         .clone();
 
