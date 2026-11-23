@@ -27,6 +27,8 @@ const LIMIT_BYTES: f64 = 512.0 * 1024.0;
 const EVERY_DAY: [u8; 7] = [0, 1, 2, 3, 4, 5, 6];
 /// What the requests one worker keeps in flight hold, at the request size of the settings.
 const IN_FLIGHT_BYTES: u64 = 4 * 32 * 1024;
+/// More than a streamed download can have counted, but not yet have on disk, when it stops.
+const UNWRITTEN_BYTES: u64 = 256 * 1024;
 
 struct Server {
     protocol: Protocol,
@@ -409,8 +411,9 @@ async fn a_paused_window_holds_an_upload_and_lets_it_continue_where_it_stopped()
         let transfers = fixture.transfers(settings);
         let size = 3 * MEBIBYTE;
         fixture.upload(&transfers, "paused.bin", size).await;
-        wait_for("a good part of the upload", || {
-            (only_job(&transfers).transferred >= MEBIBYTE).then_some(())
+        let before_noon = wait_for("a good part of the upload", || {
+            let transferred = only_job(&transfers).transferred;
+            (transferred >= MEBIBYTE).then_some(transferred)
         })
         .await;
 
@@ -443,7 +446,10 @@ async fn a_paused_window_holds_an_upload_and_lets_it_continue_where_it_stopped()
             .await
             .unwrap();
         assert!(sent[..] == pattern(size, size)[..kept as usize]);
-        assert!((MEBIBYTE..size).contains(&kept), "{kept} bytes when held");
+        assert!(
+            (before_noon..size).contains(&kept),
+            "{kept} bytes when held, after {before_noon} were seen moving"
+        );
 
         // A queue that only waits for the schedule has not finished, and nothing moves.
         tokio::time::sleep(Duration::from_millis(1500)).await;
@@ -562,14 +568,17 @@ async fn a_download_over_ftp_is_slowed_then_held_and_continues() {
         let measured_from = Instant::now();
         tokio::time::sleep(Duration::from_millis(2000)).await;
         let job = only_job(&transfers);
+        let before_noon = job.transferred;
         let limited_rate =
-            (job.transferred - moving_from) as f64 / measured_from.elapsed().as_secs_f64();
+            (before_noon - moving_from) as f64 / measured_from.elapsed().as_secs_f64();
         assert!(
             (0.5 * LIMIT_BYTES..=1.5 * LIMIT_BYTES).contains(&limited_rate),
             "{limited_rate} bytes per second under a limit of {LIMIT_BYTES}"
         );
 
-        // Noon: downloads wait for the schedule, keeping what they have.
+        // Noon: downloads wait for the schedule, keeping what they have. How much that is
+        // depends on how fast the runner went within the limit, so it is compared with what
+        // was seen moving rather than with a fixed amount.
         fixture.set_clock(monday(12, 0, 0));
         let held = wait_for("the download to wait for the schedule", || {
             let list = transfers.list();
@@ -583,7 +592,10 @@ async fn a_download_over_ftp_is_slowed_then_held_and_continues() {
             Some(monday(13, 0, 0).timestamp())
         );
         let kept = held.jobs[0].transferred;
-        assert!((MEBIBYTE..size).contains(&kept), "{kept} bytes when held");
+        assert!(
+            (before_noon..size).contains(&kept),
+            "{kept} bytes when held, after {before_noon} were seen moving"
+        );
         tokio::time::sleep(Duration::from_millis(1000)).await;
         assert_eq!(only_job(&transfers).transferred, kept);
 
@@ -606,8 +618,12 @@ async fn a_download_over_ftp_is_slowed_then_held_and_continues() {
             list.jobs[0].error
         );
         assert_eq!(list.jobs[0].attempts, 0);
+        // It continues from what the file holds, short of at most a write still on its way to
+        // the disk when the hold stopped it. What was kept is more than that, so this tells a
+        // continued download from one that started again.
+        assert!(kept > UNWRITTEN_BYTES, "{kept} bytes when held");
         assert!(
-            kept.saturating_sub(least_after_release) <= 256 * 1024,
+            kept.saturating_sub(least_after_release) <= UNWRITTEN_BYTES,
             "continued from {least_after_release} after being held at {kept}"
         );
         assert!(std::fs::read(&target).unwrap() == pattern(size, size));
