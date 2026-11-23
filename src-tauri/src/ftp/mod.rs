@@ -643,6 +643,7 @@ mod tests {
     async fn connect(mode: DataMode) -> (FakeServer, Arc<FtpFs>) {
         let server = FakeServer::start(Behavior {
             refuses_extended_passive: matches!(mode, DataMode::Passive),
+            ..Behavior::default()
         })
         .await;
         let profile = ConnectProfile {
@@ -708,6 +709,23 @@ mod tests {
             let stat = files.stat(PATH).await.unwrap().unwrap();
             assert_eq!(stat.size, contents.len() as u64, "{mode:?}");
         }
+    }
+
+    /// A `PASV` reply that names an address on this computer, as a hostile server could to
+    /// have an upload written to a service only this computer reaches. The data connection
+    /// goes to the server itself, where the scripted server listens.
+    #[tokio::test]
+    async fn a_passive_address_on_this_computer_is_not_followed() {
+        let server = FakeServer::start(Behavior {
+            refuses_extended_passive: true,
+            passive_address: Some(std::net::Ipv4Addr::new(127, 0, 0, 2)),
+        })
+        .await;
+        let files = server.connect(&server.profile()).await;
+        let contents = contents();
+        server.put_file(PATH, &contents);
+        let received = read_range(&files, 0..contents.len() as u64).await;
+        assert_eq!(received, contents);
     }
 
     #[tokio::test]

@@ -1102,26 +1102,33 @@ fn parse_pasv_address(text: &str) -> Option<std::net::SocketAddrV4> {
     ))
 }
 
-fn is_unroutable(ip: Ipv4Addr) -> bool {
+/// Whether `ip` is a host on the public internet: not this computer, not on a private or
+/// link-local network, and not an address no host has.
+fn is_public(ip: Ipv4Addr) -> bool {
     let [first, second, ..] = ip.octets();
-    ip.is_private()
+    !(ip.is_private()
         || ip.is_loopback()
         || ip.is_link_local()
-        || ip.is_unspecified()
-        || (first == 100 && (64..128).contains(&second))
+        || first == 0
+        || first >= 224
+        || (first == 100 && (64..128).contains(&second)))
 }
 
-/// Servers behind NAT often offer their private address for passive mode; the address Poros
-/// reached them at works instead.
+/// Where a passive data connection goes: to the server Poros is already talking to, as with
+/// `EPSV`, unless that server and the address in its `PASV` reply are both on the public
+/// internet.
+///
+/// Servers behind NAT often name their private address, and servers in containers one that
+/// exists only inside the container; the address Poros reached them at works instead. A
+/// hostile server can name this computer or a machine on the local network, to have Poros
+/// connect there and write an upload to it, so such an address is never followed. A server on
+/// the public internet may name another public address, as load-balanced servers do for the
+/// machine that holds the data: following it reaches nothing the server could not reach by
+/// itself.
 fn passive_ip(offered: Ipv4Addr, peer: IpAddr) -> IpAddr {
-    let peer_unroutable = match peer {
-        IpAddr::V4(peer) => is_unroutable(peer),
-        IpAddr::V6(peer) => peer.is_loopback(),
-    };
-    if offered.is_unspecified() || (is_unroutable(offered) && !peer_unroutable) {
-        peer
-    } else {
-        IpAddr::V4(offered)
+    match peer {
+        IpAddr::V4(server) if is_public(server) && is_public(offered) => IpAddr::V4(offered),
+        _ => peer,
     }
 }
 
@@ -1275,19 +1282,40 @@ mod tests {
     }
 
     #[test]
-    fn replaces_private_passive_addresses() {
-        let public: IpAddr = "203.0.113.5".parse().unwrap();
-        assert_eq!(passive_ip(Ipv4Addr::new(192, 168, 1, 2), public), public);
-        assert_eq!(passive_ip(Ipv4Addr::UNSPECIFIED, public), public);
-        assert_eq!(
-            passive_ip(Ipv4Addr::new(198, 51, 100, 7), public),
-            IpAddr::V4(Ipv4Addr::new(198, 51, 100, 7))
-        );
-        let private: IpAddr = "192.168.1.9".parse().unwrap();
-        assert_eq!(
-            passive_ip(Ipv4Addr::new(192, 168, 1, 2), private),
-            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2))
-        );
+    fn passive_connections_go_to_the_server_unless_both_addresses_are_public() {
+        let address = |text: &str| text.parse::<Ipv4Addr>().unwrap();
+        let peer = |text: &str| text.parse::<IpAddr>().unwrap();
+        // (the address the reply names, the server's address, where the connection goes)
+        for (offered, server, expected) in [
+            // A server behind NAT that names its public address, or its private one.
+            ("203.0.113.5", "203.0.113.5", "203.0.113.5"),
+            ("192.168.1.2", "203.0.113.5", "203.0.113.5"),
+            ("100.64.3.2", "203.0.113.5", "203.0.113.5"),
+            ("0.0.0.0", "203.0.113.5", "203.0.113.5"),
+            // A load-balanced server that names the machine holding the data.
+            ("198.51.100.7", "203.0.113.5", "198.51.100.7"),
+            // This computer, a link-local address or a multicast one, named by any server.
+            ("127.0.0.1", "203.0.113.5", "203.0.113.5"),
+            ("127.0.0.1", "192.168.1.10", "192.168.1.10"),
+            ("169.254.169.254", "192.168.1.10", "192.168.1.10"),
+            ("224.0.0.1", "203.0.113.5", "203.0.113.5"),
+            // A server on the local network that names a container's address, another machine
+            // on the network, or a public address.
+            ("172.17.0.2", "192.168.1.10", "192.168.1.10"),
+            ("192.168.1.2", "192.168.1.10", "192.168.1.10"),
+            ("198.51.100.7", "192.168.1.10", "192.168.1.10"),
+            // A server on this computer, or reached through a tunnel that ends on it.
+            ("10.0.0.5", "127.0.0.1", "127.0.0.1"),
+            ("198.51.100.7", "127.0.0.1", "127.0.0.1"),
+            // A server reached over IPv6 has no IPv4 address to compare with.
+            ("198.51.100.7", "2001:db8::5", "2001:db8::5"),
+        ] {
+            assert_eq!(
+                passive_ip(address(offered), peer(server)),
+                peer(expected),
+                "{offered} named by {server}"
+            );
+        }
     }
 
     #[test]

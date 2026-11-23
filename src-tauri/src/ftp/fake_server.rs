@@ -21,6 +21,9 @@ use crate::tls::TrustedCertificates;
 pub struct Behavior {
     /// Answers `EPSV` with a refusal, so the client falls back to `PASV`.
     pub refuses_extended_passive: bool,
+    /// The address `PASV` replies name instead of the server's own. The server still listens
+    /// on its own.
+    pub passive_address: Option<Ipv4Addr>,
 }
 
 #[derive(Default)]
@@ -169,7 +172,8 @@ impl Session {
                 }
                 "PASV" => {
                     let port = self.listen().await?;
-                    let [first, second, third, fourth] = Ipv4Addr::LOCALHOST.octets();
+                    let named = self.behavior.passive_address.unwrap_or(Ipv4Addr::LOCALHOST);
+                    let [first, second, third, fourth] = named.octets();
                     let reply = format!(
                         "227 Entering Passive Mode ({first},{second},{third},{fourth},{},{}).",
                         port >> 8,
