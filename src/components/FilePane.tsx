@@ -30,11 +30,13 @@ import {
   FolderOpen,
   FolderOutput,
   FolderPlus,
+  FolderSearch,
   FolderSync,
   HardDrive,
   Home,
   Info,
   ListTree,
+  LocateFixed,
   Lock,
   LockKeyhole,
   PackageOpen,
@@ -53,19 +55,31 @@ import {
 } from "lucide-react";
 import { useBackForwardButtons } from "../hooks/useBackForwardButtons";
 import { useListingPrefetch } from "../hooks/useListingPrefetch";
-import { usePane } from "../hooks/usePane";
+import { usePane, type Focus } from "../hooks/usePane";
+import { useSearch, type SearchView } from "../hooks/useSearch";
 import { archiveFormatOf, isSingleFile, unpackedName } from "../lib/archives";
 import { COLUMN_LABELS, availableColumns, type DetailColumn } from "../lib/columns";
 import { entryAfterRemoval } from "../lib/cursor";
-import { sameFilesystem, toLocation, worksInPlace } from "../lib/fileOrigin";
+import { sameFilesystem, toLocation, worksInPlace, type FileOrigin } from "../lib/fileOrigin";
 import type { FileSource } from "../lib/fileSource";
 import { PANE_KEYBOARD_TARGET } from "../lib/focus";
 import { toAppError } from "../lib/ipc";
 import { formatSize, pluralize } from "../lib/format";
 import { baseName, exampleFileName, samePath } from "../lib/path";
+import {
+  dateNarrows,
+  defaultSearchForm,
+  folderOf,
+  recheckAfterChange,
+  recheckTargets,
+  relativeFolder,
+  sharedFolder,
+  sizeNarrows,
+  type SearchForm,
+} from "../lib/search";
 import { groupOfTab } from "../lib/layout";
 import { isDirLike, type SortKey, type SortSpec } from "../lib/sort";
-import type { FileEntry, PlaceMode } from "../lib/types";
+import type { DirListing, FileEntry, FileLocation, PlaceMode } from "../lib/types";
 import { sessionShowing, vaultSessions, vaultSign } from "../lib/vaults";
 import { archivesAmong, extractArchives } from "../state/archiveActions";
 import { useClipboardStore } from "../state/clipboardStore";
@@ -79,6 +93,7 @@ import {
   paste,
   placeEntries,
   putOnClipboard,
+  refreshFoldersOf,
 } from "../state/fileOperations";
 import { useLayoutStore } from "../state/layoutStore";
 import { useLogStore } from "../state/logStore";
@@ -91,6 +106,7 @@ import {
   type PaneHandle,
 } from "../state/paneRegistry";
 import { paneListings } from "../state/listings";
+import { useSearchStore } from "../state/searchStore";
 import { useSessionStore } from "../state/sessionStore";
 import {
   previewSettingsSection,
@@ -99,10 +115,15 @@ import {
 } from "../state/settingsStore";
 import { openTerminal } from "../state/terminalActions";
 import { useToastStore } from "../state/toastStore";
-import { transferFromPane, transferToOtherSide } from "../state/transferActions";
+import {
+  sayWhereResultsDropWent,
+  transferFromPane,
+  transferToOtherSide,
+} from "../state/transferActions";
 import { useUiStore } from "../state/uiStore";
 import { requestLockVault, vaultHandover } from "../state/vaultActions";
 import { workspaceChanged } from "../state/workspace";
+import { BulkRenameDialog } from "./BulkRenameDialog";
 import { CompareDialog, type CompareSide } from "./CompareDialog";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { DeleteDialog } from "./DeleteDialog";
@@ -111,6 +132,7 @@ import { NewVaultDialog } from "./NewVaultDialog";
 import { PathBar } from "./PathBar";
 import { PromptDialog } from "./PromptDialog";
 import { PropertiesDialog } from "./PropertiesDialog";
+import { SearchBar } from "./SearchBar";
 import { VaultUnlockCard } from "./VaultUnlockCard";
 import { serverCommandsMenu } from "./commandMenu";
 
@@ -121,6 +143,7 @@ type PaneDialog =
   | { type: "delete"; entries: FileEntry[] }
   | { type: "placeTo"; mode: PlaceMode; entries: FileEntry[] }
   | { type: "properties"; entries: FileEntry[] }
+  | { type: "bulkRename"; origin: FileOrigin; folder: string; entries: FileEntry[] }
   | { type: "compare"; left: CompareSide; right: CompareSide };
 
 interface FilePaneProps {
@@ -195,7 +218,33 @@ function counterpartFile(tabId: string): { pane: PaneHandle; entry: FileEntry } 
 /** Keeps rows from getting shorter than their text when the font is large. */
 const MIN_ROW_PADDING = 6;
 
-const rememberSort = (sort: SortSpec) => void saveSettingsSection("interface", { sort });
+// Sorting by folder belongs to search results, so folders keep the order they had.
+const rememberSort = (sort: SortSpec) =>
+  sort.key !== "folder" && void saveSettingsSection("interface", { sort });
+
+const NO_SEARCHES: SearchForm[] = [];
+
+/** What the list says while a search shows no results. */
+function searchEmptyMessage(view: SearchView): string {
+  switch (view.status) {
+    case "searching":
+      return "Searching...";
+    case "stopped":
+      return "Stopped before anything was found";
+    case "failed":
+      return "Nothing was found";
+    default: {
+      const { form } = view;
+      const narrowed =
+        form.kind !== "any" ||
+        sizeNarrows(form.size) ||
+        dateNarrows(form.date) ||
+        form.depth !== null;
+      const found = narrowed ? "No results with these filters." : "No results.";
+      return form.hidden ? found : `${found} Hidden folders were not searched.`;
+    }
+  }
+}
 
 export function FilePane({
   tabId,
@@ -235,6 +284,23 @@ export function FilePane({
     () => new Set([renaming, menuPath].filter((path): path is string => typeof path === "string")),
     [renaming, menuPath],
   );
+  const searchLocation = useMemo<FileLocation>(
+    () =>
+      source.kind === "remote" && sessionId ? { kind: "remote", sessionId } : { kind: "local" },
+    [source.kind, sessionId],
+  );
+  const search = useSearch(searchLocation);
+  const searchView = search.view;
+  const resultsRoot = searchView?.root;
+  const resultEntries = searchView?.entries;
+  // A new listing only when the results change, not with each step of the search's progress.
+  const searchResults = useMemo<DirListing | null>(
+    () =>
+      resultsRoot !== undefined && resultEntries
+        ? { path: resultsRoot, parent: null, entries: resultEntries }
+        : null,
+    [resultsRoot, resultEntries],
+  );
   const pane = usePane(source, {
     showHiddenByDefault,
     initialSort: useSettingsStore.getState().settings.interface.sort,
@@ -242,11 +308,23 @@ export function FilePane({
     groupByDate,
     onSortChange: rememberSort,
     handover,
+    results: searchResults,
     // This computer's folders list at once, so only a server's are remembered.
     listings: sessionId && cachedListings ? paneListings : undefined,
     heldPaths,
   });
   useListingPrefetch(pane, sessionId, visible);
+  /** The pane shows search results in place of the folder. */
+  const inResults = pane.showingResults && searchView !== null;
+  /** The search bar shows: opened over the folder, or above results. `root` is the folder a
+   * search started from there would start in, when not the one on show. */
+  const [searchBar, setSearchBar] = useState<{ root: string | null } | null>(null);
+  const [searchForm, setSearchForm] = useState<SearchForm>(() =>
+    defaultSearchForm(showHiddenByDefault),
+  );
+  const [searchProblem, setSearchProblem] = useState<string | null>(null);
+  const [searchFocus, setSearchFocus] = useState(0);
+  const recentSearches = useSearchStore((state) => state.recent[source.key]) ?? NO_SEARCHES;
   const [dialog, setDialog] = useState<PaneDialog | null>(null);
   const [pathEditRequest, setPathEditRequest] = useState(0);
   const sectionRef = useRef<HTMLElement>(null);
@@ -275,6 +353,8 @@ export function FilePane({
   useLayoutEffect(() => {
     paneRef.current = pane;
   });
+  // Results are looked at again where the folder would be listed again.
+  const refreshRef = useRef<(focus?: Focus) => void>(() => undefined);
   useBackForwardButtons(sectionRef, pane.goBack, pane.goForward);
 
   /** Back to the file list, so the keyboard works on files again after typing a path or filter. */
@@ -291,11 +371,12 @@ export function FilePane({
         sessionId,
         label: title,
         path: () => paneRef.current.listing?.path ?? null,
-        refresh: (focus) => void paneRef.current.refresh(focus),
+        refresh: (focus) => refreshRef.current(focus),
         clear: () => paneRef.current.clear(),
         loading: () => paneRef.current.isLoading(),
         selected: () => paneRef.current.selectedEntries(),
         entries: () => paneRef.current.listing?.entries ?? [],
+        showsResults: () => paneRef.current.showingResults,
         visible: false,
         activatedAt: 0,
       }),
@@ -316,8 +397,11 @@ export function FilePane({
   // An unlocked vault lists its decrypted files, among which nothing marks a vault.
   const listedEntries = pane.listing?.entries;
   const sign = useMemo(
-    () => (source.kind === "remote" && !vault && listedEntries ? vaultSign(listedEntries) : "none"),
-    [source.kind, vault, listedEntries],
+    () =>
+      source.kind === "remote" && !vault && listedEntries && !inResults
+        ? vaultSign(listedEntries)
+        : "none",
+    [source.kind, vault, listedEntries, inResults],
   );
   /** The locked vault whose encrypted files the user asked to see, for as long as it shows. */
   const [revealedVault, setRevealedVault] = useState<string | null>(null);
@@ -378,11 +462,128 @@ export function FilePane({
     0,
   );
 
-  const openNewFolder = () => pane.listing && setDialog({ type: "newFolder" });
+  const style = source.pathStyle;
+  const searchBarShown = searchBar !== null || inResults;
+  /** Where a search from the bar starts: where the results were found, or the folder on show. */
+  const searchRoot = inResults ? searchView.root : (searchBar?.root ?? pane.listing?.path ?? null);
+
+  const runSearch = (form: SearchForm = searchForm, root: string | null = searchRoot) => {
+    if (!root) return;
+    setSearchForm(form);
+    const problem = search.start(root, form);
+    setSearchProblem(problem);
+    if (problem) return;
+    useSearchStore.getState().remember(source.key, form);
+    pane.showResults(root);
+  };
+
+  /** Opens the search bar for the folder on show, or for `folder` inside it. */
+  const openSearch = (folder?: string) => {
+    if (folder !== undefined && inResults) {
+      runSearch(searchForm, folder);
+      return;
+    }
+    setSearchBar({ root: folder ?? null });
+    setSearchProblem(null);
+    setSearchFocus((count) => count + 1);
+  };
+
+  const closeSearch = () => {
+    search.discard();
+    setSearchBar(null);
+    setSearchProblem(null);
+    setSearchFocus(0);
+    if (inResults) pane.closeResults();
+    focusList();
+  };
+
+  // Leaving the results for a folder, by Back or by going there, puts the bar away. The
+  // results stay, for Back to return to.
+  const wasInResults = useRef(false);
+  useEffect(() => {
+    if (wasInResults.current && !inResults) {
+      setSearchBar(null);
+      setSearchProblem(null);
+      setSearchFocus(0);
+      const current = paneRef.current;
+      if (current.sort.key === "folder") {
+        current.setSort(useSettingsStore.getState().settings.interface.sort);
+      }
+    }
+    wasInResults.current = inResults;
+  }, [inResults]);
+
+  // Results belong to the session that found them.
+  const discardSearch = search.discard;
+  const searchedSource = useRef(source);
+  useEffect(() => {
+    if (searchedSource.current === source) return;
+    searchedSource.current = source;
+    discardSearch();
+    setSearchBar(null);
+  }, [source, discardSearch]);
+
+  /** Looks at the results again after their folder changed, as the folder would reload. */
+  const refreshResults = () => {
+    if (!searchView) return;
+    const clip = useClipboardStore.getState().clip;
+    const clipped =
+      clip && sameFilesystem(clip.origin, paneOrigin(side))
+        ? clip.entries.map((entry) => entry.path)
+        : [];
+    void search.recheck(
+      recheckTargets(searchView.entries, searchView.root, style, [...pane.selection, ...clipped]),
+    );
+  };
+  useLayoutEffect(() => {
+    refreshRef.current = inResults
+      ? () => refreshResults()
+      : (focus) => void paneRef.current.refresh(focus);
+  });
+
+  /**
+   * After results were renamed, moved or deleted: they are looked at again, with `added` paths
+   * they go by now and the results inside changed folders. Moves and deletes on the server
+   * reload the panes showing their folders themselves; for the rest, `reload` has it done.
+   */
+  const resultsChanged = async (
+    entries: FileEntry[],
+    added: string[] = [],
+    focus?: string,
+    reload = false,
+  ) => {
+    if (reload) refreshFoldersOf(paneOrigin(side), entries);
+    await search.recheck(recheckAfterChange(searchView?.entries ?? [], entries, added, style));
+    if (focus) pane.selectOnly(focus);
+  };
+
+  /** The folder of results acted on together: theirs when they share one. */
+  const folderOfResults = (entries: FileEntry[]): string =>
+    sharedFolder(entries, style) ?? searchView?.root ?? pane.listing?.path ?? "";
+
+  /** Leaves the results for the folder `entry` is in, with it selected there. */
+  const goToFolder = (entry: FileEntry) => void pane.navigate(folderOf(entry, style), entry.path);
+
+  const folderLabel = useCallback(
+    (entry: FileEntry) => (resultsRoot ? relativeFolder(resultsRoot, entry, style) : ""),
+    [resultsRoot, style],
+  );
+  /** The list's view of the pane: F5 on results searches again. */
+  const listPane = inResults
+    ? {
+        ...pane,
+        refresh: async () => {
+          runSearch();
+          return true;
+        },
+      }
+    : pane;
+
+  const openNewFolder = () => pane.listing && !inResults && setDialog({ type: "newFolder" });
   const openNewFile = () =>
-    pane.listing && setDialog({ type: "newFile", example: exampleFileName() });
+    pane.listing && !inResults && setDialog({ type: "newFile", example: exampleFileName() });
   /** A vault goes on a server, in a folder that is not a vault's own. */
-  const canMakeVault = source.kind === "remote" && Boolean(sessionId) && !vault;
+  const canMakeVault = source.kind === "remote" && Boolean(sessionId) && !vault && !inResults;
   const openNewVault = () => pane.listing && sign === "none" && setDialog({ type: "newVault" });
 
   /** Shows the vault at `root` once it is unlocked: the path is the vault's from then on, so
@@ -455,12 +656,23 @@ export function FilePane({
       const renamed = await source.rename(entry.path, newName);
       writeLog("info", `Renamed ${entry.path} to ${renamed}`);
       setRenaming(null);
-      await pane.refresh(renamed);
+      if (inResults) await resultsChanged([entry], [renamed], renamed, true);
+      else await pane.refresh(renamed);
       return true;
     } catch (caught) {
       showToast("error", toAppError(caught).message);
       return false;
     }
+  };
+  const openBulkRename = (entries: FileEntry[]) => {
+    const listing = pane.listing;
+    if (!listing || entries.length < 2) return;
+    setDialog({
+      type: "bulkRename",
+      origin: paneOrigin({ kind: source.kind, sessionId }),
+      folder: listing.path,
+      entries,
+    });
   };
   const openDelete = () => selected.length > 0 && setDialog({ type: "delete", entries: selected });
 
@@ -485,15 +697,31 @@ export function FilePane({
       } else if (action?.kind === "blocked") {
         showToast("info", `${action.reason}.`);
       } else if (action?.kind === "place") {
+        // Results already in the folder they are dropped on stay where they are.
+        const entries = inResults
+          ? payload.entries.filter(
+              (entry) => !samePath(folderOf(entry, style), action.folder, style),
+            )
+          : payload.entries;
         void placeEntries({
           mode: action.mode,
           origin: paneOrigin(action.source),
-          sourceFolder: action.source.path() ?? "",
-          entries: payload.entries,
+          sourceFolder: inResults ? folderOfResults(entries) : (action.source.path() ?? ""),
+          entries,
           target: action.target,
           targetFolder: action.folder,
           sourceTabId: tabId,
           landing,
+        }).then((done) => {
+          if (done && inResults && action.mode === "move") void resultsChanged(entries);
+          const shown = getPane(target.tabId);
+          if (done && target.folder === null && shown) {
+            sayWhereResultsDropWent(
+              shown,
+              action.mode === "move" ? "Moved" : "Copied",
+              action.folder,
+            );
+          }
         });
       }
     };
@@ -525,7 +753,11 @@ export function FilePane({
   /** Into the folder clicked, else the one on show. */
   const pasteInto = (entry: FileEntry | null) => {
     const self = getPane(tabId);
-    const folder = entry && isDirLike(entry) ? entry.path : pane.listing?.path;
+    const folder = entry && isDirLike(entry) ? entry.path : inResults ? null : pane.listing?.path;
+    if (!folder && inResults) {
+      showToast("info", "To paste, open a folder or right-click one in the results.");
+      return;
+    }
     if (self && folder) void paste(self, folder);
   };
 
@@ -552,9 +784,15 @@ export function FilePane({
     };
   };
 
-  /** Synchronizes the folder clicked, or the one shown, with the other side. */
+  /** Synchronizes the folder clicked, or the one shown, with the other side. A file among
+   * search results stands for the folder it is in. */
   const syncMenuItem = (entry: FileEntry | null): MenuItem => {
-    const folder = entry && isDirLike(entry) ? entry.path : (pane.listing?.path ?? "");
+    const folder =
+      entry && isDirLike(entry)
+        ? entry.path
+        : entry && inResults
+          ? folderOf(entry, style)
+          : (pane.listing?.path ?? "");
     // Synchronization runs over SSH.
     const synchronizable = source.kind === "local" || protocol === "sftp";
     return {
@@ -595,8 +833,8 @@ export function FilePane({
     label: "Sort by",
     icon: <ArrowUpDown size={14} />,
     items: [
-      ...(["name", ...columns] as SortKey[]).map((key) => ({
-        label: key === "name" ? "Name" : COLUMN_LABELS[key],
+      ...(["name", ...(inResults ? ["folder"] : []), ...columns] as SortKey[]).map((key) => ({
+        label: key === "name" ? "Name" : key === "folder" ? "Folder" : COLUMN_LABELS[key],
         checked: pane.sort.key === key,
         onSelect: () => pane.setSort({ key, direction: pane.sort.direction }),
       })),
@@ -786,6 +1024,20 @@ export function FilePane({
     ];
   };
 
+  /** Commands run in one folder, so results from several have none to run in. */
+  const commandsMenuItem = (server: string, shown: string, targets: FileEntry[]): MenuItem => {
+    const folder = !inResults ? shown : targets.length > 0 ? sharedFolder(targets, style) : shown;
+    if (folder === null) {
+      return {
+        label: "Commands (items in one folder only)",
+        icon: <SquareTerminal size={14} />,
+        disabled: true,
+        onSelect: () => undefined,
+      };
+    }
+    return serverCommandsMenu(server, { folder, items: targets });
+  };
+
   const contextMenuItems = (entry: FileEntry | null): MenuItem[] => {
     const targets = entry ? (pane.selection.has(entry.path) ? selected : [entry]) : [];
     const compare = compareMenuItem(targets);
@@ -813,25 +1065,48 @@ export function FilePane({
             },
           ]
         : []),
+      ...(inResults && entry && targets.length === 1
+        ? [
+            {
+              label: "Go to folder",
+              icon: <LocateFixed size={14} />,
+              onSelect: () => goToFolder(entry),
+            },
+          ]
+        : []),
+      ...((entry && isDirLike(entry) && targets.length === 1) || (!entry && !inResults)
+        ? [
+            {
+              label: "Search in this folder",
+              icon: <FolderSearch size={14} />,
+              shortcut: entry ? undefined : "Ctrl+Shift+F",
+              onSelect: () => openSearch(entry?.path),
+            },
+          ]
+        : []),
       ...(extract.length > 0 ? ["separator" as const, ...extract, "separator" as const] : []),
       {
-        label: "Refresh",
+        label: inResults ? "Search again" : "Refresh",
         icon: <RefreshCw size={14} />,
         shortcut: "F5",
-        onSelect: () => void pane.refresh(),
+        onSelect: () => (inResults ? runSearch() : void pane.refresh()),
       },
-      {
-        label: "New folder",
-        icon: <FolderPlus size={14} />,
-        shortcut: "F7",
-        onSelect: openNewFolder,
-      },
-      {
-        label: "New file",
-        icon: <FilePlus size={14} />,
-        shortcut: "Shift+F4",
-        onSelect: openNewFile,
-      },
+      ...(inResults
+        ? []
+        : [
+            {
+              label: "New folder",
+              icon: <FolderPlus size={14} />,
+              shortcut: "F7",
+              onSelect: openNewFolder,
+            },
+            {
+              label: "New file",
+              icon: <FilePlus size={14} />,
+              shortcut: "Shift+F4",
+              onSelect: openNewFile,
+            },
+          ]),
       ...(canMakeVault
         ? [
             {
@@ -855,7 +1130,7 @@ export function FilePane({
       syncMenuItem(entry),
       // Commands run over SSH.
       ...(sessionId && protocol === "sftp" && pane.listing
-        ? [serverCommandsMenu(sessionId, { folder: pane.listing.path, items: targets })]
+        ? [commandsMenuItem(sessionId, pane.listing.path, targets)]
         : []),
       "separator",
       ...clipboardMenuItems(entry, targets),
@@ -864,8 +1139,9 @@ export function FilePane({
         label: "Rename",
         icon: <Pencil size={14} />,
         shortcut: "F2",
-        disabled: targets.length !== 1,
-        onSelect: () => setRenaming(targets[0].path),
+        disabled: targets.length === 0,
+        onSelect: () =>
+          targets.length === 1 ? setRenaming(targets[0].path) : openBulkRename(targets),
       },
       {
         label: targets.length > 1 ? "Copy paths" : "Copy path",
@@ -970,24 +1246,27 @@ export function FilePane({
             </ToolbarButton>
           )}
           <ToolbarButton
-            label="Refresh (F5)"
-            onClick={() => void pane.refresh()}
+            label={inResults ? "Search again (F5)" : "Refresh (F5)"}
+            onClick={() => (inResults ? runSearch() : void pane.refresh())}
             disabled={!pane.listing && !pane.failedPath}
           >
-            <RefreshCw size={15} className={pane.loading ? "spin" : ""} />
+            <RefreshCw
+              size={15}
+              className={pane.loading || searchView?.status === "searching" ? "spin" : ""}
+            />
           </ToolbarButton>
           <span className="toolbar-divider" />
           <ToolbarButton
             label="New folder (F7)"
             onClick={openNewFolder}
-            disabled={!pane.listing || lockedCard}
+            disabled={!pane.listing || lockedCard || inResults}
           >
             <FolderPlus size={15} />
           </ToolbarButton>
           <ToolbarButton
             label="New file (Shift+F4)"
             onClick={openNewFile}
-            disabled={!pane.listing || lockedCard}
+            disabled={!pane.listing || lockedCard || inResults}
           >
             <FilePlus size={15} />
           </ToolbarButton>
@@ -1006,6 +1285,14 @@ export function FilePane({
             pressed={pane.showHidden}
           >
             {pane.showHidden ? <Eye size={15} /> : <EyeOff size={15} />}
+          </ToolbarButton>
+          <ToolbarButton
+            label={searchBarShown ? "Close search (Ctrl+Shift+F)" : "Search (Ctrl+Shift+F)"}
+            onClick={() => (searchBarShown ? closeSearch() : openSearch())}
+            pressed={searchBarShown}
+            disabled={!pane.listing || lockedCard}
+          >
+            <FolderSearch size={15} />
           </ToolbarButton>
         </div>
       </header>
@@ -1057,6 +1344,22 @@ export function FilePane({
         </label>
       </div>
 
+      {searchBarShown && searchRoot !== null && (
+        <SearchBar
+          form={searchForm}
+          root={searchRoot}
+          view={inResults ? searchView : null}
+          recent={recentSearches}
+          problem={searchProblem}
+          focusRequest={searchFocus}
+          onChange={setSearchForm}
+          onSearch={(form) => runSearch(form)}
+          onStop={search.stop}
+          onClose={closeSearch}
+          onLeave={focusList}
+        />
+      )}
+
       {pane.listing && lockedCard ? (
         <VaultUnlockCard
           key={pane.listing.path}
@@ -1099,7 +1402,7 @@ export function FilePane({
             </p>
           )}
           <FileList
-            pane={pane}
+            pane={listPane}
             side={side}
             active={active}
             rowHeight={Math.max(rowHeight, fontSize + MIN_ROW_PADDING)}
@@ -1121,6 +1424,7 @@ export function FilePane({
             renaming={renaming}
             heldPaths={heldPaths}
             onRename={(entry) => setRenaming(entry.path)}
+            onRenameSeveral={() => openBulkRename(pane.selectedEntries())}
             onRenameSubmit={renameEntry}
             onRenameCancel={() => setRenaming(null)}
             onEdit={edit}
@@ -1135,6 +1439,9 @@ export function FilePane({
             onCopy={() => cutOrCopy("copy", pane.selectedEntries())}
             onPaste={() => pasteInto(null)}
             onProperties={() => openProperties(pane.selectedEntries())}
+            onSearch={() => (lockedCard ? undefined : openSearch())}
+            folderOf={inResults ? folderLabel : undefined}
+            emptyMessage={inResults ? searchEmptyMessage(searchView) : undefined}
           />
         </>
       ) : (
@@ -1171,7 +1478,7 @@ export function FilePane({
 
       <footer className="pane-footer">
         <span>
-          {lockedCard ? "Locked vault" : pluralize(pane.entryCount, "item")}
+          {lockedCard ? "Locked vault" : pluralize(pane.entryCount, inResults ? "result" : "item")}
           {!lockedCard && pane.hiddenCount > 0 && `, ${pane.hiddenCount} hidden`}
         </span>
         {selected.length > 0 && (
@@ -1237,13 +1544,16 @@ export function FilePane({
           onSubmit={async (folder) => {
             const self = getPane(tabId);
             if (!self || !pane.listing) return;
+            const { mode, entries } = dialog;
             void placeEntries({
-              mode: dialog.mode,
+              mode,
               origin: paneOrigin(self),
-              sourceFolder: pane.listing.path,
-              entries: dialog.entries,
+              sourceFolder: inResults ? folderOfResults(entries) : pane.listing.path,
+              entries,
               target: self,
               targetFolder: folder,
+            }).then((done) => {
+              if (done && inResults && mode === "move") void resultsChanged(entries);
             });
           }}
         />
@@ -1252,10 +1562,28 @@ export function FilePane({
       {dialog?.type === "properties" && sessionId && pane.listing && (
         <PropertiesDialog
           sessionId={sessionId}
-          folder={pane.listing.path}
+          folder={inResults ? folderOfResults(dialog.entries) : pane.listing.path}
           entries={dialog.entries}
           onClose={() => setDialog(null)}
-          onApplied={() => void pane.refresh()}
+          onApplied={() => {
+            if (!inResults) return void pane.refresh();
+            // The dialog forgets the listing of the one folder it is given; results from
+            // several folders have the listing of each forgotten, and its panes reloaded.
+            refreshFoldersOf(paneOrigin(side), dialog.entries);
+            void search.recheck(dialog.entries.map((entry) => entry.path));
+          }}
+        />
+      )}
+
+      {dialog?.type === "bulkRename" && (
+        <BulkRenameDialog
+          origin={dialog.origin}
+          folder={dialog.folder}
+          chosen={dialog.entries}
+          listing={pane.listing}
+          stale={pane.stale}
+          onRetry={() => void pane.refresh()}
+          onClose={() => setDialog(null)}
         />
       )}
 
@@ -1273,21 +1601,22 @@ export function FilePane({
           onConfirm={async (entries) => {
             const removed = entries.map((entry) => entry.path);
             const next = entryAfterRemoval(pane.visibleEntries, new Set(removed), pane.cursorPath);
+            const folder = inResults ? folderOfResults(entries) : (pane.listing?.path ?? "");
             if (overSftp && pane.listing) {
               void deleteOnServer({
                 origin: paneOrigin({ kind: source.kind, sessionId }),
-                folder: pane.listing.path,
+                folder,
                 entries,
                 focusPath: next,
+              }).then(() => {
+                if (inResults) void resultsChanged(entries, [], next);
               });
               return;
             }
             await source.remove(removed);
-            writeLog(
-              "info",
-              `Deleted ${pluralize(entries.length, `${where} item`)} in ${pane.listing?.path ?? ""}`,
-            );
-            await pane.refresh(next);
+            writeLog("info", `Deleted ${pluralize(entries.length, `${where} item`)} in ${folder}`);
+            if (inResults) await resultsChanged(entries, [], next, true);
+            else await pane.refresh(next);
           }}
         />
       )}
