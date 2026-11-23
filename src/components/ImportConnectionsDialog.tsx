@@ -80,7 +80,8 @@ export function ImportConnectionsDialog({ onClose }: { onClose: () => void }) {
       directory: false,
     });
     const paths = chosen === null ? [] : Array.isArray(chosen) ? chosen : [chosen];
-    if (paths.length > 0) await read(source, paths);
+    // Closed while the picker was open: nothing is to be read, passwords least of all.
+    if (paths.length > 0 && !closed.current) await read(source, paths);
   };
 
   const back = () => {

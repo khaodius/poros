@@ -7,6 +7,8 @@ import { ImportConnectionsDialog } from "./ImportConnectionsDialog";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke, Channel: class {} }));
+const picker = vi.hoisted(() => vi.fn());
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: picker }));
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -39,6 +41,8 @@ let root: Root | null = null;
 let container: HTMLElement;
 /** Answers the scan the dialog started, which waits until then. */
 let answerScan: (scan: ImportScan) => void;
+/** Answers the system's file picker with the files chosen. */
+let answerPicker: (paths: string[]) => void;
 
 beforeEach(() => {
   invoke.mockReset();
@@ -51,6 +55,13 @@ beforeEach(() => {
     }
     return Promise.resolve(null);
   });
+  picker.mockReset();
+  picker.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        answerPicker = resolve;
+      }),
+  );
 });
 
 afterEach(() => {
@@ -73,6 +84,16 @@ async function readFileZilla() {
   );
   await act(async () => button!.click());
 }
+
+async function chooseFile() {
+  const button = [...container.querySelectorAll(".import-source button")].find(
+    (candidate) => candidate.textContent === "Choose file...",
+  ) as HTMLButtonElement | undefined;
+  await act(async () => button!.click());
+}
+
+const scanned = () =>
+  invoke.mock.calls.filter(([command]) => command === "connections_import_scan").length;
 
 const discarded = () =>
   invoke.mock.calls
@@ -97,5 +118,21 @@ describe("ImportConnectionsDialog", () => {
     act(() => root!.unmount());
     root = null;
     expect(discarded()).toEqual(["scan-1"]);
+  });
+
+  it("does not read a file chosen after the dialog closed", async () => {
+    await open();
+    await chooseFile();
+    act(() => root!.unmount());
+    root = null;
+    await act(async () => answerPicker(["/home/poros/sitemanager.xml"]));
+    expect(scanned()).toBe(0);
+  });
+
+  it("reads a file chosen while it is open", async () => {
+    await open();
+    await chooseFile();
+    await act(async () => answerPicker(["/home/poros/sitemanager.xml"]));
+    expect(scanned()).toBe(1);
   });
 });
