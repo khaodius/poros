@@ -6124,6 +6124,7 @@ textarea::placeholder {
   flex-wrap: wrap;
   gap: 8px;
   justify-content: center;
+}
 
 /* Mounted drives */
 
