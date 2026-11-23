@@ -1,5 +1,6 @@
 import type { MouseEvent, ReactNode } from "react";
 import {
+  EyeOff,
   FolderSync,
   FolderTree,
   GitCompareArrows,
@@ -11,6 +12,7 @@ import {
 } from "lucide-react";
 import type { FolderCompareBarModel } from "../hooks/useFolderCompare";
 import { LEGEND_STATES, STATE_LABELS } from "../lib/folderCompare";
+import { pluralize } from "../lib/format";
 import type { MenuItem } from "./ContextMenu";
 import {
   COMPARE_FOLDERS_SHORTCUT,
@@ -55,23 +57,6 @@ export function FolderCompareBar({ bar, onMenu }: FolderCompareBarProps) {
           </span>
           {partner.path && <span className="folder-compare-path">{partner.path}</span>}
         </span>
-        <ul className="folder-compare-legend" aria-label="Rows by how they compare">
-          {LEGEND_STATES.map((state) => {
-            const Glyph = COMPARE_GLYPHS[state];
-            const count = counts?.[state];
-            return (
-              <li
-                key={state}
-                className={`folder-compare-chip is-${COMPARE_CLASSES[state]} ${count ? "" : "is-empty"}`}
-                title={`${STATE_LABELS[state]}: ${count ?? "nothing to compare yet"}`}
-              >
-                <Glyph size={12} aria-hidden />
-                <span>{STATE_LABELS[state]}</span>
-                <span className="folder-compare-count">{count?.toLocaleString() ?? "-"}</span>
-              </li>
-            );
-          })}
-        </ul>
         <span className="folder-compare-actions">
           <BarButton
             label={done ? `${DEEP_COMPARE_LABEL} again` : DEEP_COMPARE_LABEL}
@@ -99,12 +84,32 @@ export function FolderCompareBar({ bar, onMenu }: FolderCompareBarProps) {
           </BarButton>
         </span>
       </div>
+      <ul className="folder-compare-legend" aria-label="Rows by how they compare">
+        {LEGEND_STATES.map((state) => {
+          const Glyph = COMPARE_GLYPHS[state];
+          const count = counts?.[state];
+          const concealed = state === "identical" && bar.options.hideIdentical;
+          const described = count === undefined ? "nothing to compare yet" : count.toLocaleString();
+          return (
+            <li
+              key={state}
+              className={`folder-compare-chip is-${COMPARE_CLASSES[state]} ${count ? "" : "is-empty"}`}
+              title={`${STATE_LABELS[state]}: ${described}${concealed ? ", not shown" : ""}`}
+            >
+              <Glyph size={12} aria-hidden />
+              <span>{STATE_LABELS[state]}</span>
+              <span className="folder-compare-count">{count?.toLocaleString() ?? "-"}</span>
+              {concealed && <EyeOff size={12} className="folder-compare-concealed" aria-hidden />}
+            </li>
+          );
+        })}
+      </ul>
       {deep?.status === "running" && (
         <p className="folder-compare-status" role="status">
           <LoaderCircle size={13} className="spin" aria-hidden />
           <span>
-            Comparing subfolders: {deep.leftEntries.toLocaleString()} and{" "}
-            {deep.rightEntries.toLocaleString()} items listed
+            Comparing subfolders: {pluralize(deep.leftEntries + deep.rightEntries, "item")} listed
+            so far
           </span>
           <button type="button" className="link-button" onClick={bar.stopDeep}>
             Stop
