@@ -184,10 +184,8 @@ impl RemoteTarget {
                 self.protocol.display_name()
             )));
         }
-        let approval = (!self.host_key_fingerprint.is_empty()).then(|| HostKeyApproval {
-            fingerprint: self.host_key_fingerprint.clone(),
-            remember: false,
-        });
+        let approval = (!self.host_key_fingerprint.is_empty())
+            .then(|| HostKeyApproval::for_server(&self.profile, &self.host_key_fingerprint));
         let connection_id = format!("{}#{purpose}", self.session_id);
         let connection = ssh::connect(
             &connection_id,
@@ -331,9 +329,8 @@ impl SessionManager {
             ));
         }
         let approval = approval.or_else(|| {
-            (!previous.host_key_fingerprint.is_empty()).then(|| HostKeyApproval {
-                fingerprint: previous.host_key_fingerprint.clone(),
-                remember: false,
+            (!previous.host_key_fingerprint.is_empty()).then(|| {
+                HostKeyApproval::for_server(&previous.profile, &previous.host_key_fingerprint)
             })
         });
         let info = self

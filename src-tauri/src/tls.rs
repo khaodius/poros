@@ -161,7 +161,7 @@ impl ServerCertVerifier for ApprovingVerifier {
         let approved = self
             .approval
             .as_ref()
-            .filter(|approval| approval.fingerprint == fingerprint);
+            .filter(|approval| approval.accepts(&self.host, self.port, &fingerprint));
         if recorded.as_deref() == Some(fingerprint.as_str()) || approved.is_some() {
             if approved.is_some_and(|approval| approval.remember) {
                 if let Err(error) = self.trusted.trust(&self.host, self.port, &fingerprint) {

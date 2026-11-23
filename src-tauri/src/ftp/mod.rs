@@ -133,10 +133,10 @@ impl FtpFs {
             }
         }
         if guard.is_none() {
-            let approval = self.certificate.clone().map(|fingerprint| HostKeyApproval {
-                fingerprint,
-                remember: false,
-            });
+            let approval = self
+                .certificate
+                .as_deref()
+                .map(|fingerprint| HostKeyApproval::for_server(&self.profile, fingerprint));
             let quiet = Events::default();
             let tls = Self::tls(
                 &self.session_id,

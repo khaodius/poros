@@ -123,10 +123,7 @@ async fn connect_with(manager: &SessionManager, profile: ConnectProfile) -> Sess
             manager
                 .connect(
                     profile,
-                    Some(HostKeyApproval {
-                        fingerprint: certificate.fingerprint,
-                        remember: true,
-                    }),
+                    Some(HostKeyApproval::of(&certificate, true)),
                     OWNER,
                 )
                 .await

@@ -79,10 +79,7 @@ impl Fixture {
             Ok(session) => session,
             Err(error) => {
                 let host_key = error.host_key.expect("only the host key may be unknown");
-                let approval = HostKeyApproval {
-                    fingerprint: host_key.fingerprint,
-                    remember: true,
-                };
+                let approval = HostKeyApproval::of(&host_key, true);
                 manager
                     .connect(profile(server), Some(approval), OWNER)
                     .await

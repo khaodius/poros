@@ -118,6 +118,19 @@ fn endpoint(profile: &ConnectProfile) -> AppResult<(Url, Option<String>)> {
     Ok((url, (folder != "/").then_some(folder)))
 }
 
+/// The host and port of the server's address.
+fn address_of(base: &Url) -> (String, u16) {
+    (
+        base.host_str().unwrap_or_default().to_string(),
+        base.port_or_known_default().unwrap_or(443),
+    )
+}
+
+pub(super) fn server_address(profile: &ConnectProfile) -> Option<(String, u16)> {
+    let (base, _) = endpoint(profile).ok()?;
+    Some(address_of(&base))
+}
+
 pub struct WebDavFs {
     protocol: Protocol,
     http: Client,
@@ -140,12 +153,10 @@ impl WebDavFs {
     ) -> AppResult<(Self, String)> {
         let (base, folder_in_address) = endpoint(profile)?;
         let tls = match profile.protocol {
-            Protocol::WebDavs => Some(login.server_tls(
-                base.host_str().unwrap_or_default(),
-                base.port_or_known_default().unwrap_or(443),
-                session_id,
-                events,
-            )?),
+            Protocol::WebDavs => {
+                let (host, port) = address_of(&base);
+                Some(login.server_tls(&host, port, session_id, events)?)
+            }
             _ => None,
         };
         let http = match &tls {

@@ -78,6 +78,11 @@ pub fn endpoint_label(profile: &ConnectProfile) -> String {
     }
 }
 
+pub(super) fn server_address(profile: &ConnectProfile) -> Option<(String, u16)> {
+    let endpoint = Endpoint::parse(profile).ok()?;
+    Some((endpoint.host, endpoint.port))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Endpoint {
     secure: bool,

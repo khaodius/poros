@@ -117,6 +117,16 @@ impl Login<'_> {
     }
 }
 
+/// The host and port in the address of a WebDAV server or an S3 endpoint, under which its
+/// certificate is checked.
+pub fn server_address(profile: &ConnectProfile) -> Option<(String, u16)> {
+    match profile.protocol {
+        Protocol::WebDav | Protocol::WebDavs => webdav::server_address(profile),
+        Protocol::S3 => s3::server_address(profile),
+        _ => None,
+    }
+}
+
 /// A first request that failed because of the server's certificate fails with the prompt to
 /// trust it instead.
 fn certificate_rejection(error: AppError, tls: Option<&ServerTls>) -> AppError {

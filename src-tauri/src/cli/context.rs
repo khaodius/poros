@@ -167,13 +167,14 @@ impl Context {
             let store = self.store.clone();
             tokio::task::spawn_blocking(move || target::plan(&options, &settings, &store)).await??
         };
-        let mut approval = self
-            .options
-            .host_key
-            .as_ref()
-            .map(|fingerprint| HostKeyApproval {
-                fingerprint: fingerprint.trim().to_string(),
+        // Every attempt is for the same server, signing in another way.
+        let mut approval = plan
+            .attempts
+            .first()
+            .zip(self.options.host_key.as_ref())
+            .map(|(profile, fingerprint)| HostKeyApproval {
                 remember: self.options.save_host_key,
+                ..HostKeyApproval::for_server(profile, fingerprint.trim())
             });
         let mut last_error = None;
         for profile in plan.attempts {
@@ -195,10 +196,9 @@ impl Context {
                         let Some(offered) = &error.host_key else {
                             break Err(error);
                         };
-                        if approval
-                            .as_ref()
-                            .is_some_and(|approved| approved.fingerprint == offered.fingerprint)
-                        {
+                        if approval.as_ref().is_some_and(|approved| {
+                            approved.accepts(&offered.host, offered.port, &offered.fingerprint)
+                        }) {
                             break Err(error);
                         }
                         log::info!(
@@ -208,10 +208,7 @@ impl Context {
                             offered.algorithm,
                             offered.fingerprint
                         );
-                        approval = Some(HostKeyApproval {
-                            fingerprint: offered.fingerprint.clone(),
-                            remember: self.options.save_host_key,
-                        });
+                        approval = Some(HostKeyApproval::of(offered, self.options.save_host_key));
                     }
                     result => break result,
                 }
