@@ -28,6 +28,11 @@ export interface PaneHandle {
    * which nothing is to be copied unseen.
    */
   locked?: boolean;
+  /**
+   * The pane shows search results in place of its folder. Files let go of on its blank space
+   * go into the folder the search started in, where nothing shows them, so it is said.
+   */
+  showsResults?: () => boolean;
 }
 
 const panes = new Map<string, PaneHandle>();
