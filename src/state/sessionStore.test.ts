@@ -271,6 +271,30 @@ describe("a server that reconnects", () => {
     expect(sessionIds()).toEqual([]);
     expect(disconnected()).toEqual(["s3"]);
   });
+
+  it("leaves open the session its vaults moved to when it went to another window meanwhile", async () => {
+    know(server("s1"), vault("v1", "s1", "/srv/private"));
+    show({ id: "files", kind: "remote", sessionId: "s1", path: "/srv/www" });
+    const { reconnecting, finish } = reconnectHeld();
+    useSessionStore.getState().release("s1");
+    finish();
+
+    await expect(reconnecting).rejects.toMatchObject({ kind: "sessionNotFound" });
+    expect(sessionIds()).toEqual([]);
+    expect(disconnected()).toEqual([]);
+  });
+
+  it("closes the session its vaults moved to when the tab was closed meanwhile", async () => {
+    know(server("s1"), vault("v1", "s1", "/srv/private"));
+    show({ id: "files", kind: "remote", sessionId: "s1", path: "/srv/www" });
+    const { reconnecting, finish } = reconnectHeld();
+    closeRemoteTab("files", "s1");
+    finish();
+
+    await expect(reconnecting).rejects.toMatchObject({ kind: "sessionNotFound" });
+    expect(sessionIds()).toEqual([]);
+    expect(disconnected()).toEqual(["s1", "s3"]);
+  });
 });
 
 describe("a session no file tab shows", () => {

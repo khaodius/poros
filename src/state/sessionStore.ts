@@ -93,6 +93,12 @@ function tabsShowing(sessionIds: readonly string[]) {
 const replacedBy = new Map<string, string>();
 
 /**
+ * Sessions of this window a reconnect is under way for, each true once it was closed meanwhile
+ * rather than handed to another window.
+ */
+const reconnecting = new Map<string, boolean>();
+
+/**
  * The session that stands for `sessionId` now, for what still names a session a reconnect
  * replaced, such as transfers queued before it: the one its reconnects led to, or itself.
  */
@@ -131,12 +137,24 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   reconnect: async (sessionId, approval) => {
     const previous = get().sessions[sessionId];
-    const info = await remote.reconnect(sessionId, approval);
+    // The backend moves the server's unlocked vaults over to the session it opens.
+    const movesVaults = vaultSessions(get().sessions, sessionId).length > 0;
     const shown = () => Boolean(get().sessions[sessionId]);
-    if (shown()) await remote.disconnect(sessionId).catch(() => undefined);
+    reconnecting.set(sessionId, false);
+    let info: SessionInfo;
+    let closedMeanwhile: boolean;
+    try {
+      info = await remote.reconnect(sessionId, approval);
+      if (shown()) await remote.disconnect(sessionId).catch(() => undefined);
+    } finally {
+      closedMeanwhile = reconnecting.get(sessionId) ?? false;
+      reconnecting.delete(sessionId);
+    }
     if (!shown()) {
       // Its tabs closed, or went to another window, while it reconnected: none would show it.
-      await remote.disconnect(info.id).catch(() => undefined);
+      // Gone to another window, the old session goes on there while the vaults moved to the new
+      // one, which is left open so they are not locked under that window.
+      if (closedMeanwhile || !movesVaults) await remote.disconnect(info.id).catch(() => undefined);
       throw {
         kind: "sessionNotFound",
         message: "Its tab was closed meanwhile.",
@@ -189,6 +207,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   disconnect: async (sessionId) => {
+    if (reconnecting.has(sessionId)) reconnecting.set(sessionId, true);
     const closing = leavingWith(get().sessions, sessionId);
     get().release(sessionId);
     // Closed for good, so the listings remembered for them have no session left to show them.
