@@ -753,7 +753,7 @@ fn no_such_bucket(bucket: &str) -> AppError {
 /// An error for a failed answer, from the service's `<Error>` body when it sent one.
 async fn failure(response: Response, path: &str) -> AppError {
     let status = response.status();
-    let error = match api::body_bytes(response).await {
+    let error = match api::error_body(response).await {
         Ok(body) => xml::embedded_error(&body).unwrap_or_default(),
         Err(error) => return error,
     };

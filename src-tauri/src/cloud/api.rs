@@ -26,6 +26,11 @@ const RENEW_BEFORE: Duration = Duration::from_secs(120);
 const DEFAULT_TOKEN_LIFETIME: Duration = Duration::from_secs(3600);
 /// How long a request may move no bytes, in either direction, before it counts as stalled.
 pub const STALL_TIMEOUT: Duration = Duration::from_secs(60);
+/// The most of a response read into memory whole, such as a folder listing: as much as an FTP
+/// listing may take.
+const MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
+/// The most of a failed answer's body read for the explanation in it.
+const MAX_ERROR_BODY_BYTES: usize = 1024 * 1024;
 /// Request bodies go out in pieces this size, each taken once the connection has room for it,
 /// which is how a slow upload shows that it is still moving.
 const BODY_PIECE: usize = 64 * 1024;
@@ -211,11 +216,33 @@ fn is_transient(status: StatusCode, repeatable: bool) -> bool {
         ))
 }
 
-/// A whole response body, however it failed or succeeded.
+/// A whole response body, however it failed or succeeded, refused past `MAX_BODY_BYTES`.
 pub async fn body_bytes(mut response: Response) -> AppResult<Vec<u8>> {
     let mut body = Vec::new();
     while let Some(chunk) = next_chunk(&mut response).await? {
+        if body.len() + chunk.len() > MAX_BODY_BYTES {
+            return Err(AppError::new(
+                ErrorKind::Cloud,
+                format!(
+                    "The server sent an answer larger than {} MiB",
+                    MAX_BODY_BYTES / (1024 * 1024)
+                ),
+            ));
+        }
         body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
+/// The start of a failed answer's body, as much as the explanation in it can need.
+pub async fn error_body(mut response: Response) -> AppResult<Vec<u8>> {
+    let mut body = Vec::new();
+    while let Some(chunk) = next_chunk(&mut response).await? {
+        let room = MAX_ERROR_BODY_BYTES - body.len();
+        body.extend_from_slice(&chunk[..chunk.len().min(room)]);
+        if body.len() == MAX_ERROR_BODY_BYTES {
+            break;
+        }
     }
     Ok(body)
 }
@@ -480,7 +507,10 @@ struct ServiceError {
 impl ServiceError {
     async fn read(response: Response) -> Self {
         let status = response.status();
-        let body: ErrorBody = decode(response).await.unwrap_or_default();
+        let body: ErrorBody = match error_body(response).await {
+            Ok(body) => serde_json::from_slice(&body).unwrap_or_default(),
+            Err(_) => ErrorBody::default(),
+        };
         let detail = body.error;
         let reasons: Vec<&str> = detail
             .errors
@@ -643,6 +673,59 @@ mod tests {
         let error = AppError::from(failure);
         assert_eq!(error.kind, ErrorKind::Timeout);
         assert!(error.is_connection_lost());
+    }
+
+    /// Answers one request with a chunked body of `length` bytes, or less once the client stops
+    /// reading. Returns how many bytes of it went out.
+    async fn serve_long_body(listener: TcpListener, length: usize) -> usize {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut head = Vec::new();
+        let mut piece = [0u8; 4096];
+        while !head.windows(4).any(|window| window == b"\r\n\r\n") {
+            let read = stream.read(&mut piece).await.unwrap();
+            assert!(read > 0, "the request ended early");
+            head.extend_from_slice(&piece[..read]);
+        }
+        let started = stream
+            .write_all(b"HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n")
+            .await;
+        if started.is_err() {
+            return 0;
+        }
+        let chunk = vec![b'x'; 64 * 1024];
+        let mut sent = 0;
+        while sent < length {
+            let framed = [format!("{:x}\r\n", chunk.len()).as_bytes(), &chunk, b"\r\n"].concat();
+            if stream.write_all(&framed).await.is_err() {
+                return sent;
+            }
+            sent += chunk.len();
+        }
+        let _ = stream.write_all(b"0\r\n\r\n").await;
+        sent
+    }
+
+    #[tokio::test]
+    async fn an_answer_that_never_ends_is_cut_off() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let url = format!("http://{}/listing", listener.local_addr().unwrap());
+        let server = tokio::spawn(serve_long_body(listener, 2 * MAX_BODY_BYTES));
+        let http = http_client().unwrap();
+        let response = http.get(&url).send().await.unwrap();
+        let error = body_bytes(response).await.unwrap_err();
+        assert_eq!(error.kind, ErrorKind::Cloud);
+        let sent = server.await.unwrap();
+        assert!(sent < 2 * MAX_BODY_BYTES, "the whole body was read");
+
+        // The explanation in a failed answer is read only so far.
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let url = format!("http://{}/error", listener.local_addr().unwrap());
+        tokio::spawn(serve_long_body(listener, 4 * MAX_ERROR_BODY_BYTES));
+        let response = http.get(&url).send().await.unwrap();
+        assert_eq!(
+            error_body(response).await.unwrap().len(),
+            MAX_ERROR_BODY_BYTES
+        );
     }
 
     #[test]

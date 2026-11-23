@@ -317,7 +317,7 @@ impl WebDavFs {
 /// An error for a failed answer, with the server's own explanation when it sent one.
 async fn failure(response: Response, path: &str) -> AppError {
     let status = response.status();
-    let explanation = match api::body_bytes(response).await {
+    let explanation = match api::error_body(response).await {
         Ok(body) => multistatus::error_message(&body),
         Err(_) => None,
     };

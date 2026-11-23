@@ -851,7 +851,7 @@ fn no_such_bucket(bucket: &str) -> AppError {
 /// An error for a failed answer, from the JSON B2 sends with one.
 async fn failure(response: Response, path: &str) -> AppError {
     let status = response.status();
-    let error = match api::body_bytes(response).await {
+    let error = match api::error_body(response).await {
         Ok(body) => serde_json::from_slice(&body).unwrap_or_default(),
         Err(error) => return error,
     };
