@@ -18,6 +18,7 @@ import {
   type StoredListing,
 } from "../lib/listingCache";
 import { ListingLoads } from "../lib/listingLoads";
+import { rangeStart } from "../lib/selection";
 import { filterEntries, isDirLike, sortEntries, type SortKey, type SortSpec } from "../lib/sort";
 import type { AppError, DirListing, FileEntry } from "../lib/types";
 import { useToday } from "./useToday";
@@ -787,22 +788,23 @@ export function usePane(
 
   const selectRangeTo = useCallback(
     (path: string) => {
-      setSelection(rangeBetween(anchorPath, path));
-      if (!anchorPath) setAnchorPath(path);
+      const anchor = rangeStart(visibleEntries, anchorPath, cursorPath, path);
+      setSelection(rangeBetween(anchor, path));
+      setAnchorPath(anchor);
       setCursorPath(path);
     },
-    [anchorPath, rangeBetween],
+    [visibleEntries, anchorPath, cursorPath, rangeBetween],
   );
 
   const addRangeTo = useCallback(
     (path: string) => {
-      const anchor = anchorPath ?? cursorPath ?? path;
+      const anchor = rangeStart(visibleEntries, anchorPath, cursorPath, path);
       const range = rangeBetween(anchor, path);
       setSelection((current) => new Set([...current, ...range]));
       setAnchorPath(anchor);
       setCursorPath(path);
     },
-    [anchorPath, cursorPath, rangeBetween],
+    [visibleEntries, anchorPath, cursorPath, rangeBetween],
   );
 
   const selectAll = useCallback(() => {
@@ -820,7 +822,7 @@ export function usePane(
       const clamped = Math.max(0, Math.min(visibleEntries.length - 1, index));
       const path = visibleEntries[clamped].path;
       if (extendSelection) {
-        const anchor = anchorPath ?? cursorPath ?? path;
+        const anchor = rangeStart(visibleEntries, anchorPath, cursorPath, path);
         setSelection(rangeBetween(anchor, path));
         setAnchorPath(anchor);
         setCursorPath(path);
