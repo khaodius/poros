@@ -4,6 +4,8 @@
 //! B2 keeps old versions of a file: replacing one adds a version, and deleting hides it, after
 //! which the bucket's lifecycle rules decide how long the old versions stay.
 
+mod versions;
+
 use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::{Arc, Mutex};
@@ -77,6 +79,12 @@ struct Allowed {
     /// `None` for every bucket in the account.
     #[serde(default)]
     buckets: Option<Vec<AllowedBucket>>,
+    /// What the key may do, such as `listFiles` and `deleteFiles`.
+    #[serde(default)]
+    capabilities: Option<Vec<String>>,
+    /// The start of the only file names the key reaches, when it is restricted to some.
+    #[serde(default)]
+    name_prefix: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -231,6 +239,10 @@ pub struct B2Fs {
     reauthorizing: tokio::sync::Mutex<()>,
     /// The buckets a restricted key can reach; `None` for all of the account's.
     allowed: Option<Vec<AllowedBucket>>,
+    /// What the key may do; empty when Backblaze did not say.
+    capabilities: Vec<String>,
+    /// The start of the only file names the key reaches, when it is restricted to some.
+    name_prefix: Option<String>,
     minimum_part_size: u64,
     home: String,
     bucket_ids: Mutex<HashMap<String, String>>,
@@ -247,7 +259,11 @@ impl B2Fs {
         let key = super::password_of(profile)?;
         let authorization = authorize(&http, &key_id, &key).await?;
         let storage = authorization.api_info.storage_api;
-        let allowed = storage.allowed.buckets;
+        let Allowed {
+            buckets: allowed,
+            capabilities,
+            name_prefix,
+        } = storage.allowed;
         let (initial_bucket, _) = split(profile.initial_path.as_deref().unwrap_or_default());
         // A key for a single bucket starts in it.
         let only_bucket = match allowed.as_deref() {
@@ -267,6 +283,8 @@ impl B2Fs {
             })),
             reauthorizing: tokio::sync::Mutex::new(()),
             allowed,
+            capabilities: capabilities.unwrap_or_default(),
+            name_prefix: name_prefix.filter(|prefix| !prefix.is_empty()),
             minimum_part_size: storage.absolute_minimum_part_size,
             home: home_bucket
                 .as_deref()
@@ -1215,6 +1233,10 @@ impl RemoteFileSystem for B2Fs {
         };
         Ok(Box::new(ChunkedUpload::new(target, request.size)))
     }
+
+    fn as_versioned(&self) -> Option<&dyn crate::versions::ObjectVersions> {
+        Some(self)
+    }
 }
 
 /// Adds a version at the file's name: in one request up to a chunk's size, as a large file in
@@ -1313,11 +1335,19 @@ mod tests {
         assert_eq!(storage.api_url, "https://api005.backblazeb2.com");
         assert_eq!(storage.absolute_minimum_part_size, 5_000_000);
         assert!(storage.allowed.buckets.is_none());
+        assert_eq!(
+            storage.allowed.capabilities.as_deref(),
+            Some(&["listBuckets".to_string()][..])
+        );
+        assert_eq!(storage.allowed.name_prefix, None);
         let restricted: Authorization = serde_json::from_str(
-            r#"{"accountId":"a1","authorizationToken":"t","apiInfo":{"storageApi":{"apiUrl":"u","downloadUrl":"d","allowed":{"buckets":[{"id":"b1","name":"photos"},{"id":"b2","name":null}],"capabilities":[]}}}}"#,
+            r#"{"accountId":"a1","authorizationToken":"t","apiInfo":{"storageApi":{"apiUrl":"u","downloadUrl":"d","allowed":{"buckets":[{"id":"b1","name":"photos"},{"id":"b2","name":null}],"capabilities":["listFiles","readFiles"],"namePrefix":"reports/"}}}}"#,
         )
         .unwrap();
-        let buckets = restricted.api_info.storage_api.allowed.buckets.unwrap();
+        let allowed = restricted.api_info.storage_api.allowed;
+        assert_eq!(allowed.capabilities.map(|list| list.len()), Some(2));
+        assert_eq!(allowed.name_prefix.as_deref(), Some("reports/"));
+        let buckets = allowed.buckets.unwrap();
         assert_eq!(buckets[0].name.as_deref(), Some("photos"));
         assert_eq!(buckets[1].name, None);
     }

@@ -4,6 +4,7 @@ mod integrity;
 mod manage;
 mod sync;
 mod transfer;
+mod versions;
 
 use std::future::Future;
 use std::path::{Component, Path, PathBuf};
@@ -33,6 +34,7 @@ pub async fn run(
         Command::Connections => browse::connections(context).await,
         Command::Ls(arguments) => browse::list(context, arguments).await,
         Command::Stat(arguments) => browse::stat(context, arguments).await,
+        Command::Versions(arguments) => versions::versions(context, arguments).await,
         Command::Cat(arguments) => browse::cat(context, arguments, json).await,
         Command::Write(arguments) => browse::write(context, arguments, input).await,
         Command::Du(arguments) => browse::usage(context, arguments).await,

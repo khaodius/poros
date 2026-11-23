@@ -5,6 +5,7 @@
 //! service's answer.
 
 mod signing;
+mod versions;
 mod xml;
 
 use std::collections::HashMap;
@@ -529,7 +530,20 @@ impl S3Fs {
 
     /// The size and time of an object; `None` when there is none.
     async fn head_object(&self, bucket: &str, key: &str) -> AppResult<Option<RemoteStat>> {
-        let request = S3Request::new(Method::HEAD, Some(bucket), key);
+        self.head_version(bucket, key, None).await
+    }
+
+    /// The size and time of one version of an object, or of the current one.
+    async fn head_version(
+        &self,
+        bucket: &str,
+        key: &str,
+        version_id: Option<&str>,
+    ) -> AppResult<Option<RemoteStat>> {
+        let mut request = S3Request::new(Method::HEAD, Some(bucket), key);
+        if let Some(version_id) = version_id {
+            request = request.query("versionId", version_id);
+        }
         let response = self.send(&request).await?;
         match response.status() {
             status if status.is_success() => {
@@ -552,6 +566,10 @@ impl S3Fs {
                 }))
             }
             StatusCode::NOT_FOUND => Ok(None),
+            // What a delete marker answers when it is asked for by its version id.
+            StatusCode::METHOD_NOT_ALLOWED if version_id.is_some() => Err(
+                crate::versions::marker_has_no_content(&format!("/{bucket}/{key}")),
+            ),
             _ => Err(failure(response, &format!("/{bucket}/{key}")).await),
         }
     }
@@ -644,10 +662,12 @@ impl S3Fs {
     }
 
     /// Copies an object within the service, in parts when it is too large for one request.
+    /// With a version id it copies that version of the source instead of the current one.
     async fn copy_object(
         &self,
         bucket: &str,
         source: &str,
+        version_id: Option<&str>,
         size: u64,
         target: &str,
     ) -> AppResult<()> {
@@ -655,6 +675,9 @@ impl S3Fs {
         // A folder marker keeps its trailing slash.
         if source.ends_with('/') {
             copy_source.push('/');
+        }
+        if let Some(version_id) = version_id {
+            copy_source.push_str(&format!("?versionId={}", escape(version_id)));
         }
         let target_path = format!("/{bucket}/{target}");
         if size <= COPY_LIMIT {
@@ -722,6 +745,58 @@ impl S3Fs {
         let request =
             S3Request::new(Method::DELETE, Some(bucket), key).query("uploadId", upload_id);
         self.send(&request).await.map(drop)
+    }
+
+    /// Opens an object, or one version of it, for reading.
+    async fn read_object(
+        &self,
+        path: &str,
+        version_id: Option<&str>,
+        range: Range<u64>,
+    ) -> AppResult<Box<dyn ReadStream>> {
+        let path = protocol::normalize(&self.resolve(path));
+        let (Some(bucket), key) = split(&path) else {
+            return Err(super::is_a_folder(&path));
+        };
+        if key.is_empty() {
+            return Err(super::is_a_folder(&path));
+        }
+        if range.start >= range.end {
+            if self
+                .head_version(&bucket, &key, version_id)
+                .await?
+                .is_none()
+            {
+                return Err(super::not_found(&path));
+            }
+            return Ok(Box::new(HttpReader::new(None, 0)));
+        }
+        let mut request = S3Request::new(Method::GET, Some(&bucket), &key);
+        if let Some(version_id) = version_id {
+            request = request.query("versionId", version_id);
+        }
+        if range.start > 0 || range.end != u64::MAX {
+            let last = match range.end {
+                u64::MAX => String::new(),
+                end => (end - 1).to_string(),
+            };
+            request = request.header("range", format!("bytes={}-{last}", range.start));
+        }
+        let response = self.send(&request).await?;
+        let length = range.end - range.start;
+        match response.status() {
+            StatusCode::PARTIAL_CONTENT => Ok(Box::new(HttpReader::new(Some(response), length))),
+            StatusCode::OK => Ok(Box::new(HttpReader::skipping(
+                response,
+                range.start,
+                length,
+            ))),
+            StatusCode::RANGE_NOT_SATISFIABLE => Ok(Box::new(HttpReader::new(None, 0))),
+            StatusCode::METHOD_NOT_ALLOWED if version_id.is_some() => {
+                Err(crate::versions::marker_has_no_content(&path))
+            }
+            _ => Err(failure(response, &path).await),
+        }
     }
 
     fn bucket_and_key(&self, path: &str) -> (Option<String>, String) {
@@ -964,7 +1039,7 @@ impl RemoteFileSystem for S3Fs {
             return Err(protocol::already_exists(&target));
         }
         if let Some(object) = self.head_object(&bucket, &key).await? {
-            self.copy_object(&bucket, &key, object.size, &target_key)
+            self.copy_object(&bucket, &key, None, object.size, &target_key)
                 .await?;
             self.delete_object(&bucket, &key).await?;
             return Ok(target);
@@ -976,7 +1051,7 @@ impl RemoteFileSystem for S3Fs {
         }
         for object in &objects {
             let moved = format!("{target_key}/{}", &object.key[prefix.len()..]);
-            self.copy_object(&bucket, &object.key, object.size, &moved)
+            self.copy_object(&bucket, &object.key, None, object.size, &moved)
                 .await?;
         }
         let keys: Vec<String> = objects.into_iter().map(|object| object.key).collect();
@@ -1009,7 +1084,16 @@ impl RemoteFileSystem for S3Fs {
             self.delete_keys(&bucket, &keys).await?;
             if key.is_empty() {
                 let request = S3Request::new(Method::DELETE, Some(&bucket), "");
-                self.send_for_body(&request, &path).await?;
+                match self.send_for_body(&request, &path).await {
+                    // A versioned bucket still holds the old versions and the delete markers.
+                    Err(error) if error.kind == ErrorKind::AlreadyExists => {
+                        self.purge_versions(&bucket).await?;
+                        self.send_for_body(&request, &path).await?;
+                    }
+                    deleted => {
+                        deleted?;
+                    }
+                }
             }
             self.folders.forget(&path);
         }
@@ -1059,39 +1143,7 @@ impl RemoteFileSystem for S3Fs {
         path: &str,
         range: Range<u64>,
     ) -> AppResult<Box<dyn ReadStream>> {
-        let path = protocol::normalize(&self.resolve(path));
-        let (Some(bucket), key) = split(&path) else {
-            return Err(super::is_a_folder(&path));
-        };
-        if key.is_empty() {
-            return Err(super::is_a_folder(&path));
-        }
-        if range.start >= range.end {
-            if self.head_object(&bucket, &key).await?.is_none() {
-                return Err(super::not_found(&path));
-            }
-            return Ok(Box::new(HttpReader::new(None, 0)));
-        }
-        let mut request = S3Request::new(Method::GET, Some(&bucket), &key);
-        if range.start > 0 || range.end != u64::MAX {
-            let last = match range.end {
-                u64::MAX => String::new(),
-                end => (end - 1).to_string(),
-            };
-            request = request.header("range", format!("bytes={}-{last}", range.start));
-        }
-        let response = self.send(&request).await?;
-        let length = range.end - range.start;
-        match response.status() {
-            StatusCode::PARTIAL_CONTENT => Ok(Box::new(HttpReader::new(Some(response), length))),
-            StatusCode::OK => Ok(Box::new(HttpReader::skipping(
-                response,
-                range.start,
-                length,
-            ))),
-            StatusCode::RANGE_NOT_SATISFIABLE => Ok(Box::new(HttpReader::new(None, 0))),
-            _ => Err(failure(response, &path).await),
-        }
+        self.read_object(path, None, range).await
     }
 
     async fn open_write(self: Arc<Self>, request: WriteRequest) -> AppResult<Box<dyn WriteStream>> {
@@ -1116,6 +1168,10 @@ impl RemoteFileSystem for S3Fs {
             etags: Vec::new(),
         };
         Ok(Box::new(ChunkedUpload::new(target, request.size)))
+    }
+
+    fn as_versioned(&self) -> Option<&dyn crate::versions::ObjectVersions> {
+        Some(self)
     }
 }
 

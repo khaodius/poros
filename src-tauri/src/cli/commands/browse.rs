@@ -20,6 +20,7 @@ use crate::format::format_size;
 use crate::model::{DirListing, EntryKind, FileEntry};
 use crate::protocol::{Protocol, RemoteFileSystem, RemoteStat, WriteRequest};
 use crate::remote_path;
+use crate::versions::{self, DeletedEntry};
 
 /// `cat --json` holds files in memory, so larger ones need `--length`.
 const MAX_JSON_BYTES: u64 = 16 * 1024 * 1024;
@@ -147,8 +148,13 @@ pub async fn list(context: &Context, arguments: &ListArgs) -> AppResult<Reply> {
     let mut listings = Vec::with_capacity(paths.len());
     for path in &paths {
         let root = connected.resolve(path);
+        let mut deleted = None;
         let mut listing = if arguments.recursive {
             walk(&*files, &root, arguments.max_depth, arguments.all).await?
+        } else if arguments.deleted {
+            let with_deleted = versions::list_with_deleted(&*files, &root).await?;
+            deleted = Some(with_deleted.deleted);
+            with_deleted.listing
         } else {
             files.list_dir(&root).await?
         };
@@ -160,15 +166,25 @@ pub async fn list(context: &Context, arguments: &ListArgs) -> AppResult<Reply> {
                 .entries
                 .sort_by(|left, right| left.name.cmp(&right.name));
         }
-        listings.push(listing);
+        if let Some(deleted) = &mut deleted {
+            deleted.sort_by(|left, right| left.name.cmp(&right.name));
+        }
+        listings.push(ListingView { listing, deleted });
     }
     let several = listings.len() > 1;
     let text = listings
         .iter()
-        .map(|listing| {
-            let body = render_entries(&listing.entries, arguments.long, arguments.recursive);
+        .map(|view| {
+            let mut body =
+                render_entries(&view.listing.entries, arguments.long, arguments.recursive);
+            for entry in view.deleted.iter().flatten() {
+                if !body.is_empty() {
+                    body.push('\n');
+                }
+                body.push_str(&render_deleted(entry, arguments.long));
+            }
             if several {
-                format!("{}:\n{body}", listing.path)
+                format!("{}:\n{body}", view.listing.path)
             } else {
                 body
             }
@@ -176,6 +192,31 @@ pub async fn list(context: &Context, arguments: &ListArgs) -> AppResult<Reply> {
         .collect::<Vec<_>>()
         .join("\n\n");
     Ok(Reply::new(one_or_many(listings), text))
+}
+
+/// A listing as `ls` prints it, with what `--deleted` adds.
+#[derive(Serialize)]
+struct ListingView {
+    #[serde(flatten)]
+    listing: DirListing,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    deleted: Option<Vec<DeletedEntry>>,
+}
+
+fn render_deleted(entry: &DeletedEntry, long: bool) -> String {
+    let name = match entry.is_dir {
+        true => format!("{}/", entry.name),
+        false => entry.name.clone(),
+    };
+    if long && !entry.is_dir {
+        format!(
+            "{name}  (deleted {}, {})",
+            time_string(entry.deleted),
+            format_size(entry.size)
+        )
+    } else {
+        format!("{name}  (deleted)")
+    }
 }
 
 /// Every entry under `root`, folders before what they hold, sorted by path.

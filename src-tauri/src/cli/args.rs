@@ -179,6 +179,8 @@ pub enum Command {
     Ls(ListArgs),
     /// Show the size, time and permissions of paths
     Stat(PathsArgs),
+    /// List the versions a bucket keeps of a file, restore one or download one
+    Versions(VersionsArgs),
     /// Print files to standard output
     Cat(CatArgs),
     /// Write standard input to a file on the server
@@ -248,6 +250,27 @@ pub struct ListArgs {
     /// How many levels a recursive listing goes down
     #[arg(long, value_name = "LEVELS", requires = "recursive")]
     pub max_depth: Option<usize>,
+    /// Also list what was deleted, in a bucket that keeps versions
+    #[arg(long, conflicts_with = "recursive")]
+    pub deleted: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct VersionsArgs {
+    /// The file whose versions to list
+    #[arg(value_name = "PATH")]
+    pub path: String,
+    /// Make this version the current one again; what it replaces stays in the history
+    #[arg(long, value_name = "VERSION", conflicts_with = "get")]
+    pub restore: Option<String>,
+    /// Download one version: --get VERSION DESTINATION
+    #[arg(long, num_args = 2, value_names = ["VERSION", "DESTINATION"])]
+    pub get: Option<Vec<String>>,
+    /// Create the destination folder when it is missing
+    #[arg(short, long, requires = "get")]
+    pub parents: bool,
+    #[command(flatten)]
+    pub options: TransferOptions,
 }
 
 #[derive(Debug, Args)]
@@ -606,6 +629,31 @@ mod tests {
             panic!("not exec");
         };
         assert_eq!(exec.command, ["ls", "-la", "/tmp"]);
+    }
+
+    #[test]
+    fn versions_lists_restores_or_downloads() {
+        let parse = |arguments: &[&str]| {
+            let line = ["poros-cli", "versions"].iter().chain(arguments).copied();
+            Cli::try_parse_from(line).map(|cli| match cli.command {
+                Command::Versions(versions) => versions,
+                _ => panic!("not versions"),
+            })
+        };
+        let list = parse(&["notes/a.txt"]).unwrap();
+        assert_eq!(list.path, "notes/a.txt");
+        assert!(list.restore.is_none() && list.get.is_none());
+        let restore = parse(&["a.txt", "--restore", "null"]).unwrap();
+        assert_eq!(restore.restore.as_deref(), Some("null"));
+        let get = parse(&["a.txt", "--get", "v1", "/tmp/old.txt", "-w", "2"]).unwrap();
+        assert_eq!(get.get.unwrap(), ["v1", "/tmp/old.txt"]);
+        assert_eq!(get.options.workers, Some(2));
+        assert!(parse(&["a.txt", "--get", "v1"]).is_err());
+        assert!(parse(&["a.txt", "--restore", "v1", "--get", "v2", "x"]).is_err());
+        assert!(parse(&[]).is_err());
+        let deleted = Cli::try_parse_from(["poros-cli", "ls", "--deleted", "/bucket"]).unwrap();
+        assert!(matches!(deleted.command, Command::Ls(list) if list.deleted));
+        assert!(Cli::try_parse_from(["poros-cli", "ls", "--deleted", "-R"]).is_err());
     }
 
     #[test]

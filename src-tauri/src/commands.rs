@@ -22,9 +22,9 @@ use crate::error::{AppError, AppResult};
 use crate::events::{Events, LogLevel, LogRecord, Store};
 use crate::file_ops::archive::{self, ExtractSummary, InstalledTool};
 use crate::file_ops::{
-    CompareRequest, Comparison, DeleteRequest, DeleteSummary, Details, ExtractRequest,
-    FileOperations, Location, MoveCopyRequest, OperationSummary, PermissionRequest,
-    PermissionSummary, Usage,
+    CompareRequest, Comparison, DeleteRequest, DeleteSummary, DeletedRequest, DeletedSummary,
+    Details, ExtractRequest, FileOperations, Location, MoveCopyRequest, OperationSummary,
+    PermissionRequest, PermissionSummary, Usage, VersionCompareRequest,
 };
 use crate::fonts::{self, FontFamily};
 use crate::import::{
@@ -44,9 +44,10 @@ use crate::system_icons::{self, IconRequest};
 use crate::terminal::{Sink, TerminalEvent, TerminalInfo, TerminalManager};
 use crate::themes::{self, ThemeFile, ThemeStore};
 use crate::transfer::{
-    EnqueueRequest, ExistsAction, JobId, JobState, TransferList, TransferManager,
+    EnqueueRequest, ExistsAction, JobId, JobState, TransferList, TransferManager, VersionDownload,
 };
 use crate::update::{self, PendingUpdate, ReleaseMetadata, UpdateProgress};
+use crate::versions::{self, ListingWithDeleted, ObjectVersion, Versioning};
 use crate::workspace::{self, FrameUpdate, Opening, PendingWindows, WorkspaceStore, MAIN_WINDOW};
 
 #[tauri::command]
@@ -366,6 +367,99 @@ pub async fn files_extract(
 #[tauri::command]
 pub async fn archive_tools() -> AppResult<Vec<InstalledTool>> {
     Ok(tokio::task::spawn_blocking(archive::installed_tools).await?)
+}
+
+#[tauri::command]
+pub async fn versions_status(
+    sessions: State<'_, Arc<SessionManager>>,
+    session_id: String,
+    path: String,
+) -> AppResult<Versioning> {
+    let files = sessions.get(&session_id).await?.files();
+    versions::of(files.as_ref())?.versioning(&path).await
+}
+
+#[tauri::command]
+pub async fn versions_list(
+    sessions: State<'_, Arc<SessionManager>>,
+    session_id: String,
+    path: String,
+) -> AppResult<Vec<ObjectVersion>> {
+    let files = sessions.get(&session_id).await?.files();
+    versions::of(files.as_ref())?.list_versions(&path).await
+}
+
+#[tauri::command]
+pub async fn versions_list_deleted(
+    sessions: State<'_, Arc<SessionManager>>,
+    session_id: String,
+    path: String,
+) -> AppResult<ListingWithDeleted> {
+    let files = sessions.get(&session_id).await?.files();
+    versions::list_with_deleted(files.as_ref(), &path).await
+}
+
+#[tauri::command]
+pub async fn versions_restore(
+    sessions: State<'_, Arc<SessionManager>>,
+    session_id: String,
+    path: String,
+    version_id: String,
+) -> AppResult<()> {
+    let files = sessions.get(&session_id).await?.files();
+    versions::of(files.as_ref())?
+        .restore_version(&path, &version_id)
+        .await
+}
+
+#[tauri::command]
+pub async fn versions_delete(
+    sessions: State<'_, Arc<SessionManager>>,
+    session_id: String,
+    path: String,
+    version_id: String,
+) -> AppResult<()> {
+    let files = sessions.get(&session_id).await?.files();
+    versions::of(files.as_ref())?
+        .delete_version(&path, &version_id)
+        .await
+}
+
+#[tauri::command]
+pub async fn versions_download(
+    transfers: State<'_, TransferManager>,
+    request: VersionDownload,
+) -> AppResult<()> {
+    transfers.enqueue_version(request).await
+}
+
+#[tauri::command]
+pub async fn versions_compare(
+    operations: State<'_, FileOperations>,
+    request: VersionCompareRequest,
+) -> AppResult<Comparison> {
+    operations.compare_version(request).await
+}
+
+#[tauri::command]
+pub async fn versions_open(
+    window: WebviewWindow,
+    editor: State<'_, EditorManager>,
+    session_id: String,
+    path: String,
+    version_id: String,
+) -> AppResult<DocumentInfo> {
+    editor
+        .open_version(&session_id, &path, &version_id, window.label())
+        .await
+}
+
+#[tauri::command]
+pub async fn versions_deleted(
+    operations: State<'_, FileOperations>,
+    request: DeletedRequest,
+) -> AppResult<DeletedSummary> {
+    operations.restore_or_purge_deleted(request).await
 }
 
 #[tauri::command]

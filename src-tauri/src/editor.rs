@@ -21,6 +21,7 @@ use crate::session::{self, RemoteTarget, SessionManager};
 use crate::sftp::{ReadChunk, RemoteFs};
 use crate::ssh::{self, SshHandle};
 use crate::text::{self, LineEnding, TextEncoding};
+use crate::versions::{self, PinnedVersion};
 
 /// Larger files are better served by a transfer and a dedicated editor.
 pub const MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
@@ -48,6 +49,9 @@ pub struct DocumentInfo {
     pub path: String,
     /// "Local", or the label of the server the file is on.
     pub origin: String,
+    /// An older version of a file, which is shown and cannot be saved.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub read_only: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,6 +98,8 @@ pub enum SaveOutcome {
 struct Document {
     name: String,
     path: String,
+    /// The version read, for a file opened from the history of a bucket that keeps versions.
+    version: Option<String>,
     origin: Origin,
     /// Label of the window showing the document; closing that window forgets it.
     owner: Mutex<String>,
@@ -157,16 +163,52 @@ impl EditorManager {
                 (path, name, origin, label)
             }
         };
+        Ok(self.register(path, name, None, origin, origin_label, owner))
+    }
+
+    /// Opens one version of a file in a bucket that keeps versions, to read and not to save.
+    pub async fn open_version(
+        &self,
+        session_id: &str,
+        path: &str,
+        version_id: &str,
+        owner: &str,
+    ) -> AppResult<DocumentInfo> {
+        versions::validate_version_id(version_id)?;
+        let session = self.sessions.get(session_id).await?;
+        versions::of(session.files().as_ref())?;
+        let target = session.target();
+        let label = target.label.clone();
+        let name = remote_path::file_name(path).to_string();
+        let origin = Origin::Remote(Box::new(RemoteOrigin {
+            target,
+            own_connection: tokio::sync::Mutex::new(None),
+        }));
+        let version = Some(version_id.to_string());
+        Ok(self.register(path.to_string(), name, version, origin, label, owner))
+    }
+
+    fn register(
+        &self,
+        path: String,
+        name: String,
+        version: Option<String>,
+        origin: Origin,
+        origin_label: String,
+        owner: &str,
+    ) -> DocumentInfo {
         let id = uuid::Uuid::new_v4().to_string();
         let info = DocumentInfo {
             id: id.clone(),
             name: name.clone(),
             path: path.clone(),
             origin: origin_label,
+            read_only: version.is_some(),
         };
         let document = Document {
             name,
             path,
+            version,
             origin,
             owner: Mutex::new(owner.to_string()),
         };
@@ -174,7 +216,7 @@ impl EditorManager {
             .lock()
             .unwrap()
             .insert(id, Arc::new(document));
-        Ok(info)
+        info
     }
 
     /// Reads the file; the calling window becomes the document's owner.
@@ -211,6 +253,12 @@ impl EditorManager {
 
     pub async fn save(&self, request: SaveRequest) -> AppResult<SaveOutcome> {
         let document = self.document(&request.document_id)?;
+        if document.version.is_some() {
+            return Err(AppError::unsupported(
+                "An older version cannot be changed. Restore it to make it the current file.",
+            )
+            .with_path(&document.path));
+        }
         let contents = text::encode(&request.text, request.encoding, request.line_ending)?;
         let size = contents.len() as u64;
         let outcome = match &document.origin {
@@ -291,6 +339,11 @@ impl EditorManager {
         remote: &RemoteOrigin,
         request: Request<'_>,
     ) -> AppResult<Reply> {
+        if let Some(version) = &document.version {
+            let session = self.sessions.get(&remote.target.session_id).await?;
+            let files = PinnedVersion::over(session.files(), &document.path, version)?;
+            return perform_on(files, &document.path, &request).await;
+        }
         let mut own = remote.own_connection.lock().await;
         if own.is_none() {
             match self.sessions.get(&remote.target.session_id).await {

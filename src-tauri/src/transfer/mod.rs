@@ -15,6 +15,7 @@ mod published;
 mod queue;
 mod streamed;
 mod verify;
+mod version;
 mod worker;
 
 use std::collections::{BTreeSet, HashMap, VecDeque};
@@ -32,6 +33,7 @@ use queue::Totals;
 pub use queue::{
     ChangedDirectory, Direction, JobId, JobKind, JobSnapshot, JobState, QueueCounts, Side,
 };
+pub use version::VersionDownload;
 #[cfg(feature = "gui")]
 pub(crate) use worker::is_partial_name;
 pub(crate) use worker::{ensure_remote_folders, keep_local_backup, keep_remote_backup};

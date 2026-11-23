@@ -261,6 +261,12 @@ pub trait RemoteFileSystem: Send + Sync {
     fn as_ftp(&self) -> Option<&crate::ftp::FtpFs> {
         None
     }
+
+    /// The history of versions and deleted files behind this file system, where the service
+    /// keeps one: versioned S3 buckets and Backblaze B2.
+    fn as_versioned(&self) -> Option<&dyn crate::versions::ObjectVersions> {
+        None
+    }
 }
 
 pub fn resolve_against(home: &str, path: &str) -> String {

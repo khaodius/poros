@@ -605,6 +605,7 @@ fn base_job_options(options: &SyncOptions, run_id: &str) -> JobOptions {
         compress: options.compress,
         rate_limit: options.bwlimit_kib.saturating_mul(1024),
         limit_group: run_id.to_string(),
+        source_version: None,
     }
 }
 
