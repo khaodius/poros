@@ -1102,6 +1102,16 @@ export interface DriveView {
   uploads: DriveUpload[];
 }
 
+/** Folders a mounted drive changed on a server. Mirrored in `mount/manager.rs`. */
+export interface DriveChanges {
+  sessionId: string;
+  folders: {
+    folder: string;
+    /** Paths in the folder whose own contents changed too, such as folders moved or removed. */
+    entries: string[];
+  }[];
+}
+
 /** A file kept on this computer because a drive went before it reached the server. */
 export interface UnsentFile {
   /** The local file holding the contents. */

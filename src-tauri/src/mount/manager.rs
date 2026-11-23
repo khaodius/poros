@@ -10,9 +10,10 @@
 //! named after the process and the drive so a later run can tell the files of drives that are
 //! still mounted, here or by another process, from those left behind.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -38,6 +39,9 @@ const DEFAULT_PARENT: &str = "Poros";
 const MAX_FOLDER_NAME: usize = 80;
 /// Names shown for open files and uploads in a message, before "and N more".
 const NAMED_IN_MESSAGES: usize = 5;
+/// How long the changes a drive makes are gathered before the app is told of them, so a
+/// program writing many files sends one message rather than one for each.
+const CHANGES_GATHERED: Duration = Duration::from_millis(250);
 
 /// What the dialog asks for. Mirrored in `src/lib/types.ts`.
 #[derive(Debug, Clone, Deserialize)]
@@ -89,6 +93,31 @@ pub struct DriveView {
     /// Files programs have open, below the drive's root.
     pub open_files: Vec<String>,
     pub uploads: Vec<DriveUpload>,
+}
+
+/// Folders a drive changed on the server, told to the app so the listings it remembers of
+/// them are read again. Mirrored in `src/lib/types.ts`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DriveChanges {
+    pub session_id: String,
+    pub folders: Vec<ChangedFolder>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangedFolder {
+    pub folder: String,
+    /// Paths in the folder whose own contents changed too: folders made, moved or removed,
+    /// and files removed.
+    pub entries: Vec<String>,
+}
+
+/// Changes gathered since the app was last told.
+#[derive(Default)]
+struct GatheredChanges {
+    folders: BTreeMap<String, BTreeSet<String>>,
+    sending: bool,
 }
 
 struct Drive {
@@ -342,6 +371,7 @@ impl MountManager {
                 events.mounts_changed();
             }));
         }
+        core.report_changes(self.change_report(backend.clone()));
         let on_end: Box<dyn Fn() + Send> = {
             let (manager, id) = (self.this.clone(), id.clone());
             let runtime = tokio::runtime::Handle::current();
@@ -387,6 +417,43 @@ impl MountManager {
         );
         self.events.mounts_changed();
         Ok(drive.view())
+    }
+
+    /// Gathers the changes a drive makes and tells the app of them a moment later, under the
+    /// session the drive follows by then.
+    fn change_report(&self, backend: Arc<SessionBackend>) -> super::vfs::ChangeReport {
+        let gathered = Arc::new(Mutex::new(GatheredChanges::default()));
+        let events = self.events.clone();
+        let runtime = tokio::runtime::Handle::current();
+        Arc::new(move |folder: &str, below: Option<&str>| {
+            let mut changes = gathered.lock().unwrap();
+            let entries = changes.folders.entry(folder.to_string()).or_default();
+            if let Some(path) = below {
+                entries.insert(path.to_string());
+            }
+            if std::mem::replace(&mut changes.sending, true) {
+                return;
+            }
+            let (gathered, events, backend) = (gathered.clone(), events.clone(), backend.clone());
+            runtime.spawn(async move {
+                tokio::time::sleep(CHANGES_GATHERED).await;
+                let folders = {
+                    let mut changes = gathered.lock().unwrap();
+                    changes.sending = false;
+                    std::mem::take(&mut changes.folders)
+                };
+                events.drive_changed(DriveChanges {
+                    session_id: backend.session_id(),
+                    folders: folders
+                        .into_iter()
+                        .map(|(folder, entries)| ChangedFolder {
+                            folder,
+                            entries: entries.into_iter().collect(),
+                        })
+                        .collect(),
+                });
+            });
+        })
     }
 
     /// The folder a drive is to be shown at, refused if another drive is there or inside it.

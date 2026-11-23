@@ -1,7 +1,9 @@
 import { create } from "zustand";
-import { mounts, onMounts } from "../lib/ipc";
+import { mounts, onDriveChanges, onMounts } from "../lib/ipc";
 import { drivesShowing } from "../lib/mounts";
-import type { DriveView, MountSupport, UnsentFile } from "../lib/types";
+import type { DriveChanges, DriveView, MountSupport, UnsentFile } from "../lib/types";
+import { forgetListing } from "./listings";
+import { refreshChangedPanes } from "./transferStore";
 
 /** How often the drives are read while any is mounted, for what they are busy with. */
 const POLL_MILLIS = 1500;
@@ -57,12 +59,26 @@ function schedulePoll(wanted: boolean): void {
     : null;
 }
 
+/**
+ * What programs change on a server through a drive happens outside Poros's own operations, so
+ * the listings remembered of those folders are forgotten and the panes showing them reload.
+ */
+function forgetDriveChanges({ sessionId, folders }: DriveChanges): void {
+  for (const { folder, entries } of folders) {
+    if (entries.length > 0) forgetListing(sessionId, folder, entries);
+  }
+  refreshChangedPanes(folders.map(({ folder }) => ({ side: "remote", sessionId, path: folder })));
+}
+
 /** Keeps the drives up to date in this window; returns what stops it. */
 export function watchMounts(): () => void {
-  const subscription = onMounts(() => void useMountStore.getState().load());
+  const subscriptions = [
+    onMounts(() => void useMountStore.getState().load()),
+    onDriveChanges(forgetDriveChanges),
+  ];
   void useMountStore.getState().load();
   return () => {
-    void subscription.then((unlisten) => unlisten());
+    for (const subscription of subscriptions) void subscription.then((unlisten) => unlisten());
     schedulePoll(false);
   };
 }

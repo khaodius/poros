@@ -16,6 +16,8 @@ pub const COMMAND_OUTPUT_EVENT: &str = "poros://command-output";
 pub const FILE_OPERATION_EVENT: &str = "poros://file-operation";
 /// A drive was mounted or unmounted, or one of its uploads failed.
 pub const MOUNTS_EVENT: &str = "poros://mounts";
+/// Folders a mounted drive changed on a server, whose remembered listings are out of date.
+pub const DRIVE_CHANGES_EVENT: &str = "poros://drive-changes";
 /// Records kept for the main window while it loads; later ones past this are dropped.
 const MAX_STARTUP_RECORDS: usize = 500;
 
@@ -135,6 +137,10 @@ impl Events {
 
     pub fn mounts_changed(&self) {
         self.emit(MOUNTS_EVENT, ());
+    }
+
+    pub fn drive_changed(&self, changes: impl Serialize + Clone) {
+        self.emit(DRIVE_CHANGES_EVENT, changes);
     }
 
     pub fn store_changed(&self, store: Store) {

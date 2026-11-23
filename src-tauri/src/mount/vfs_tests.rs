@@ -1201,3 +1201,64 @@ async fn forgotten_nodes_are_let_go() {
         first.node
     );
 }
+
+/// The folders a drive reported changes in, each with the path below it that changed.
+type Reported = Vec<(String, Option<String>)>;
+
+#[tokio::test]
+async fn every_change_on_the_server_is_reported_with_its_folder() {
+    let server = MemoryFs::new();
+    server.put_file("/read.txt", "read");
+    let drive = drive_with(server, |_| {});
+    let reported: Arc<Mutex<Reported>> = Arc::default();
+    {
+        let reported = reported.clone();
+        drive
+            .fs
+            .report_changes(Arc::new(move |folder: &str, below: Option<&str>| {
+                reported
+                    .lock()
+                    .unwrap()
+                    .push((folder.to_string(), below.map(str::to_string)));
+            }));
+    }
+    let take = || std::mem::take(&mut *reported.lock().unwrap());
+    let changes = |pairs: &[(&str, Option<&str>)]| -> Reported {
+        pairs
+            .iter()
+            .map(|(folder, below)| (folder.to_string(), below.map(str::to_string)))
+            .collect()
+    };
+
+    let folder = drive.fs.make_folder(ROOT_NODE, "docs").await.unwrap().node;
+    assert_eq!(take(), changes(&[("/", Some("/docs"))]));
+
+    save(&drive, folder, "draft.txt", b"words").await;
+    // Made empty, then sent with its contents.
+    assert_eq!(take(), changes(&[("/docs", None), ("/docs", None)]));
+
+    drive
+        .fs
+        .rename(folder, "draft.txt", ROOT_NODE, "final.txt", false)
+        .await
+        .unwrap();
+    assert_eq!(
+        take(),
+        changes(&[("/docs", Some("/docs/draft.txt")), ("/", None)])
+    );
+
+    drive.fs.remove_file(ROOT_NODE, "final.txt").await.unwrap();
+    drive.fs.remove_folder(ROOT_NODE, "docs").await.unwrap();
+    assert_eq!(
+        take(),
+        changes(&[("/", Some("/final.txt")), ("/", Some("/docs"))])
+    );
+
+    // Reading changes nothing.
+    let read = node(&drive, "/read.txt").await;
+    let handle = drive.fs.open(read, OpenMode::READ).await.unwrap();
+    drive.fs.read(handle, 0, 100).await.unwrap();
+    drive.fs.release(handle);
+    drive.fs.read_folder(ROOT_NODE).await.unwrap();
+    assert!(take().is_empty());
+}

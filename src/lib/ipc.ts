@@ -21,6 +21,7 @@ import type {
   DragOutHover,
   DragOutOutcome,
   DragOutRequest,
+  DriveChanges,
   DriveView,
   EnqueueRequest,
   ExistsAction,
@@ -90,6 +91,8 @@ export const COMMAND_OUTPUT_EVENT = "poros://command-output";
 export const FILE_OPERATION_EVENT = "poros://file-operation";
 /** Drives were mounted or unmounted, or an upload of one failed. */
 export const MOUNTS_EVENT = "poros://mounts";
+/** Folders a mounted drive changed on a server, whose remembered listings are out of date. */
+export const DRIVE_CHANGES_EVENT = "poros://drive-changes";
 /** Sent by a torn-out window to hand a tab back to the main window. */
 export const RETURN_TAB_EVENT = "poros://return-tab";
 /** Sent by the window a tab is dragged out of to the window under the pointer. */
@@ -494,3 +497,5 @@ export const onCommandOutput = (handler: (chunk: OutputChunk) => void) =>
 export const onFileOperation = (handler: (progress: OperationProgress) => void) =>
   subscribe(FILE_OPERATION_EVENT, handler);
 export const onMounts = (handler: () => void) => subscribe<null>(MOUNTS_EVENT, handler);
+export const onDriveChanges = (handler: (changes: DriveChanges) => void) =>
+  subscribe(DRIVE_CHANGES_EVENT, handler);

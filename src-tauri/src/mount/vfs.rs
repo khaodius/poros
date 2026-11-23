@@ -71,6 +71,9 @@ pub type VfsResult<T> = Result<T, VfsError>;
 
 /// Takes the path of a file whose upload failed, and the reason.
 pub type FailureReport = Arc<dyn Fn(&str, &str) + Send + Sync>;
+/// Told the folder on the server of each change made through the drive, with the changed path
+/// when what is below it changed too: a folder made, moved or removed, or a file removed.
+pub type ChangeReport = Arc<dyn Fn(&str, Option<&str>) + Send + Sync>;
 
 impl From<AppError> for VfsError {
     fn from(error: AppError) -> Self {
@@ -427,6 +430,7 @@ pub struct MountFs {
     bytes_written: AtomicU64,
     /// Told about uploads that failed with nobody waiting to hear of it.
     on_upload_failure: Mutex<Option<FailureReport>>,
+    on_change: Mutex<Option<ChangeReport>>,
 }
 
 impl Drop for MountFs {
@@ -499,6 +503,7 @@ impl MountFs {
             bytes_read: AtomicU64::new(0),
             bytes_written: AtomicU64::new(0),
             on_upload_failure: Mutex::new(None),
+            on_change: Mutex::new(None),
         })
     }
 
@@ -514,6 +519,22 @@ impl MountFs {
     /// program that wrote the file has gone.
     pub fn report_upload_failures(&self, report: FailureReport) {
         *self.on_upload_failure.lock().unwrap() = Some(report);
+    }
+
+    /// Calls `report` for each change the drive makes on the server, so whoever remembers
+    /// listings of the server can forget them.
+    pub fn report_changes(&self, report: ChangeReport) {
+        *self.on_change.lock().unwrap() = Some(report);
+    }
+
+    fn changed(&self, path: &str, below: bool) {
+        let Some(folder) = remote_path::parent(path) else {
+            return;
+        };
+        let report = self.on_change.lock().unwrap().clone();
+        if let Some(report) = report {
+            report(&folder, below.then_some(path));
+        }
     }
 
     // ---- requests to the server ----
@@ -674,6 +695,7 @@ impl MountFs {
     }
 
     fn put_entry(&self, path: &str, local_name: Option<&str>, entry: Entry) {
+        self.changed(path, entry.kind == NodeKind::Folder);
         let Some(folder) = remote_path::parent(path) else {
             return;
         };
@@ -693,6 +715,7 @@ impl MountFs {
     }
 
     fn drop_entry(&self, path: &str) {
+        self.changed(path, true);
         let Some(folder) = remote_path::parent(path) else {
             return;
         };
@@ -1967,7 +1990,7 @@ impl MountFs {
                 })
                 .await;
             match set {
-                Ok(()) => {}
+                Ok(()) => self.changed(&path, false),
                 Err(error) if error.kind == ErrorKind::PermissionDenied => {
                     return Err(VfsError::PermissionDenied)
                 }
