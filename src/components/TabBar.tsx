@@ -96,7 +96,7 @@ export function TabBar({ group }: { group: GroupNode }) {
               onSelect: () =>
                 requestMount(
                   connected.info.id,
-                  getPane(tab.id)?.path() ?? (tab.kind === "remote" ? tab.path : null),
+                  getPane(tab.id)?.path() ?? (tab.kind === "remote" ? tab.path : null) ?? null,
                 ),
             },
             "separator" as const,

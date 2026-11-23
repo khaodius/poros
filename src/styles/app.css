@@ -6254,6 +6254,10 @@ textarea::placeholder {
   text-overflow: ellipsis;
 }
 
+.drive-card-facts dd.drive-activity {
+  white-space: normal;
+}
+
 .drive-uploads {
   display: flex;
   flex-direction: column;

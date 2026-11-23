@@ -211,8 +211,8 @@ export function MountDialog({ sessionId, path, onClose }: MountDialogProps) {
         </div>
 
         <p className="field-hint">
-          What programs save is uploaded when they close the file. The drive is unmounted when
-          the tab closes{info.vault ? ", the vault locks" : ""} or Poros quits.
+          What programs save is uploaded when they close the file. The drive is unmounted when the
+          tab closes{info.vault ? ", the vault locks" : ""} or Poros quits.
         </p>
         {lost && <p className="form-error">The connection is lost. Reconnect to mount it.</p>}
         {error && <p className="form-error">{error}</p>}

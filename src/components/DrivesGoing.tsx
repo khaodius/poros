@@ -25,8 +25,8 @@ export function DrivesGoing({ drives, when }: { drives: string[]; when: string }
       {busy && (
         <p>
           Programs still have files open on it, or uploads are pending. They lose the open files,
-          and what is not on the server yet is kept on this computer, listed under the drives in
-          the status bar.
+          and what is not on the server yet is kept on this computer, listed under the drives in the
+          status bar.
         </p>
       )}
     </>

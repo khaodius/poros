@@ -28,7 +28,9 @@ function reportFailure(what: string, caught: unknown, sessionId?: string): void 
 export async function openDrive(drive: DriveView): Promise<void> {
   await mounts
     .open(drive.id)
-    .catch((caught) => reportFailure(`Could not open ${drive.mountPoint}`, caught, drive.sessionId));
+    .catch((caught) =>
+      reportFailure(`Could not open ${drive.mountPoint}`, caught, drive.sessionId),
+    );
 }
 
 /** Unmounts a drive; without `force` the backend refuses while files are open or uploads wait. */

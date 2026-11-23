@@ -237,17 +237,17 @@ pub fn remove_orphans(directory: &Path) {
             let path = entry.path();
             if path.is_dir() {
                 folders.push(path);
-            } else if path
+                continue;
+            }
+            let unnoted_spool = path
                 .extension()
                 .is_some_and(|extension| extension == "spool")
-                && !note_path(&path).exists()
-            {
-                let _ = std::fs::remove_file(&path);
-            } else if path
+                && !note_path(&path).exists();
+            let half_written_note = path
                 .file_name()
                 .and_then(|name| name.to_str())
-                .is_some_and(|name| name.ends_with(NOTE_WRITING_EXTENSION))
-            {
+                .is_some_and(|name| name.ends_with(NOTE_WRITING_EXTENSION));
+            if unnoted_spool || half_written_note {
                 let _ = std::fs::remove_file(&path);
             }
         }

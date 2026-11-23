@@ -112,7 +112,7 @@ function DriveCard({ drive, home }: { drive: DriveView; home: string | null }) {
         <dt>Shows</dt>
         <dd title={drive.remoteRoot}>{drive.remoteRoot}</dd>
         <dt>Activity</dt>
-        <dd>{driveActivity(drive)}</dd>
+        <dd className="drive-activity">{driveActivity(drive)}</dd>
       </dl>
       {drive.uploads.length > 0 && (
         <ul className="drive-uploads" aria-label="Uploads">
@@ -129,11 +129,7 @@ function DriveCard({ drive, home }: { drive: DriveView; home: string | null }) {
         </ul>
       )}
       <div className="drive-card-actions">
-        <button
-          type="button"
-          className="button button-small"
-          onClick={() => void openDrive(drive)}
-        >
+        <button type="button" className="button button-small" onClick={() => void openDrive(drive)}>
           <FolderOpen size={13} /> Open
         </button>
         {failed && (

@@ -471,7 +471,23 @@ async fn a_drive_left_by_a_crash_is_cleared_at_the_next_mount() {
     })
     .await;
     assert_eq!(read, "working again");
-    program(move || mount.unmount(false)).await.unwrap();
+    program(move || {
+        // A helper another test starts meanwhile inherits the file this one read until it
+        // runs, which keeps the drive busy for a moment.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match mount.unmount(false) {
+                Err(error)
+                    if error.message.contains("still using") && Instant::now() < deadline =>
+                {
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                done => return done,
+            }
+        }
+    })
+    .await
+    .unwrap();
     assert!(at.is_dir(), "a folder that was there before stays");
 }
 
