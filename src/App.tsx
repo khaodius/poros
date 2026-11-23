@@ -14,6 +14,7 @@ import { QuickConnectBar } from "./components/QuickConnectBar";
 import { PorosLogo } from "./components/PorosLogo";
 import { RunCommandDialog } from "./components/RunCommandDialog";
 import { ImportConnectionsDialog } from "./components/ImportConnectionsDialog";
+import { LockVaultDialog } from "./components/LockVaultDialog";
 import { SaveConnectionDialog } from "./components/SaveConnectionDialog";
 import { SchedulerDialog } from "./components/SchedulerDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
@@ -578,6 +579,16 @@ function AppDialog() {
           tabId={dialog.tabId}
           sessionId={dialog.sessionId}
           label={dialog.label}
+          pendingTransfers={dialog.pendingTransfers}
+          vaultTransfers={dialog.vaultTransfers}
+          onClose={close}
+        />
+      );
+    case "lockVault":
+      return (
+        <LockVaultDialog
+          sessionId={dialog.sessionId}
+          name={dialog.name}
           pendingTransfers={dialog.pendingTransfers}
           onClose={close}
         />

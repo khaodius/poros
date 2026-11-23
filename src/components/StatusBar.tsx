@@ -3,7 +3,7 @@ import { formatDuration, formatSize, formatSpeed, formatVersion, pluralize } fro
 import { findGroup } from "../lib/layout";
 import { secondsRemaining } from "../lib/transfers";
 import { useLayoutStore } from "../state/layoutStore";
-import { useSessionStore } from "../state/sessionStore";
+import { serverEntry, useSessionStore } from "../state/sessionStore";
 import { useSettingsStore } from "../state/settingsStore";
 import { useTransferStore } from "../state/transferStore";
 import { useUiStore } from "../state/uiStore";
@@ -22,10 +22,13 @@ function useActiveSessionText(): { text: string; tone: "connected" | "lost" | "d
     const tab = group?.tabs.find((candidate) => candidate.id === group.activeTabId);
     return tab?.kind === "remote" ? tab.sessionId : null;
   });
+  // A tab in an unlocked vault is connected to the vault's server.
   const entry = useSessionStore((state) =>
-    activeSessionId ? state.sessions[activeSessionId] : undefined,
+    activeSessionId ? serverEntry(state.sessions, activeSessionId) : undefined,
   );
-  const count = useSessionStore((state) => Object.keys(state.sessions).length);
+  const count = useSessionStore(
+    (state) => Object.values(state.sessions).filter((session) => !session.info.vault).length,
+  );
   if (entry?.status === "lost") {
     return { text: `Connection to ${entry.info.label} lost`, tone: "lost" };
   }

@@ -23,7 +23,17 @@ export type AppDialog =
   | { kind: "importConnections"; returnTo?: AppDialog }
   /** Folders to start with; the panes looked at last fill in what is not given. */
   | { kind: "sync"; localPath?: string; sessionId?: string; remotePath?: string }
-  | { kind: "closeTab"; tabId: string; sessionId: string; label: string; pendingTransfers: number }
+  | {
+      kind: "closeTab";
+      tabId: string;
+      sessionId: string;
+      label: string;
+      /** Jobs in the queue for the tab's server and for its unlocked vaults. */
+      pendingTransfers: number;
+      /** How many of those are for its unlocked vaults, which close with the tab. */
+      vaultTransfers: number;
+    }
+  | { kind: "lockVault"; sessionId: string; name: string; pendingTransfers: number }
   /** Editor tabs with unsaved changes that are about to close, or whose window is. */
   | { kind: "unsavedChanges"; tabIds: string[]; closeWindow: boolean }
   /** `returnTo` reopens the dialog the update was found from once this one closes. */

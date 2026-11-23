@@ -192,6 +192,9 @@ fn keychain_error(error: keyring::Error) -> AppError {
 
 /// `connection` tidied up, or why it cannot be saved.
 fn validated(mut connection: SavedConnection) -> AppResult<SavedConnection> {
+    if connection.protocol == Protocol::Cryptomator {
+        return Err(crate::cryptomator::not_a_connection());
+    }
     connection.name = connection.name.trim().to_string();
     connection.host = connection.host.trim().to_string();
     if let Some(host) = connection.protocol.service_host() {

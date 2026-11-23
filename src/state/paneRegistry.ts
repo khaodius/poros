@@ -14,11 +14,18 @@ export interface PaneHandle {
    * with the cursor on the first.
    */
   refresh: (focus?: string | readonly string[]) => void;
+  /** Empties the pane at once, before it is given another session to list from. */
+  clear?: () => void;
   selected: () => FileEntry[];
   /** Everything the listing holds, also rows scrolled away or filtered out. */
   entries?: () => readonly FileEntry[];
   visible: boolean;
   activatedAt: number;
+  /**
+   * The pane shows the card of a locked vault in place of the folder's encrypted files, among
+   * which nothing is to be copied unseen.
+   */
+  locked?: boolean;
 }
 
 const panes = new Map<string, PaneHandle>();

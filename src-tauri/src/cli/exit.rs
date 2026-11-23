@@ -77,7 +77,9 @@ impl Exit {
         match kind {
             ErrorKind::HostKeyUnknown => Self::HostKeyUnknown,
             ErrorKind::HostKeyChanged => Self::HostKeyChanged,
-            ErrorKind::AuthFailed | ErrorKind::PassphraseRequired => Self::Authentication,
+            ErrorKind::AuthFailed | ErrorKind::PassphraseRequired | ErrorKind::WrongPassword => {
+                Self::Authentication
+            }
             ErrorKind::Connection
             | ErrorKind::Timeout
             | ErrorKind::Disconnected

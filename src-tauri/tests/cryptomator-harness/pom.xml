@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>interop</groupId>
+  <artifactId>harness</artifactId>
+  <version>1.0</version>
+  <packaging>jar</packaging>
+  <name>Cryptomator interoperability harness for the Poros tests</name>
+
+  <!--
+    Built with `mvn -B clean package` into target/harness.jar, which the tests run when
+    POROS_TEST_CRYPTOMATOR_JAR names it. cryptofs 2.9.0 is the newest that runs on Java 21.
+    `mvn -B -Platest clean package` builds target-latest/harness.jar on the newest cryptofs,
+    which needs Java 25 to build and to run (POROS_TEST_JAVA names the java to run it with).
+  -->
+
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <maven.compiler.release>21</maven.compiler.release>
+    <cryptofs.version>2.9.0</cryptofs.version>
+    <slf4j.version>2.0.17</slf4j.version>
+    <harness.buildDirectory>${project.basedir}/target</harness.buildDirectory>
+  </properties>
+
+  <profiles>
+    <profile>
+      <id>latest</id>
+      <properties>
+        <maven.compiler.release>25</maven.compiler.release>
+        <cryptofs.version>2.12.0</cryptofs.version>
+        <slf4j.version>2.0.20</slf4j.version>
+        <harness.buildDirectory>${project.basedir}/target-latest</harness.buildDirectory>
+      </properties>
+    </profile>
+  </profiles>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.cryptomator</groupId>
+      <artifactId>cryptofs</artifactId>
+      <version>${cryptofs.version}</version>
+    </dependency>
+    <!-- Keeps the libraries' logging off standard output and error. -->
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-nop</artifactId>
+      <version>${slf4j.version}</version>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <directory>${harness.buildDirectory}</directory>
+    <finalName>harness</finalName>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <version>3.4.2</version>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-shade-plugin</artifactId>
+        <version>3.6.0</version>
+        <executions>
+          <execution>
+            <phase>package</phase>
+            <goals>
+              <goal>shade</goal>
+            </goals>
+            <configuration>
+              <createDependencyReducedPom>false</createDependencyReducedPom>
+              <transformers>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                  <mainClass>interop.Harness</mainClass>
+                  <manifestEntries>
+                    <!-- cryptolib and siv-mode pick classes by Java version. -->
+                    <Multi-Release>true</Multi-Release>
+                    <Cryptofs-Version>${cryptofs.version}</Cryptofs-Version>
+                  </manifestEntries>
+                </transformer>
+                <!-- The libraries find each other's providers through META-INF/services. -->
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+              </transformers>
+              <filters>
+                <filter>
+                  <artifact>*:*</artifact>
+                  <excludes>
+                    <exclude>module-info.class</exclude>
+                    <exclude>META-INF/versions/*/module-info.class</exclude>
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                    <exclude>META-INF/MANIFEST.MF</exclude>
+                  </excludes>
+                </filter>
+              </filters>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

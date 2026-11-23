@@ -22,6 +22,11 @@
   and Box.
 - **Server-to-server copies** by dragging files from one server tab onto another. Two FTP servers
   send files straight to each other (FXP) when both allow it.
+- **Encrypted vaults**: a folder on any server can hold a [Cryptomator](https://cryptomator.org)
+  vault, whose file names, folder names and contents are encrypted before they leave this
+  computer. Poros makes vaults, unlocks them with their password right in the pane, and encrypts
+  and decrypts in every transfer worker. The Cryptomator apps open the same vaults. See
+  [Encrypted vaults](#encrypted-vaults).
 - **Drag files out** of any tab into Windows Explorer, the desktop, GNOME Files, Dolphin or any
   other file manager. Files on a server download as you drag, and files dropped on Dolphin or the
   KDE desktop download straight into the folder they were dropped in.
@@ -135,6 +140,52 @@ with.
 Arguments that make no sense over Poros's own SSH connection are noted and passed over, such as
 `-e`, `--partial-dir`, `--sparse`, `-H`, `-A` and `-X`. A few are refused with the reason:
 `-R`, `--compare-dest`, `--copy-dest`, `--link-dest`, batch files and time limits.
+
+## Encrypted vaults
+
+A vault is a folder on a server that only its password opens. Poros reads and writes the vault
+format of [Cryptomator](https://cryptomator.org) 1.6 and later (format 8, with AES-GCM or
+AES-CTR and HMAC contents), so a vault made in Poros opens in the Cryptomator apps for Windows,
+macOS, Linux, Android and iOS, and a vault made there opens in Poros.
+
+- **New vault**, on a server pane's toolbar and in its right-click menu, makes a folder with the
+  name you give it and a password of at least 8 characters. The password cannot be recovered:
+  without it nobody can read the vault, Poros included.
+- **Unlocking**: a folder that holds a vault shows a card asking for its password where its
+  files would be. Once unlocked, the same pane lists the decrypted files, marked Encrypted, and
+  the tab is named after the vault. Show encrypted files on the card lists what the server
+  stores instead.
+- **Everything goes through the vault**: uploads, downloads, copies to and from other servers
+  and the vault's own, the editor, new files and folders, renaming and deleting. Each transfer
+  worker encrypts and decrypts on its own connection, so transfers into and out of a vault run
+  in parallel like any others.
+- **Locking**: Lock on the pane's toolbar forgets the vault's keys, and so does closing the
+  server's tab or disconnecting. The password is never saved, the keys are only ever in memory,
+  and a tab that showed a vault reopens on its locked folder after a restart. Files dropped or
+  pasted onto a locked vault's folder are refused, so nothing lands unencrypted among its files.
+- **What the server sees**: encrypted names and contents, how many files and folders there are
+  and about how large each file is. Names are stored in the same Unicode form (NFC) and
+  shortened at the same length as Cryptomator stores and shortens them.
+- **Integrity**: every 32 KiB chunk of a file is authenticated as it is read, so a damaged or
+  swapped chunk stops the transfer instead of passing as the file. With the integrity checks on,
+  an upload into a vault on an SFTP, FTP or WebDAV server is read back, decrypted and compared
+  with its source. The server is not asked to flush a vault's files to its disk.
+
+What vaults leave out:
+
+- An interrupted upload into a vault starts over instead of resuming, because the last chunk
+  the interruption left cannot be trusted. Downloads resume.
+- Unfinished transfers into or out of a vault are not kept across a restart, since they need
+  the password. Transfers still in the queue when a vault is locked run again once it is
+  unlocked and they are resumed.
+- Files pasted or dragged from one folder of a vault to another are copied through the transfer
+  queue, as on an FTP server. Folder sync, Properties, comparing, extracting on the server and
+  the terminal work on a server's own files, not inside a vault.
+- Symbolic links stored in a vault are listed but not followed.
+- A vault in an older format is opened once in Cryptomator 1.6 or later, which upgrades it. A
+  vault whose key Cryptomator Hub keeps cannot be opened, and a vault's password is changed in
+  Cryptomator.
+- `poros-cli` does not open vaults.
 
 ## Command line
 
@@ -299,14 +350,16 @@ Every check is on by default, and each can be turned off under Settings > Transf
 The [Performance](#performance) workload, 3,600 files totaling 1.4 GiB, most of them small, with
 4 workers. Medians of three runs, page cache dropped before each:
 
-| Checks                                         | 1 ms link, upload | 1 ms link, download |  Loopback, upload | Loopback, download |
-| ---------------------------------------------- | ----------------: | ------------------: | ----------------: | -----------------: |
-| Poros 0.5.5 defaults                           |            30.1 s |              25.7 s |            4.55 s |             3.99 s |
-| All off                                        |            29.8 s |              25.4 s |            4.60 s |             4.12 s |
-| Flush to disk only                             |      30.8 s (+3%) |        26.8 s (+6%) |     5.77 s (+25%) |      5.67 s (+38%) |
-| Checksums only, by the server's `sha256sum`    |     36.0 s (+21%) |       31.5 s (+24%) |     7.68 s (+67%) |      7.18 s (+74%) |
-| **All on (default)**                           | **37.0 s (+24%)** |   **33.3 s (+31%)** | **8.91 s (+94%)** | **9.01 s (+119%)** |
-| All on, server without `sha256sum` (read back) |     50.1 s (+68%) |       47.9 s (+89%) |    9.41 s (+105%) |     8.71 s (+111%) |
+| Checks                                         | 1 ms link, upload | 1 ms link, download |   Loopback, upload | Loopback, download |
+| ---------------------------------------------- | ----------------: | ------------------: | -----------------: | -----------------: |
+| Poros 0.5.5 defaults                           |            23.8 s |              20.9 s |             5.23 s |             4.72 s |
+| All off                                        |            23.8 s |              21.0 s |             5.15 s |             4.99 s |
+| Flush to disk only                             |      25.6 s (+8%) |        22.7 s (+8%) |      6.98 s (+36%) |      7.06 s (+41%) |
+| Checksums only, by the server's `sha256sum`    |     29.0 s (+22%) |       26.1 s (+24%) |      9.45 s (+83%) |      9.00 s (+80%) |
+| **All on (default)**                           | **31.0 s (+31%)** |   **28.4 s (+35%)** | **10.4 s (+103%)** | **10.0 s (+101%)** |
+| All on, server without `sha256sum` (read back) |     41.0 s (+73%) |       40.1 s (+91%) |     11.3 s (+120%) |     11.1 s (+123%) |
+| Encrypted vault, all off                       |     29.3 s (+23%) |       26.1 s (+24%) |       5.26 s (+2%) |       5.11 s (+2%) |
+| Encrypted vault, all on (read back)            |     46.8 s (+97%) |      50.2 s (+139%) |      9.02 s (+75%) |     11.3 s (+127%) |
 
 Percentages are against all off. Most of the cost is per file: each file's checksum takes a round
 trip to the server and a `sha256sum` started there, so it weighs most on many small files and
@@ -314,14 +367,22 @@ on links with more latency, and least on large files. Reading back costs a secon
 network instead. On loopback, Poros and the server share the same four cores, so the checks
 there show their processing cost rather than what a real server adds.
 
-Setup: Poros 0.5.7 release build and OpenSSH 9.6 on Ubuntu 24.04, both on one 4-core Xeon at
-2.3 GHz with ext4 storage. The 1 ms link is a relay on the same machine that adds 1 ms each way
-and caps it at 1 Gbit/s; the relay itself holds throughput to 400 to 480 Mbit/s, so those times
-compare with each other, not with the table above. The read-back row signs in as a user the
-server limits to SFTP. To reproduce, run
+The vault rows move the same files into and out of an [encrypted vault](#encrypted-vaults) on the
+same server. Encrypting and decrypting costs about 2%, as loopback shows. Over the link a vault
+adds about a quarter, because its transfers wait on the server more times for each file than
+plain SFTP transfers do. With the checks on, a vault's files are read back and decrypted, since
+the server cannot hash what it cannot read, and the server is not asked to flush them to disk.
+
+Setup: Poros 0.7.0 release build and OpenSSH 9.6 on Ubuntu 24.04, both on one 4-core Xeon at
+2.1 GHz with ext4 storage. The 1 ms link is a relay on the same machine that adds 1 ms each way
+and caps each direction at 1 Gbit/s. The relay passes that in full, 1,000 Mbit/s measured over
+one connection and over four, so what holds these runs to about half of it is the round trips
+each file takes. Those times compare with each other, not with the table above. The read-back
+row signs in as a user the server limits to SFTP. To reproduce, run
 `POROS_TEST_SSH_PORT=2222 POROS_BENCH_WORKERS=4 POROS_BENCH_RUNS=3 POROS_BENCH_CHECKS=default cargo run --release --example transfer_benchmark`
 in `src-tauri`, with `POROS_BENCH_CHECKS` set to `off`, `checksums` or `flush` for the other
-rows, and `POROS_BENCH_DROP_CACHES=1` as root to drop the page cache.
+rows, `POROS_BENCH_VAULT=1` for the vault rows, and `POROS_BENCH_DROP_CACHES=1` as root to drop
+the page cache.
 
 ## Install
 
@@ -486,6 +547,11 @@ End-to-end tests in `src-tauri/tests/` run against a real SSH server when `POROS
 is set, against FTP servers when the `POROS_TEST_FTP*` variables listed in `ftp_server.rs` are
 set, and against WebDAV and S3 servers when the variables listed in `http_storage.rs` are set. The
 CI workflow shows how to start them.
+
+The vault tests in `vault.rs` read vaults made by Cryptomator's own libraries. With
+`POROS_TEST_CRYPTOMATOR_JAR` naming the harness in `src-tauri/tests/cryptomator-harness`, built
+with `mvn -B clean package` on Java 21, those libraries also read what Poros writes and change
+vaults for Poros to read. `vault_servers.rs` puts vaults on every server configured above.
 
 To release, set the new version in `package.json`, `src-tauri/Cargo.toml` and
 `src-tauri/tauri.conf.json`, update the lockfiles (`npm install`, then `cargo check` in

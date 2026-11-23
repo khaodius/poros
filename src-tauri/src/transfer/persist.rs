@@ -2,7 +2,7 @@
 //! not lose the queue. They come back paused. Passwords, passphrases and cloud sign-ins are never
 //! written: a restored server takes them from a session the user opens to it. Neither is the
 //! route, which is worked out again from the current settings before a restored server
-//! connects.
+//! connects. Transfers with an unlocked vault are not saved: the vault is locked again by then.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -181,7 +181,11 @@ fn snapshot(shared: &Shared) -> Option<(SavedQueue, &Path)> {
     let mut saved = SavedQueue::default();
     let mut server_index: HashMap<String, usize> = HashMap::new();
     let mut index_of = |session_id: &str| -> Option<usize> {
-        let target = targets.get(session_id)?;
+        // Transfers into and out of a vault end when Poros closes, as the vault locks. Saved,
+        // they would come back as transfers with the vault's server, around its encryption.
+        let target = targets
+            .get(session_id)
+            .filter(|target| !target.is_vault())?;
         Some(
             *server_index
                 .entry(target.session_id.clone())
@@ -300,6 +304,7 @@ pub(super) fn restore(shared: &Shared, file: &Path) -> usize {
             host_key_fingerprint: String::new(),
             browsing_session: session_id.clone(),
             browsing_files: None,
+            vault: None,
         };
         targets.insert(
             session_id.clone(),

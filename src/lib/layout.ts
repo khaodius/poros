@@ -8,6 +8,7 @@ import type {
   Protocol,
   TextLineEnding,
   TextEncoding,
+  VaultInfo,
 } from "./types";
 
 /** Unsaved text an editor tab takes along when it moves to another window. */
@@ -496,8 +497,13 @@ export function parseLayout(value: unknown): LayoutNode | null {
 export interface CurrentState {
   /** The folder a file pane shows, or null before it has listed one. */
   folderOf: (tabId: string) => string | null;
-  /** The server a session in this window is connected to, or null for one it no longer has. */
+  /**
+   * The server a session in this window is connected to, or null for one it no longer has and
+   * for an unlocked vault, which is no server.
+   */
   serverOf: (sessionId: string) => SavedServer | null;
+  /** The vault a session has unlocked, or null for a server's own session. */
+  vaultOf: (sessionId: string) => VaultInfo | null;
 }
 
 /** A tab as it reopens after a restart, or null for one that cannot. */
@@ -512,10 +518,14 @@ function restorableTab(tab: PaneTab, current: CurrentState): PaneTab | null {
     case "local":
       return { ...tab, path: current.folderOf(tab.id) ?? tab.path };
     case "remote": {
-      const server = current.serverOf(tab.sessionId);
+      // A vault is locked again after a restart, and no password is kept: its tab reopens on
+      // the vault's folder on the server, which asks for the password.
+      const vault = current.vaultOf(tab.sessionId);
+      const sessionId = vault?.parentSessionId ?? tab.sessionId;
+      const server = current.serverOf(sessionId);
       if (!server) return null;
-      const path = current.folderOf(tab.id) ?? tab.path;
-      return { id: tab.id, kind: "remote", sessionId: tab.sessionId, path, restore: { server } };
+      const path = vault ? vault.root : (current.folderOf(tab.id) ?? tab.path);
+      return { id: tab.id, kind: "remote", sessionId, path, restore: { server } };
     }
     case "terminal": {
       const server = current.serverOf(tab.sessionId);

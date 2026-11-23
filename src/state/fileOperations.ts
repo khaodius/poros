@@ -4,7 +4,13 @@
 import { formatCount } from "../lib/deletion";
 import type { Point } from "../lib/fileFlight";
 import { localSource, type PathStyle } from "../lib/fileSource";
-import { sameFilesystem, toLocation, worksInPlace, type FileOrigin } from "../lib/fileOrigin";
+import {
+  isInsideVault,
+  sameFilesystem,
+  toLocation,
+  worksInPlace,
+  type FileOrigin,
+} from "../lib/fileOrigin";
 import { pluralize } from "../lib/format";
 import { fileOperations, toAppError } from "../lib/ipc";
 import { baseName, breadcrumbs, isWithin, samePath } from "../lib/path";
@@ -17,6 +23,7 @@ import type {
   PlaceMode,
 } from "../lib/types";
 import { useClipboardStore } from "./clipboardStore";
+import { serverSessionId } from "../lib/vaults";
 import type { DropTarget } from "./dragStore";
 import { flyPlaced, measureRows } from "./fileFlight";
 import { useLogStore } from "./logStore";
@@ -24,7 +31,7 @@ import { askNameClash, track } from "./operationStore";
 import { getPane, listPanes, type PaneHandle } from "./paneRegistry";
 import { useSessionStore } from "./sessionStore";
 import { useToastStore } from "./toastStore";
-import { transferBetween } from "./transferActions";
+import { paneWritingTo, refusesLockedVault, transferBetween } from "./transferActions";
 
 export function paneOrigin(pane: Pick<PaneHandle, "kind" | "sessionId">): FileOrigin {
   const info = pane.sessionId
@@ -38,12 +45,28 @@ export function paneOrigin(pane: Pick<PaneHandle, "kind" | "sessionId">): FileOr
       host: info.host,
       port: info.port,
       username: info.username,
+      vaultRoot: info.vault?.root,
     },
   };
 }
 
 export function pathStyleOf(origin: Pick<FileOrigin, "kind">): PathStyle {
   return origin.kind === "remote" ? "posix" : localSource.pathStyle;
+}
+
+/**
+ * Whether both are one tree of folders: one filesystem, or a server and a vault unlocked on it,
+ * whose files are under the vault's folder on the server.
+ */
+function sharesFolders(first: FileOrigin, second: FileOrigin): boolean {
+  if (sameFilesystem(first, second)) return true;
+  const sessions = useSessionStore.getState().sessions;
+  const serverOf = (origin: FileOrigin) => {
+    const info = origin.sessionId ? sessions[origin.sessionId]?.info : undefined;
+    return info && serverSessionId(info);
+  };
+  const server = serverOf(first);
+  return server !== undefined && server === serverOf(second);
 }
 
 /** Whether entries from `origin` can be moved or copied into `target` without a transfer. */
@@ -124,26 +147,30 @@ export interface PlaceRequest {
  * Elsewhere the entries are queued as a transfer, which copies. False when nothing was done.
  */
 export async function placeEntries(request: PlaceRequest): Promise<boolean> {
-  const { mode, origin, sourceFolder, entries, target, targetFolder, sourceTabId, landing } =
-    request;
+  const { mode, origin, sourceFolder, entries, targetFolder, sourceTabId, landing } = request;
   const showToast = useToastStore.getState().show;
   if (entries.length === 0) return false;
+  const target = paneWritingTo(request.target, targetFolder);
   const targetOrigin = paneOrigin(target);
 
   if (!placesInPlace(origin, target)) {
-    if (sameFilesystem(origin, targetOrigin)) {
-      const style = pathStyleOf(origin);
-      // A transfer into the folder the files came from would write each file over itself.
-      if (samePath(sourceFolder, targetFolder, style)) {
-        showToast("info", "Copies in the same folder need an SFTP connection.");
-        return false;
-      }
-      if (
-        entries.some((entry) => entry.kind === "dir" && isWithin(targetFolder, entry.path, style))
-      ) {
-        showToast("info", "A folder cannot go inside itself.");
-        return false;
-      }
+    const style = pathStyleOf(origin);
+    // A transfer into the folder the files came from would write each file over itself.
+    if (sameFilesystem(origin, targetOrigin) && samePath(sourceFolder, targetFolder, style)) {
+      showToast(
+        "info",
+        isInsideVault(origin)
+          ? "Copies in the same folder cannot be made inside a vault."
+          : "Copies in the same folder need an SFTP connection.",
+      );
+      return false;
+    }
+    if (
+      sharesFolders(origin, targetOrigin) &&
+      entries.some((entry) => entry.kind === "dir" && isWithin(targetFolder, entry.path, style))
+    ) {
+      showToast("info", "A folder cannot go inside itself.");
+      return false;
     }
     const source: PaneHandle = {
       tabId: sourceTabId ?? "clipboard",
@@ -163,6 +190,7 @@ export async function placeEntries(request: PlaceRequest): Promise<boolean> {
     return true;
   }
 
+  if (await refusesLockedVault(target, targetFolder)) return false;
   const style = pathStyleOf(origin);
   const inPlace = samePath(sourceFolder, targetFolder, style);
   if (inPlace && mode === "move") return false;
@@ -317,9 +345,10 @@ export function dropAction(
 ): DropAction | null {
   if (target.kind !== "pane") return null;
   const source = getPane(sourceTabId);
-  const destination = getPane(target.tabId);
-  const folder = target.folder ?? destination?.path();
-  if (!source || !destination || !folder) return null;
+  const shown = getPane(target.tabId);
+  const folder = target.folder ?? shown?.path();
+  if (!source || !shown || !folder) return null;
+  const destination = paneWritingTo(shown, folder);
   const origin = paneOrigin(source);
   if (source.kind !== destination.kind) {
     return { kind: "transfer", direction: source.kind === "local" ? "upload" : "download", folder };
@@ -327,8 +356,9 @@ export function dropAction(
   if (source.tabId === destination.tabId && target.folder === null) return null;
   const style = pathStyleOf(origin);
   const sourceFolder = source.path();
-  const sameFiles = sameFilesystem(origin, paneOrigin(destination));
-  if (sameFiles) {
+  const destinationOrigin = paneOrigin(destination);
+  const sameFiles = sameFilesystem(origin, destinationOrigin);
+  if (sharesFolders(origin, destinationOrigin)) {
     // Over the dragged folder itself, the drag was a click that slipped.
     if (entries.some((entry) => samePath(folder, entry.path, style))) return null;
     if (entries.some((entry) => entry.kind === "dir" && isWithin(folder, entry.path, style))) {
@@ -337,8 +367,13 @@ export function dropAction(
   }
   // Between two servers, or on one reached other than over SFTP, the transfer queue copies.
   if (!placesInPlace(origin, destination)) {
-    if (source.tabId === destination.tabId) {
-      return { kind: "blocked", reason: "Moving on this server needs SFTP" };
+    if (source.tabId === destination.tabId && source.sessionId === destination.sessionId) {
+      return {
+        kind: "blocked",
+        reason: isInsideVault(origin)
+          ? "Files cannot be moved inside a vault"
+          : "Moving on this server needs SFTP",
+      };
     }
     if (sameFiles && sourceFolder && samePath(folder, sourceFolder, style)) return null;
     return { kind: "transfer", direction: "relay", folder };

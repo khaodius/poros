@@ -48,7 +48,7 @@ pub(super) fn applies(shared: &Shared, spec: &JobSpec) -> bool {
     spec.direction == Direction::Relay
         || shared
             .target(&spec.session_id)
-            .is_ok_and(|target| target.protocol() != Protocol::Sftp)
+            .is_ok_and(|target| target.protocol() != Protocol::Sftp || target.is_vault())
 }
 
 /// The connection a relay reads from: its source session's, or a second one when source and
@@ -91,8 +91,8 @@ async fn endpoints(job: &JobRef<'_>, connections: &mut Connections) -> AppResult
     };
     // One FTP connection cannot read and write at once.
     if let Some(source) = &source {
-        if source.protocol().is_ftp()
-            && std::ptr::addr_eq(Arc::as_ptr(source), Arc::as_ptr(&remote))
+        if source.transport().is_ftp()
+            && source.connection_identity() == remote.connection_identity()
         {
             return Err(AppError::unsupported(
                 if job.settings.separate_connections {
@@ -480,7 +480,7 @@ pub(super) async fn finalize(job: &JobRef<'_>, connections: &mut Connections) ->
             return Err(changed());
         }
     }
-    if files.protocol().uploads_carry_time() {
+    if files.transport().uploads_carry_time() {
         return Ok(());
     }
     let modified = preserved_time(job, plan.source_modified);
@@ -527,12 +527,16 @@ async fn source_changed(
 }
 
 /// Whether a finished file is read back to check it: on FTP and WebDAV servers, which have no
-/// checksum command, when checksums are on.
+/// checksum command, when checksums are on. So is a file in a vault on an SFTP server, whose
+/// own checksum would be of the encrypted file.
 fn reads_back(job: &JobRef<'_>, files: &Arc<dyn RemoteFileSystem>) -> bool {
-    let protocol = files.protocol();
+    let transport = files.transport();
+    let in_vault = files.protocol() == Protocol::Cryptomator;
     job.settings.verify_checksums
         && job.settings.read_back
-        && (protocol.is_ftp() || protocol.is_webdav())
+        && (transport.is_ftp()
+            || transport.is_webdav()
+            || (in_vault && transport == Protocol::Sftp))
 }
 
 enum Prepared {

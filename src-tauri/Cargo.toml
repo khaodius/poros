@@ -1,6 +1,6 @@
 [package]
 name = "poros"
-version = "0.6.5"
+version = "0.7.0"
 description = "SFTP and rsync client"
 authors = ["khaodius"]
 license = "Apache-2.0"
@@ -124,6 +124,16 @@ quick-xml = { version = "0.42", features = ["serialize", "overlapped-lists"] }
 minisign-verify = "0.2"
 # Arguments of the headless command line.
 clap = { version = "4.5", features = ["derive", "env", "wrap_help"], optional = true }
+# Cryptomator vaults: AES-SIV for file names, scrypt and AES key wrap for the masterkey file,
+# and AES-CTR for vaults made before Cryptomator 1.7. AES-GCM, HMAC and SHA-1 come from ring.
+aes-siv = "0.8"
+aes-kw = "0.3"
+aes = "0.9"
+ctr = "0.10"
+scrypt = { version = "0.12", default-features = false }
+zeroize = "1"
+# File names and passwords are normalized (NFC) before they are encrypted, as Cryptomator does.
+unicode-normalization = "0.1"
 
 [target.'cfg(windows)'.dependencies]
 # Rounded window corners on Windows 11, showing the drag preview without taking focus, and the
@@ -145,6 +155,14 @@ zbus = { version = "5", optional = true }
 tempfile = "3"
 # Paused clocks, so tests of minute-long timeouts run instantly.
 tokio = { version = "1", features = ["test-util"] }
+
+# Deriving a vault's key from its password is deliberately slow, and many times slower
+# unoptimized: without this, every test that opens a vault takes seconds.
+[profile.dev.package.scrypt]
+opt-level = 3
+
+[profile.dev.package.salsa20]
+opt-level = 3
 
 [profile.release]
 codegen-units = 1

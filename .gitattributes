@@ -4,3 +4,5 @@
 *.ico binary
 *.icns binary
 *.cmd -text
+# Vaults made by Cryptomator, kept byte for byte.
+src-tauri/tests/fixtures/vaults/** -text

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { FileSource } from "../lib/fileSource";
 import { entryLeadingTo } from "../lib/cursor";
 import {
@@ -37,6 +37,16 @@ function focusList(focus: Focus | undefined): readonly string[] {
   return typeof focus === "string" ? [focus] : focus;
 }
 
+/**
+ * Another source that shows a folder in place of the pane's own, as an unlocked vault does for
+ * the paths inside it, or its server for those outside.
+ */
+export interface Handover {
+  source: FileSource;
+  /** Makes `source` the pane's own, once it has listed the folder at `path`. */
+  take: (path: string) => void;
+}
+
 export interface PaneController {
   listing: DirListing | null;
   /** The entries on show, in the order shown; none from collapsed groups. */
@@ -63,6 +73,8 @@ export interface PaneController {
   navigate: (path: string) => Promise<boolean>;
   /** Reloads the folder, selecting `focus` (one path or several) where the listing has it. */
   refresh: (focus?: Focus) => Promise<boolean>;
+  /** Empties the pane until its next listing arrives, for a listing that must not stay up. */
+  clear: () => void;
   goUp: () => void;
   goBack: () => void;
   goForward: () => void;
@@ -97,6 +109,11 @@ export interface PaneOptions {
   groupByDate?: boolean;
   /** Called with each sort order picked in the pane. */
   onSortChange?: (sort: SortSpec) => void;
+  /**
+   * Asked before every folder is listed, however the pane gets there: the source to list `path`
+   * with when that is not the pane's own, or null. The pane keeps its place and its history.
+   */
+  handover?: (path: string) => Handover | null;
 }
 
 export function usePane(
@@ -107,6 +124,7 @@ export function usePane(
     foldersFirst = true,
     groupByDate = false,
     onSortChange,
+    handover,
   }: PaneOptions = {},
 ): PaneController {
   const [listing, setListing] = useState<DirListing | null>(null);
@@ -136,6 +154,12 @@ export function usePane(
   // Where Back or Forward is taking the pane, so pressing it again before the folder loads
   // steps on from there.
   const travelIndex = useRef<number | null>(null);
+  const handoverRef = useRef(handover);
+  useLayoutEffect(() => {
+    handoverRef.current = handover;
+  });
+  // The source a handover listed the folder on show with, until it is the pane's own.
+  const takenOverBy = useRef<string | null>(null);
 
   const sortedEntries = useMemo(
     () =>
@@ -176,9 +200,11 @@ export function usePane(
       const request = loads.current.start(mode === "replace" ? "refresh" : "navigation");
       if (request === null) return false;
       if (mode === "push") travelIndex.current = null;
+      takenOverBy.current = null;
       setLoading(true);
       try {
-        const next = await source.list(target);
+        const other = handoverRef.current?.(target) ?? null;
+        const next = await (other?.source ?? source).list(target);
         if (!loads.current.isCurrent(request)) return false;
         const existing = new Set(next.entries.map((entry) => entry.path));
         const leftPath = listedPath.current;
@@ -233,6 +259,10 @@ export function usePane(
           entries.splice(current.index + 1, Infinity, { path: next.path, cursor: null });
           return { entries, index: entries.length - 1 };
         });
+        if (other) {
+          takenOverBy.current = other.source.key;
+          other.take(next.path);
+        }
         return true;
       } catch (caught) {
         if (loads.current.isCurrent(request)) setError(toAppError(caught));
@@ -246,6 +276,11 @@ export function usePane(
   );
 
   useEffect(() => {
+    // The folder on show came from this source already, in a handover.
+    if (takenOverBy.current === source.key) {
+      takenOverBy.current = null;
+      return;
+    }
     let cancelled = false;
     const open = async () => {
       const opened = await load(await source.initialPath(), "push");
@@ -271,6 +306,18 @@ export function usePane(
         : Promise.resolve(false),
     [load],
   );
+
+  const clear = useCallback(() => {
+    // A load on its way would bring back what is cleared.
+    const superseding = loads.current.start("navigation");
+    if (superseding !== null) loads.current.finish(superseding);
+    setLoading(false);
+    setListing(null);
+    setSelection(new Set());
+    setAnchorPath(null);
+    setCursorPath(null);
+    setError(null);
+  }, []);
 
   const goUp = useCallback(() => {
     if (listing?.parent) void load(listing.parent, "push", listing.path);
@@ -476,6 +523,7 @@ export function usePane(
     canGoUp: Boolean(listing?.parent),
     navigate,
     refresh,
+    clear,
     goUp,
     goBack: () => travel(-1),
     goForward: () => travel(1),

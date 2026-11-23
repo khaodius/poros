@@ -23,6 +23,7 @@ use super::queue::{
 use super::streamed;
 use super::verify::{self, Checked, Copies};
 use super::{Login, SessionTarget, Shared};
+use crate::cryptomator::VaultFs;
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::events::{Events, LogLevel};
 use crate::format::format_size;
@@ -62,6 +63,11 @@ pub(super) struct WorkerConnection {
     pub handle: Option<SshHandle>,
     /// The worker opened `files` itself, as with an FTP connection, and so closes it.
     owns_files: bool,
+    /// The server's own files when `files` is a vault on that server. Only the vault reads and
+    /// writes through them; they are kept to be closed.
+    vault_server: Option<Arc<dyn RemoteFileSystem>>,
+    /// The vault `files` shows, to tell when it has been locked.
+    vault: Option<Arc<VaultFs>>,
     /// The shell on `handle` that checksum commands run through.
     hash_shell: ShellSlot,
 }
@@ -74,6 +80,8 @@ impl WorkerConnection {
             sftp: Some(fs),
             handle,
             owns_files: false,
+            vault_server: None,
+            vault: None,
             hash_shell: ShellSlot::default(),
         }
     }
@@ -84,25 +92,59 @@ impl WorkerConnection {
             sftp: None,
             handle: None,
             owns_files,
+            vault_server: None,
+            vault: None,
             hash_shell: ShellSlot::default(),
         }
+    }
+
+    /// The same connection showing the unlocked vault instead of the server's own files. The
+    /// SFTP channel is given up with them, so no transfer path can write around the vault.
+    fn inside(self, vault: &Arc<VaultFs>) -> Self {
+        if self.files.protocol() == Protocol::Cryptomator {
+            return Self {
+                vault: Some(vault.clone()),
+                ..self
+            };
+        }
+        let through = vault.through(self.files.clone());
+        Self {
+            files: through.clone(),
+            // A channel is the worker's own to close, as a connection it opened is.
+            owns_files: self.owns_files || self.sftp.is_some(),
+            sftp: None,
+            vault_server: Some(self.files),
+            vault: Some(through),
+            handle: self.handle,
+            hash_shell: self.hash_shell,
+        }
+    }
+
+    /// The vault this connection shows was locked, so nothing more goes over it. Unlocked
+    /// again, the vault is reached through a new connection.
+    fn shows_locked_vault(&self) -> bool {
+        self.vault.as_ref().is_some_and(|vault| vault.is_locked())
     }
 
     /// An FTP connection borrowed from the browsing session, which other workers may be
     /// waiting for.
     pub fn borrows_ftp_connection(&self) -> bool {
-        !self.owns_files && self.files.protocol().is_ftp()
+        !self.owns_files && self.files.transport().is_ftp()
     }
 
     async fn close(self) {
         if let Some(fs) = &self.sftp {
             fs.close();
         }
+        if self.owns_files {
+            self.vault_server
+                .as_ref()
+                .unwrap_or(&self.files)
+                .close()
+                .await;
+        }
         if let Some(handle) = self.handle {
             ssh::disconnect(&handle).await;
-        }
-        if self.owns_files {
-            self.files.close().await;
         }
     }
 }
@@ -124,10 +166,11 @@ impl Connections {
     ) -> AppResult<&WorkerConnection> {
         self.last_used = Instant::now();
         let closed = self.open.get(key).is_some_and(|connection| {
-            connection
+            let handle_closed = connection
                 .handle
                 .as_ref()
-                .is_some_and(|handle| handle.is_closed())
+                .is_some_and(|handle| handle.is_closed());
+            handle_closed || connection.shows_locked_vault()
         });
         if closed {
             self.drop_connection(key).await;
@@ -185,10 +228,27 @@ async fn open_connection(
         .resolve_restored_route(shared.route_resolver.get())
         .await?;
     let login = target.login();
+    let Some(vault) = &login.vault else {
+        return open_server_connection(shared, target, &login, worker_index, compress).await;
+    };
+    // No connection is worth opening for a vault that was locked since the transfer was queued.
+    vault.check_unlocked()?;
+    let connection = open_server_connection(shared, target, &login, worker_index, compress).await?;
+    Ok(connection.inside(vault))
+}
+
+/// A connection to the server itself, which for a vault's transfers is the server it is on.
+async fn open_server_connection(
+    shared: &Shared,
+    target: &SessionTarget,
+    login: &Login,
+    worker_index: usize,
+    compress: bool,
+) -> AppResult<WorkerConnection> {
     let protocol = login.profile.protocol;
     if protocol.is_http() {
         // HTTP services take any number of requests over the browsing session's client.
-        return match login.browsing_files {
+        return match login.browsing_files.clone() {
             Some(files) => Ok(WorkerConnection::files(files, false)),
             None if target.is_restored() => Err(connect_first(target)),
             None => Err(AppError::session_not_found()),
@@ -200,7 +260,7 @@ async fn open_connection(
     // Without a browsing connection to share, a connection of its own is the only way.
     if separate || browsing.is_none() {
         let refusal =
-            match connect_directly(shared, target, &login, worker_index + 1, compress).await {
+            match connect_directly(shared, target, login, worker_index + 1, compress).await {
                 Ok(connection) => return Ok(connection),
                 Err(error) if error.kind == ErrorKind::HostKeyChanged => return Err(error),
                 Err(error) if target.is_restored() && needs_login(&error) => {
@@ -225,7 +285,14 @@ async fn open_connection(
     }
     let session = browsing.ok_or_else(AppError::session_not_found)?;
     match protocol {
-        Protocol::Sftp => Ok(WorkerConnection::sftp(session.open_channel().await?, None)),
+        Protocol::Sftp => {
+            // A vault's session has no connection of its own: the channel opens on its server's.
+            let carrier = match session.server_session() {
+                Some(server_session) => shared.sessions.get(server_session).await?,
+                None => session,
+            };
+            Ok(WorkerConnection::sftp(carrier.open_channel().await?, None))
+        }
         _ => Ok(WorkerConnection::files(session.files(), false)),
     }
 }

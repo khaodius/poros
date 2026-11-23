@@ -33,6 +33,8 @@ pub enum ErrorKind {
     Keychain,
     /// Downloading, verifying or installing an update failed.
     Update,
+    /// The password does not open the vault.
+    WrongPassword,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

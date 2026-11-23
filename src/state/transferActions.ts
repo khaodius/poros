@@ -1,11 +1,14 @@
-import { local, toAppError, transfers } from "../lib/ipc";
+import { local, remote, toAppError, transfers } from "../lib/ipc";
 import type { Point } from "../lib/fileFlight";
 import { pluralize } from "../lib/format";
+import { baseName } from "../lib/path";
 import { isDirLike } from "../lib/sort";
-import type { Direction, FileEntry, TransferItem } from "../lib/types";
+import type { Direction, FileEntry, SessionInfo, TransferItem } from "../lib/types";
+import { isVaultSession, sessionShowing, vaultSign } from "../lib/vaults";
 import { watchTransfer } from "./fileFlight";
 import { useLogStore } from "./logStore";
 import { getPane, lastActivePane, type PaneHandle } from "./paneRegistry";
+import { useSessionStore } from "./sessionStore";
 import { useToastStore } from "./toastStore";
 
 /** The entries that can be copied: files and folders, not devices or broken links. */
@@ -59,6 +62,46 @@ interface Route {
   sourceSessionId?: string;
 }
 
+/**
+ * The pane as files headed for `folder` see it. A folder inside an unlocked vault is written to
+ * through the vault, also from a pane showing the folder the vault is in, so that nothing lands
+ * unencrypted among the vault's encrypted files.
+ */
+export function paneWritingTo(pane: PaneHandle, folder: string): PaneHandle {
+  if (pane.kind !== "remote" || !pane.sessionId) return pane;
+  const sessionId = sessionShowing(useSessionStore.getState().sessions, pane.sessionId, folder);
+  return sessionId === pane.sessionId ? pane : { ...pane, sessionId };
+}
+
+/**
+ * Says so and returns true when `folder` is a vault that is not unlocked: files put there
+ * through the server would lie unencrypted among the vault's encrypted files. The pane showing
+ * the vault's folder knows by its card. A folder `target` does not show, usually a row of the
+ * folder the vault is in, is listed to find out. Where the user asked to see what the server
+ * stores in a vault, files go in as on any server.
+ */
+export async function refusesLockedVault(target: PaneHandle, folder: string): Promise<boolean> {
+  if (target.kind !== "remote" || !target.sessionId) return false;
+  const showToast = useToastStore.getState().show;
+  if (target.path() === folder) {
+    if (target.locked) showToast("info", "Unlock the vault to copy files into it.");
+    return target.locked === true;
+  }
+  const session = useSessionStore.getState().sessions[target.sessionId] as
+    { info: SessionInfo } | undefined;
+  if (!session || isVaultSession(session.info)) return false;
+  let entries: FileEntry[];
+  try {
+    entries = (await remote.list(target.sessionId, folder)).entries;
+  } catch {
+    // A folder that cannot be listed is for the copy itself to report.
+    return false;
+  }
+  if (vaultSign(entries) === "none") return false;
+  showToast("info", `${baseName(folder)} is a locked vault. Open it to copy files into it.`);
+  return true;
+}
+
 /** How files go from one pane to another, if they can. */
 function routeBetween(source: PaneHandle, target: PaneHandle): Route | null {
   if (source.kind === "local" && target.kind === "remote" && target.sessionId) {
@@ -93,7 +136,9 @@ export async function transferBetween(
 ): Promise<void> {
   const targetFolder = folder ?? target.path();
   if (!targetFolder || (source.tabId === target.tabId && folder === null)) return;
-  const route = routeBetween(source, target);
+  const writer = paneWritingTo(target, targetFolder);
+  if (await refusesLockedVault(writer, targetFolder)) return;
+  const route = routeBetween(source, writer);
   if (!route) {
     useToastStore.getState().show("info", "Drop local files on a server tab to upload them.");
     return;

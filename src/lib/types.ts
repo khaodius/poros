@@ -39,7 +39,9 @@ export type Protocol =
   | "backblazeB2"
   | "googleDrive"
   | "oneDrive"
-  | "box";
+  | "box"
+  /** The session of an unlocked vault. Never something to connect to. */
+  | "cryptomator";
 
 export type CloudProvider = "google" | "microsoft" | "box";
 
@@ -103,6 +105,16 @@ export interface HostKeyApproval {
   remember: boolean;
 }
 
+/** An unlocked Cryptomator vault, as its session describes it. */
+export interface VaultInfo {
+  /** The session of the server the vault's files are on. */
+  parentSessionId: string;
+  /** The vault's folder on that server. The decrypted files have this path and those below it. */
+  root: string;
+  /** That folder's name. */
+  name: string;
+}
+
 export interface SessionInfo {
   id: string;
   label: string;
@@ -113,6 +125,8 @@ export interface SessionInfo {
   initialPath: string;
   savedConnectionId?: string;
   protocol: Protocol;
+  /** Set for the session of an unlocked vault, whose host, port and username are its server's. */
+  vault?: VaultInfo;
 }
 
 export type ErrorKind =
@@ -139,7 +153,8 @@ export type ErrorKind =
   | "untrusted"
   | "cancelled"
   | "keychain"
-  | "update";
+  | "update"
+  | "wrongPassword";
 
 export interface AppError {
   kind: ErrorKind;

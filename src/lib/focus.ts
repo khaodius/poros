@@ -2,8 +2,13 @@
 
 /** The tab group the user works in. */
 const ACTIVE_GROUP = ".tab-group.is-focused";
-/** The file list of the pane the user works in. */
-const ACTIVE_FILE_LIST = ".tab-panel:not([hidden]) .pane.is-active .file-list-body";
+/**
+ * What takes the keyboard in a file pane: its file list, or the password field of the card that
+ * stands in for the list while the folder is a locked vault.
+ */
+export const PANE_KEYBOARD_TARGET = ":is(.file-list-body, .vault-password)";
+/** That, in the pane the user works in. */
+const ACTIVE_FILE_LIST = `.tab-panel:not([hidden]) .pane.is-active ${PANE_KEYBOARD_TARGET}`;
 
 export interface FocusReturn<Target> {
   /** What has focus as the dialog or menu closes. */

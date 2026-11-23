@@ -8,6 +8,7 @@ pub mod cloud;
 #[cfg(feature = "gui")]
 pub mod commands;
 pub mod connections;
+pub mod cryptomator;
 #[cfg(feature = "gui")]
 pub mod desktop;
 #[cfg(feature = "gui")]
@@ -283,6 +284,8 @@ pub fn run() {
             commands::reconnect,
             commands::adopt_session,
             commands::disconnect,
+            commands::vault_unlock,
+            commands::vault_create,
             commands::remote_list,
             commands::remote_mkdir,
             commands::remote_make_file,

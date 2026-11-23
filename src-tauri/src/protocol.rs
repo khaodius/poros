@@ -36,6 +36,9 @@ pub enum Protocol {
     GoogleDrive,
     OneDrive,
     Box,
+    /// An unlocked Cryptomator vault, which lives on a server of any of the other kinds and is
+    /// reached through that server's session. Never saved as a connection.
+    Cryptomator,
 }
 
 impl Protocol {
@@ -51,6 +54,7 @@ impl Protocol {
             | Protocol::GoogleDrive
             | Protocol::OneDrive
             | Protocol::Box => 443,
+            Protocol::Cryptomator => 0,
         }
     }
 
@@ -70,7 +74,11 @@ impl Protocol {
     pub fn is_http(self) -> bool {
         !matches!(
             self,
-            Protocol::Sftp | Protocol::Ftp | Protocol::Ftps | Protocol::FtpsImplicit
+            Protocol::Sftp
+                | Protocol::Ftp
+                | Protocol::Ftps
+                | Protocol::FtpsImplicit
+                | Protocol::Cryptomator
         )
     }
 
@@ -116,6 +124,7 @@ impl Protocol {
             Protocol::GoogleDrive => "Google Drive",
             Protocol::OneDrive => "OneDrive",
             Protocol::Box => "Box",
+            Protocol::Cryptomator => "Cryptomator",
         }
     }
 }
@@ -171,6 +180,17 @@ pub trait WriteStream: Send {
 #[async_trait]
 pub trait RemoteFileSystem: Send + Sync {
     fn protocol(&self) -> Protocol;
+
+    /// The protocol that carries the bytes: the server's own, for a vault on a server.
+    fn transport(&self) -> Protocol {
+        self.protocol()
+    }
+
+    /// Tells connections apart: two file systems that answer the same send their requests
+    /// over one connection, as a vault does with the server it is on.
+    fn connection_identity(&self) -> usize {
+        std::ptr::from_ref(self).cast::<()>() as usize
+    }
 
     fn home(&self) -> &str;
 
