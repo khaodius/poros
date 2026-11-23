@@ -265,6 +265,65 @@ export function sameLink(first: Pick<ShareLink, "id" | "url">, second: ShareLink
   return second.id !== "" ? first.id === second.id : first.url === second.url;
 }
 
+/** What a Create asked for, and when, which the links it made are checked against. */
+export interface ShareRequest {
+  options: ShareOptions;
+  /** Seconds since the Unix epoch. */
+  at: number;
+}
+
+/** A request for `options`, made now. */
+export function requestNow(options: ShareOptions): ShareRequest {
+  return { options, at: Math.floor(Date.now() / 1000) };
+}
+
+/**
+ * How far a link's end may be from the one asked for: the time the request took, and the
+ * difference between this computer's clock and the service's.
+ */
+export const END_TOLERANCE_SECS = 120;
+
+/**
+ * Whether `link` is what `request` asked for: what it allows, for whom, until when, and
+ * whether it asks for a password.
+ */
+export function isAsked(link: ShareLink, request: ShareRequest): boolean {
+  const { options } = request;
+  if (link.kind !== options.kind || link.audience !== options.audience) return false;
+  if (link.hasPassword !== Boolean(options.password)) return false;
+  if (options.lifetimeSecs === undefined) return link.expiresAt === undefined;
+  if (link.expiresAt === undefined) return false;
+  return Math.abs(link.expiresAt - (request.at + options.lifetimeSecs)) <= END_TOLERANCE_SECS;
+}
+
+/** Whether two sets of options ask for the same link. */
+export function sameOptions(first: ShareOptions, second: ShareOptions): boolean {
+  return (
+    first.kind === second.kind &&
+    first.audience === second.audience &&
+    first.lifetimeSecs === second.lifetimeSecs &&
+    (first.password ?? "") === (second.password ?? "")
+  );
+}
+
+/**
+ * What a row among several says about its link, where the statement above the rows, which
+ * describes the draft, does not describe it: `null` for a link the last Create made as asked
+ * while the draft still asks for the same. `made` is the request that made the link, or
+ * `null` for a link the item had before; `statement` describes the link itself.
+ */
+export function batchLinkLabel(
+  link: ShareLink,
+  made: ShareRequest | null,
+  draft: ShareOptions | null,
+  statement: string,
+): string | null {
+  if (made === null) return `Shared before: ${statement}`;
+  if (!isAsked(link, made)) return `Not what was asked: ${statement}`;
+  if (draft === null || !sameOptions(draft, made.options)) return statement;
+  return null;
+}
+
 /** A key for a link among an item's links. */
 export function linkKey(link: Pick<ShareLink, "id" | "url">): string {
   return link.id !== "" ? `id:${link.id}` : `url:${link.url}`;

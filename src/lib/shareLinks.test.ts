@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
+  END_TOLERANCE_SECS,
   audienceLabel,
+  batchLinkLabel,
   customLifetime,
   draftLifetime,
   draftOptions,
@@ -8,16 +10,20 @@ import {
   forEachLimited,
   formatDeadline,
   initialDraft,
+  isAsked,
   lifetimePresets,
   lifetimeText,
   linkKey,
   linkStatement,
   linksText,
   mergeLinks,
+  requestNow,
+  sameOptions,
   selectionSummary,
   shareMenuEntry,
   takesPassword,
   withLink,
+  type ShareRequest,
   type StatementSubject,
 } from "./shareLinks";
 import type { ShareCapabilities, ShareLink } from "./types";
@@ -31,6 +37,7 @@ const signed: ShareCapabilities = {
   password: false,
   revocable: false,
   folders: false,
+  singleLink: false,
 };
 
 /** OneDrive on a work account: links kept with the item. */
@@ -41,6 +48,7 @@ const kept: ShareCapabilities = {
   password: true,
   revocable: true,
   folders: true,
+  singleLink: false,
 };
 
 /** Google Drive on a Workspace domain. */
@@ -51,6 +59,7 @@ const drive: ShareCapabilities = {
   password: false,
   revocable: true,
   folders: true,
+  singleLink: false,
   organization: "example.com",
 };
 
@@ -330,6 +339,78 @@ describe("labels and lists", () => {
     // A link made while the list was read stays as it was made.
     expect(mergeLinks([changed], [kept])).toEqual([changed]);
     expect(mergeLinks([], [])).toEqual([]);
+  });
+});
+
+describe("rows of several links", () => {
+  const at = 1_700_000_000;
+  const week = 7 * 86_400;
+  const viewForAWeek: ShareRequest = {
+    options: { kind: "view", audience: "anyone", lifetimeSecs: week },
+    at,
+  };
+  const madeForAWeek = { ...link("", "https://s3.example/a"), expiresAt: at + week + 1 };
+  const own = "Its own statement.";
+
+  it("tells a link made as asked from one that is not", () => {
+    expect(isAsked(madeForAWeek, viewForAWeek)).toBe(true);
+    expect(
+      isAsked({ ...madeForAWeek, expiresAt: at + week - END_TOLERANCE_SECS }, viewForAWeek),
+    ).toBe(true);
+    // The S3 clock note: the link ends well before the end asked for.
+    expect(isAsked({ ...madeForAWeek, expiresAt: at + week - 3600 }, viewForAWeek)).toBe(false);
+    // A public B2 bucket: the address never ends.
+    expect(isAsked({ ...madeForAWeek, expiresAt: undefined }, viewForAWeek)).toBe(false);
+    // Google Drive kept a link that lets people edit.
+    expect(isAsked({ ...madeForAWeek, kind: "edit" }, viewForAWeek)).toBe(false);
+    // Box's settings narrowed who the link works for.
+    expect(isAsked({ ...madeForAWeek, audience: "organization" }, viewForAWeek)).toBe(false);
+    // Box kept the password the link had.
+    expect(isAsked({ ...madeForAWeek, hasPassword: true }, viewForAWeek)).toBe(false);
+
+    const noEnd: ShareRequest = { options: { kind: "view", audience: "anyone" }, at };
+    expect(isAsked(link("anyoneWithLink", "https://drive.example/f"), noEnd)).toBe(true);
+    expect(isAsked(madeForAWeek, noEnd)).toBe(false);
+    const withPassword: ShareRequest = {
+      options: { kind: "view", audience: "anyone", password: "open sesame" },
+      at,
+    };
+    expect(
+      isAsked({ ...link("1", "https://onedrive.example/f"), hasPassword: true }, withPassword),
+    ).toBe(true);
+  });
+
+  it("says nothing only where the statement above describes the link", () => {
+    const draft = viewForAWeek.options;
+    expect(batchLinkLabel(madeForAWeek, viewForAWeek, draft, own)).toBeNull();
+    const kept = { ...madeForAWeek, kind: "edit" as const };
+    expect(batchLinkLabel(kept, viewForAWeek, draft, own)).toBe(`Not what was asked: ${own}`);
+    // A link the item had before the dialog made any.
+    expect(batchLinkLabel(madeForAWeek, null, draft, own)).toBe(`Shared before: ${own}`);
+    // The draft changed since, so the statement above is about the next links.
+    const longer = { ...draft, lifetimeSecs: 2 * week };
+    expect(batchLinkLabel(madeForAWeek, viewForAWeek, longer, own)).toBe(own);
+    expect(batchLinkLabel(madeForAWeek, viewForAWeek, null, own)).toBe(own);
+  });
+
+  it("stamps a request with the time it is made", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(at * 1000 + 999);
+      expect(requestNow(viewForAWeek.options)).toEqual(viewForAWeek);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("compares options field by field", () => {
+    const options = viewForAWeek.options;
+    expect(sameOptions(options, { ...options })).toBe(true);
+    expect(sameOptions(options, { ...options, kind: "download" })).toBe(false);
+    expect(sameOptions(options, { ...options, audience: "organization" })).toBe(false);
+    expect(sameOptions(options, { kind: "view", audience: "anyone" })).toBe(false);
+    expect(sameOptions(options, { ...options, password: "x" })).toBe(false);
+    expect(sameOptions({ ...options, password: "" }, options)).toBe(true);
   });
 });
 

@@ -5,6 +5,7 @@ import {
   KIND_LABELS,
   LIFETIME_UNITS,
   audienceLabel,
+  batchLinkLabel,
   draftLifetime,
   draftOptions,
   draftProblem,
@@ -16,6 +17,7 @@ import {
   linkStatement,
   linksText,
   mergeLinks,
+  requestNow,
   sameLink,
   selectionSummary,
   takesPassword,
@@ -23,6 +25,7 @@ import {
   type LifetimeChoice,
   type LifetimeUnit,
   type ShareDraft,
+  type ShareRequest,
 } from "../lib/shareLinks";
 import type { FileEntry, ShareCapabilities, ShareLink } from "../lib/types";
 import { Dialog } from "./Dialog";
@@ -61,6 +64,11 @@ const UNIT_LABELS: Record<LifetimeUnit, string> = {
   days: "Days",
 };
 
+/** Tells a link made for one item from the same link of another, as Drive names them alike. */
+function madeKey(path: string, link: ShareLink): string {
+  return `${path}\n${linkKey(link)}`;
+}
+
 function replaceAt(
   items: readonly ItemLinks[],
   index: number,
@@ -94,8 +102,10 @@ export function ShareDialog({
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  /** The links the last Create made, which are marked as new. */
+  /** The links the last Create made, by `madeKey`, which are marked as new. */
   const [fresh, setFresh] = useState<ReadonlySet<string>>(new Set());
+  /** What the last Create asked for, which the links it made are checked against. */
+  const [asked, setAsked] = useState<ShareRequest | null>(null);
   /** Counts the Creates that made a link, each of which moves the focus to Copy. */
   const [created, setCreated] = useState(0);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -151,11 +161,12 @@ export function ShareDialog({
     if (!options || busy) return;
     setBusy(true);
     setError(null);
+    const request = requestNow(options);
     const made = new Set<string>();
     await forEachLimited(entries, PARALLEL_REQUESTS, async (entry, index) => {
       try {
         const link = await share.create(sessionId, entry.path, options);
-        made.add(linkKey(link));
+        made.add(madeKey(entry.path, link));
         update(index, (item) => ({ ...item, links: withLink(item.links, link), error: null }));
       } catch (caught) {
         const message = toAppError(caught).message;
@@ -163,6 +174,7 @@ export function ShareDialog({
         else update(index, (item) => ({ ...item, error: message }));
       }
     });
+    setAsked(request);
     setFresh(made);
     setBusy(false);
     if (made.size > 0) setCreated((count) => count + 1);
@@ -207,9 +219,17 @@ export function ShareDialog({
           nowMillis,
         });
 
-  const shown = items.map((item) => item.links[0]).filter((link) => link !== undefined);
+  const isFresh = (item: ItemLinks, link: ShareLink) => fresh.has(madeKey(item.entry.path, link));
+  // Only what the last Create made: the rows say what any other link does.
+  const made = items.flatMap((item) => item.links.filter((link) => isFresh(item, link)));
   const singleItem = single ? items[0] : null;
-  const createLabel = single ? "Create link" : `Create ${entries.length} links`;
+  // A service with one link per item changes the link an item has, for everyone who has it.
+  const changesLink = sharing.singleLink && items.some((item) => item.links.length > 0);
+  const createLabel = single
+    ? changesLink
+      ? "Change link"
+      : "Create link"
+    : `Create ${entries.length} links`;
 
   return (
     <Dialog
@@ -243,7 +263,7 @@ export function ShareDialog({
                     key={linkKey(link)}
                     link={link}
                     statement={statementFor(link, singleItem.entry)}
-                    fresh={fresh.has(linkKey(link))}
+                    fresh={isFresh(singleItem, link)}
                     onRemove={() => remove(0, link)}
                     onError={setError}
                   />
@@ -256,9 +276,12 @@ export function ShareDialog({
           )}
           {singleItem?.error && <p className="field-hint is-error">{singleItem.error}</p>}
 
-          <section className="share-section share-options" aria-label="New link">
+          <section
+            className="share-section share-options"
+            aria-label={single && changesLink ? "Change link" : "New link"}
+          >
             {singleItem && singleItem.links.length > 0 && (
-              <h3 className="share-section-title">New link</h3>
+              <h3 className="share-section-title">{changesLink ? "Change link" : "New link"}</h3>
             )}
             {sharing.kinds.length > 1 && (
               <div className="field">
@@ -366,21 +389,42 @@ export function ShareDialog({
               </label>
             )}
             {draftStatement && <p className="share-statement">{draftStatement}</p>}
+            {changesLink && (
+              <p className="field-hint">
+                {single
+                  ? `${service} keeps one link per item, so this changes the link above for everyone who has it.`
+                  : `${service} keeps one link per item, so an item that has one gets it changed for everyone who has it.`}
+              </p>
+            )}
           </section>
 
           {!single && (
             <ul className="share-batch" aria-label="Links">
-              {items.map((item, index) => (
-                <BatchRow
-                  key={item.entry.path}
-                  item={item}
-                  busy={busy}
-                  fresh={item.links[0] !== undefined && fresh.has(linkKey(item.links[0]))}
-                  onError={(message) =>
-                    update(index, (current) => ({ ...current, error: message }))
-                  }
-                />
-              ))}
+              {items.map((item, index) => {
+                const link = item.links[0];
+                const isNew = link !== undefined && isFresh(item, link);
+                return (
+                  <BatchRow
+                    key={item.entry.path}
+                    item={item}
+                    busy={busy}
+                    fresh={isNew}
+                    label={
+                      link === undefined
+                        ? null
+                        : batchLinkLabel(
+                            link,
+                            isNew ? asked : null,
+                            options,
+                            statementFor(link, item.entry),
+                          )
+                    }
+                    onError={(message) =>
+                      update(index, (current) => ({ ...current, error: message }))
+                    }
+                  />
+                );
+              })}
             </ul>
           )}
 
@@ -390,9 +434,9 @@ export function ShareDialog({
             {!single && (
               <CopyButton
                 className="share-copy-all push-left"
-                text={linksText(shown)}
-                label="Copy all"
-                disabled={shown.length === 0}
+                text={linksText(made)}
+                label={made.length === 1 ? "Copy new link" : "Copy new links"}
+                disabled={made.length === 0}
                 onError={setError}
               />
             )}
@@ -405,7 +449,7 @@ export function ShareDialog({
               className="button button-primary"
               disabled={busy || options === null}
             >
-              {busy ? "Creating..." : createLabel}
+              {busy ? (single && changesLink ? "Changing..." : "Creating...") : createLabel}
             </button>
           </div>
         </div>
@@ -609,12 +653,18 @@ function LinkRow({ link, statement, fresh, onRemove, onError }: LinkRowProps) {
 interface BatchRowProps {
   item: ItemLinks;
   busy: boolean;
+  /** Made by the last Create. */
   fresh: boolean;
+  /** What the link does, where the statement above does not say it. */
+  label: string | null;
   onError: (message: string) => void;
 }
 
-/** One item of several shared at once: its name, and its newest link or why it has none. */
-function BatchRow({ item, busy, fresh, onError }: BatchRowProps) {
+/**
+ * One item of several shared at once: its name, and its newest link or why it has none, with
+ * what that link does when it is not what the statement above says, and the service's notes.
+ */
+function BatchRow({ item, busy, fresh, label, onError }: BatchRowProps) {
   const link = item.links[0];
   const status = item.loading ? "Checking..." : busy ? "Making the link..." : "No link yet";
   return (
@@ -631,6 +681,12 @@ function BatchRow({ item, busy, fresh, onError }: BatchRowProps) {
       ) : (
         !item.error && <span className="share-batch-status">{status}</span>
       )}
+      {link && label && <span className="share-batch-label">{label}</span>}
+      {link?.notes.map((note) => (
+        <span key={note} className="share-batch-note">
+          {note}
+        </span>
+      ))}
       {item.error && <span className="share-batch-error">{item.error}</span>}
     </li>
   );

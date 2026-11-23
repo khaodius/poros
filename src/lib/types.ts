@@ -136,6 +136,8 @@ export interface ShareCapabilities {
   /** Links stay with the item, so they can be listed and removed. */
   revocable: boolean;
   folders: boolean;
+  /** The service keeps one link per item, so making a link changes the one it has. */
+  singleLink: boolean;
   /** The organization the `organization` audience stands for, when its name is known. */
   organization?: string;
 }

@@ -6318,3 +6318,20 @@ textarea::placeholder {
   font-size: var(--font-size-small);
   overflow-wrap: anywhere;
 }
+
+.share-batch-label,
+.share-batch-note {
+  grid-column: 1 / -1;
+  padding-left: 24px;
+  font-size: var(--font-size-small);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.share-batch-label {
+  color: var(--text-muted);
+}
+
+.share-batch-note {
+  color: var(--warning);
+}

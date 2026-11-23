@@ -835,7 +835,10 @@ pub async fn share_remove(
     link_id: String,
 ) -> AppResult<()> {
     let files = sessions.get(&session_id).await?.files();
-    share::remove(files.as_ref(), &events, &session_id, &path, &link_id).await
+    // A link removed elsewhere since the page listed it is gone either way.
+    share::remove(files.as_ref(), &events, &session_id, &path, &link_id)
+        .await
+        .map(drop)
 }
 
 #[tauri::command]

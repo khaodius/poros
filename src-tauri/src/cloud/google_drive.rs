@@ -33,8 +33,6 @@ const FOLDER_TYPE: &str = "application/vnd.google-apps.folder";
 /// Google Docs, Sheets, shortcuts and the like: Drive items without file content.
 const NATIVE_TYPE_PREFIX: &str = "application/vnd.google-apps.";
 const FILE_FIELDS: &str = "id,name,mimeType,size,modifiedTime";
-/// My Drive's own folder, with the account it belongs to.
-const ROOT_FIELDS: &str = "id,name,mimeType,size,modifiedTime,owners(emailAddress)";
 const LIST_FIELDS: &str = "nextPageToken,files(id,name,mimeType,size,modifiedTime)";
 /// Folders before files, then the most recently changed, so a name clash always resolves to
 /// the same item.
@@ -101,21 +99,6 @@ impl DriveFile {
 }
 
 #[derive(Debug, Deserialize)]
-struct Root {
-    #[serde(flatten)]
-    folder: DriveFile,
-    #[serde(default)]
-    owners: Vec<Owner>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Owner {
-    #[serde(default)]
-    email_address: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct FileList {
     #[serde(default)]
@@ -143,20 +126,19 @@ pub struct DriveFs {
 
 impl DriveFs {
     pub async fn connect(api: Api) -> AppResult<Self> {
-        let root: Root = api
-            .json(&|http| {
+        let (root, account) = tokio::join!(
+            api.json::<DriveFile>(&|http| {
                 http.get(format!("{FILES_URL}/root"))
-                    .query(&[("fields", ROOT_FIELDS)])
-            })
-            .await?;
-        let organization = root
-            .owners
-            .iter()
-            .filter_map(|owner| owner.email_address.as_deref())
-            .find_map(sharing::organization_of);
+                    .query(&[("fields", FILE_FIELDS)])
+            }),
+            api.json::<sharing::Account>(&|http| http.get(sharing::USERINFO_URL)),
+        );
+        let root = root?;
+        // Without it, links are offered for anyone only.
+        let organization = account.ok().as_ref().and_then(sharing::organization_of);
         Ok(Self {
             api,
-            root: root.folder,
+            root,
             organization,
             folders: FolderCache::default(),
             folder_creation: tokio::sync::Mutex::new(()),
@@ -670,24 +652,5 @@ mod tests {
         .unwrap();
         assert!(document.is_native());
         assert_eq!(document.kind(), EntryKind::Other);
-    }
-
-    #[test]
-    fn reads_the_account_from_the_root_folder() {
-        let root: Root = serde_json::from_str(
-            r#"{"id":"0AMrootid","name":"My Drive","mimeType":"application/vnd.google-apps.folder","modifiedTime":"2024-05-01T10:00:00.000Z","owners":[{"emailAddress":"ada@example.com"}]}"#,
-        )
-        .unwrap();
-        assert!(root.folder.is_folder());
-        assert_eq!(root.folder.id, "0AMrootid");
-        assert_eq!(
-            root.owners[0].email_address.as_deref(),
-            Some("ada@example.com")
-        );
-        let bare: Root = serde_json::from_str(
-            r#"{"id":"root","name":"My Drive","mimeType":"application/vnd.google-apps.folder"}"#,
-        )
-        .unwrap();
-        assert!(bare.owners.is_empty());
     }
 }

@@ -95,6 +95,8 @@ pub struct ShareCapabilities {
     /// Links stay with the item, so they can be listed and removed.
     pub revocable: bool,
     pub folders: bool,
+    /// The service keeps one link per item, so making a link changes the one it has.
+    pub single_link: bool,
     /// The organization `Audience::Organization` stands for, when its name is known.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub organization: Option<String>,
@@ -173,7 +175,9 @@ pub trait LinkSharing: Send + Sync {
     /// the service's limits.
     async fn create_share_link(&self, path: &str, options: &ShareOptions) -> AppResult<ShareLink>;
 
-    async fn remove_share_link(&self, _path: &str, _link_id: &str) -> AppResult<()> {
+    /// Whether a link was removed: `false` when the item has no link `link_id` names, as
+    /// when it was removed elsewhere since the page listed it.
+    async fn remove_share_link(&self, _path: &str, _link_id: &str) -> AppResult<bool> {
         Err(not_revocable())
     }
 }
@@ -335,14 +339,15 @@ pub async fn create(
     Ok(link)
 }
 
-/// Removes one of the links `path` has, which stops it working for everyone.
+/// Removes one of the links `path` has, which stops it working for everyone. `false` when
+/// the item had no such link left to remove.
 pub async fn remove(
     files: &dyn RemoteFileSystem,
     events: &Events,
     session_id: &str,
     path: &str,
     link_id: &str,
-) -> AppResult<()> {
+) -> AppResult<bool> {
     let sharing = sharing(files)?;
     let path = checked_path(path)?;
     let well_formed = !link_id.is_empty()
@@ -351,13 +356,15 @@ pub async fn remove(
     if !well_formed {
         return Err(AppError::invalid("That is not a link of this item"));
     }
-    sharing.remove_share_link(path, link_id).await?;
-    events.log(
-        LogLevel::Info,
-        Some(session_id),
-        format!("Stopped sharing {} with a link", files.resolve(path)),
-    );
-    Ok(())
+    let removed = sharing.remove_share_link(path, link_id).await?;
+    if removed {
+        events.log(
+            LogLevel::Info,
+            Some(session_id),
+            format!("Stopped sharing {} with a link", files.resolve(path)),
+        );
+    }
+    Ok(removed)
 }
 
 /// A link's address, checked before it is handed to the system's browser: only web
@@ -388,6 +395,7 @@ mod tests {
             password: false,
             revocable: false,
             folders: false,
+            single_link: false,
             organization: None,
         }
     }
@@ -401,6 +409,7 @@ mod tests {
             password: true,
             revocable: true,
             folders: true,
+            single_link: false,
             organization: None,
         }
     }
@@ -528,12 +537,24 @@ mod tests {
     fn opens_only_web_addresses_in_the_browser() {
         assert!(web_address("https://drive.google.com/file/d/abc/view").is_ok());
         assert!(web_address("http://127.0.0.1:9000/bucket/key?X-Amz-Expires=60").is_ok());
+        // What the browser gets is the address as the parser writes it back.
+        for (given, opened) in [
+            ("HTTPS://EXAMPLE.COM/x", "https://example.com/x"),
+            ("  https://example.com/x\n", "https://example.com/x"),
+            ("\thttps://example.com/x ", "https://example.com/x"),
+            ("http:\\\\host", "http://host/"),
+        ] {
+            assert_eq!(web_address(given).unwrap().as_str(), opened, "{given:?}");
+        }
         for refused in [
             "file:///etc/passwd",
             "javascript:alert(1)",
             "ms-msdt:/id",
+            "data:text/html,<script>alert(1)</script>",
+            "data:,hello",
             "/usr/bin/true",
             "",
+            "   ",
             "https://",
         ] {
             assert!(web_address(refused).is_err(), "{refused}");

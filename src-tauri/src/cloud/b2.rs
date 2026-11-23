@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -52,6 +53,8 @@ const AUTO_CONTENT_TYPE: &str = "b2/x-auto";
 const SHARE_CAPABILITY: &str = "shareFiles";
 /// A bucket whose files anyone can download by address.
 const PUBLIC_BUCKET: &str = "allPublic";
+/// How long a bucket's type is trusted, so sharing many files asks for it once.
+const BUCKET_TYPE_TTL: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -270,6 +273,16 @@ fn authorized_address(download_url: &str, bucket: &str, key: &str, token: &str) 
     )
 }
 
+/// What a link to a file in a private bucket opens besides the file: B2 scopes a download
+/// authorization by the start of a name, so it covers longer names, now and later.
+fn prefix_note(example: Option<&str>) -> String {
+    let note = "The link's token opens every file whose name starts with this file's name, including files added later.";
+    match example {
+        Some(other) => format!("{note} One already does: {other}."),
+        None => note.to_string(),
+    }
+}
+
 /// A key's capabilities, when Backblaze listed them, have to include sharing.
 fn may_share(key_capabilities: &[String]) -> bool {
     key_capabilities.is_empty()
@@ -300,6 +313,9 @@ pub struct B2Fs {
     minimum_part_size: u64,
     home: String,
     bucket_ids: Mutex<HashMap<String, String>>,
+    /// Whether each bucket is public, and when that was read. Held while a bucket's type is
+    /// looked up, so files shared in parallel ask for it once.
+    bucket_types: tokio::sync::Mutex<HashMap<String, (bool, Instant)>>,
     /// Upload addresses not in use, by bucket id. Each takes one upload at a time.
     upload_addresses: Mutex<HashMap<String, Vec<UploadAddress>>>,
     folders: FolderCache,
@@ -340,6 +356,7 @@ impl B2Fs {
                 .as_deref()
                 .map_or_else(|| "/".to_string(), |bucket| format!("/{bucket}")),
             bucket_ids: Mutex::new(HashMap::new()),
+            bucket_types: tokio::sync::Mutex::new(HashMap::new()),
             upload_addresses: Mutex::new(HashMap::new()),
             folders: FolderCache::default(),
             folder_creation: tokio::sync::Mutex::new(()),
@@ -883,9 +900,17 @@ impl B2Fs {
 
     /// Whether the bucket's files can be downloaded by address alone. A key that may not
     /// read the bucket's settings gets `false`, and with it a link that works either way.
+    /// The answer is kept for a minute: listing buckets is a paid transaction on B2.
     async fn bucket_is_public(&self, name: &str) -> bool {
+        let mut known = self.bucket_types.lock().await;
+        if let Some((public, read_at)) = known.get(name) {
+            if read_at.elapsed() < BUCKET_TYPE_TTL {
+                return *public;
+            }
+        }
         let body = json!({ "accountId": self.account_id, "bucketName": name });
-        self.call::<BucketList>("b2_list_buckets", body, &format!("/{name}"), true)
+        let public = self
+            .call::<BucketList>("b2_list_buckets", body, &format!("/{name}"), true)
             .await
             .ok()
             .and_then(|list| {
@@ -893,7 +918,9 @@ impl B2Fs {
                     .into_iter()
                     .find(|bucket| bucket.bucket_name == name)
             })
-            .is_some_and(|bucket| bucket.bucket_type.as_deref() == Some(PUBLIC_BUCKET))
+            .is_some_and(|bucket| bucket.bucket_type.as_deref() == Some(PUBLIC_BUCKET));
+        known.insert(name.to_string(), (public, Instant::now()));
+        public
     }
 
     fn public_link(&self, bucket: &str, key: &str) -> ShareLink {
@@ -1328,6 +1355,7 @@ impl LinkSharing for B2Fs {
             password: false,
             revocable: false,
             folders: false,
+            single_link: false,
             organization: None,
         }
     }
@@ -1349,8 +1377,9 @@ impl LinkSharing for B2Fs {
     }
 
     /// The plain address in a public bucket. In a private one, a download authorization
-    /// for the file's name, added to the address: B2 keeps no record of it, so the link
-    /// cannot be taken back and works until it expires or the key is deleted.
+    /// for names that start with the file's name, added to the address: B2 has no narrower
+    /// scope, keeps no record of it, so the link cannot be taken back and works until it
+    /// expires or the key is deleted.
     async fn create_share_link(&self, path: &str, options: &ShareOptions) -> AppResult<ShareLink> {
         let path = protocol::normalize(&self.resolve(path));
         let (Some(bucket), key) = split(&path) else {
@@ -1391,7 +1420,8 @@ impl LinkSharing for B2Fs {
             .unwrap_or(share::DEFAULT_LIFETIME_SECS)
             .clamp(1, share::MAX_SIGNED_LIFETIME_SECS);
         let requested_at = timestamp::now_seconds();
-        // B2 authorizes by the start of the name, and the whole name is the narrowest start.
+        // B2 authorizes by the start of a name, and the whole name is the narrowest start it
+        // takes. Files added later under a longer name are opened too.
         let body = json!({
             "bucketId": bucket_id,
             "fileNamePrefix": key,
@@ -1400,15 +1430,7 @@ impl LinkSharing for B2Fs {
         let authorization: DownloadAuthorization = self
             .call("b2_get_download_authorization", body, &path, true)
             .await?;
-        let notes = also_opened
-            .map(|other| {
-                format!(
-                    "The link's token also opens other files whose names start with this file's name, such as {}.",
-                    remote_path::file_name(other)
-                )
-            })
-            .into_iter()
-            .collect();
+        let notes = vec![prefix_note(also_opened.map(remote_path::file_name))];
         Ok(ShareLink {
             id: String::new(),
             url: authorized_address(
@@ -1645,6 +1667,18 @@ mod tests {
         assert_eq!(list.buckets[0].bucket_type.as_deref(), Some("allPrivate"));
         assert_eq!(list.buckets[1].bucket_type.as_deref(), Some(PUBLIC_BUCKET));
         assert_eq!(list.buckets[2].bucket_type, None);
+    }
+
+    #[test]
+    fn says_what_else_a_private_link_opens() {
+        assert_eq!(
+            prefix_note(None),
+            "The link's token opens every file whose name starts with this file's name, including files added later."
+        );
+        assert_eq!(
+            prefix_note(Some("a.txt.bak")),
+            "The link's token opens every file whose name starts with this file's name, including files added later. One already does: a.txt.bak."
+        );
     }
 
     #[test]

@@ -218,6 +218,7 @@ impl LinkSharing for OneDriveFs {
             password: self.account != Account::Organization,
             revocable: true,
             folders: true,
+            single_link: false,
             organization: None,
         }
     }
@@ -277,7 +278,7 @@ impl LinkSharing for OneDriveFs {
 
     /// Removes only a permission that is one of the item's links, so an id from the page
     /// cannot take away a person's own access to the item.
-    async fn remove_share_link(&self, path: &str, link_id: &str) -> AppResult<()> {
+    async fn remove_share_link(&self, path: &str, link_id: &str) -> AppResult<bool> {
         let path = protocol::normalize(&self.resolve(path));
         if path == "/" {
             return Err(top_folder());
@@ -286,7 +287,7 @@ impl LinkSharing for OneDriveFs {
         let links = self.links_of(&item.id).await?;
         match links.iter().find(|link| link.id == link_id) {
             // Already removed, here or in the browser.
-            None => return Ok(()),
+            None => return Ok(false),
             Some(link) if !link.revocable => {
                 return Err(AppError::new(
                     ErrorKind::PermissionDenied,
@@ -314,9 +315,8 @@ impl LinkSharing for OneDriveFs {
                 ),
                 _ => error,
             })?;
-        // A link already removed, here or in the browser, is gone either way.
-        drop(response);
-        Ok(())
+        // Removed in the browser since the list above was read: gone either way.
+        Ok(response.status() != StatusCode::NOT_FOUND)
     }
 }
 

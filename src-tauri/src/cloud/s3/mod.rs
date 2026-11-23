@@ -1266,6 +1266,7 @@ impl LinkSharing for S3Fs {
             password: false,
             revocable: false,
             folders: false,
+            single_link: false,
             organization: None,
         }
     }

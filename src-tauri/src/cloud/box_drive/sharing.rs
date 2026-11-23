@@ -85,19 +85,23 @@ impl SharedLink {
     }
 }
 
-/// The body that gives an item the link `options` ask for, made at `now`.
+/// The body that gives an item the link `options` ask for, made at `now`. Box keeps the
+/// value of a field left out, so a link without an end says so: otherwise an end the
+/// item's link already has would stay. A password left out stays too, which keeps a
+/// protected link protected.
 fn link_request(options: &ShareOptions, now: i64) -> AppResult<serde_json::Value> {
     if options.kind != LinkKind::View {
         return Err(AppError::invalid(
             "Box links open the item for viewing; make a view link",
         ));
     }
-    let mut link = json!({ "access": access_of(options.audience) });
-    if let Some(lifetime_secs) = options.lifetime_secs {
-        link["unshared_at"] = json!(timestamp::format_rfc3339(
-            now.saturating_add_unsigned(lifetime_secs)
-        ));
-    }
+    let unshared_at = options
+        .lifetime_secs
+        .map(|lifetime_secs| timestamp::format_rfc3339(now.saturating_add_unsigned(lifetime_secs)));
+    let mut link = json!({
+        "access": access_of(options.audience),
+        "unshared_at": unshared_at,
+    });
     if let Some(password) = &options.password {
         if options.audience != Audience::Anyone {
             return Err(AppError::invalid(
@@ -109,7 +113,9 @@ fn link_request(options: &ShareOptions, now: i64) -> AppResult<serde_json::Value
     Ok(json!({ "shared_link": link }))
 }
 
-/// Box's refusal to make a link, with what the chosen options suggest doing about it.
+/// Box's refusal to make a link, in Box's words first, then what the chosen options
+/// suggest trying. A refusal can be about the plan or about the password itself, and Box
+/// does not always say which.
 fn link_refusal(refusal: Refusal, options: &ShareOptions) -> AppError {
     let said = refusal.error.message.trim_end_matches('.');
     let extras = options.lifetime_secs.is_some()
@@ -118,7 +124,7 @@ fn link_refusal(refusal: Refusal, options: &ShareOptions) -> AppError {
     let advice = if refusal.error.kind == ErrorKind::PermissionDenied {
         " Your account or its administrator may not allow a link like this for the item: try a narrower audience, or ask the item's owner."
     } else if extras {
-        " Links that expire, have a password or are limited to the company need a paid Box plan: try without them."
+        " Links that expire, have a password or are limited to the company may need a paid Box plan: if Box's reason is not about the password itself, try without them."
     } else {
         ""
     };
@@ -158,6 +164,7 @@ impl LinkSharing for BoxFs {
             password: true,
             revocable: true,
             folders: true,
+            single_link: true,
             organization: None,
         }
     }
@@ -176,8 +183,9 @@ impl LinkSharing for BoxFs {
         Ok(shared.shared_link.iter().map(SharedLink::link).collect())
     }
 
-    /// Sets the item's one link, which changes the link it already has, if any: the
-    /// address stays and the audience, end and password become the ones asked for.
+    /// Sets the item's one link, which changes the link it already has, if any, for
+    /// everyone who has its address: the address stays, the audience and end become the
+    /// ones asked for, and a password stays unless a new one is given.
     async fn create_share_link(&self, path: &str, options: &ShareOptions) -> AppResult<ShareLink> {
         let body = link_request(options, timestamp::now_seconds())?;
         let item = self.shareable(path).await?;
@@ -208,9 +216,17 @@ impl LinkSharing for BoxFs {
             })
     }
 
-    async fn remove_share_link(&self, path: &str, _link_id: &str) -> AppResult<()> {
+    async fn remove_share_link(&self, path: &str, _link_id: &str) -> AppResult<bool> {
         let item = self.shareable(path).await?;
         let url = item_url(&item);
+        let shared: SharedItem = self
+            .api
+            .json(&|http| http.get(&url).query(&[("fields", "shared_link")]))
+            .await?;
+        if shared.shared_link.is_none() {
+            // Already removed, here or in the browser.
+            return Ok(false);
+        }
         let body = json!({ "shared_link": null });
         self.api
             .send(&|http| {
@@ -218,8 +234,8 @@ impl LinkSharing for BoxFs {
                     .query(&[("fields", "shared_link")])
                     .json(&body)
             })
-            .await
-            .map(drop)
+            .await?;
+        Ok(true)
     }
 }
 
@@ -240,11 +256,11 @@ mod tests {
     fn builds_the_shared_link_request() {
         assert_eq!(
             link_request(&options(Audience::Anyone), 0).unwrap(),
-            json!({ "shared_link": { "access": "open" } })
+            json!({ "shared_link": { "access": "open", "unshared_at": null } })
         );
         assert_eq!(
             link_request(&options(Audience::Invited), 0).unwrap(),
-            json!({ "shared_link": { "access": "collaborators" } })
+            json!({ "shared_link": { "access": "collaborators", "unshared_at": null } })
         );
         let limited = ShareOptions {
             lifetime_secs: Some(7 * 86_400),
@@ -261,7 +277,7 @@ mod tests {
         };
         assert_eq!(
             link_request(&protected, 0).unwrap(),
-            json!({ "shared_link": { "access": "open", "password": "Open-Sesame1" } })
+            json!({ "shared_link": { "access": "open", "unshared_at": null, "password": "Open-Sesame1" } })
         );
         let narrow = ShareOptions {
             password: Some("Open-Sesame1".into()),
@@ -355,6 +371,32 @@ mod tests {
         );
         assert!(plan
             .message
-            .ends_with("need a paid Box plan: try without them."));
+            .starts_with("Box did not make the link: Bad Request. "));
+        assert!(plan.message.contains("may need a paid Box plan"));
+        let protected = ShareOptions {
+            password: Some("short".into()),
+            ..options(Audience::Anyone)
+        };
+        let weak = link_refusal(
+            api::refusal_from(
+                StatusCode::BAD_REQUEST,
+                br#"{"type":"error","status":400,"code":"bad_request","message":"Password does not meet minimum requirements."}"#,
+            ),
+            &protected,
+        );
+        assert!(weak.message.starts_with(
+            "Box did not make the link: Password does not meet minimum requirements. "
+        ));
+        // Box's reason comes first, and the plan is only a maybe.
+        assert!(weak.message.contains(" may need a paid Box plan"));
+        assert!(!weak.message.contains("limited to the company need"));
+        let plain = link_refusal(
+            api::refusal_from(
+                StatusCode::BAD_REQUEST,
+                br#"{"type":"error","status":400,"code":"bad_request","message":"Bad Request"}"#,
+            ),
+            &options(Audience::Anyone),
+        );
+        assert_eq!(plain.message, "Box did not make the link: Bad Request.");
     }
 }

@@ -52,11 +52,14 @@ pub async fn share(context: &Context, arguments: &ShareArgs) -> AppResult<Reply>
         return each(&paths, |path| async move {
             let links = share::links(files, path).await?;
             let mut removed: u64 = 0;
+            let mut revocable: u64 = 0;
             for link in links.iter().filter(|link| link.revocable) {
-                share::remove(files, &context.events, session_id, path, &link.id).await?;
-                removed += 1;
+                revocable += 1;
+                if share::remove(files, &context.events, session_id, path, &link.id).await? {
+                    removed += 1;
+                }
             }
-            let kept = links.len() as u64 - removed;
+            let kept = links.len() as u64 - revocable;
             if kept > 0 {
                 return Err(AppError::unsupported(format!(
                     "{path} is shared through a folder above it; stop sharing that folder"

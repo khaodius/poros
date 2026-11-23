@@ -20,8 +20,10 @@ use crate::share::{
 const SHARE_FIELDS: &str =
     "webViewLink,webContentLink,permissions(id,type,role,domain,permissionDetails(inherited))";
 const PERMISSION_FIELDS: &str = "id,type,role,domain";
-/// Google's own mail domains, which are not organizations.
-const PERSONAL_DOMAINS: [&str; 2] = ["gmail.com", "googlemail.com"];
+/// Google's OpenID account details, which the `openid email` scopes allow.
+pub(super) const USERINFO_URL: &str = "https://openidconnect.googleapis.com/v1/userinfo";
+/// The longest name DNS allows.
+const MAX_DOMAIN_LENGTH: usize = 253;
 /// The reasons Drive gives when the organization's sharing rules forbid a permission.
 const POLICY_REASONS: [&str; 7] = [
     "invalidSharingRequest",
@@ -33,11 +35,28 @@ const POLICY_REASONS: [&str; 7] = [
     "teamDrivesSharingRestrictionNotAllowed",
 ];
 
-/// The organization an account belongs to, from its address; none for a personal account.
-pub(super) fn organization_of(email: &str) -> Option<String> {
-    let (_, domain) = email.trim().rsplit_once('@')?;
-    let domain = domain.to_ascii_lowercase();
-    (!domain.is_empty() && !PERSONAL_DOMAINS.contains(&domain.as_str())).then_some(domain)
+/// What Google says about the signed-in account.
+#[derive(Debug, Default, Deserialize)]
+pub(super) struct Account {
+    /// The hosted domain: given only for a Google Workspace account, whatever the mail
+    /// address of a personal one is.
+    #[serde(default)]
+    hd: Option<String>,
+}
+
+/// The Workspace domain links can be limited to; none for a personal account, or for a
+/// domain that is not a plain host name.
+pub(super) fn organization_of(account: &Account) -> Option<String> {
+    let domain = account.hd.as_deref()?.trim().to_ascii_lowercase();
+    let plain = domain.len() <= MAX_DOMAIN_LENGTH
+        && domain.contains('.')
+        && domain
+            .split('.')
+            .all(|label| !label.is_empty() && !label.starts_with('-'))
+        && domain
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-');
+    plain.then_some(domain)
 }
 
 /// The parts of a file that sharing works with.
@@ -188,12 +207,14 @@ fn sharing_refusal(refusal: Refusal, audience: Audience, organization: Option<&s
         (Audience::Anyone, Some(domain)) => format!(
             "Your organization does not allow links that anyone can open. Share with people in {domain} instead, or ask an administrator to allow sharing outside it."
         ),
-        (Audience::Anyone, None) => format!(
-            "Google Drive does not allow a link that anyone can open for this item ({}). Check the sharing settings of the folder it is in.",
+        (_, Some(domain)) => format!(
+            "Your organization does not allow sharing this item with a link ({}). Ask an administrator of {domain} about the sharing settings.",
             refusal.error.message
         ),
-        _ => format!(
-            "Your organization does not allow sharing this item with a link ({}). Ask an administrator about the sharing settings.",
+        // A personal account, or one whose organization Google did not name: no
+        // administrator to point to.
+        (_, None) => format!(
+            "Google Drive does not allow a link for this item ({}). Check the sharing settings of the item and of the folder or shared drive it is in, or ask its owner.",
             refusal.error.message
         ),
     };
@@ -307,6 +328,7 @@ impl LinkSharing for DriveFs {
             password: false,
             revocable: true,
             folders: true,
+            single_link: false,
             organization: self.organization.clone(),
         }
     }
@@ -380,13 +402,13 @@ impl LinkSharing for DriveFs {
 
     /// Removes only a permission that is one of the item's links, so an id from the page
     /// cannot take away a person's own access to the item.
-    async fn remove_share_link(&self, path: &str, link_id: &str) -> AppResult<()> {
+    async fn remove_share_link(&self, path: &str, link_id: &str) -> AppResult<bool> {
         let path = protocol::normalize(&self.resolve(path));
         let file = self.existing(&path).await?;
         let links = self.links_of(&file.id).await?;
         match links.iter().find(|link| link.id == link_id) {
             // Already removed, here or in the browser.
-            None => return Ok(()),
+            None => return Ok(false),
             Some(link) if !link.revocable => return Err(inherited_link()),
             Some(_) => {}
         }
@@ -403,8 +425,9 @@ impl LinkSharing for DriveFs {
             )
             .await?;
         match response.status() {
-            // Already removed, here or in the browser.
-            status if status.is_success() || status == StatusCode::NOT_FOUND => Ok(()),
+            status if status.is_success() => Ok(true),
+            // Removed in the browser since the list above was read.
+            StatusCode::NOT_FOUND => Ok(false),
             _ => Err(sharing_refusal(
                 api::refusal(response).await,
                 Audience::Anyone,
@@ -448,14 +471,37 @@ mod tests {
 
     #[test]
     fn tells_organizations_from_personal_accounts() {
+        let organization = |body: &str| {
+            let account: Account = serde_json::from_str(body).unwrap();
+            organization_of(&account)
+        };
         assert_eq!(
-            organization_of("ada@Example.com"),
+            organization(
+                r#"{"sub":"1","email":"ada@example.com","email_verified":true,"hd":"Example.com"}"#
+            ),
             Some("example.com".into())
         );
-        assert_eq!(organization_of("someone@gmail.com"), None);
-        assert_eq!(organization_of("someone@googlemail.com"), None);
-        assert_eq!(organization_of("not an address"), None);
-        assert_eq!(organization_of("trailing@"), None);
+        // A personal account on any address has no hosted domain.
+        assert_eq!(
+            organization(r#"{"sub":"2","email":"ada@outlook.com","email_verified":true}"#),
+            None
+        );
+        assert_eq!(organization(r#"{"sub":"3","email":"ada@gmail.com"}"#), None);
+        for odd in [
+            "",
+            " ",
+            "localhost",
+            "a..b",
+            "-a.example",
+            "a b.example",
+            "a.exam\nple",
+            "a.example/x",
+        ] {
+            let account = Account {
+                hd: Some(odd.into()),
+            };
+            assert_eq!(organization_of(&account), None, "{odd:?}");
+        }
     }
 
     #[test]
@@ -565,6 +611,7 @@ mod tests {
             None,
         );
         assert!(personal.message.contains("ACL change not allowed"));
+        assert!(!personal.message.contains("organization"));
         let not_allowed = br#"{"error":{"code":403,"message":"The user does not have sufficient permissions for this file.","errors":[{"reason":"insufficientFilePermissions"}]}}"#;
         let owner = sharing_refusal(
             api::refusal_from(StatusCode::FORBIDDEN, not_allowed),
