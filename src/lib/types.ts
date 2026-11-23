@@ -1051,6 +1051,72 @@ export interface PreviewPlacement {
 export type UpdateProgress =
   { stage: "downloading"; received: number; total: number | null } | { stage: "installing" };
 
+/** Mirrored in src-tauri/src/search/pattern.rs. */
+export type SearchPatternKind = "text" | "regex";
+
+/** Mirrored in src-tauri/src/search/criteria.rs. */
+export type SearchKind = "any" | "files" | "folders";
+
+/** Mirrored in src-tauri/src/search/mod.rs. */
+export interface SearchRequest {
+  searchId: string;
+  location: FileLocation;
+  folder: string;
+  /** Empty finds every name. */
+  pattern: string;
+  patternKind: SearchPatternKind;
+  caseSensitive: boolean;
+  kind: SearchKind;
+  minSize: number | null;
+  maxSize: number | null;
+  /** Seconds since the Unix epoch, both ends included. */
+  modifiedAfter: number | null;
+  modifiedBefore: number | null;
+  /** 1 looks only at what is directly in the folder; null goes all the way down. */
+  maxDepth: number | null;
+  /** Whether hidden folders are searched too. */
+  hidden: boolean;
+  followLinks: boolean;
+  limit: number | null;
+}
+
+export interface SearchReport {
+  /** What was found since the last report. */
+  entries: FileEntry[];
+  /** How many folders were looked at so far. */
+  folders: number;
+  /** The folder being looked at. */
+  current: string;
+  /** Folders that could not be read since the last report. */
+  unreadable: OperationFailure[];
+  /**
+   * The start folder as its listing names it, once, when not as asked for: a link to a folder,
+   * `/var` that is `/private/var`, a short name on Windows. Results are below this name.
+   */
+  start?: string;
+}
+
+export type SearchEngine = "find" | "walker";
+
+export type SearchOutcome = "finished" | "stopped" | "capped";
+
+export interface SearchSummary {
+  engine: SearchEngine;
+  outcome: SearchOutcome;
+  found: number;
+  folders: number;
+  /** How many folders could not be read, also those no report listed. */
+  unreadable: number;
+}
+
+/** What became of results a search view still shows. */
+export interface SearchRecheck {
+  /** The items still there, as their folders list them now. */
+  entries: FileEntry[];
+  /** The paths nothing is at any more. */
+  missing: string[];
+}
+
 /** What this computer lacks for mounting drives, and how to get it. Mirrored in `mount/platform.rs`. */
 export interface MountMissing {
   problem: string;
