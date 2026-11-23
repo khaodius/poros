@@ -137,6 +137,7 @@ describe("FileList", () => {
     remove: async () => {},
   };
   const onRename = vi.fn();
+  const onRenameSeveral = vi.fn();
   const ignored = () => {};
   const actions: FileListActions = {
     onActivate: ignored,
@@ -144,6 +145,7 @@ describe("FileList", () => {
     onHeaderContextMenu: ignored,
     onDelete: ignored,
     onRename,
+    onRenameSeveral,
     onRenameSubmit: async () => true,
     onRenameCancel: ignored,
     onEdit: ignored,
@@ -158,6 +160,7 @@ describe("FileList", () => {
     onCopy: ignored,
     onPaste: ignored,
     onProperties: ignored,
+    onCompareFolders: ignored,
   };
   const noRows: ReadonlySet<string> = new Set();
   let pane: PaneController;
@@ -219,7 +222,10 @@ describe("FileList", () => {
     });
   }
 
-  beforeEach(() => onRename.mockReset());
+  beforeEach(() => {
+    onRename.mockReset();
+    onRenameSeveral.mockReset();
+  });
 
   it("renames with F2 the one selected row on show, though a hidden one is selected too", async () => {
     await selectedWithAHiddenFile();
@@ -227,6 +233,17 @@ describe("FileList", () => {
       body().dispatchEvent(new KeyboardEvent("keydown", { key: "F2", bubbles: true }));
     });
     expect(onRename).toHaveBeenCalledWith(expect.objectContaining({ name: "a.txt" }));
+    expect(onRenameSeveral).not.toHaveBeenCalled();
+  });
+
+  it("renames with F2 several selected rows on show together", async () => {
+    await selectedWithAHiddenFile();
+    await onPane((pane) => pane.toggleSelected(`${FOLDER}/b.txt`));
+    await act(async () => {
+      body().dispatchEvent(new KeyboardEvent("keydown", { key: "F2", bubbles: true }));
+    });
+    expect(onRenameSeveral).toHaveBeenCalledTimes(1);
+    expect(onRename).not.toHaveBeenCalled();
   });
 
   it("renames on a slow click the one selected row on show, though a hidden one is selected too", async () => {

@@ -1,6 +1,11 @@
 import { create } from "zustand";
 import { settingsStore as settingsIpc } from "../lib/ipc";
-import { DEFAULT_SETTINGS, sanitizeSettings, type Settings } from "../lib/settings";
+import {
+  DEFAULT_SETTINGS,
+  sanitizeSettings,
+  storableSettings,
+  type Settings,
+} from "../lib/settings";
 
 interface SettingsState {
   settings: Settings;
@@ -57,7 +62,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     previews = [];
     set({ settings: next });
     try {
-      const saved = await settingsIpc.set(next);
+      const saved = await settingsIpc.set(storableSettings(next));
       if (save === saves) set({ settings: withPreviews(sanitizeSettings(saved)) });
     } catch (caught) {
       // What is on show was never stored.

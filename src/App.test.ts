@@ -8,6 +8,12 @@ import { askToSave } from "./state/editorActions";
 import { useUiStore } from "./state/uiStore";
 import { AppDialog } from "./App";
 
+// Modules that work across windows ask, as they load, which window this page is.
+vi.hoisted(() => {
+  Object.assign(globalThis, {
+    __TAURI_INTERNALS__: { metadata: { currentWindow: { label: "main" } } },
+  });
+});
 const editor = vi.hoisted(() => ({ saveAndClose: vi.fn(), closeWindowNow: vi.fn() }));
 vi.mock("./state/editorActions", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./state/editorActions")>()),

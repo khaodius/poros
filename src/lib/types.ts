@@ -127,6 +127,8 @@ export interface SessionInfo {
   protocol: Protocol;
   /** Set for the session of an unlocked vault, whose host, port and username are its server's. */
   vault?: VaultInfo;
+  /** Listings give times only to the minute, or to the day, as FTP's `LIST` does. */
+  coarseTimes?: boolean;
 }
 
 export type ErrorKind =
@@ -493,6 +495,47 @@ export interface SyncProgress {
   remoteEntries: number;
   compared: number;
   toCompare: number;
+}
+
+/** One of two compared folders. The backend knows itself whether its listings' times are coarse. */
+export interface FolderRef {
+  location: FileLocation;
+  path: string;
+}
+
+export interface FolderCompareRequest {
+  /** Names the comparison for `SyncProgress` events and for `sync_cancel`. */
+  requestId: string;
+  left: FolderRef;
+  right: FolderRef;
+  sizeOnly: boolean;
+  timeToleranceSecs: number;
+  ignoreHourOffsets: boolean;
+  includeHidden: boolean;
+  ignoreCase: boolean;
+}
+
+/** How the files in one folder that both sides have compare, at any depth below it. */
+export interface FolderSummary {
+  /** Below the compared folders, with `/` between names; in lower case when case is ignored. */
+  path: string;
+  identical: number;
+  newerLeft: number;
+  newerRight: number;
+  onlyLeft: number;
+  onlyRight: number;
+  different: number;
+  /** Folders that could not be read, links that lead nowhere and special files. */
+  notCompared: number;
+}
+
+export interface FolderComparison {
+  /** Shallowest first. */
+  folders: FolderSummary[];
+  /** More folders were compared than are reported; the deepest are left out. */
+  truncated: boolean;
+  leftEntries: number;
+  rightEntries: number;
 }
 
 export interface SyncChoice {
@@ -864,6 +907,58 @@ export interface DeleteSummary {
   failed: number;
   failures: OperationFailure[];
   methods: OperationMethod[];
+}
+
+/** One item's name in its folder, and the name it is to have. */
+export interface PlannedRename {
+  from: string;
+  to: string;
+}
+
+/**
+ * Renames that go through together or not at all, in an order in which each new name is free
+ * by the time it is needed. Names that trade places form a ring with no such order: the first
+ * item of the ring then waits under `temporary` while the others move, and takes its name last.
+ */
+export interface RenameGroup {
+  temporary?: string;
+  renames: PlannedRename[];
+}
+
+export interface RenameRequest {
+  operationId: string;
+  location: FileLocation;
+  /** The folder every item is in. */
+  directory: string;
+  /** Run in this order. */
+  groups: RenameGroup[];
+}
+
+export interface RenamedItem extends PlannedRename {
+  /** Where the item is now. */
+  path: string;
+}
+
+export interface RenameFailure extends PlannedRename {
+  message: string;
+}
+
+/** An item left under its temporary name, because it could not be moved back either. */
+export interface StrandedItem extends PlannedRename {
+  /** The name it has now. */
+  temporary: string;
+  /** Why it could not be moved back. */
+  message: string;
+}
+
+export interface RenameSummary {
+  /** The items that have their new name, in the order they got it. */
+  renamed: RenamedItem[];
+  /** The rename that stopped the rest, and why. The items after it keep their names. */
+  failure?: RenameFailure;
+  stranded?: StrandedItem;
+  /** Stopped by the user before every item was renamed. */
+  cancelled: boolean;
 }
 
 export interface FileDetails {

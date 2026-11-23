@@ -106,7 +106,10 @@ interface Load {
 const NOT_STARTED: Load = { shown: false, answered: Promise.resolve(false) };
 
 export interface PaneController {
+  /** What the pane shows: the folder's listing, or the results while they are on show. */
   listing: DirListing | null;
+  /** The folder's listing, which stays behind the results while they are on show. */
+  folder: DirListing | null;
   /** The entries on show, in the order shown; none from collapsed groups. */
   visibleEntries: FileEntry[];
   /** Entries the filter and the hidden files setting let through, collapsed groups included. */
@@ -191,6 +194,8 @@ export interface PaneOptions {
    * with when that is not the pane's own, or null. The pane keeps its place and its history.
    */
   handover?: (path: string) => Handover | null;
+  /** Entries left out by name, as the identical ones of two compared panes can be. */
+  hideNames?: ReadonlySet<string>;
   /**
    * Remembered listings to show folders from at once; without them every folder is awaited, and
    * a folder that fails to reload stays on show as it was.
@@ -218,6 +223,7 @@ export function usePane(
     groupByDate = false,
     onSortChange,
     handover,
+    hideNames,
     listings,
     heldPaths = NO_PATHS,
     results = null,
@@ -291,15 +297,19 @@ export function usePane(
   );
   const displayed = showingResults ? results : folderDisplayed;
   const showsHidden = showsHiddenItems(showHidden, showingResults);
-  const sortedEntries = useMemo(
-    () =>
-      sortEntries(
-        filterEntries(displayed?.entries ?? [], { showHidden: showsHidden, query: filter }),
-        sort,
-        foldersFirst,
-      ),
-    [displayed, showsHidden, filter, sort, foldersFirst],
-  );
+  // Names are left out of a folder's listing only: results come from many folders.
+  const hiddenNames = showingResults ? undefined : hideNames;
+  const sortedEntries = useMemo(() => {
+    const shown = filterEntries(displayed?.entries ?? [], {
+      showHidden: showsHidden,
+      query: filter,
+    });
+    return sortEntries(
+      hiddenNames ? shown.filter((entry) => !hiddenNames.has(entry.name)) : shown,
+      sort,
+      foldersFirst,
+    );
+  }, [displayed, showsHidden, filter, sort, foldersFirst, hiddenNames]);
   // As in Explorer, the groups run the other way only while sorting oldest first by date.
   const newestFirst = sort.key !== "modified" || sort.direction === -1;
   const groups = useMemo(
@@ -859,6 +869,7 @@ export function usePane(
 
   return {
     listing: displayed,
+    folder: folderDisplayed,
     visibleEntries,
     entryCount: sortedEntries.length,
     groups,

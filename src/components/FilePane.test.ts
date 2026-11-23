@@ -6,6 +6,12 @@ import type { FileSource } from "../lib/fileSource";
 import type { FileEntry } from "../lib/types";
 import { FilePane } from "./FilePane";
 
+// Modules that work across windows ask, as they load, which window this page is.
+vi.hoisted(() => {
+  Object.assign(globalThis, {
+    __TAURI_INTERNALS__: { metadata: { currentWindow: { label: "main" } } },
+  });
+});
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(() => Promise.resolve(null)),
   Channel: class {},
