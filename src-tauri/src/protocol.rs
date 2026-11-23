@@ -229,6 +229,18 @@ pub trait RemoteFileSystem: Send + Sync {
 
     async fn rename(&self, path: &str, new_name: &str) -> AppResult<String>;
 
+    /// Moves a file or folder to `target`, a full path that may lie in another folder,
+    /// taking the place of a file already there. Protocols that can only rename within a
+    /// folder leave this unsupported, and callers fall back to `rename` or to copying.
+    async fn move_path(&self, path: &str, target: &str) -> AppResult<()> {
+        let _ = target;
+        Err(AppError::unsupported(format!(
+            "{} cannot move {} to another folder",
+            self.protocol().display_name(),
+            remote_path::file_name(path)
+        )))
+    }
+
     /// Folders are removed with everything in them.
     async fn delete(&self, paths: &[String]) -> AppResult<()>;
 

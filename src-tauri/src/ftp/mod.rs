@@ -346,6 +346,15 @@ impl RemoteFileSystem for FtpFs {
         .await
     }
 
+    async fn move_path(&self, path: &str, target: &str) -> AppResult<()> {
+        let path = self.resolve(path);
+        let target = self.resolve(target);
+        self.with_control(move |control| {
+            Box::pin(async move { control.rename(&path, &target).await })
+        })
+        .await
+    }
+
     async fn delete(&self, paths: &[String]) -> AppResult<()> {
         let resolved: Vec<String> = paths.iter().map(|path| self.resolve(path)).collect();
         let targets = protocol::outermost(&resolved);

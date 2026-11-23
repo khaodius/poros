@@ -24,6 +24,7 @@ pub mod ftp;
 pub mod import;
 pub mod local;
 pub mod model;
+pub mod mount;
 pub mod protocol;
 pub mod remote_path;
 pub mod route;

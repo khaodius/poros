@@ -639,6 +639,10 @@ impl RemoteFileSystem for RemoteFs {
         RemoteFs::rename(self, path, new_name).await
     }
 
+    async fn move_path(&self, path: &str, target: &str) -> AppResult<()> {
+        RemoteFs::replace(self, &self.resolve(path), &self.resolve(target)).await
+    }
+
     async fn delete(&self, paths: &[String]) -> AppResult<()> {
         RemoteFs::delete(self, paths).await
     }
