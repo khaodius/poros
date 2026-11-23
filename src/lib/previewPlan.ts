@@ -227,8 +227,11 @@ export function changedSinceListed(
   return Math.abs(stamp.modified / 1000 - entry.modified) > 1;
 }
 
-/** Why a preview could not be read, as far as the pane tells them apart. */
-export type Problem = "denied" | "gone" | "lost" | "locked" | "busy" | "other";
+/**
+ * Why a preview could not be read, as far as the pane tells them apart. A connection is "busy"
+ * with another request for a moment, or "lent" to transfers for as long as they run.
+ */
+export type Problem = "denied" | "gone" | "lost" | "locked" | "busy" | "lent" | "other";
 
 export function problemOf(error: AppError, inVault: boolean): Problem {
   switch (error.kind) {
@@ -238,6 +241,8 @@ export function problemOf(error: AppError, inVault: boolean): Problem {
       return "gone";
     case "busy":
       return "busy";
+    case "lent":
+      return "lent";
     case "sessionNotFound":
       // A vault's session ends when the vault is locked.
       return inVault ? "locked" : "lost";

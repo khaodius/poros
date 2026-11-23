@@ -3,7 +3,8 @@
 //! `MAX_READ_BYTES` whatever it is asked for, reads only the range it needs from the server,
 //! and stops when the page cancels it, leaving the connection ready for the next request. On
 //! FTP, where one control connection serves every request, a preview never queues behind a
-//! transfer: it takes the connection only while nothing else holds it.
+//! transfer, which keeps the connection for a whole file: it waits a few seconds at most for
+//! anything else holding it, such as the listing of a folder, and answers busy past that.
 
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
@@ -33,6 +34,11 @@ const LOCAL_PIECE_BYTES: u64 = 1024 * 1024;
 /// How long a cancellation that arrived before its read is remembered.
 const EARLY_CANCEL_LIFETIME: Duration = Duration::from_secs(60);
 const MAX_REQUEST_ID_BYTES: usize = 64;
+/// How long a preview's request waits for an FTP connection something other than transfers
+/// holds, such as the listing of a folder, before it answers busy.
+const CONNECTION_PATIENCE: Duration = Duration::from_secs(4);
+/// How often a preview that waits for an FTP connection looks whether transfers took it.
+const LENT_CHECK_EVERY: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -75,8 +81,8 @@ enum Slot {
 /// up their names on their own, so one window never cancels another's read.
 type ReadKey = (String, String);
 
-/// The previews of one FTP connection wait here for each other, so that each finds the
-/// connection free and only something else holding it makes a preview busy.
+/// The previews of one FTP connection wait here for each other, so that only something else
+/// holding the connection counts against how long a preview waits for it.
 type Turn = Arc<tokio::sync::Mutex<()>>;
 
 pub struct FilePreviews {
@@ -84,6 +90,7 @@ pub struct FilePreviews {
     reads: Mutex<HashMap<ReadKey, Slot>>,
     /// By connection identity.
     turns: Mutex<HashMap<usize, Turn>>,
+    patience: Duration,
 }
 
 /// A read under way: forgotten once it ends.
@@ -105,12 +112,13 @@ impl FilePreviews {
             sessions,
             reads: Mutex::new(HashMap::new()),
             turns: Mutex::new(HashMap::new()),
+            patience: CONNECTION_PATIENCE,
         }
     }
 
     /// Reads the range asked for by the window labelled `owner`. `lent` tells whether transfers
     /// are using the connection a server's file would be read over, in which case the read is
-    /// refused as busy instead of waiting for them or making them wait.
+    /// refused at once instead of waiting for them or making them wait.
     pub async fn read(
         &self,
         owner: &str,
@@ -152,8 +160,8 @@ impl FilePreviews {
             return Err(lent_to_transfers());
         }
         let _turn = self.turn(files.as_ref(), Some(cancel)).await?;
-        let read = ftp::without_waiting(read_remote(files.clone(), path, offset, length, cancel));
-        busy_as_lent(read.await, files.as_ref(), &lent)
+        let read = read_remote(files.clone(), path, offset, length, cancel);
+        self.patiently(files.as_ref(), cancel, lent, read).await
     }
 
     /// Lists a folder on a server for the summary of what it holds, on the same terms as a
@@ -170,8 +178,43 @@ impl FilePreviews {
             return Err(lent_to_transfers());
         }
         let _turn = self.turn(files.as_ref(), None).await?;
-        let listed = ftp::without_waiting(files.list_dir(path)).await;
-        busy_as_lent(listed, files.as_ref(), &lent)
+        let never = CancellationToken::new();
+        self.patiently(files.as_ref(), &never, lent, files.list_dir(path))
+            .await
+    }
+
+    /// Runs a preview's `requests` so that on FTP each waits for the connection only so long,
+    /// and not at all once transfers are seen to take it.
+    async fn patiently<T>(
+        &self,
+        files: &dyn RemoteFileSystem,
+        cancel: &CancellationToken,
+        lent: impl Fn(&dyn RemoteFileSystem) -> bool,
+        requests: impl std::future::Future<Output = AppResult<T>>,
+    ) -> AppResult<T> {
+        if !files.transport().is_ftp() {
+            return requests.await;
+        }
+        let patience = ftp::Patience {
+            bound: self.patience,
+            cancel: cancel.clone(),
+            give_up: CancellationToken::new(),
+        };
+        let give_up = patience.give_up.clone();
+        let requests = ftp::waiting_briefly(patience, requests);
+        tokio::pin!(requests);
+        let watch = async {
+            while !lent(files) {
+                tokio::time::sleep(LENT_CHECK_EVERY).await;
+            }
+            give_up.cancel();
+        };
+        // The requests always run to their end, so none stops half done on the connection.
+        let result = tokio::select! {
+            result = &mut requests => result,
+            () = watch => requests.await,
+        };
+        busy_as_lent(result, files, &lent)
     }
 
     /// Stops the read named `request_id` by the window labelled `owner`, also when it has not
@@ -239,7 +282,7 @@ impl FilePreviews {
     }
 }
 
-/// A preview refused because something holds the connection is told why when it is transfers.
+/// A preview that found the connection busy is told why when it is transfers.
 fn busy_as_lent<T>(
     result: AppResult<T>,
     files: &dyn RemoteFileSystem,
@@ -267,7 +310,7 @@ fn validate_request_id(request_id: &str) -> AppResult<()> {
 }
 
 fn lent_to_transfers() -> AppError {
-    AppError::new(ErrorKind::Busy, "A transfer is using this connection")
+    AppError::new(ErrorKind::Lent, "A transfer is using this connection")
 }
 
 fn not_a_file(path: &str) -> AppError {
@@ -672,6 +715,8 @@ mod tests {
         finished: Arc<AtomicBool>,
         /// Cancels the read after its first piece.
         cancel_after_first: Option<CancellationToken>,
+        /// Each `stat` takes this as a request over FTP takes the control connection.
+        connection: Option<Arc<tokio::sync::Mutex<()>>>,
     }
 
     impl OneFile {
@@ -685,7 +730,17 @@ mod tests {
                 opened: AtomicUsize::new(0),
                 finished: Arc::new(AtomicBool::new(false)),
                 cancel_after_first: None,
+                connection: None,
             }
+        }
+
+        /// Over FTP, with a control connection something else can hold.
+        fn over_ftp(contents: &[u8]) -> (Arc<Self>, Arc<tokio::sync::Mutex<()>>) {
+            let connection = Arc::new(tokio::sync::Mutex::new(()));
+            let mut server = Self::holding(contents);
+            server.protocol = Protocol::Ftp;
+            server.connection = Some(connection.clone());
+            (Arc::new(server), connection)
         }
     }
 
@@ -756,6 +811,10 @@ mod tests {
         }
 
         async fn stat(&self, path: &str) -> AppResult<Option<RemoteStat>> {
+            let _taken = match &self.connection {
+                Some(connection) => Some(ftp::take_connection(connection.clone()).await?),
+                None => None,
+            };
             self.stats.fetch_add(1, Ordering::SeqCst);
             if let Some(gate) = &self.stat_gate {
                 gate.acquire().await.unwrap().forget();
@@ -927,6 +986,83 @@ mod tests {
         assert!(first.await.is_ok() && second.await.is_ok());
     }
 
+    #[tokio::test]
+    async fn a_preview_waits_for_an_ftp_connection_another_request_holds() {
+        let (_folder, previews) = previews();
+        let (server, connection) = OneFile::over_ftp(b"abc");
+        let held = connection.clone().lock_owned().await;
+        let cancel = CancellationToken::new();
+        let read = previews.read_server(server.clone(), "/file", (0, 3), &cancel, never_lent);
+        tokio::pin!(read);
+        assert!(futures::poll!(read.as_mut()).is_pending());
+        assert_eq!(server.stats.load(Ordering::SeqCst), 0);
+        drop(held);
+        assert_eq!(read.await.unwrap().contents, b"abc");
+    }
+
+    #[tokio::test]
+    async fn a_preview_answers_busy_once_it_has_waited_long_enough() {
+        let (_folder, mut previews) = previews();
+        previews.patience = Duration::from_millis(30);
+        let (server, connection) = OneFile::over_ftp(b"abc");
+        let _held = connection.clone().lock_owned().await;
+        let cancel = CancellationToken::new();
+        let error = previews
+            .read_server(server.clone(), "/file", (0, 3), &cancel, never_lent)
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind, ErrorKind::Busy);
+        assert_eq!(error.message, "Another request is using this connection");
+        assert_eq!(server.stats.load(Ordering::SeqCst), 0);
+        let listed = previews
+            .patiently(server.as_ref(), &cancel, never_lent, server.stat("/file"))
+            .await;
+        assert_eq!(listed.unwrap_err().kind, ErrorKind::Busy);
+    }
+
+    #[tokio::test]
+    async fn a_waiting_preview_gives_up_at_once_when_transfers_take_the_connection() {
+        let (_folder, previews) = previews();
+        let (server, connection) = OneFile::over_ftp(b"abc");
+        let _held = connection.clone().lock_owned().await;
+        let transfers_started = AtomicBool::new(false);
+        let lent = |_: &dyn RemoteFileSystem| transfers_started.load(Ordering::SeqCst);
+        let cancel = CancellationToken::new();
+        let read = previews.read_server(server.clone(), "/file", (0, 3), &cancel, lent);
+        tokio::pin!(read);
+        assert!(futures::poll!(read.as_mut()).is_pending());
+        transfers_started.store(true, Ordering::SeqCst);
+        let error = tokio::time::timeout(Duration::from_secs(2), read)
+            .await
+            .expect("the preview kept waiting")
+            .unwrap_err();
+        assert_eq!(error.kind, ErrorKind::Lent);
+        assert_eq!(error.message, lent_to_transfers().message);
+        assert_eq!(server.stats.load(Ordering::SeqCst), 0);
+
+        // Once transfers have it, a preview is refused before it waits at all.
+        let refused = previews
+            .read_server(server.clone(), "/file", (0, 3), &cancel, lent)
+            .await
+            .unwrap_err();
+        assert_eq!(refused.kind, ErrorKind::Lent);
+    }
+
+    #[tokio::test]
+    async fn a_preview_waiting_for_the_ftp_connection_stops_when_cancelled() {
+        let (_folder, previews) = previews();
+        let (server, connection) = OneFile::over_ftp(b"abc");
+        let held = connection.clone().lock_owned().await;
+        let cancel = CancellationToken::new();
+        let read = previews.read_server(server.clone(), "/file", (0, 3), &cancel, never_lent);
+        tokio::pin!(read);
+        assert!(futures::poll!(read.as_mut()).is_pending());
+        cancel.cancel();
+        assert_eq!(read.await.unwrap_err().kind, ErrorKind::Cancelled);
+        drop(held);
+        assert!(connection.try_lock().is_ok());
+    }
+
     #[test]
     fn a_connection_held_by_transfers_is_named_as_such() {
         let server = OneFile::holding(b"x");
@@ -937,6 +1073,7 @@ mod tests {
             ))
         };
         let lent = busy_as_lent(held(), &server, |_| true).unwrap_err();
+        assert_eq!(lent.kind, ErrorKind::Lent);
         assert_eq!(lent.message, lent_to_transfers().message);
         let other = busy_as_lent(held(), &server, never_lent).unwrap_err();
         assert_eq!(other.message, "Another request is using this connection");

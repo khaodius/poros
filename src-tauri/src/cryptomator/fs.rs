@@ -46,6 +46,16 @@ const SYMLINK_LIMIT: u64 = 64 * 1024;
 const DIRECTORY_ID_LIFETIME: Duration = Duration::from_secs(60);
 /// Requests in flight at once while looking into several nodes of one folder.
 const LOOKUPS_AT_ONCE: usize = 8;
+
+/// One FTP control connection answers one request at a time, so there lookups go one by one
+/// instead of queueing for it side by side.
+fn lookups_at_once(server: &Arc<dyn RemoteFileSystem>) -> usize {
+    if server.transport().is_ftp() {
+        1
+    } else {
+        LOOKUPS_AT_ONCE
+    }
+}
 /// How much of a file is held in memory while it is copied over a connection that cannot read
 /// and write at once.
 const COPY_PIECE: u64 = 4 * 1024 * 1024;
@@ -826,7 +836,7 @@ impl RemoteFileSystem for VaultFs {
             .map(|(stored_name, modified)| {
                 self.shortened_entry(&keys, &server, &folder, &directory, stored_name, modified)
             })
-            .buffer_unordered(LOOKUPS_AT_ONCE)
+            .buffer_unordered(lookups_at_once(&server))
             .try_collect()
             .await?;
         entries.extend(read.into_iter().flatten());

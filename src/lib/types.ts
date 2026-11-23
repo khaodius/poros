@@ -155,7 +155,8 @@ export type ErrorKind =
   | "keychain"
   | "update"
   | "wrongPassword"
-  | "busy";
+  | "busy"
+  | "lent";
 
 export interface AppError {
   kind: ErrorKind;

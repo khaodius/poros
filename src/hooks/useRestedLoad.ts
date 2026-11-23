@@ -1,11 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toAppError } from "../lib/ipc";
 import { problemOf, type Problem } from "../lib/previewPlan";
-import { RestingLoad, isCancelled } from "../lib/previewScheduler";
+import { RestingLoad, isCancelled, loadRetrying } from "../lib/previewScheduler";
 import type { PreviewLoad, StorageKind } from "../lib/previewSettings";
 
 /** How long the cursor rests on an item before anything is read for its preview. */
 export const REST_MILLIS: Record<StorageKind, number> = { local: 120, server: 250, metered: 250 };
+/**
+ * A load that found its connection busy with another request asks again this long after, as
+ * often as this. The server end waits a few seconds for the connection each time already.
+ */
+export const BUSY_RETRY_MILLIS = 1000;
+export const BUSY_RETRIES = 10;
 
 export type Rested<Result> =
   /** The cursor has just arrived: nothing is read yet. */
@@ -14,7 +20,8 @@ export type Rested<Result> =
   | { status: "manual" }
   | { status: "loading" }
   | { status: "ready"; result: Result }
-  | { status: "failed"; problem: Problem; message: string };
+  /** With `retrying`, it loads again by itself shortly. */
+  | { status: "failed"; problem: Problem; message: string; retrying: boolean };
 
 export interface RestedLoad<Result> {
   state: Rested<Result>;
@@ -65,24 +72,34 @@ export function useRestedLoad<Result>({
     latest.current = { load, inVault };
   });
 
-  const settled = reached.run === run && reached.state.status !== "loading";
+  const retrying = reached.state.status === "failed" && reached.state.retrying;
+  const settled = reached.run === run && reached.state.status !== "loading" && !retrying;
   const waitsForClick = cached === undefined && mode === "click" && !requested;
   const loads = cached === undefined && !waitsForClick && !settled;
 
   useEffect(() => {
     if (!loads) return;
     const current = latest.current;
+    const failed = (caught: unknown, again: boolean): Rested<Result> => {
+      const error = toAppError(caught);
+      const problem = problemOf(error, current.inVault);
+      return { status: "failed", problem, message: error.message, retrying: again };
+    };
     resting.schedule((signal) => {
       setReached({ run, state: { status: "loading" } });
-      current.load(signal).then(
+      // What failed stays on show while it is tried again.
+      loadRetrying(current.load, signal, {
+        retries: BUSY_RETRIES,
+        delayMillis: BUSY_RETRY_MILLIS,
+        passes: (caught) => !isCancelled(caught) && toAppError(caught).kind === "busy",
+        meanwhile: (caught) => setReached({ run, state: failed(caught, true) }),
+      }).then(
         (result) => {
           if (!signal.aborted) setReached({ run, state: { status: "ready", result } });
         },
         (caught: unknown) => {
           if (signal.aborted || isCancelled(caught)) return;
-          const error = toAppError(caught);
-          const problem = problemOf(error, current.inVault);
-          setReached({ run, state: { status: "failed", problem, message: error.message } });
+          setReached({ run, state: failed(caught, false) });
         },
       );
     }, requested);

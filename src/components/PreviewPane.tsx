@@ -338,12 +338,15 @@ function contentsText({ folders, files, bytes }: Summary): string {
 function Failure({
   problem,
   message,
+  retrying,
   what,
   onRetry,
   onRefresh,
 }: {
   problem: Problem;
   message: string;
+  /** It is tried again by itself shortly. */
+  retrying: boolean;
   what: "file" | "folder";
   onRetry: () => void;
   onRefresh?: () => void;
@@ -381,7 +384,20 @@ function Failure({
       return (
         <Notice
           icon={Hourglass}
-          title="A transfer is using this connection"
+          title={message}
+          detail={
+            retrying
+              ? "The preview tries again as soon as the connection is free."
+              : "It stayed busy for a while. Try again in a moment."
+          }
+          action={retrying ? undefined : retry}
+        />
+      );
+    case "lent":
+      return (
+        <Notice
+          icon={Hourglass}
+          title={message}
           detail="The preview waits rather than slow the transfer down."
           action={retry}
         />

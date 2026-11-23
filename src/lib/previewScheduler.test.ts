@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PreviewCancelled, RequestQueue, RestingLoad, isCancelled } from "./previewScheduler";
+import {
+  PreviewCancelled,
+  RequestQueue,
+  RestingLoad,
+  isCancelled,
+  loadRetrying,
+} from "./previewScheduler";
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -227,5 +233,68 @@ describe("RequestQueue", () => {
     queue.request("later", controlled().run).catch(() => undefined);
     queue.cancelAll();
     expect(queue.waiting).toBe(0);
+  });
+});
+
+describe("loadRetrying", () => {
+  const busy = { kind: "busy", message: "Another request is using this connection" };
+  const passes = (caught: unknown) => caught === busy;
+
+  it("loads again a while after a failure that passes, telling of it meanwhile", async () => {
+    const load = vi.fn().mockRejectedValueOnce(busy).mockResolvedValueOnce("read");
+    const meanwhile = vi.fn();
+    const signal = new AbortController().signal;
+    const loaded = loadRetrying(load, signal, { retries: 3, delayMillis: 1000, passes, meanwhile });
+    await settle();
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(meanwhile).toHaveBeenCalledWith(busy);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(load).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await loaded).toBe("read");
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it("gives up after its retries, and at once on any other failure", async () => {
+    const always = vi.fn().mockRejectedValue(busy);
+    const signal = new AbortController().signal;
+    const meanwhile = vi.fn();
+    const outcome = loadRetrying(always, signal, {
+      retries: 2,
+      delayMillis: 10,
+      passes,
+      meanwhile,
+    }).catch((caught: unknown) => caught);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(await outcome).toBe(busy);
+    expect(always).toHaveBeenCalledTimes(3);
+    expect(meanwhile).toHaveBeenCalledTimes(2);
+
+    const denied = { kind: "permissionDenied", message: "No" };
+    const once = vi.fn().mockRejectedValue(denied);
+    const refused = loadRetrying(once, signal, {
+      retries: 2,
+      delayMillis: 10,
+      passes,
+      meanwhile,
+    }).catch((caught: unknown) => caught);
+    expect(await refused).toBe(denied);
+    expect(once).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops waiting the moment it is cancelled", async () => {
+    const load = vi.fn().mockRejectedValue(busy);
+    const controller = new AbortController();
+    const outcome = loadRetrying(load, controller.signal, {
+      retries: 5,
+      delayMillis: 1000,
+      passes,
+      meanwhile: () => undefined,
+    }).catch((caught: unknown) => caught);
+    await settle();
+    controller.abort();
+    expect(isCancelled(await outcome)).toBe(true);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(load).toHaveBeenCalledTimes(1);
   });
 });

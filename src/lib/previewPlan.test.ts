@@ -369,6 +369,7 @@ describe("problemOf", () => {
     expect(problemOf(error("permissionDenied"), false)).toBe("denied");
     expect(problemOf(error("notFound"), false)).toBe("gone");
     expect(problemOf(error("busy"), false)).toBe("busy");
+    expect(problemOf(error("lent"), false)).toBe("lent");
     expect(problemOf(error("disconnected"), false)).toBe("lost");
     expect(problemOf(error("connection"), false)).toBe("lost");
     expect(problemOf(error("timeout"), true)).toBe("lost");

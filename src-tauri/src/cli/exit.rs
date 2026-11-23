@@ -99,7 +99,8 @@ impl Exit {
             | ErrorKind::Cloud
             | ErrorKind::Keychain
             | ErrorKind::Update
-            | ErrorKind::Busy => Self::Failure,
+            | ErrorKind::Busy
+            | ErrorKind::Lent => Self::Failure,
         }
     }
 }

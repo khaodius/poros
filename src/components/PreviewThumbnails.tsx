@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { BUSY_RETRIES, BUSY_RETRY_MILLIS } from "../hooks/useRestedLoad";
+import { toAppError } from "../lib/ipc";
 import type { Caps } from "../lib/previewPlan";
 import { isCancelled } from "../lib/previewScheduler";
 import type { FileEntry } from "../lib/types";
@@ -80,6 +82,7 @@ function ThumbnailTile({ place, entry, box, caps }: ThumbnailTileProps) {
     const current = latest.current;
     let timer = 0;
     let asked = false;
+    let busyRetries = 0;
     const ask = () => {
       asked = true;
       requestThumbnail(current.place, current.entry, box, current.caps).then(
@@ -88,6 +91,10 @@ function ThumbnailTile({ place, entry, box, caps }: ThumbnailTileProps) {
           // Dropped by another pane showing the same file while this one still wants it.
           if (isCancelled(caught)) {
             if (asked) ask();
+          } else if (asked && toAppError(caught).kind === "busy" && busyRetries < BUSY_RETRIES) {
+            // The connection stayed busy with another request: asked again shortly.
+            busyRetries++;
+            timer = window.setTimeout(ask, BUSY_RETRY_MILLIS);
           } else {
             setDrawn({ key, thumbnail: null });
           }

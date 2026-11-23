@@ -470,8 +470,8 @@ async fn wait_until_settled(transfers: &TransferManager) {
 }
 
 /// On FTP a transfer that borrows the browsing connection keeps it for the whole file, so a
-/// preview is told the connection is busy instead of waiting; with connections of their own,
-/// transfers leave the browsing connection to the preview.
+/// preview is told at once that a transfer is using it instead of waiting; with connections of
+/// their own, transfers leave the browsing connection to the preview.
 #[tokio::test]
 async fn a_preview_does_not_wait_on_the_connection_ftp_transfers_borrow() {
     let Some(server) = server("POROS_TEST_FTP_PORT", Protocol::Ftp) else {
@@ -534,20 +534,29 @@ async fn a_preview_does_not_wait_on_the_connection_ftp_transfers_borrow() {
         assert_eq!(waiting.contents, b"Read between transfers", "{label}");
 
         transfers.set_paused(false);
-        let during = read_notes().await;
+        let asked = Instant::now();
+        let during = (read_notes().await, asked.elapsed());
         let listed = previews
             .list(&session.id, &scratch, |files| {
                 transfers.borrows_connection_of(files)
             })
             .await;
         if separate_connections {
-            let reply = during.unwrap_or_else(|error| panic!("{label}: {}", error.message));
+            let reply = during
+                .0
+                .unwrap_or_else(|error| panic!("{label}: {}", error.message));
             assert_eq!(reply.contents, b"Read between transfers", "{label}");
             assert!(listed.is_ok(), "{label}");
         } else {
-            let error = during.unwrap_err();
-            assert_eq!(error.kind, ErrorKind::Busy, "{label}: {}", error.message);
-            assert_eq!(listed.unwrap_err().kind, ErrorKind::Busy, "{label}");
+            let (error, took) = during;
+            let error = error.unwrap_err();
+            assert_eq!(error.kind, ErrorKind::Lent, "{label}: {}", error.message);
+            assert_eq!(
+                error.message, "A transfer is using this connection",
+                "{label}"
+            );
+            assert!(took < Duration::from_millis(500), "{label}: {took:?}");
+            assert_eq!(listed.unwrap_err().kind, ErrorKind::Lent, "{label}");
         }
 
         wait_until_settled(&transfers).await;
@@ -561,38 +570,92 @@ async fn a_preview_does_not_wait_on_the_connection_ftp_transfers_borrow() {
     }
 }
 
-/// A transfer can take the FTP connection between the preview's look at the queue and its first
-/// request. The preview then answers busy at once instead of queueing behind the whole file,
-/// while previews of the same connection still take turns with each other.
+/// Held as a transfer's download, or a long listing, holds the FTP connection: for as long as
+/// the file is read.
+async fn hold_connection(
+    files: &Arc<dyn RemoteFileSystem>,
+    path: &str,
+) -> Box<dyn poros_lib::protocol::ReadStream> {
+    files
+        .clone()
+        .open_read(path, 0..6 * MEBIBYTE as u64)
+        .await
+        .unwrap()
+}
+
+/// Something other than transfers holding the FTP connection, such as the pane listing its
+/// folder again, keeps a preview waiting only until it is done; past a few seconds the preview
+/// answers busy, in words that do not blame a transfer.
 #[tokio::test]
-async fn a_preview_is_busy_at_once_while_anything_else_holds_the_ftp_connection() {
+async fn a_preview_meeting_a_listing_in_progress_succeeds_after_it() {
     let Some(server) = server("POROS_TEST_FTP_PORT", Protocol::Ftp) else {
         return;
     };
     let (_config, manager) = new_manager();
     let (session, files, scratch) = open_scratch(&manager, &server, "held").await;
-    let previews = FilePreviews::new(manager.clone());
+    let previews = Arc::new(FilePreviews::new(manager.clone()));
     let held_path = remote_path::join(&scratch, "held.bin");
     write_remote(&files, &held_path, &pattern(6 * MEBIBYTE, 8)).await;
     let notes_path = remote_path::join(&scratch, "notes.txt");
     write_remote(&files, &notes_path, b"Read between transfers").await;
 
-    // Held as a transfer's download holds it: for as long as the file is read.
-    let holding = files
-        .clone()
-        .open_read(&held_path, 0..6 * MEBIBYTE as u64)
-        .await
-        .unwrap();
-    let patience = Duration::from_secs(5);
-    let during = tokio::time::timeout(patience, read(&previews, &session.id, &notes_path, 0, 64))
-        .await
-        .expect("the preview waited for the connection");
-    let error = during.unwrap_err();
+    // A listing under way as the preview asks: both get their answer.
+    let (listed, read_meanwhile) = tokio::join!(
+        files.list_dir(&scratch),
+        read(&previews, &session.id, &notes_path, 0, 64)
+    );
+    assert_eq!(listed.unwrap().entries.len(), 2);
+    assert_eq!(read_meanwhile.unwrap().contents, b"Read between transfers");
+
+    // One that keeps the connection a while: the preview waits for it, then reads.
+    let holding = hold_connection(&files, &held_path).await;
+    let release = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(700)).await;
+        holding.finish().await.unwrap();
+    });
+    let started = Instant::now();
+    let (after, summary) = tokio::join!(
+        read(&previews, &session.id, &notes_path, 0, 64),
+        previews.list(&session.id, &scratch, |_| false),
+    );
+    release.await.unwrap();
+    assert_eq!(after.unwrap().contents, b"Read between transfers");
+    assert_eq!(summary.unwrap().entries.len(), 2);
+    assert!(started.elapsed() >= Duration::from_millis(600));
+
+    // One that keeps it far longer: busy after a few seconds, not at once and not for ever.
+    let holding = hold_connection(&files, &held_path).await;
+    let started = Instant::now();
+    let error = tokio::time::timeout(
+        Duration::from_secs(20),
+        read(&previews, &session.id, &notes_path, 0, 64),
+    )
+    .await
+    .expect("the preview waited for as long as the connection was held")
+    .unwrap_err();
+    let waited = started.elapsed();
     assert_eq!(error.kind, ErrorKind::Busy, "{}", error.message);
-    let listed = tokio::time::timeout(patience, previews.list(&session.id, &scratch, |_| false))
+    assert!(!error.message.contains("transfer"), "{}", error.message);
+    assert!(
+        waited >= Duration::from_secs(2) && waited < Duration::from_secs(10),
+        "{waited:?}"
+    );
+
+    // Cancelled while it waits, it stops at once and leaves the connection as it was.
+    let mut cancelled = request(&session.id, &notes_path, 0, 64);
+    cancelled.request_id = "cancelled-while-waiting".into();
+    let waiting = {
+        let (previews, cancelled) = (previews.clone(), cancelled.clone());
+        tokio::spawn(async move { previews.read(OWNER, cancelled, |_| false).await })
+    };
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    previews.cancel(OWNER, &cancelled.request_id);
+    let stopped = tokio::time::timeout(Duration::from_secs(1), waiting)
         .await
-        .expect("the folder's summary waited for the connection");
-    assert_eq!(listed.unwrap_err().kind, ErrorKind::Busy);
+        .expect("the cancelled preview kept waiting")
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(stopped.kind, ErrorKind::Cancelled, "{}", stopped.message);
     holding.finish().await.unwrap();
 
     // Several at once, as the thumbnails of a folder ask: one after the other, none refused.
@@ -609,5 +672,142 @@ async fn a_preview_is_busy_at_once_while_anything_else_holds_the_ftp_connection(
     let listed = files.list_dir(&scratch).await.unwrap();
     assert_eq!(listed.entries.len(), 2);
     files.delete(std::slice::from_ref(&scratch)).await.unwrap();
+    manager.disconnect(&session.id).await.unwrap();
+}
+
+/// A preview already waiting for the FTP connection gives way as soon as transfers take it,
+/// instead of holding them up once it gets it.
+#[tokio::test]
+async fn a_waiting_preview_gives_way_to_transfers_that_start() {
+    let Some(server) = server("POROS_TEST_FTP_PORT", Protocol::Ftp) else {
+        return;
+    };
+    let (_config, manager) = new_manager();
+    let (session, files, scratch) = open_scratch(&manager, &server, "give-way").await;
+    let previews = FilePreviews::new(manager.clone());
+    let held_path = remote_path::join(&scratch, "held.bin");
+    write_remote(&files, &held_path, &pattern(6 * MEBIBYTE, 8)).await;
+    let notes_path = remote_path::join(&scratch, "notes.txt");
+    write_remote(&files, &notes_path, b"Read between transfers").await;
+
+    let local = tempfile::tempdir().unwrap();
+    let upload = local.path().join("upload.bin");
+    std::fs::write(&upload, pattern(MEBIBYTE, 4)).unwrap();
+    let transfers = TransferManager::new(
+        manager.clone(),
+        Events::default(),
+        TransferSettings {
+            auto_start: false,
+            separate_connections: false,
+            exists_action: ExistsAction::Overwrite,
+            retry_attempts: 0,
+            ..TransferSettings::default()
+        },
+    );
+    transfers
+        .enqueue(EnqueueRequest {
+            session_id: session.id.clone(),
+            source_session_id: None,
+            direction: Direction::Upload,
+            target_directory: scratch.clone(),
+            items: vec![TransferItem {
+                path: upload.to_string_lossy().into_owned(),
+                name: "upload.bin".into(),
+                is_dir: false,
+                size: MEBIBYTE as u64,
+            }],
+        })
+        .await
+        .unwrap();
+
+    let holding = hold_connection(&files, &held_path).await;
+    let reading = previews.read(OWNER, request(&session.id, &notes_path, 0, 64), |files| {
+        transfers.borrows_connection_of(files)
+    });
+    let starting = async {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        transfers.set_paused(false);
+        Instant::now()
+    };
+    let (during, started) = tokio::join!(reading, starting);
+    let gave_way_after = started.elapsed();
+    let error = during.unwrap_err();
+    assert_eq!(error.kind, ErrorKind::Lent, "{}", error.message);
+    assert_eq!(error.message, "A transfer is using this connection");
+    assert!(
+        gave_way_after < Duration::from_secs(1),
+        "{gave_way_after:?}"
+    );
+
+    holding.finish().await.unwrap();
+    wait_until_settled(&transfers).await;
+    let after = read(&previews, &session.id, &notes_path, 0, 64)
+        .await
+        .unwrap_or_else(|error| panic!("{}", error.message));
+    assert_eq!(after.contents, b"Read between transfers");
+
+    files.delete(std::slice::from_ref(&scratch)).await.unwrap();
+    manager.disconnect(&session.id).await.unwrap();
+}
+
+/// A name whose encrypted form is longer than a vault stores as a file name.
+fn long_name(stem: &str) -> String {
+    format!("{stem}-{}.txt", "long ".repeat(40))
+}
+
+/// A vault keeps such names in files of their own, which its listing reads one by one over the
+/// single FTP connection; the folder's summary and a read of one of them must not find the
+/// connection busy with the vault's own requests.
+#[tokio::test]
+async fn a_folder_in_a_vault_on_ftp_with_long_names_is_summarized_and_read() {
+    let Some(server) = server("POROS_TEST_FTP_PORT", Protocol::Ftp) else {
+        return;
+    };
+    let (_config, manager) = new_manager();
+    let (session, server_files, scratch) = open_scratch(&manager, &server, "ftp-vault").await;
+    let vault = manager
+        .create_vault(&session.id, &scratch, "Vault", PASSWORD.to_string(), OWNER)
+        .await
+        .unwrap_or_else(|error| panic!("{}", error.message));
+    let root = remote_path::join(&scratch, "Vault");
+    let vault_files = files_of(&manager, &vault.id).await;
+    let previews = FilePreviews::new(manager.clone());
+
+    let (first, second) = (long_name("first"), long_name("second"));
+    let first_path = remote_path::join(&root, &first);
+    write_remote(&vault_files, &first_path, b"The first of two").await;
+    write_remote(
+        &vault_files,
+        &remote_path::join(&root, &second),
+        b"The second of two",
+    )
+    .await;
+    let folder = long_name("folder");
+    vault_files.make_dir(&root, &folder).await.unwrap();
+    write_remote(&vault_files, &remote_path::join(&root, "short.txt"), b"x").await;
+
+    let mut names: Vec<String> = previews
+        .list(&vault.id, &root, |_| false)
+        .await
+        .unwrap_or_else(|error| panic!("{:?}: {}", error.kind, error.message))
+        .entries
+        .into_iter()
+        .map(|entry| entry.name)
+        .collect();
+    names.sort();
+    let mut expected = vec![first.clone(), folder, second, "short.txt".to_string()];
+    expected.sort();
+    assert_eq!(names, expected);
+
+    let reply = read(&previews, &vault.id, &first_path, 0, TEXT_PART)
+        .await
+        .unwrap_or_else(|error| panic!("{:?}: {}", error.kind, error.message));
+    assert_eq!(reply.contents, b"The first of two");
+
+    manager.disconnect(&vault.id).await.unwrap();
+    server_files
+        .delete(std::slice::from_ref(&scratch))
+        .await
+        .unwrap();
     manager.disconnect(&session.id).await.unwrap();
 }

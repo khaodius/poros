@@ -13,6 +13,56 @@ export function isCancelled(error: unknown): boolean {
   return error instanceof PreviewCancelled;
 }
 
+/** Waits `millis`, or rejects with `PreviewCancelled` as soon as `signal` aborts. */
+export function pause(millis: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new PreviewCancelled());
+      return;
+    }
+    const stop = () => {
+      clearTimeout(timer);
+      reject(new PreviewCancelled());
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", stop);
+      resolve();
+    }, millis);
+    signal.addEventListener("abort", stop, { once: true });
+  });
+}
+
+export interface Retries {
+  /** How many more times to load after the first. */
+  retries: number;
+  delayMillis: number;
+  /** Whether a failure is one that passes by itself, such as a connection busy for a moment. */
+  passes: (caught: unknown) => boolean;
+  /** Told of each failure that is waited out, before the wait. */
+  meanwhile: (caught: unknown) => void;
+}
+
+/**
+ * Loads, and loads again `delayMillis` later while each go fails in a way that passes by
+ * itself, at most `retries` more times. Settles as the last go does, and rejects with
+ * `PreviewCancelled` once `signal` aborts between goes.
+ */
+export async function loadRetrying<Result>(
+  load: (signal: AbortSignal) => Promise<Result>,
+  signal: AbortSignal,
+  { retries, delayMillis, passes, meanwhile }: Retries,
+): Promise<Result> {
+  for (let retry = 1; ; retry++) {
+    try {
+      return await load(signal);
+    } catch (caught) {
+      if (signal.aborted || retry > retries || !passes(caught)) throw caught;
+      meanwhile(caught);
+      await pause(delayMillis, signal);
+    }
+  }
+}
+
 /**
  * Starts a load once nothing else has been asked for during a delay, as when the cursor stops
  * on a file. Whatever was waiting or under way before is cancelled by the next call.
