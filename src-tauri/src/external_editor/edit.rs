@@ -12,7 +12,6 @@ use tokio_util::sync::CancellationToken;
 use super::conflict::{Resolution, ServerState};
 use super::journal::{Record, ServerIdentity};
 use super::watch::Fingerprint;
-use crate::protocol::Protocol;
 use crate::transfer::{JobId, TransferRoute};
 
 /// What a working copy is opened with.
@@ -193,7 +192,8 @@ impl Edit {
             session_id: core.route.session_id().to_string(),
             server: core.server.label.clone(),
             in_vault: self.in_vault,
-            outlives_session: core.server.protocol == Protocol::Sftp && !self.in_vault,
+            // A vault locks as its tab closes; any other server is reached again by the queue.
+            outlives_session: !self.in_vault,
             local_path: self.local_path.to_string_lossy().into_owned(),
             program: core
                 .launch
@@ -255,7 +255,7 @@ pub struct EditView {
     /// The server's label.
     pub server: String,
     pub in_vault: bool,
-    /// Uploads reach the server over a connection of their own once the tab is closed.
+    /// Saves are still uploaded once the tab is closed; a vault's are not, as it locks.
     pub outlives_session: bool,
     pub local_path: String,
     /// What the file was opened with; empty for a file taken up from an earlier run.

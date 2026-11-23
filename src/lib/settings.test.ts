@@ -24,6 +24,39 @@ describe("sanitizeSettings", () => {
     expect(settings.log.levels).toEqual({ info: true, warn: false, error: true, server: true });
   });
 
+  it("keeps the programs files open in, and the new double-click choices", () => {
+    const before = sanitizeSettings({ interface: { doubleClickFile: "edit" } });
+    expect(before.editing).toEqual({ programs: [], uploadOnSave: true, keepMinutes: 10 });
+    const settings = sanitizeSettings({
+      interface: { doubleClickFile: "ask" },
+      editing: {
+        uploadOnSave: false,
+        programs: [
+          {
+            id: "gimp",
+            name: "GIMP",
+            command: "gimp",
+            arguments: "{file}",
+            patterns: ["*.psd", 4],
+          },
+          { id: "empty", name: "No command", command: " " },
+          { id: "odd", command: "code", arguments: 7 },
+          "not a program",
+        ],
+      },
+    });
+    expect(settings.interface.doubleClickFile).toBe("ask");
+    expect(
+      sanitizeSettings({ interface: { doubleClickFile: "open" } }).interface.doubleClickFile,
+    ).toBe("open");
+    expect(settings.editing.uploadOnSave).toBe(false);
+    expect(settings.editing.keepMinutes).toBe(10);
+    expect(settings.editing.programs).toEqual([
+      { id: "gimp", name: "GIMP", command: "gimp", arguments: "{file}", patterns: ["*.psd"] },
+      { id: "odd", name: "", command: "code", arguments: "", patterns: [] },
+    ]);
+  });
+
   it("keeps the cloud apps and the FXP switch", () => {
     const settings = sanitizeSettings({
       transfers: { fxp: false },

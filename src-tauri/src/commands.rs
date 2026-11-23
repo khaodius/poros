@@ -740,7 +740,7 @@ pub async fn external_open_local(
     external: State<'_, ExternalEditManager>,
     path: String,
     with: OpenWith,
-) -> AppResult<()> {
+) -> AppResult<OpenOutcome> {
     external.open_local(&path, &with).await
 }
 

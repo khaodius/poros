@@ -2,7 +2,9 @@
 //! list, and the system's default program through the platform's opener. Neither goes through
 //! a shell.
 
-use std::path::Path;
+#[cfg(any(windows, test))]
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use super::command_line::Invocation;
@@ -10,7 +12,7 @@ use crate::error::{AppError, AppResult, ErrorKind};
 
 /// Starts a program. The process comes back so its end can be noticed.
 pub fn start(invocation: &Invocation) -> AppResult<tokio::process::Child> {
-    let mut command = tokio::process::Command::new(&invocation.program);
+    let mut command = tokio::process::Command::new(program_path(&invocation.program));
     command
         .args(&invocation.arguments)
         .stdin(Stdio::null())
@@ -26,6 +28,43 @@ pub fn start(invocation: &Invocation) -> AppResult<tokio::process::Child> {
             ErrorKind::Io,
             format!("Could not start {}: {reason}", invocation.program),
         )
+    })
+}
+
+/// The program file to start for `program`. Windows looks for a bare name such as `code` on
+/// the PATH only as `code.exe`, so the other extensions its shell runs (`code.cmd`) are tried
+/// as well.
+#[cfg(windows)]
+fn program_path(program: &str) -> PathBuf {
+    let folders = std::env::var_os("PATH").unwrap_or_default();
+    let extensions = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());
+    find_on_path(program, &folders, &extensions, Path::is_file).unwrap_or_else(|| program.into())
+}
+
+#[cfg(not(windows))]
+fn program_path(program: &str) -> PathBuf {
+    program.into()
+}
+
+/// The first file called `name` with one of `extensions` in the folders of `folders`, for a
+/// name with neither a folder nor an extension of its own.
+#[cfg(any(windows, test))]
+fn find_on_path(
+    name: &str,
+    folders: &OsStr,
+    extensions: &str,
+    exists: impl Fn(&Path) -> bool,
+) -> Option<PathBuf> {
+    if name.contains(['/', '\\', ':']) || Path::new(name).extension().is_some() {
+        return None;
+    }
+    std::env::split_paths(folders).find_map(|folder| {
+        extensions
+            .split(';')
+            .map(str::trim)
+            .filter(|extension| !extension.is_empty())
+            .map(|extension| folder.join(format!("{name}{extension}")))
+            .find(|candidate| exists(candidate))
     })
 }
 
@@ -153,6 +192,26 @@ mod tests {
         })
         .unwrap_err();
         assert!(error.message.contains("was not found"), "{}", error.message);
+    }
+
+    #[test]
+    fn bare_names_are_found_with_the_extensions_the_shell_runs() {
+        let first = tempfile::tempdir().unwrap();
+        let second = tempfile::tempdir().unwrap();
+        std::fs::write(second.path().join("code.cmd"), "").unwrap();
+        std::fs::write(second.path().join("notepad.exe"), "").unwrap();
+        std::fs::write(first.path().join("notepad.com"), "").unwrap();
+        let folders = std::env::join_paths([first.path(), second.path()]).unwrap();
+        let find = |name: &str| find_on_path(name, &folders, ".com;.exe; .cmd;", Path::is_file);
+
+        assert_eq!(find("code"), Some(second.path().join("code.cmd")));
+        // Folders are searched in order, each with every extension.
+        assert_eq!(find("notepad"), Some(first.path().join("notepad.com")));
+        assert_eq!(find("missing"), None);
+        // A name with an extension or a folder is started as it is.
+        assert_eq!(find("code.cmd"), None);
+        assert_eq!(find(r"C:\Tools\code"), None);
+        assert_eq!(find("tools/code"), None);
     }
 
     #[cfg(unix)]

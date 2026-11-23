@@ -106,6 +106,8 @@ pub enum OpenOutcome {
     Opening { edit: EditView },
     /// The file was open already, and its working copy is opened again.
     AlreadyOpen { edit: EditView },
+    /// A file on this computer was handed to its program; nothing follows it.
+    Opened,
     /// The file is of a type that runs. Nothing was downloaded: the user has to agree first,
     /// and name an editor to open it in.
     NeedsConfirmation { name: String },
@@ -521,8 +523,9 @@ impl ExternalEditManager {
         Some(edit.view())
     }
 
-    /// Opens a file on this computer where it is. Nothing is copied or watched.
-    pub async fn open_local(&self, path: &str, with: &OpenWith) -> AppResult<()> {
+    /// Opens a file on this computer where it is. Nothing is copied or watched. A file of a
+    /// type that runs is not given to the system to open: the user is to name an editor.
+    pub async fn open_local(&self, path: &str, with: &OpenWith) -> AppResult<OpenOutcome> {
         let file = Path::new(path);
         if !file.is_absolute() {
             return Err(AppError::invalid("That is not a file's full path"));
@@ -535,15 +538,32 @@ impl ExternalEditManager {
             return Err(AppError::invalid("Only files open in another program"));
         }
         match launch {
-            Launch::Default => launch::open_with_default(file).await,
+            // Open shows files; running one takes the user's own file manager or shell.
+            Launch::Default => {
+                let name = file
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let checked = file.to_path_buf();
+                let runs = executable::is_executable_name(&name)
+                    || tokio::task::spawn_blocking(move || {
+                        executable::has_executable_content(&checked)
+                    })
+                    .await?;
+                if runs {
+                    return Ok(OpenOutcome::NeedsConfirmation { name });
+                }
+                launch::open_with_default(file).await?;
+            }
             Launch::Program {
                 command, arguments, ..
             } => {
                 let invocation = command_line::invocation(&command, &arguments, path)?;
                 // The program runs on by itself; nothing waits for it.
-                launch::start(&invocation).map(drop)
+                drop(launch::start(&invocation)?);
             }
         }
+        Ok(OpenOutcome::Opened)
     }
 
     /// Uploads a working copy now: one held back, one whose upload failed, or one whose
@@ -639,6 +659,8 @@ impl ExternalEditManager {
     /// server out of reach.
     pub async fn flush(&self, ids: &[String]) -> Vec<EditView> {
         let asked = Instant::now();
+        // A file a program keeps writing to never comes to rest; it is not waited for longer.
+        let patience = (self.inner.pace.watch.settle + self.inner.pace.watch.poll) * 3;
         let edits: Vec<Arc<Edit>> = self
             .inner
             .edits
@@ -661,7 +683,10 @@ impl ExternalEditManager {
                 let core = edit.core.lock().unwrap();
                 match &core.phase {
                     Phase::Downloading { .. } => false,
-                    Phase::Watching => core.looked.is_none_or(|looked| looked < asked),
+                    Phase::Watching => {
+                        core.looked.is_none_or(|looked| looked < asked)
+                            && asked.elapsed() < patience
+                    }
                     Phase::Uploading { .. } => core.stalled.is_none(),
                     Phase::Conflict { .. } => core.requests.answer.is_some(),
                     Phase::Changed { .. }

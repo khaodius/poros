@@ -148,6 +148,22 @@ async fn read_through(files: &Arc<dyn RemoteFileSystem>, path: &str) -> Vec<u8> 
     contents
 }
 
+/// The stand-in program, once for each way it saves, named after it.
+fn stand_in_programs(folder: &Path) -> Vec<ExternalProgram> {
+    let script = folder.join("editor.sh");
+    std::fs::write(&script, EDITOR_SCRIPT).unwrap();
+    ["rename", "in-place", "recreate", "twice", "nothing"]
+        .into_iter()
+        .map(|mode| ExternalProgram {
+            id: mode.to_string(),
+            name: format!("Stand-in ({mode})"),
+            command: "/bin/sh".to_string(),
+            arguments: format!("\"{}\" {{file}} {mode}", script.display()),
+            patterns: Vec::new(),
+        })
+        .collect()
+}
+
 /// Short waits, so the tests take seconds.
 fn quick_pace() -> Pace {
     Pace {
@@ -208,18 +224,7 @@ impl Bench {
         }
         let folder = files.make_dir("~", &scratch).await.unwrap();
 
-        let script = local.path().join("editor.sh");
-        std::fs::write(&script, EDITOR_SCRIPT).unwrap();
-        editing.programs = ["rename", "in-place", "recreate", "twice", "nothing"]
-            .into_iter()
-            .map(|mode| ExternalProgram {
-                id: mode.to_string(),
-                name: format!("Stand-in ({mode})"),
-                command: "/bin/sh".to_string(),
-                arguments: format!("\"{}\" {{file}} {mode}", script.display()),
-                patterns: Vec::new(),
-            })
-            .collect();
+        editing.programs = stand_in_programs(local.path());
         let transfers = TransferManager::new(
             sessions.clone(),
             events.clone(),
@@ -619,7 +624,7 @@ async fn a_save_reaches(profile: &ConnectProfile, name: &str) {
     let bench = Bench::start(profile, name).await;
     let path = bench.put("page.html", b"as it was on the server\n").await;
     let opened = bench.open(&path, "rename").await;
-    assert!(!opened.outlives_session);
+    assert!(opened.outlives_session);
     bench.wait_watching(&opened.id, 1).await;
     assert_eq!(bench.read(&path).await, b"saved through a temporary file\n");
     bench.external.stop(&opened.id).unwrap();
@@ -725,9 +730,31 @@ async fn saves_still_arrive_after_the_tab_is_closed() {
     let Some(profile) = sftp_profile() else {
         return;
     };
-    let bench = Bench::start(&profile, "closed-tab").await;
+    saves_arrive_after_closing(&profile, "closed-tab").await;
+}
+
+#[tokio::test]
+async fn ftp_saves_still_arrive_after_the_tab_is_closed() {
+    let Some(profile) = ftp_profile() else {
+        return;
+    };
+    saves_arrive_after_closing(&profile, "closed-tab-ftp").await;
+}
+
+#[tokio::test]
+async fn webdav_saves_still_arrive_after_the_tab_is_closed() {
+    let Some(profile) = webdav_profile() else {
+        return;
+    };
+    saves_arrive_after_closing(&profile, "closed-tab-webdav").await;
+}
+
+/// Closes the session a file was opened through, then saves it: the upload finds its way.
+async fn saves_arrive_after_closing(profile: &ConnectProfile, name: &str) {
+    let bench = Bench::start(profile, name).await;
     let path = bench.put("config.ini", b"as it was on the server\n").await;
     let opened = bench.open(&path, "nothing").await;
+    assert!(opened.outlives_session);
     let edit = bench.wait_watching(&opened.id, 0).await;
 
     bench.sessions.disconnect(&bench.session.id).await.unwrap();
@@ -735,7 +762,7 @@ async fn saves_still_arrive_after_the_tab_is_closed() {
     bench.wait_watching(&opened.id, 1).await;
 
     let check_sessions = SessionManager::new(bench.local.path().join("check"), Events::default());
-    let check = connect(&check_sessions, &profile).await;
+    let check = connect(&check_sessions, profile).await;
     let files = check_sessions.get(&check.id).await.unwrap().files();
     assert_eq!(
         read_through(&files, &path).await,
@@ -985,4 +1012,82 @@ async fn vault_files_are_edited_as_plain_copies_and_wiped_when_the_vault_locks()
     bench.wait_gone(&opened.id).await;
     assert!(!local.parent().unwrap().exists());
     bench.finish().await;
+}
+
+#[tokio::test]
+async fn local_files_open_where_they_are_and_programs_are_not_run() {
+    let local = tempfile::tempdir().unwrap();
+    let sessions = Arc::new(SessionManager::new(
+        local.path().join("known_hosts"),
+        Events::default(),
+    ));
+    let transfers = TransferManager::new(sessions, Events::default(), TransferSettings::default());
+    let editing = EditingSettings {
+        programs: stand_in_programs(local.path()),
+        ..EditingSettings::default()
+    };
+    let external = ExternalEditManager::with_pace(
+        local.path().join("editing"),
+        transfers.files(),
+        Events::default(),
+        editing,
+        quick_pace(),
+    );
+    let in_place = OpenWith::Program {
+        id: "in-place".to_string(),
+    };
+
+    // The program is handed the file itself: nothing is copied or followed.
+    let notes = local.path().join("notes $(touch injected).txt");
+    std::fs::write(&notes, "as it was\n").unwrap();
+    let path = notes.to_str().unwrap();
+    assert_eq!(
+        external.open_local(path, &in_place).await.unwrap(),
+        OpenOutcome::Opened
+    );
+    let deadline = Instant::now() + WAIT;
+    while std::fs::read(&notes).unwrap() != b"rewritten in place\n" {
+        assert!(
+            Instant::now() < deadline,
+            "the program never saved the file"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(external.list().is_empty());
+    assert!(!local.path().join("editing").exists());
+    assert!(!local.path().join("injected").exists());
+
+    // Neither a script by its name nor one by its content goes to the system to open.
+    let named = local.path().join("deploy.sh");
+    std::fs::write(&named, "echo deploying\n").unwrap();
+    let disguised = local.path().join("readme.txt");
+    std::fs::write(&disguised, "#!/bin/sh\necho not a readme\n").unwrap();
+    for (file, name) in [(&named, "deploy.sh"), (&disguised, "readme.txt")] {
+        assert_eq!(
+            external
+                .open_local(file.to_str().unwrap(), &OpenWith::Default)
+                .await
+                .unwrap(),
+            OpenOutcome::NeedsConfirmation {
+                name: name.to_string()
+            }
+        );
+    }
+    // Named by the user, an editor opens them.
+    assert_eq!(
+        external
+            .open_local(disguised.to_str().unwrap(), &in_place)
+            .await
+            .unwrap(),
+        OpenOutcome::Opened
+    );
+
+    assert!(external
+        .open_local("notes.txt", &OpenWith::Default)
+        .await
+        .is_err());
+    assert!(external
+        .open_local(local.path().to_str().unwrap(), &in_place)
+        .await
+        .is_err());
 }
