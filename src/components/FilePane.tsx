@@ -48,11 +48,13 @@ import {
   ShieldPlus,
   SquareTerminal,
   Trash2,
+  TriangleAlert,
   Upload,
   X,
 } from "lucide-react";
 import { useBackForwardButtons } from "../hooks/useBackForwardButtons";
 import { useFolderCompare, useHiddenIdentical } from "../hooks/useFolderCompare";
+import { useListingPrefetch } from "../hooks/useListingPrefetch";
 import { usePane } from "../hooks/usePane";
 import { archiveFormatOf, isSingleFile, unpackedName } from "../lib/archives";
 import { COLUMN_LABELS, availableColumns, type DetailColumn } from "../lib/columns";
@@ -90,6 +92,7 @@ import {
   updatePane,
   type PaneHandle,
 } from "../state/paneRegistry";
+import { paneListings } from "../state/listings";
 import { useSessionStore } from "../state/sessionStore";
 import {
   previewSettingsSection,
@@ -103,8 +106,8 @@ import { useUiStore } from "../state/uiStore";
 import { requestLockVault, vaultHandover } from "../state/vaultActions";
 import { workspaceChanged } from "../state/workspace";
 import { CompareDialog, type CompareSide } from "./CompareDialog";
-import { ConfirmDialog } from "./ConfirmDialog";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
+import { DeleteDialog } from "./DeleteDialog";
 import { FileList, type MenuPosition } from "./FileList";
 import { FolderCompareBar } from "./FolderCompareBar";
 import { COMPARE_FOLDERS_SHORTCUT, folderCompareMenuItems } from "./folderCompareMenu";
@@ -143,6 +146,8 @@ interface OpenMenu {
   x: number;
   y: number;
   items: MenuItem[];
+  /** The row the menu was opened on. */
+  path?: string;
 }
 
 /** Moves keyboard focus to the next file list on screen, left to right, then top to bottom. */
@@ -211,6 +216,7 @@ export function FilePane({
   const foldersFirst = useSettingsStore((state) => state.settings.interface.foldersFirst);
   const hiddenColumns = useSettingsStore((state) => state.settings.interface.hiddenColumns);
   const columnWidths = useSettingsStore((state) => state.settings.interface.columnWidths);
+  const cachedListings = useSettingsStore((state) => state.settings.interface.cachedListings);
   const dateFormat = useSettingsStore((state) => state.settings.interface.dateFormat);
   const rowHeight = useSettingsStore((state) => state.settings.appearance.rowHeight);
   const stripedRows = useSettingsStore((state) => state.settings.appearance.stripedRows);
@@ -224,6 +230,16 @@ export function FilePane({
     [tabId, sessionId],
   );
   const hiddenIdentical = useHiddenIdentical(tabId);
+  /** The entry whose row shows the name field. */
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [menu, setMenu] = useState<OpenMenu | null>(null);
+  // The row being renamed and the one a menu is open on stay as they are when the folder is
+  // listed again under them.
+  const menuPath = menu?.path;
+  const heldPaths = useMemo(
+    () => new Set([renaming, menuPath].filter((path): path is string => typeof path === "string")),
+    [renaming, menuPath],
+  );
   const pane = usePane(source, {
     showHiddenByDefault,
     initialSort: useSettingsStore.getState().settings.interface.sort,
@@ -232,11 +248,12 @@ export function FilePane({
     onSortChange: rememberSort,
     handover,
     hideNames: hiddenIdentical,
+    // This computer's folders list at once, so only a server's are remembered.
+    listings: sessionId && cachedListings ? paneListings : undefined,
+    heldPaths,
   });
+  useListingPrefetch(pane, sessionId, visible);
   const [dialog, setDialog] = useState<PaneDialog | null>(null);
-  /** The entry whose row shows the name field. */
-  const [renaming, setRenaming] = useState<string | null>(null);
-  const [menu, setMenu] = useState<OpenMenu | null>(null);
   const [pathEditRequest, setPathEditRequest] = useState(0);
   const sectionRef = useRef<HTMLElement>(null);
   const filterRef = useRef<HTMLInputElement>(null);
@@ -282,6 +299,7 @@ export function FilePane({
         path: () => paneRef.current.listing?.path ?? null,
         refresh: (focus) => void paneRef.current.refresh(focus),
         clear: () => paneRef.current.clear(),
+        loading: () => paneRef.current.isLoading(),
         selected: () => paneRef.current.selectedEntries(),
         entries: () => paneRef.current.listing?.entries ?? [],
         visible: false,
@@ -361,12 +379,14 @@ export function FilePane({
     [clip, source.kind, sessionId],
   );
 
+  const reportedError = useRef(pane.error);
   useEffect(() => {
-    if (pane.error && pane.listing) {
-      showToast("error", pane.error.message);
-      writeLog("error", `${title}: ${pane.error.message}`);
-    }
-  }, [pane.error, pane.listing, showToast, writeLog, title]);
+    if (!pane.error || !pane.listing || reportedError.current === pane.error) return;
+    reportedError.current = pane.error;
+    // A listing left up because the server could not be reached says so in the pane.
+    if (pane.stale !== "outdated") showToast("error", pane.error.message);
+    writeLog("error", `${title}: ${pane.error.message}`);
+  }, [pane.error, pane.listing, pane.stale, showToast, writeLog, title]);
 
   const selected = pane.selectedEntries();
   const selectedSize = selected.reduce(
@@ -567,7 +587,7 @@ export function FilePane({
   };
 
   const showContextMenu = (position: MenuPosition, entry: FileEntry | null) => {
-    setMenu({ ...position, items: contextMenuItems(entry) });
+    setMenu({ ...position, items: contextMenuItems(entry), path: entry?.path });
   };
 
   const showDriveMenu = async (event: MouseEvent<HTMLButtonElement>) => {
@@ -898,9 +918,15 @@ export function FilePane({
   return (
     <section
       ref={sectionRef}
-      className={["pane", active && "is-active", dropFolder === "" && "is-drop-target"]
+      className={[
+        "pane",
+        active && "is-active",
+        dropFolder === "" && "is-drop-target",
+        pane.stale && `is-${pane.stale}`,
+      ]
         .filter(Boolean)
         .join(" ")}
+      aria-busy={pane.loading}
       // Nothing is dropped unseen among a locked vault's encrypted files.
       data-drop-pane={lockedCard ? undefined : tabId}
       onMouseDown={markActive}
@@ -973,7 +999,7 @@ export function FilePane({
           <ToolbarButton
             label="Refresh (F5)"
             onClick={() => void pane.refresh()}
-            disabled={!pane.listing}
+            disabled={!pane.listing && !pane.failedPath}
           >
             <RefreshCw size={15} className={pane.loading ? "spin" : ""} />
           </ToolbarButton>
@@ -1030,7 +1056,7 @@ export function FilePane({
           </span>
         )}
         <PathBar
-          path={pane.listing?.path ?? null}
+          path={pane.listing?.path ?? pane.failedPath}
           pathStyle={source.pathStyle}
           vaultRoot={vault?.root}
           editRequest={pathEditRequest}
@@ -1095,6 +1121,18 @@ export function FilePane({
               </span>
             </p>
           )}
+          {pane.stale === "outdated" && (
+            <p className="pane-notice pane-notice-warning" role="status">
+              <TriangleAlert size={13} />
+              <span>
+                Could not refresh this folder: {pane.error?.message.trim().replace(/\.+$/, "")}.
+                This listing may be out of date.
+              </span>
+              <button type="button" className="link-button" onClick={() => void pane.refresh()}>
+                Try again
+              </button>
+            </p>
+          )}
           {folderCompare.bar && (
             <FolderCompareBar
               bar={folderCompare.bar}
@@ -1126,6 +1164,7 @@ export function FilePane({
             onHeaderContextMenu={showHeaderMenu}
             onDelete={openDelete}
             renaming={renaming}
+            heldPaths={heldPaths}
             onRename={(entry) => setRenaming(entry.path)}
             onRenameSubmit={renameEntry}
             onRenameCancel={() => setRenaming(null)}
@@ -1148,11 +1187,25 @@ export function FilePane({
         <div className="pane-empty">
           {pane.error ? (
             <>
-              <p className="pane-empty-title">Could not open this folder</p>
+              <p className="pane-empty-title">
+                {pane.failedPath ? "Could not refresh this folder" : "Could not open this folder"}
+              </p>
               <p className="pane-empty-detail">{pane.error.message}</p>
-              <button type="button" className="button" onClick={pane.goHome}>
-                Go to home folder
-              </button>
+              <div className="pane-empty-actions">
+                {pane.failedPath && (
+                  <button
+                    type="button"
+                    className="button"
+                    disabled={pane.loading}
+                    onClick={() => void pane.refresh()}
+                  >
+                    Try again
+                  </button>
+                )}
+                <button type="button" className="button" onClick={pane.goHome}>
+                  Go to home folder
+                </button>
+              </div>
             </>
           ) : (
             <p className="pane-empty-detail">Loading...</p>
@@ -1258,21 +1311,20 @@ export function FilePane({
       )}
 
       {dialog?.type === "delete" && (
-        <ConfirmDialog
-          title={
-            dialog.entries.length === 1 ? "Delete item" : `Delete ${dialog.entries.length} items`
-          }
-          confirmLabel="Delete"
-          danger
+        <DeleteDialog
+          chosen={dialog.entries}
+          listing={pane.listing}
+          checking={pane.stale === "refreshing"}
+          summary={(entries) => <DeleteSummary entries={entries} where={where} />}
           onClose={() => setDialog(null)}
-          onConfirm={async () => {
-            const removed = dialog.entries.map((entry) => entry.path);
+          onConfirm={async (entries) => {
+            const removed = entries.map((entry) => entry.path);
             const next = entryAfterRemoval(pane.visibleEntries, new Set(removed), pane.cursorPath);
             if (overSftp && pane.listing) {
               void deleteOnServer({
                 origin: paneOrigin({ kind: source.kind, sessionId }),
                 folder: pane.listing.path,
-                entries: dialog.entries,
+                entries,
                 focusPath: next,
               });
               return;
@@ -1280,13 +1332,11 @@ export function FilePane({
             await source.remove(removed);
             writeLog(
               "info",
-              `Deleted ${pluralize(dialog.entries.length, `${where} item`)} in ${pane.listing?.path ?? ""}`,
+              `Deleted ${pluralize(entries.length, `${where} item`)} in ${pane.listing?.path ?? ""}`,
             );
             await pane.refresh(next);
           }}
-        >
-          <DeleteSummary entries={dialog.entries} where={where} />
-        </ConfirmDialog>
+        />
       )}
     </section>
   );
