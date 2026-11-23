@@ -512,6 +512,10 @@ pub enum ServerChange {
 /// A server whose connections dropped. Its jobs wait instead of using up their retries.
 struct Outage {
     since: Instant,
+    /// How long since then the paused queue or the schedule kept all its waiting jobs from
+    /// starting. Nothing tried the server meanwhile, so that time does not use up the
+    /// reconnect window.
+    untried: Duration,
     /// Its jobs are not started before this.
     until: Instant,
     failures: u32,
@@ -534,6 +538,35 @@ impl Held {
             Direction::Upload => self.upload,
             Direction::Download => self.download,
             Direction::Relay => self.upload || self.download,
+        }
+    }
+}
+
+const DIRECTIONS: [Direction; 3] = [Direction::Upload, Direction::Download, Direction::Relay];
+
+/// Since when the paused queue or the schedule keeps each direction from starting, while it
+/// does.
+#[derive(Debug, Clone, Copy, Default)]
+struct BlockedSince {
+    upload: Option<Instant>,
+    download: Option<Instant>,
+    relay: Option<Instant>,
+}
+
+impl BlockedSince {
+    fn get(self, direction: Direction) -> Option<Instant> {
+        match direction {
+            Direction::Upload => self.upload,
+            Direction::Download => self.download,
+            Direction::Relay => self.relay,
+        }
+    }
+
+    fn of(&mut self, direction: Direction) -> &mut Option<Instant> {
+        match direction {
+            Direction::Upload => &mut self.upload,
+            Direction::Download => &mut self.download,
+            Direction::Relay => &mut self.relay,
         }
     }
 }
@@ -566,6 +599,7 @@ pub struct Queue {
     bottom_rank: u32,
     pub paused: bool,
     held: Held,
+    blocked_since: BlockedSince,
     pub conflict_override: Option<ExistsAction>,
     pub totals: Totals,
     dirty: HashSet<JobId>,
@@ -987,6 +1021,7 @@ impl Queue {
                     session_id.clone(),
                     Outage {
                         since: now,
+                        untried: Duration::ZERO,
                         until: now + retry_in,
                         failures: 1,
                         gave_up: false,
@@ -998,7 +1033,10 @@ impl Queue {
             // This attempt began before the outage did.
             Some(outage) if now < outage.until => None,
             Some(outage)
-                if now.saturating_duration_since(outage.since) < settings.reconnect_window() =>
+                if now
+                    .saturating_duration_since(outage.since)
+                    .saturating_sub(outage.untried)
+                    < settings.reconnect_window() =>
             {
                 outage.failures += 1;
                 let retry_in = delay(outage.failures);
@@ -1288,9 +1326,6 @@ impl Queue {
 
     /// Pausing the queue interrupts running transfers; they continue from where they stopped.
     pub fn set_paused(&mut self, paused: bool, now: Instant) {
-        if self.paused && !paused {
-            self.restart_outages(|_| true, now);
-        }
         self.paused = paused;
         if paused {
             for job in self.jobs.values_mut() {
@@ -1299,6 +1334,7 @@ impl Queue {
                 }
             }
         }
+        self.note_blocked(now);
     }
 
     /// Holds back the directions the speed limit schedule pauses, interrupting their running
@@ -1307,17 +1343,14 @@ impl Queue {
         if self.held == held {
             return false;
         }
-        let before = std::mem::replace(&mut self.held, held);
-        self.restart_outages(
-            |job| before.holds(job.spec.direction) && !held.holds(job.spec.direction),
-            now,
-        );
+        self.held = held;
         for job in self.jobs.values_mut() {
             if job.state == JobState::Running && held.holds(job.spec.direction) {
                 stop_run(job, StopReason::Requeue);
                 self.dirty.insert(job.id);
             }
         }
+        self.note_blocked(now);
         true
     }
 
@@ -1325,22 +1358,54 @@ impl Queue {
         self.held
     }
 
-    /// Gives the servers of waiting jobs that `released` lets go again a whole reconnect window
-    /// from `now`. Nothing tried them while they were held back, so the time since their
-    /// connection dropped says nothing about whether the server is back.
-    fn restart_outages(&mut self, released: impl Fn(&Job) -> bool, now: Instant) {
-        let sessions: HashSet<&String> = self
-            .pending
-            .values()
-            .map(|id| &self.jobs[id])
-            .filter(|job| released(job))
-            .map(|job| &job.spec.session_id)
-            .collect();
+    /// Notes which directions the paused queue or the schedule now keeps from starting, and
+    /// since when. A server whose waiting jobs were all kept back, and some of which may start
+    /// again now, does not count the time nothing tried it towards its reconnect window, so the
+    /// window still runs out however often the schedule lets them go.
+    fn note_blocked(&mut self, now: Instant) {
+        let before = self.blocked_since;
+        let mut let_go = false;
+        for direction in DIRECTIONS {
+            let blocked = self.paused || self.held.holds(direction);
+            let since = self.blocked_since.of(direction);
+            match (blocked, since.is_some()) {
+                (true, false) => *since = Some(now),
+                (false, true) => {
+                    *since = None;
+                    let_go = true;
+                }
+                _ => {}
+            }
+        }
+        if !let_go {
+            return;
+        }
+        // For each server with waiting jobs: when the last of their directions was kept back,
+        // or nothing if one of them could start meanwhile; and whether one may start now.
+        let mut untried_since: HashMap<&String, Option<Instant>> = HashMap::new();
+        let mut released: HashSet<&String> = HashSet::new();
+        for id in self.pending.values() {
+            let job = &self.jobs[id];
+            let direction = job.spec.direction;
+            let kept_back = before.get(direction);
+            untried_since
+                .entry(&job.spec.session_id)
+                .and_modify(|latest| {
+                    *latest = latest
+                        .zip(kept_back)
+                        .map(|(first, second)| first.max(second));
+                })
+                .or_insert(kept_back);
+            if kept_back.is_some() && self.blocked_since.get(direction).is_none() {
+                released.insert(&job.spec.session_id);
+            }
+        }
         for (session_id, outage) in &mut self.outages {
-            if !outage.gave_up && sessions.contains(session_id) {
-                outage.since = now;
-                outage.until = outage.until.min(now);
-                outage.failures = 0;
+            if outage.gave_up || !released.contains(session_id) {
+                continue;
+            }
+            if let Some(Some(kept_back)) = untried_since.get(session_id) {
+                outage.untried += now.saturating_duration_since(outage.since.max(*kept_back));
             }
         }
     }
@@ -2165,9 +2230,9 @@ mod tests {
             retry_delay_secs: 5,
             ..settings()
         };
-        let lost_again = Some(ServerChange::Lost {
-            retry_in: Duration::from_secs(5),
-        });
+        let seconds = Duration::from_secs;
+        let lost_again = |retry_in| Some(ServerChange::Lost { retry_in });
+        let gave_up = Some(ServerChange::GaveUp { failed: 2 });
         let mut queue = Queue::new();
         let first = queue.add(file("a", 1));
         let second = queue.add(file("b", 1));
@@ -2176,40 +2241,74 @@ mod tests {
         drop_connection(&mut queue, first, &settings, start);
 
         // The schedule holds the uploads for far longer than the reconnect window. Nothing
-        // tried the server meanwhile, so one more dropped connection waits for it again.
+        // tried the server meanwhile, so one more dropped connection waits for it again, with
+        // the next delay rather than the first.
         queue.set_held(UPLOADS_HELD, start);
-        let released = start + Duration::from_secs(3600);
+        let released = start + seconds(3600);
         queue.set_held(Held::default(), released);
         assert_eq!(queue.claim(released).unwrap().id, first);
         assert_eq!(
             drop_connection(&mut queue, first, &settings, released),
-            lost_again
+            lost_again(seconds(10))
         );
         assert_eq!(queue.job(first).unwrap().state, JobState::Queued);
         assert_eq!(queue.job(second).unwrap().state, JobState::Queued);
+        // A new session to the server since the connection dropped still ends the wait.
         assert_eq!(
             queue.waiting_servers(),
-            vec![("session".to_string(), released)]
+            vec![("session".to_string(), start)]
         );
 
         // The same for a queue paused that long.
         queue.set_paused(true, released);
-        let started = released + Duration::from_secs(3600);
+        let started = released + seconds(3600);
         queue.set_paused(false, started);
         assert_eq!(queue.claim(started).unwrap().id, first);
         assert_eq!(
             drop_connection(&mut queue, first, &settings, started),
-            lost_again
+            lost_again(seconds(20))
         );
         assert_eq!(queue.job(second).unwrap().state, JobState::Queued);
 
         // Within the window, a server that stays out of reach is still given up on.
-        let late = started + Duration::from_secs(61);
+        let late = started + seconds(61);
         assert_eq!(queue.claim(late).unwrap().id, first);
+        assert_eq!(drop_connection(&mut queue, first, &settings, late), gave_up);
+
+        // Holds within the window only add the time they took, so the window still runs out
+        // however often the schedule lets the jobs go: here 20 seconds of holds make it end
+        // 80 seconds after the connection dropped.
+        let mut queue = Queue::new();
+        let first = queue.add(file("a", 1));
+        queue.add(file("b", 1));
+        queue.claim(start).unwrap();
+        drop_connection(&mut queue, first, &settings, start);
+        for held_at in [10, 30] {
+            queue.set_held(UPLOADS_HELD, start + seconds(held_at));
+            queue.set_held(Held::default(), start + seconds(held_at + 10));
+        }
+        let within = start + seconds(75);
+        assert_eq!(queue.claim(within).unwrap().id, first);
         assert_eq!(
-            drop_connection(&mut queue, first, &settings, late),
-            Some(ServerChange::GaveUp { failed: 2 })
+            drop_connection(&mut queue, first, &settings, within),
+            lost_again(seconds(10))
         );
+        let past = start + seconds(85);
+        assert_eq!(queue.claim(past).unwrap().id, first);
+        assert_eq!(drop_connection(&mut queue, first, &settings, past), gave_up);
+
+        // Downloads from the server could go on while its uploads were held, so the hold
+        // takes nothing off the window.
+        let mut queue = Queue::new();
+        let first = queue.add(file("a", 1));
+        queue.add(download("down", 1));
+        queue.claim(start).unwrap();
+        drop_connection(&mut queue, first, &settings, start);
+        queue.set_held(UPLOADS_HELD, start);
+        queue.set_held(Held::default(), start + seconds(50));
+        let past = start + seconds(60);
+        assert_eq!(queue.claim(past).unwrap().id, first);
+        assert_eq!(drop_connection(&mut queue, first, &settings, past), gave_up);
     }
 
     #[test]
