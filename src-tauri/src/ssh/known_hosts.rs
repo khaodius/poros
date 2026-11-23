@@ -38,6 +38,8 @@ pub struct KnownHosts {
     system_files: Vec<PathBuf>,
     /// Keys trusted until Poros closes, shared by every clone.
     trusted_until_exit: Arc<Mutex<Vec<(String, PublicKey)>>>,
+    /// Held while the app file is rewritten, so keys remembered at the same moment all stay.
+    writing: Arc<Mutex<()>>,
 }
 
 impl KnownHosts {
@@ -46,6 +48,7 @@ impl KnownHosts {
             app_file,
             system_files,
             trusted_until_exit: Arc::default(),
+            writing: Arc::default(),
         }
     }
 
@@ -146,6 +149,7 @@ impl KnownHosts {
 
     /// Replaces any recorded key of the same algorithm for the host.
     pub fn trust(&self, host: &str, port: u16, key: &PublicKey) -> io::Result<()> {
+        let _writing = self.writing.lock().unwrap();
         let host_port = host_pattern(host, port);
         let existing = fs::read_to_string(&self.app_file).unwrap_or_default();
         let mut kept: Vec<&str> = existing
@@ -172,15 +176,22 @@ impl KnownHosts {
         if let Some(parent) = self.app_file.parent() {
             fs::create_dir_all(parent)?;
         }
-        let temporary = self.app_file.with_extension("tmp");
-        {
+        // A name of its own, since poros-cli may be saving a key to the same file.
+        let temporary = self
+            .app_file
+            .with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
+        let written = (|| {
             let mut file = fs::File::create(&temporary)?;
             for line in &kept {
                 writeln!(file, "{line}")?;
             }
             file.sync_all()?;
+            fs::rename(&temporary, &self.app_file)
+        })();
+        if written.is_err() {
+            let _ = fs::remove_file(&temporary);
         }
-        fs::rename(&temporary, &self.app_file)
+        written
     }
 }
 
@@ -375,6 +386,43 @@ mod tests {
             HostKeyStatus::Unknown
         );
         assert_eq!(fs::read_to_string(&known_hosts.app_file).unwrap(), "");
+    }
+
+    /// Each approval rewrites the file with what it read before, so two at once could each
+    /// keep only their own record, or share one temporary file.
+    #[test]
+    fn keys_remembered_at_the_same_moment_are_all_recorded() {
+        let (dir, known_hosts) = store("", "");
+        let hosts: Vec<String> = (0..24)
+            .map(|index| format!("host{index}.example.com"))
+            .collect();
+        let start = Arc::new(std::sync::Barrier::new(hosts.len()));
+        let approvals: Vec<_> = hosts
+            .iter()
+            .map(|host| {
+                let (known_hosts, start, host) = (known_hosts.clone(), start.clone(), host.clone());
+                std::thread::spawn(move || {
+                    start.wait();
+                    known_hosts.trust(&host, 22, &key(KEY_A))
+                })
+            })
+            .collect();
+        for approval in approvals {
+            approval.join().unwrap().unwrap();
+        }
+        for host in &hosts {
+            assert_eq!(
+                known_hosts.check(host, 22, &key(KEY_A)),
+                HostKeyStatus::Trusted,
+                "{host}"
+            );
+        }
+        let leftovers: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .filter(|name| name.to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
     }
 
     #[test]
