@@ -19,6 +19,13 @@ import { useTransferStore } from "./transferStore";
 
 const lanes = new PrefetchLanes();
 
+/** Whether listings are still remembered, and the session is still open in this window. */
+function stillListing(sessionId: string): boolean {
+  const remembering = useSettingsStore.getState().settings.interface.cachedListings;
+  const entry = useSessionStore.getState().sessions[sessionId] as SessionEntry | undefined;
+  return remembering && entry !== undefined;
+}
+
 /**
  * Lists ahead the folders likely to be opened next from `listing`, which a pane on `sessionId`
  * shows with the cursor on `cursorPath`. One folder at a time per server, and none where the
@@ -47,7 +54,9 @@ export function prefetchAround(
     const scope = listingScope(showing.info, showing.profile);
     if (cache.has(scope, path)) return [];
     const run = async () => {
-      if (cache.has(scope, path)) return;
+      // A job that waited its turn while its session left, as a vault that locked, or while
+      // the setting was turned off, asks for nothing that would be kept under a forgotten name.
+      if (cache.has(scope, path) || !stillListing(showing.info.id)) return;
       const ticket = cache.begin(scope, path);
       try {
         listingShare.store(scope, await remote.list(showing.info.id, path), ticket);
