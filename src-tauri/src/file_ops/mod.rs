@@ -8,6 +8,7 @@ mod history;
 mod local_ops;
 mod names;
 mod permissions;
+mod rename;
 mod server;
 
 use std::collections::HashMap;
@@ -26,6 +27,9 @@ use crate::sftp::RemoteFs;
 pub use compare::{CompareRequest, Comparison, FileRef, VersionCompareRequest};
 pub use history::{DeletedAction, DeletedItem, DeletedRequest, DeletedSummary};
 pub use permissions::{Details, ModeChange, PermissionRequest, PermissionSummary, Usage};
+pub use rename::{
+    Rename, RenameFailure, RenameGroup, RenameRequest, RenameSummary, Renamed, Stranded,
+};
 
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
 /// Failures an operation keeps to report; any more are only counted.
@@ -428,7 +432,10 @@ impl FileOperations {
             }
             Location::Remote { session_id } => {
                 let session = self.sessions.get(&session_id).await?;
-                server::existing_names(session.sftp()?, &directory, &names).await
+                match session.sftp() {
+                    Ok(fs) => server::existing_names(fs, &directory, &names).await,
+                    Err(_) => rename::taken_names(&*session.files(), &directory, &names).await,
+                }
             }
         }
     }
@@ -452,6 +459,25 @@ impl FileOperations {
                 work.move_or_copy(&request).await
             }
         }
+    }
+
+    /// Renames items of one folder, on this computer or on a server of any kind, in the order
+    /// given, and says which have their new name.
+    pub async fn rename(&self, request: RenameRequest) -> AppResult<RenameSummary> {
+        rename::check(&request)?;
+        let running = self.begin(&request.operation_id);
+        let (cancel, progress) = (&running.cancel, &running.progress);
+        Ok(match &request.location {
+            Location::Local => {
+                let folder = rename::LocalFolder::new(&request.directory);
+                rename::run(&folder, &request.groups, cancel, progress).await
+            }
+            Location::Remote { session_id } => {
+                let session = self.sessions.get(session_id).await?;
+                let folder = rename::RemoteFolder::new(session.files(), &request.directory);
+                rename::run(&folder, &request.groups, cancel, progress).await
+            }
+        })
     }
 
     pub async fn delete(&self, request: DeleteRequest) -> AppResult<DeleteSummary> {

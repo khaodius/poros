@@ -206,6 +206,9 @@ pub enum Command {
     Chown(ChownArgs),
     /// Count the files, folders and bytes under paths
     Du(PathsArgs),
+    /// Search a folder and everything below it by name, size and date: find NAME [FOLDER]
+    #[command(visible_alias = "search")]
+    Find(FindArgs),
     /// Hash files on the server
     Checksum(ChecksumArgs),
     /// Check that a local and a server copy hold the same contents
@@ -271,6 +274,62 @@ pub struct VersionsArgs {
     pub parents: bool,
     #[command(flatten)]
     pub options: TransferOptions,
+}
+
+#[derive(Debug, Args)]
+pub struct FindArgs {
+    /// What names have to look like: text found anywhere in a name, or a pattern with * and ?
+    /// for the whole name. "" finds every name
+    #[arg(value_name = "NAME")]
+    pub name: String,
+    /// Where to search; the connection's own folder by default
+    #[arg(value_name = "FOLDER")]
+    pub folder: Option<String>,
+    /// NAME is a regular expression, found anywhere in a name unless anchored with ^ and $
+    #[arg(short = 'E', long)]
+    pub regex: bool,
+    /// Tell upper case from lower case
+    #[arg(short = 's', long)]
+    pub case_sensitive: bool,
+    /// Find only files or only folders
+    #[arg(short = 't', long = "type", value_enum, value_name = "KIND")]
+    pub kind: Option<FindKind>,
+    /// At least this large: bytes, or with a unit as in 500K, 100M, 2G
+    #[arg(long, value_name = "SIZE")]
+    pub min_size: Option<String>,
+    /// At most this large
+    #[arg(long, value_name = "SIZE")]
+    pub max_size: Option<String>,
+    /// Changed at this time or later: 2026-11-01, 2026-11-01T08:30:00Z, or an age as in 30m,
+    /// 12h, 7d
+    #[arg(long, value_name = "WHEN")]
+    pub newer: Option<String>,
+    /// Changed at this time or earlier
+    #[arg(long, value_name = "WHEN")]
+    pub older: Option<String>,
+    /// How many levels down to look; 1 is the folder alone
+    #[arg(long, value_name = "LEVELS", value_parser = clap::value_parser!(u32).range(1..))]
+    pub max_depth: Option<u32>,
+    /// Search hidden folders too
+    #[arg(short = 'a', long)]
+    pub hidden: bool,
+    /// Search the folders links lead to; a link back up is not entered twice
+    #[arg(short = 'L', long)]
+    pub follow: bool,
+    /// Stop after this many results
+    #[arg(long, value_name = "COUNT", default_value_t = crate::search::DEFAULT_LIMIT, value_parser = clap::value_parser!(u32).range(1..=crate::search::MAX_LIMIT as i64))]
+    pub limit: u32,
+    /// Show permissions, owner, size and time
+    #[arg(short, long)]
+    pub long: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum FindKind {
+    #[value(alias = "f")]
+    File,
+    #[value(alias = "d", alias = "dir")]
+    Folder,
 }
 
 #[derive(Debug, Args)]
