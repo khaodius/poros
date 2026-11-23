@@ -36,6 +36,38 @@ describe("ListingLoads", () => {
     expect(loads.start("refresh")).not.toBeNull();
   });
 
+  it("refreshes a folder that is on show from a remembered listing", () => {
+    const loads = new ListingLoads();
+    const navigation = loads.start("navigation")!;
+    // Its folder is up already, so the load still on its way only confirms it.
+    loads.landed(navigation);
+    const refresh = loads.start("refresh")!;
+    expect(refresh).not.toBeNull();
+    expect(loads.isCurrent(refresh)).toBe(true);
+    expect(loads.isCurrent(navigation)).toBe(false);
+  });
+
+  it("keeps the newest navigation on its way when an older one lands", () => {
+    const loads = new ListingLoads();
+    const first = loads.start("navigation")!;
+    loads.start("navigation");
+    loads.landed(first);
+    expect(loads.start("refresh")).toBeNull();
+  });
+
+  it("is busy until every load has finished", () => {
+    const loads = new ListingLoads();
+    expect(loads.busy).toBe(false);
+    const navigation = loads.start("navigation")!;
+    loads.landed(navigation);
+    const refresh = loads.start("refresh")!;
+    expect(loads.busy).toBe(true);
+    loads.finish(navigation);
+    expect(loads.busy).toBe(true);
+    loads.finish(refresh);
+    expect(loads.busy).toBe(false);
+  });
+
   it("shows only the newest of several refreshes", () => {
     const loads = new ListingLoads();
     const first = loads.start("refresh")!;

@@ -37,6 +37,7 @@ import type { EditorTab } from "../lib/layout";
 import type { FileStamp, TextLineEnding, TextEncoding } from "../lib/types";
 import { registerEditor, useUnsavedStore } from "../state/editorRegistry";
 import { useLayoutStore } from "../state/layoutStore";
+import { forgetListingOf } from "../state/listings";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 
@@ -168,6 +169,9 @@ export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
       }
       stampRef.current = outcome.stamp;
       baselineRef.current = { doc, ...savedFormat };
+      // The file's size and date in its folder's listing are no longer what they were.
+      const { sessionId, path } = tabRef.current;
+      if (sessionId) forgetListingOf(sessionId, path);
       setConflict(null);
       refreshUnsaved();
       return true;
