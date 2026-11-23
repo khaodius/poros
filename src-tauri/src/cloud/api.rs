@@ -14,7 +14,7 @@ use serde::Deserialize;
 use tokio::sync::Mutex;
 
 use super::oauth::{self, OAuthClient};
-use super::TokenRotation;
+use super::{TokenReload, TokenRotation};
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::stall::Activity;
 
@@ -271,10 +271,12 @@ struct AccessToken {
 
 pub struct AccessTokens {
     http: Client,
+    token_url: String,
     client: OAuthClient,
     refresh_token: SyncMutex<String>,
     current: Mutex<Option<AccessToken>>,
     rotation: Option<TokenRotation>,
+    reload: Option<TokenReload>,
 }
 
 impl AccessTokens {
@@ -283,13 +285,16 @@ impl AccessTokens {
         client: OAuthClient,
         refresh_token: String,
         rotation: Option<TokenRotation>,
+        reload: Option<TokenReload>,
     ) -> Self {
         Self {
             http,
+            token_url: client.token_url(),
             client,
             refresh_token: SyncMutex::new(refresh_token),
             current: Mutex::new(None),
             rotation,
+            reload,
         }
     }
 
@@ -300,8 +305,26 @@ impl AccessTokens {
                 return Ok(token.value.clone());
             }
         }
-        let refresh_token = self.refresh_token.lock().unwrap().clone();
-        let response = oauth::refresh(&self.http, &self.client, &refresh_token).await?;
+        let mut refresh_token = self.refresh_token.lock().unwrap().clone();
+        let response =
+            match oauth::refresh(&self.http, &self.client, &self.token_url, &refresh_token).await {
+                // Some services take a refresh token once. Another session or poros-cli on the
+                // same account may have used it up and stored the one it got in its place.
+                Err(refused) if refused.kind == ErrorKind::AuthFailed => {
+                    let Some(stored) = self
+                        .stored_refresh_token()
+                        .await
+                        .filter(|stored| !stored.is_empty() && *stored != refresh_token)
+                    else {
+                        return Err(refused);
+                    };
+                    refresh_token = stored;
+                    *self.refresh_token.lock().unwrap() = refresh_token.clone();
+                    oauth::refresh(&self.http, &self.client, &self.token_url, &refresh_token)
+                        .await?
+                }
+                result => result?,
+            };
         if let Some(replacement) = response
             .refresh_token
             .filter(|replacement| !replacement.is_empty() && *replacement != refresh_token)
@@ -320,6 +343,16 @@ impl AccessTokens {
             renew_at: Instant::now() + lifetime - RENEW_BEFORE.min(lifetime / 2),
         });
         Ok(response.access_token)
+    }
+
+    /// The refresh token stored for the account now, read off the async runtime since the
+    /// keychain can take a while to answer.
+    async fn stored_refresh_token(&self) -> Option<String> {
+        let reload = self.reload.clone()?;
+        tokio::task::spawn_blocking(move || reload())
+            .await
+            .ok()
+            .flatten()
     }
 
     /// The service refused `token` before it was due to expire (revoked, or a clock jump).
@@ -726,6 +759,116 @@ mod tests {
             error_body(response).await.unwrap().len(),
             MAX_ERROR_BODY_BYTES
         );
+    }
+
+    /// A token endpoint that, as Box does, hands out a new refresh token with every access
+    /// token and refuses a refresh token once it was used.
+    async fn serve_rotating_tokens(listener: TcpListener) {
+        let mut valid = "R0".to_string();
+        for issued in 1.. {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                return;
+            };
+            let mut request = Vec::new();
+            let mut piece = [0u8; 4096];
+            let body = loop {
+                let read = stream.read(&mut piece).await.unwrap();
+                assert!(read > 0, "the request ended early");
+                request.extend_from_slice(&piece[..read]);
+                let text = String::from_utf8_lossy(&request).into_owned();
+                let Some((head, body)) = text.split_once("\r\n\r\n") else {
+                    continue;
+                };
+                let length: usize = head
+                    .to_ascii_lowercase()
+                    .lines()
+                    .find_map(|line| line.strip_prefix("content-length:"))
+                    .map_or(0, |value| value.trim().parse().unwrap());
+                if body.len() >= length {
+                    break body.to_string();
+                }
+            };
+            let presented = body
+                .split('&')
+                .find_map(|pair| pair.strip_prefix("refresh_token="))
+                .unwrap_or_default();
+            let (status, answer) = if presented == valid {
+                valid = format!("R{issued}");
+                let access = format!("A{issued}");
+                let answer = serde_json::json!({
+                    "access_token": access,
+                    "expires_in": 3600,
+                    "refresh_token": valid,
+                });
+                ("200 OK", answer.to_string())
+            } else {
+                let answer =
+                    r#"{"error":"invalid_grant","error_description":"Refresh token has expired"}"#;
+                ("400 Bad Request", answer.to_string())
+            };
+            let reply = format!(
+                "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{answer}",
+                answer.len()
+            );
+            stream.write_all(reply.as_bytes()).await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn sessions_on_one_account_keep_signing_in_as_its_token_rotates() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let token_url = format!("http://{}/token", listener.local_addr().unwrap());
+        tokio::spawn(serve_rotating_tokens(listener));
+        // The keychain entry of the saved connection both sessions were opened from.
+        let stored = Arc::new(SyncMutex::new("R0".to_string()));
+        let open_session = || {
+            let (kept, read) = (stored.clone(), stored.clone());
+            let client = OAuthClient {
+                provider: crate::cloud::CloudProvider::Box,
+                client_id: "poros".into(),
+                client_secret: "secret".into(),
+                tenant: String::new(),
+            };
+            let refresh_token = stored.lock().unwrap().clone();
+            let rotation: TokenRotation = Arc::new(move |replacement: &str| {
+                *kept.lock().unwrap() = replacement.to_string();
+            });
+            let reload: TokenReload = Arc::new(move || Some(read.lock().unwrap().clone()));
+            let mut tokens = AccessTokens::new(
+                http_client().unwrap(),
+                client,
+                refresh_token,
+                Some(rotation),
+                Some(reload),
+            );
+            tokens.token_url = token_url.clone();
+            tokens
+        };
+        let expire = |tokens: &AccessTokens| {
+            let mut current = tokens.current.try_lock().unwrap();
+            current.as_mut().unwrap().renew_at = Instant::now();
+        };
+
+        let first = open_session();
+        first.get().await.unwrap();
+        // Opened with the token the first session stored, which the first one still holds too.
+        let second = open_session();
+        second.get().await.unwrap();
+        assert_eq!(*stored.lock().unwrap(), "R2");
+
+        // An hour on, each renews its access token with a refresh token the other used up.
+        expire(&first);
+        first.get().await.unwrap();
+        expire(&second);
+        second.get().await.unwrap();
+        expire(&first);
+        first.get().await.unwrap();
+
+        // With nothing newer stored, a refused token stays refused.
+        *stored.lock().unwrap() = "R0".to_string();
+        let lost = open_session();
+        let error = lost.get().await.unwrap_err();
+        assert_eq!(error.kind, ErrorKind::AuthFailed);
     }
 
     #[test]

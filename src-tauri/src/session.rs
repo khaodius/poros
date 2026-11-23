@@ -28,6 +28,10 @@ pub type SecretSink = Arc<dyn Fn(&str, &SecretScope, &str) + Send + Sync>;
 /// connection saved from the session later keeps one that still works.
 pub type GrantSink = Arc<dyn Fn(&str, &str) + Send + Sync>;
 
+/// Reads the secret stored for a saved connection's id and what the session signed in to, as
+/// the keychain holds it now.
+pub type SecretSource = Arc<dyn Fn(&str, &SecretScope) -> Option<String> + Send + Sync>;
+
 pub struct Session {
     pub id: String,
     /// Kept (with credentials) so transfer workers can open more connections. An unlocked
@@ -237,6 +241,7 @@ pub struct SessionManager {
     pub known_hosts: KnownHosts,
     pub certificates: TrustedCertificates,
     secret_sink: SyncRwLock<Option<SecretSink>>,
+    secret_source: SyncRwLock<Option<SecretSource>>,
     grant_sink: SyncRwLock<Option<GrantSink>>,
     events: Events,
 }
@@ -251,6 +256,7 @@ impl SessionManager {
             known_hosts: KnownHosts::with_defaults(known_hosts_file),
             certificates: TrustedCertificates::new(certificates_file),
             secret_sink: SyncRwLock::new(None),
+            secret_source: SyncRwLock::new(None),
             grant_sink: SyncRwLock::new(None),
             events,
         }
@@ -258,6 +264,10 @@ impl SessionManager {
 
     pub fn set_secret_sink(&self, sink: SecretSink) {
         *self.secret_sink.write().unwrap() = Some(sink);
+    }
+
+    pub fn set_secret_source(&self, source: SecretSource) {
+        *self.secret_source.write().unwrap() = Some(source);
     }
 
     pub fn set_grant_sink(&self, sink: GrantSink) {
@@ -290,6 +300,15 @@ impl SessionManager {
                 sink(grant_id, secret);
             }
         }))
+    }
+
+    /// Where a session reads its saved connection's refresh token again, for when another
+    /// session or program on the same account used up the one it holds.
+    fn reload_hook(&self, profile: &ConnectProfile) -> Option<cloud::TokenReload> {
+        let saved_id = profile.saved_connection_id.clone()?;
+        let source = self.secret_source.read().unwrap().clone()?;
+        let scope = SecretScope::of_profile(profile);
+        Some(Arc::new(move || source(&saved_id, &scope)))
     }
 
     pub async fn connect(
@@ -496,6 +515,7 @@ impl SessionManager {
                     certificates: &self.certificates,
                     approval,
                     rotation: self.rotation_hook(&profile),
+                    reload: self.reload_hook(&profile),
                 };
                 let (files, fingerprint) =
                     cloud::connect(id, &profile, login, &self.events).await?;

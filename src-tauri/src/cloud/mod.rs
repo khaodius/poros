@@ -59,6 +59,10 @@ fn encode_path(path: &str) -> String {
 /// Receives a refresh token that replaced the one the session started with.
 pub type TokenRotation = Arc<dyn Fn(&str) + Send + Sync>;
 
+/// Reads the refresh token stored for the session's account now, which another session or
+/// `poros-cli` may have replaced with the one it got for it.
+pub type TokenReload = Arc<dyn Fn() -> Option<String> + Send + Sync>;
+
 /// Mirrored in `src/lib/types.ts`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -95,6 +99,7 @@ pub struct Login<'login> {
     pub certificates: &'login TrustedCertificates,
     pub approval: Option<HostKeyApproval>,
     pub rotation: Option<TokenRotation>,
+    pub reload: Option<TokenReload>,
 }
 
 impl Login<'_> {
@@ -196,7 +201,10 @@ pub async fn connect(
             (Arc::new(files), fingerprint)
         }
         Protocol::BackblazeB2 => (Arc::new(b2::B2Fs::connect(profile).await?), String::new()),
-        _ => (connect_oauth(profile, login.rotation).await?, String::new()),
+        _ => (
+            connect_oauth(profile, login.rotation, login.reload).await?,
+            String::new(),
+        ),
     };
     events.log(
         LogLevel::Info,
@@ -209,6 +217,7 @@ pub async fn connect(
 async fn connect_oauth(
     profile: &ConnectProfile,
     rotation: Option<TokenRotation>,
+    reload: Option<TokenReload>,
 ) -> AppResult<Arc<dyn RemoteFileSystem>> {
     let provider = CloudProvider::for_protocol(profile.protocol)
         .ok_or_else(|| AppError::invalid("Not a cloud storage connection"))?;
@@ -237,6 +246,7 @@ async fn connect_oauth(
         client,
         refresh_token.clone(),
         rotation,
+        reload,
     ));
     let api = api::Api::new(tokens);
     Ok(match provider {

@@ -123,6 +123,10 @@ impl Context {
                 }
             },
         ));
+        let source = store.clone();
+        sessions.set_secret_source(Arc::new(move |id: &str, scope: &SecretScope| {
+            source.secret_for(id, scope).ok().flatten()
+        }));
         Ok(Self {
             options,
             settings,
