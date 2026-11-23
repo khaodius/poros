@@ -4,8 +4,9 @@
 //! the exit status says how it went (see `exit::TABLE`).
 //!
 //! It reads the app's settings, saved connections and trusted host keys from the app's config
-//! folder but writes nothing there, except a host key it is told to remember and a cloud
-//! sign-in the provider renewed. Its transfer queue is its own and is never saved.
+//! folder but writes nothing there, except a host key it is told to remember, a cloud sign-in
+//! the provider renewed, and what `schedule` does to the app's scheduled tasks. Its transfer
+//! queue is its own and is never saved.
 
 mod args;
 mod batch;

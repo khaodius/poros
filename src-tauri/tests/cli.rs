@@ -441,3 +441,304 @@ fn batch_answers_every_line_in_order() {
     assert_eq!(answers[5]["exitCode"], 2);
     assert_eq!(answers[6]["error"]["kind"], "invalidInput");
 }
+
+impl Run {
+    /// `schedule` as cron would run it: no connection or password in the environment.
+    fn schedule(&self, arguments: &[&str]) -> Command {
+        let mut command = self.command(&[&["schedule"], arguments].concat());
+        command
+            .env_remove("POROS_CONNECTION")
+            .env_remove("POROS_PASSWORD");
+        command
+    }
+
+    fn schedule_json(&self, arguments: &[&str]) -> (i32, Value) {
+        let output = self
+            .schedule(&[&["--json"], arguments].concat())
+            .output()
+            .unwrap();
+        (status(&output), parsed(&output))
+    }
+
+    fn write_config(&self, name: &str, value: &Value) {
+        std::fs::write(
+            self.config.path().join(name),
+            serde_json::to_vec_pretty(value).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn tasks(&self) -> Vec<Value> {
+        let (code, value) = self.schedule_json(&["list"]);
+        assert_eq!(code, 0, "{value}");
+        value.as_array().unwrap().clone()
+    }
+
+    fn task(&self, name: &str) -> Value {
+        self.tasks()
+            .into_iter()
+            .find(|task| task["name"] == name)
+            .unwrap_or_else(|| panic!("no task {name}"))
+    }
+}
+
+fn now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
+}
+
+#[test]
+fn scheduled_tasks_from_0_7_0_are_listed() {
+    let run = Run::offline();
+    let output = run.schedule(&["list"]).output().unwrap();
+    assert_eq!(status(&output), 0, "{output:?}");
+    assert!(String::from_utf8_lossy(&output.stdout).contains("No scheduled tasks"));
+    // Looking leaves no trace in a config folder without tasks.
+    assert_eq!(std::fs::read_dir(run.config.path()).unwrap().count(), 0);
+
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/schedules-0.7.0.json"),
+        run.config.path().join("schedules.json"),
+    )
+    .unwrap();
+    let output = run.schedule(&["list"]).output().unwrap();
+    assert_eq!(status(&output), 0, "{output:?}");
+    let text = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(lines[0].starts_with("NAME") && lines[0].contains("NEXT RUN"));
+    assert!(lines[1].starts_with("Nightly site upload  sync"));
+    assert!(lines[1].contains("Every day at 02:00") && lines[1].contains("ok: 12 files copied"));
+    assert!(lines[2].contains("Every 6 hours") && lines[2].contains(" off "));
+    assert!(lines[2].contains("failed: Command exited with status 1"));
+
+    let tasks = run.tasks();
+    assert_eq!(tasks.len(), 3);
+    assert_eq!(tasks[0]["kind"], "sync");
+    assert_eq!(tasks[0]["nextRun"], "2026-11-24T02:00:00Z");
+    assert_eq!(tasks[0]["lastRun"]["succeeded"], true);
+    assert_eq!(tasks[1]["enabled"], false);
+    assert_eq!(tasks[1]["nextRun"], Value::Null);
+    assert_eq!(
+        tasks[2]["description"],
+        "Run wall 'Moving to the new server tonight'"
+    );
+    assert_eq!(tasks[2]["lastRun"], Value::Null);
+
+    let (code, value) = run.schedule_json(&["run", "weekly"]);
+    assert_eq!(code, 7, "{value}");
+    assert_eq!(value["error"]["kind"], "notFound");
+    let (code, value) = run.schedule_json(&["enable", "rotate LOGS"]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(value[0]["enabled"], true);
+    assert!(value[0]["nextRun"].is_string());
+    let help = run.run(&["schedule", "--help"]);
+    let help = String::from_utf8_lossy(&help.stdout);
+    for part in [
+        "*/5 * * * * poros-cli schedule run --due",
+        "OnCalendar=",
+        "13 when a task",
+    ] {
+        assert!(help.contains(part), "{help}");
+    }
+}
+
+#[test]
+fn scheduled_tasks_run_now_when_due_and_never_twice_at_once() {
+    let Some(run) = Run::online("schedule") else {
+        return;
+    };
+    let (code, info) = run.json(&["info"]);
+    assert_eq!(code, 0, "{info}");
+    let home = info["home"]
+        .as_str()
+        .unwrap()
+        .trim_end_matches('/')
+        .to_string();
+    let remote = format!("{home}/{}", run.remote);
+    let port: u16 = std::env::var("POROS_TEST_SSH_PORT")
+        .unwrap()
+        .parse()
+        .unwrap();
+    let user = std::env::var("POROS_TEST_SSH_USER").unwrap_or_else(|_| "poros".into());
+    let saved = |id: &str, name: &str, auth: &str| {
+        serde_json::json!({
+            "id": id,
+            "protocol": "sftp",
+            "name": name,
+            "host": "127.0.0.1",
+            "port": port,
+            "username": user,
+            "authType": auth,
+            "keyPath": fixture("openssh-ed25519"),
+            "saveSecret": auth == "password",
+        })
+    };
+    run.write_config(
+        "connections.json",
+        &serde_json::json!([
+            saved("by-key", "test server", "publicKey"),
+            saved("by-password", "with password", "password"),
+        ]),
+    );
+    write_tree(
+        run.local.path(),
+        &[
+            ("site/index.html", b"<h1>scheduled</h1>\n"),
+            ("site/css/site.css", &[7u8; 40_000]),
+            ("notes.txt", b"remember\n"),
+        ],
+    );
+    let site = run.local("site").to_string_lossy().into_owned();
+    let notes = run.local("notes.txt").to_string_lossy().into_owned();
+    let restored = run.local("restored").to_string_lossy().into_owned();
+    let every_hour = serde_json::json!({ "type": "every", "minutes": 60, "start": 0 });
+    let task = |id: &str, name: &str, next_run: i64, action: Value| {
+        serde_json::json!({
+            "id": id,
+            "name": name,
+            "enabled": true,
+            "trigger": every_hour,
+            "action": action,
+            "runMissed": true,
+            "nextRun": next_run,
+        })
+    };
+    run.write_config(
+        "schedules.json",
+        &serde_json::json!([
+            task(
+                "upload",
+                "Backup",
+                now() - 30,
+                serde_json::json!({
+                    "type": "transfer",
+                    "connectionId": "by-key",
+                    "direction": "upload",
+                    "items": [{ "path": site, "isDir": true }, { "path": notes }],
+                    "destination": remote,
+                    "exists": "overwrite",
+                    "subfolder": "backup-{date}",
+                })
+            ),
+            task(
+                "download",
+                "Restore",
+                now() + 3600,
+                serde_json::json!({
+                    "type": "transfer",
+                    "connectionId": "by-key",
+                    "direction": "download",
+                    "items": [{ "path": format!("{remote}/latest"), "isDir": true }],
+                    "destination": restored,
+                })
+            ),
+            task(
+                "slow",
+                "Slow",
+                now() + 3600,
+                serde_json::json!({
+                    "type": "command",
+                    "connectionId": "by-key",
+                    "command": "sleep 3; echo slept",
+                })
+            ),
+            task(
+                "password",
+                "Needs a password",
+                now() + 3600,
+                serde_json::json!({
+                    "type": "command",
+                    "connectionId": "by-password",
+                    "command": "echo signed in",
+                })
+            ),
+        ]),
+    );
+
+    // Only the task whose time has come runs, once.
+    let (code, value) = run.schedule_json(&["run", "--due"]);
+    assert_eq!(code, 0, "{value}");
+    let reports = value.as_array().unwrap();
+    assert_eq!(reports.len(), 1, "{value}");
+    assert_eq!(reports[0]["name"], "Backup");
+    assert_eq!(reports[0]["state"], "succeeded");
+    let message = reports[0]["message"].as_str().unwrap();
+    assert!(message.starts_with("3 files uploaded ("), "{message}");
+    let dated = message.rsplit_once(" to ").unwrap().1.to_string();
+    assert!(dated.starts_with(&format!("{remote}/backup-20")), "{dated}");
+    let shown = run.run(&["cat", &format!("{dated}/site/index.html")]);
+    assert_eq!(shown.stdout, b"<h1>scheduled</h1>\n");
+    let backup = run.task("Backup");
+    assert_eq!(backup["lastRun"]["message"], message);
+    assert!(backup["nextRun"].as_str().unwrap() > backup["lastRun"]["started"].as_str().unwrap());
+    let output = run.schedule(&["run", "--due"]).output().unwrap();
+    assert_eq!(status(&output), 0, "{output:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "No task is due"
+    );
+
+    // A task asked for by name runs whenever; this one downloads what the backup uploaded.
+    let (code, value) = run.json(&["mv", &dated, &format!("{remote}/latest")]);
+    assert_eq!(code, 0, "{value}");
+    let output = run.schedule(&["run", "restore"]).output().unwrap();
+    assert_eq!(status(&output), 0, "{output:?}");
+    assert!(String::from_utf8_lossy(&output.stdout).starts_with("Restore: 3 files downloaded"));
+    assert_eq!(
+        std::fs::read(run.local("restored/latest/site/css/site.css")).unwrap(),
+        [7u8; 40_000]
+    );
+    assert_eq!(
+        std::fs::read(run.local("restored/latest/notes.txt")).unwrap(),
+        b"remember\n"
+    );
+
+    // While one run of a task goes on, another is refused with a status of its own.
+    let first = run
+        .schedule(&["run", "Slow"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while run.task("Slow")["running"] != true {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the first run never started"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let (code, value) = run.schedule_json(&["run", "slow"]);
+    assert_eq!(code, 13, "{value}");
+    assert_eq!(value[0]["state"], "alreadyRunning");
+    let first = first.wait_with_output().unwrap();
+    assert_eq!(status(&first), 0, "{first:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&first.stdout).trim(),
+        "Slow: Command finished: slept"
+    );
+    assert_eq!(run.task("Slow")["running"], false);
+
+    // Without a keychain, a connection that needs its password says how to give one.
+    let (code, value) = run.schedule_json(&["run", "Needs a password"]);
+    assert_eq!(code, 4, "{value}");
+    let message = value[0]["message"].as_str().unwrap();
+    assert!(
+        message.contains("--connection \"with password\"") && message.contains("POROS_PASSWORD"),
+        "{message}"
+    );
+    let output = run
+        .schedule(&["--json", "-c", "with password", "run", "Needs a password"])
+        .env("POROS_PASSWORD", &run.password)
+        .output()
+        .unwrap();
+    assert_eq!(status(&output), 0, "{output:?}");
+    assert_eq!(parsed(&output)[0]["message"], "Command finished: signed in");
+    assert!(!String::from_utf8_lossy(&output.stderr).contains(&run.password));
+
+    let (code, value) = run.schedule_json(&["disable", "Backup"]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(run.task("Backup")["enabled"], false);
+}

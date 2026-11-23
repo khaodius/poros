@@ -113,8 +113,11 @@ fn auth_label(connection: &SavedConnection) -> &'static str {
     }
 }
 
-fn table(header: &[[String; 4]], rows: &[[String; 4]]) -> String {
-    let mut widths = [0usize; 4];
+pub(super) fn table<const COLUMNS: usize>(
+    header: &[[String; COLUMNS]],
+    rows: &[[String; COLUMNS]],
+) -> String {
+    let mut widths = [0usize; COLUMNS];
     for row in header.iter().chain(rows) {
         for (width, cell) in widths.iter_mut().zip(row) {
             *width = (*width).max(cell.chars().count());

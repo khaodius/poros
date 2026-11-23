@@ -210,7 +210,7 @@ pub async fn wait(
     Ok(summarize(&manager.list().jobs, elapsed, workers, verified))
 }
 
-fn snapshot(jobs: &[JobSnapshot]) -> Snapshot {
+pub fn snapshot(jobs: &[JobSnapshot]) -> Snapshot {
     let mut snapshot = Snapshot::default();
     for job in jobs.iter().filter(|job| job.kind == JobKind::File) {
         snapshot.files_total += 1;

@@ -118,6 +118,9 @@ async fn run_line(context: &Context, parsed: Parsed) -> AppResult<Reply> {
     })?;
     match &line.command {
         Command::Batch => Err(AppError::invalid("batch cannot run inside batch")),
+        Command::Schedule(_) => Err(AppError::invalid(
+            "schedule opens connections of its own, so it cannot run inside batch",
+        )),
         Command::Write(_) if parsed.input.is_none() => Err(AppError::invalid(
             "In a batch, write takes its data from \"input\" or \"inputBase64\"",
         )),

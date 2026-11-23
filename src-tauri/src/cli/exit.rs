@@ -28,6 +28,8 @@ pub enum Exit {
     Integrity,
     /// The protocol cannot do what was asked.
     Unsupported,
+    /// A scheduled task asked to run is already running, in Poros or another poros-cli.
+    Busy,
     Interrupted,
     /// A command run on the server ended with this status.
     Remote(u8),
@@ -49,6 +51,7 @@ Exit status:
   10   some items failed (transfers, deletes, synchronization)
   11   contents differ, or a file failed its integrity check or published checksum
   12   not supported by the connection's protocol
+  13   a scheduled task is already running, in Poros or another poros-cli
   130  interrupted
   exec exits with the status of the command it ran.";
 
@@ -68,6 +71,7 @@ impl Exit {
             Self::Partial => 10,
             Self::Integrity => 11,
             Self::Unsupported => 12,
+            Self::Busy => 13,
             Self::Interrupted => 130,
             Self::Remote(status) => status,
         }
@@ -133,6 +137,7 @@ mod tests {
             Exit::Partial,
             Exit::Integrity,
             Exit::Unsupported,
+            Exit::Busy,
             Exit::Interrupted,
         ];
         assert_eq!(
