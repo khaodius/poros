@@ -2,7 +2,7 @@ import { terminal } from "../lib/ipc";
 import { findTab, terminalTab } from "../lib/layout";
 import type { TerminalEvent } from "../lib/types";
 import { useLayoutStore } from "./layoutStore";
-import { useSessionStore } from "./sessionStore";
+import { disconnectUnused, useSessionStore } from "./sessionStore";
 
 /** Opens a shell on a session's server, beside the pane it was opened from. */
 export function openTerminal(sessionId: string, nearGroupId?: string): void {
@@ -52,4 +52,5 @@ export function closeTerminalTab(tabId: string): void {
   if (tab?.kind !== "terminal") return;
   useLayoutStore.getState().closeTab(tabId);
   if (tab.terminalId) void terminal.close(tab.terminalId).catch(() => undefined);
+  disconnectUnused(tab.sessionId);
 }

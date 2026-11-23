@@ -5,7 +5,7 @@ import type { DocumentLocation } from "../lib/types";
 import { untilAnswered } from "./answers";
 import { getEditor, useUnsavedStore } from "./editorRegistry";
 import { useLayoutStore } from "./layoutStore";
-import { useSessionStore } from "./sessionStore";
+import { disconnectUnused, useSessionStore } from "./sessionStore";
 import { useToastStore } from "./toastStore";
 import { useUiStore } from "./uiStore";
 import { stopSavingWorkspace } from "./workspace";
@@ -43,6 +43,7 @@ export function closeEditorTab(tabId: string): void {
   if (tab?.kind !== "editor") return;
   useLayoutStore.getState().closeTab(tabId);
   void editor.close(tab.documentId).catch(() => undefined);
+  if (tab.sessionId) disconnectUnused(tab.sessionId);
 }
 
 /** Editor tabs in this window with unsaved changes. */

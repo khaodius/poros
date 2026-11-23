@@ -182,4 +182,30 @@ describe("restoring tabs", () => {
       "Could not reopen notes.txt: No such file",
     );
   });
+
+  it("disconnects the session it connected when the server's file is gone", async () => {
+    const page: RestoringTab = {
+      id: "page",
+      kind: "editor",
+      documentId: "old-document",
+      name: "index.html",
+      path: "/var/www/index.html",
+      origin: "web",
+      sessionId: "before",
+      restore: { server },
+    };
+    show(page, other);
+    useSessionStore.setState({
+      sessions: { after: { info: session("after"), profile: null, status: "connected" } },
+    });
+    invoke.mockImplementation(async (command: string) => {
+      if (command === "editor_open") throw { kind: "notFound", message: "No such file" };
+    });
+    reopenWithSession("before", session("after"));
+    await flush();
+
+    expect(findTab(useLayoutStore.getState().root, "page")).toBeNull();
+    expect(invoke).toHaveBeenCalledWith("disconnect", { sessionId: "after" });
+    expect(useSessionStore.getState().sessions).toEqual({});
+  });
 });

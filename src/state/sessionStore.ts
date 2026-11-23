@@ -2,8 +2,14 @@ import { create } from "zustand";
 import { forgetRemoteSource } from "../lib/fileSource";
 import { remote, vaults } from "../lib/ipc";
 import { allTabs, isRestoring, type SavedServer } from "../lib/layout";
-import type { ConnectProfile, HostKeyApproval, SessionInfo, VaultInfo } from "../lib/types";
-import { serverSessionId, vaultSessions } from "../lib/vaults";
+import type {
+  AppError,
+  ConnectProfile,
+  HostKeyApproval,
+  SessionInfo,
+  VaultInfo,
+} from "../lib/types";
+import { serverSessionId, sessionFamily, vaultSessions } from "../lib/vaults";
 import { useLayoutStore } from "./layoutStore";
 import { getPane } from "./paneRegistry";
 import { useSettingsStore } from "./settingsStore";
@@ -119,7 +125,16 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   reconnect: async (sessionId, approval) => {
     const previous = get().sessions[sessionId];
     const info = await remote.reconnect(sessionId, approval);
-    await remote.disconnect(sessionId).catch(() => undefined);
+    const shown = () => Boolean(get().sessions[sessionId]);
+    if (shown()) await remote.disconnect(sessionId).catch(() => undefined);
+    if (!shown()) {
+      // Its tabs closed, or went to another window, while it reconnected: none would show it.
+      await remote.disconnect(info.id).catch(() => undefined);
+      throw {
+        kind: "sessionNotFound",
+        message: "Its tab was closed meanwhile.",
+      } satisfies AppError;
+    }
     forgetRemoteSource(sessionId);
     replacedBy.set(sessionId, info.id);
     // In one step with the sessions, so no tab is left showing a session that is gone.
@@ -205,6 +220,24 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 export function serverEntry(sessions: Sessions, sessionId: string): SessionEntry | undefined {
   const entry = sessions[sessionId] as SessionEntry | undefined;
   return entry && sessions[serverSessionId(entry.info)];
+}
+
+/**
+ * Closes the session of a server, with its vaults, once no tab of this window uses it any more,
+ * as when the last editor or terminal tab it was connected again for after a restart closes.
+ */
+export function disconnectUnused(sessionId: string): void {
+  const { sessions, disconnect } = useSessionStore.getState();
+  if (!sessions[sessionId]) return;
+  const family = sessionFamily(sessions, sessionId);
+  const used = allTabs(useLayoutStore.getState().root).some(
+    (tab) =>
+      (tab.kind === "remote" || tab.kind === "editor" || tab.kind === "terminal") &&
+      !isRestoring(tab) &&
+      tab.sessionId !== undefined &&
+      family.includes(tab.sessionId),
+  );
+  if (!used) void disconnect(family[0]);
 }
 
 /** A profile safe to hand to another window: the backend still holds the secrets. */

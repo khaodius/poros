@@ -16,7 +16,7 @@ import type { DocumentLocation, SessionInfo } from "../lib/types";
 import { NEEDS_CREDENTIALS, connectWithPrompts } from "./connectFlow";
 import { useLayoutStore } from "./layoutStore";
 import { useSavedConnections } from "./savedConnectionsStore";
-import { useSessionStore } from "./sessionStore";
+import { disconnectUnused, useSessionStore } from "./sessionStore";
 import { useSettingsStore } from "./settingsStore";
 import { useToastStore } from "./toastStore";
 import { useUiStore } from "./uiStore";
@@ -61,20 +61,22 @@ const openingFiles = new Set<string>();
 async function reopenEditor(tab: RestoringTab, location: DocumentLocation): Promise<void> {
   if (tab.kind !== "editor" || openingFiles.has(tab.id)) return;
   openingFiles.add(tab.id);
+  const sessionId = location.side === "remote" ? location.sessionId : undefined;
   try {
     const document = await editor.open(location);
     const layout = useLayoutStore.getState();
     if (!findTab(layout.root, tab.id)) {
       void editor.close(document.id).catch(() => undefined);
+      if (sessionId) disconnectUnused(sessionId);
       return;
     }
-    const sessionId = location.side === "remote" ? location.sessionId : undefined;
     layout.replaceTab(tab.id, { ...editorTab(document, sessionId), id: tab.id });
   } catch (caught) {
     useToastStore
       .getState()
       .show("error", `Could not reopen ${tab.name}: ${toAppError(caught).message}`);
     useLayoutStore.getState().closeTab(tab.id);
+    if (sessionId) disconnectUnused(sessionId);
   } finally {
     openingFiles.delete(tab.id);
   }
