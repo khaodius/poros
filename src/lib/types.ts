@@ -127,6 +127,8 @@ export interface SessionInfo {
   protocol: Protocol;
   /** Set for the session of an unlocked vault, whose host, port and username are its server's. */
   vault?: VaultInfo;
+  /** Listings give times only to the minute, or to the day, as FTP's `LIST` does. */
+  coarseTimes?: boolean;
 }
 
 export type ErrorKind =
@@ -493,6 +495,47 @@ export interface SyncProgress {
   remoteEntries: number;
   compared: number;
   toCompare: number;
+}
+
+/** One of two compared folders. The backend knows itself whether its listings' times are coarse. */
+export interface FolderRef {
+  location: FileLocation;
+  path: string;
+}
+
+export interface FolderCompareRequest {
+  /** Names the comparison for `SyncProgress` events and for `sync_cancel`. */
+  requestId: string;
+  left: FolderRef;
+  right: FolderRef;
+  sizeOnly: boolean;
+  timeToleranceSecs: number;
+  ignoreHourOffsets: boolean;
+  includeHidden: boolean;
+  ignoreCase: boolean;
+}
+
+/** How the files in one folder that both sides have compare, at any depth below it. */
+export interface FolderSummary {
+  /** Below the compared folders, with `/` between names; in lower case when case is ignored. */
+  path: string;
+  identical: number;
+  newerLeft: number;
+  newerRight: number;
+  onlyLeft: number;
+  onlyRight: number;
+  different: number;
+  /** Folders that could not be read, links that lead nowhere and special files. */
+  notCompared: number;
+}
+
+export interface FolderComparison {
+  /** Shallowest first. */
+  folders: FolderSummary[];
+  /** More folders were compared than are reported; the deepest are left out. */
+  truncated: boolean;
+  leftEntries: number;
+  rightEntries: number;
 }
 
 export interface SyncChoice {
@@ -868,6 +911,58 @@ export interface DeleteSummary {
   methods: OperationMethod[];
 }
 
+/** One item's name in its folder, and the name it is to have. */
+export interface PlannedRename {
+  from: string;
+  to: string;
+}
+
+/**
+ * Renames that go through together or not at all, in an order in which each new name is free
+ * by the time it is needed. Names that trade places form a ring with no such order: the first
+ * item of the ring then waits under `temporary` while the others move, and takes its name last.
+ */
+export interface RenameGroup {
+  temporary?: string;
+  renames: PlannedRename[];
+}
+
+export interface RenameRequest {
+  operationId: string;
+  location: FileLocation;
+  /** The folder every item is in. */
+  directory: string;
+  /** Run in this order. */
+  groups: RenameGroup[];
+}
+
+export interface RenamedItem extends PlannedRename {
+  /** Where the item is now. */
+  path: string;
+}
+
+export interface RenameFailure extends PlannedRename {
+  message: string;
+}
+
+/** An item left under its temporary name, because it could not be moved back either. */
+export interface StrandedItem extends PlannedRename {
+  /** The name it has now. */
+  temporary: string;
+  /** Why it could not be moved back. */
+  message: string;
+}
+
+export interface RenameSummary {
+  /** The items that have their new name, in the order they got it. */
+  renamed: RenamedItem[];
+  /** The rename that stopped the rest, and why. The items after it keep their names. */
+  failure?: RenameFailure;
+  stranded?: StrandedItem;
+  /** Stopped by the user before every item was renamed. */
+  cancelled: boolean;
+}
+
 export interface FileDetails {
   uid: number | null;
   gid: number | null;
@@ -1052,3 +1147,69 @@ export interface PreviewPlacement {
  */
 export type UpdateProgress =
   { stage: "downloading"; received: number; total: number | null } | { stage: "installing" };
+
+/** Mirrored in src-tauri/src/search/pattern.rs. */
+export type SearchPatternKind = "text" | "regex";
+
+/** Mirrored in src-tauri/src/search/criteria.rs. */
+export type SearchKind = "any" | "files" | "folders";
+
+/** Mirrored in src-tauri/src/search/mod.rs. */
+export interface SearchRequest {
+  searchId: string;
+  location: FileLocation;
+  folder: string;
+  /** Empty finds every name. */
+  pattern: string;
+  patternKind: SearchPatternKind;
+  caseSensitive: boolean;
+  kind: SearchKind;
+  minSize: number | null;
+  maxSize: number | null;
+  /** Seconds since the Unix epoch, both ends included. */
+  modifiedAfter: number | null;
+  modifiedBefore: number | null;
+  /** 1 looks only at what is directly in the folder; null goes all the way down. */
+  maxDepth: number | null;
+  /** Whether hidden folders are searched too. */
+  hidden: boolean;
+  followLinks: boolean;
+  limit: number | null;
+}
+
+export interface SearchReport {
+  /** What was found since the last report. */
+  entries: FileEntry[];
+  /** How many folders were looked at so far. */
+  folders: number;
+  /** The folder being looked at. */
+  current: string;
+  /** Folders that could not be read since the last report. */
+  unreadable: OperationFailure[];
+  /**
+   * The start folder as its listing names it, once, when not as asked for: a link to a folder,
+   * `/var` that is `/private/var`, a short name on Windows. Results are below this name.
+   */
+  start?: string;
+}
+
+export type SearchEngine = "find" | "walker";
+
+export type SearchOutcome = "finished" | "stopped" | "capped";
+
+export interface SearchSummary {
+  engine: SearchEngine;
+  outcome: SearchOutcome;
+  found: number;
+  folders: number;
+  /** How many folders could not be read, also those no report listed. */
+  unreadable: number;
+}
+
+/** What became of results a search view still shows. */
+export interface SearchRecheck {
+  /** The items still there, as their folders list them now. */
+  entries: FileEntry[];
+  /** The paths nothing is at any more. */
+  missing: string[];
+}

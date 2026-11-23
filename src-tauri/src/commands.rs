@@ -24,7 +24,7 @@ use crate::file_ops::archive::{self, ExtractSummary, InstalledTool};
 use crate::file_ops::{
     CompareRequest, Comparison, DeleteRequest, DeleteSummary, Details, ExtractRequest,
     FileOperations, Location, MoveCopyRequest, OperationSummary, PermissionRequest,
-    PermissionSummary, Usage,
+    PermissionSummary, RenameRequest, RenameSummary, Usage,
 };
 use crate::fonts::{self, FontFamily};
 use crate::import::{
@@ -33,12 +33,13 @@ use crate::import::{
 use crate::local;
 use crate::model::{DirListing, FileEntry};
 use crate::route;
+use crate::search::{Recheck, SearchManager, SearchReport, SearchRequest, SearchSummary};
 use crate::session::{SessionInfo, SessionManager};
 use crate::settings::{Settings, SettingsStore};
 use crate::ssh::{AuthMethod, ConnectProfile, HostKeyApproval};
 use crate::sync::{
-    OptionCheck, SyncDirection, SyncManager, SyncOptions, SyncPlanView, SyncRequest,
-    SyncRunRequest, SyncRunSummary,
+    FolderCompareRequest, FolderComparison, OptionCheck, SyncDirection, SyncManager, SyncOptions,
+    SyncPlanView, SyncRequest, SyncRunRequest, SyncRunSummary,
 };
 use crate::system_icons::{self, IconRequest};
 use crate::terminal::{Sink, TerminalEvent, TerminalInfo, TerminalManager};
@@ -316,6 +317,14 @@ pub async fn files_delete(
 }
 
 #[tauri::command]
+pub async fn files_rename(
+    operations: State<'_, FileOperations>,
+    request: RenameRequest,
+) -> AppResult<RenameSummary> {
+    operations.rename(request).await
+}
+
+#[tauri::command]
 pub fn files_cancel(operations: State<'_, FileOperations>, operation_id: String) {
     operations.cancel(&operation_id);
 }
@@ -437,6 +446,16 @@ pub async fn sync_compare(
     request: SyncRequest,
 ) -> AppResult<SyncPlanView> {
     sync.compare(request).await
+}
+
+/// Compares what two folders hold below them, each on this computer or a server, for two
+/// panes that are compared. `sync_cancel` stops it.
+#[tauri::command]
+pub async fn sync_compare_folders(
+    sync: State<'_, SyncManager>,
+    request: FolderCompareRequest,
+) -> AppResult<FolderComparison> {
+    sync.compare_folders(request).await
 }
 
 /// rsync options with layers of rsync arguments applied in turn, checked, and shown as the
@@ -720,6 +739,38 @@ pub async fn editor_save(
 pub async fn editor_close(editor: State<'_, EditorManager>, document_id: String) -> AppResult<()> {
     editor.close(&document_id).await;
     Ok(())
+}
+
+/// Searches below a folder; what is found arrives on `reports` while the search runs.
+#[tauri::command]
+pub async fn search_start(
+    searches: State<'_, SearchManager>,
+    request: SearchRequest,
+    reports: Channel<SearchReport>,
+) -> AppResult<SearchSummary> {
+    // A report that cannot be sent means the page that asked is gone: the search stops.
+    let page_gone = tokio_util::sync::CancellationToken::new();
+    let gone = page_gone.clone();
+    let sink = Arc::new(move |report| {
+        if reports.send(report).is_err() {
+            gone.cancel();
+        }
+    });
+    searches.run_until(request, sink, page_gone).await
+}
+
+#[tauri::command]
+pub fn search_cancel(searches: State<'_, SearchManager>, search_id: String) {
+    searches.cancel(&search_id);
+}
+
+#[tauri::command]
+pub async fn search_recheck(
+    searches: State<'_, SearchManager>,
+    location: Location,
+    paths: Vec<String>,
+) -> AppResult<Recheck> {
+    searches.recheck(&location, paths).await
 }
 
 fn terminal_sink(output: Channel<TerminalEvent>) -> Sink {

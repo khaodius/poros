@@ -26,6 +26,8 @@ import type {
   FileDetails,
   FileEntry,
   FileLocation,
+  FolderCompareRequest,
+  FolderComparison,
   InstalledArchiveTool,
   FolderUsage,
   FontFamily,
@@ -49,10 +51,16 @@ import type {
   PreviewPlacement,
   PreviewSupport,
   QueueFinished,
+  RenameRequest,
+  RenameSummary,
   SaveOutcome,
   SaveRequest,
   SavedConnection,
   ScheduledTask,
+  SearchRecheck,
+  SearchReport,
+  SearchRequest,
+  SearchSummary,
   SessionClosed,
   SessionInfo,
   SignedIn,
@@ -98,6 +106,8 @@ export const DRAG_PREVIEW_SHOWN_EVENT = "poros://drag-preview-shown";
 export const DRAG_PREVIEW_RELEASED_EVENT = "poros://drag-preview-released";
 /** Sent to every window by the window the user turns to, with its label. */
 export const WINDOW_USED_EVENT = "poros://window-used";
+/** Sent between windows whose panes are compared with each other (Compare folders). */
+export const FOLDER_COMPARE_EVENT = "poros://folder-compare";
 /** Sent between windows to share the folder listings they remember; see lib/listingShare.ts. */
 export const LISTING_CACHE_EVENT = "poros://listing-cache";
 /** Mirrored in src-tauri/src/drag_out/mod.rs. Says whether files are dragged out of Poros. */
@@ -178,6 +188,8 @@ export const fileOperations = {
     call<OperationSummary>("files_move_or_copy", { request }),
   /** Deletes on an SFTP server, reporting progress like the other operations. */
   delete: (request: DeleteRequest) => call<DeleteSummary>("files_delete", { request }),
+  /** Renames items of one folder in the order given, wherever the folder is. */
+  rename: (request: RenameRequest) => call<RenameSummary>("files_rename", { request }),
   cancel: (operationId: string) => call<void>("files_cancel", { operationId }),
   details: (sessionId: string, path: string) =>
     call<FileDetails>("files_details", { sessionId, path }),
@@ -212,6 +224,12 @@ export const transfers = {
 
 export const sync = {
   compare: (request: SyncRequest) => call<SyncPlanView>("sync_compare", { request }),
+  /**
+   * Compares what two folders hold below them, each on this computer or any server. Progress
+   * comes as `SyncProgress`, with the left side counted as the local one; `cancel` stops it.
+   */
+  compareFolders: (request: FolderCompareRequest) =>
+    call<FolderComparison>("sync_compare_folders", { request }),
   cancel: (requestId: string) => call<void>("sync_cancel", { requestId }),
   /** Forgets a comparison that will not be run. */
   discard: (planId: string) => call<void>("sync_discard", { planId }),
@@ -219,6 +237,19 @@ export const sync = {
   /** Applies each layer of rsync arguments over `options` in turn and checks the result. */
   checkOptions: (options: SyncOptions, layers: string[], direction: SyncDirection) =>
     call<OptionCheck>("sync_check_options", { options, arguments: layers, direction }),
+};
+
+/** Searching below a folder; what is found arrives on `onReport` as the search runs. */
+export const search = {
+  start: (request: SearchRequest, onReport: (report: SearchReport) => void) => {
+    const reports = new Channel<SearchReport>();
+    reports.onmessage = onReport;
+    return call<SearchSummary>("search_start", { request, reports });
+  },
+  cancel: (searchId: string) => call<void>("search_cancel", { searchId }),
+  /** Looks at the folders of results again, after they were renamed, moved or deleted. */
+  recheck: (location: FileLocation, paths: string[]) =>
+    call<SearchRecheck>("search_recheck", { location, paths }),
 };
 
 export const settingsStore = {

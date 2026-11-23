@@ -529,3 +529,98 @@ describe("a refresh that fails", () => {
     expect(view.pane.failedPath).toBeNull();
   });
 });
+
+describe("search results in a pane that remembers listings", () => {
+  const found: DirListing = {
+    path: "/home",
+    parent: null,
+    entries: [file("/home/site/a.html"), file("/home/site/old/a.html")],
+  };
+
+  /** A pane on `/home` with `/home/site` remembered, showing results found in `/home`. */
+  async function paneWithResults(server: FakeServer) {
+    const view = await paneThatVisited(server);
+    await view.rerender({ ...REMEMBERING, results: found });
+    await act(async () => view.pane.showResults("/home"));
+    return view;
+  }
+
+  it("are never remembered as the listing of the folder they were found in", async () => {
+    const server = new FakeServer();
+    const view = await paneWithResults(server);
+    expect(view.pane.showingResults).toBe(true);
+    expect(view.pane.listing?.entries.map((entry) => entry.path)).toEqual([
+      "/home/site/a.html",
+      "/home/site/old/a.html",
+    ]);
+    expect(cache.get(SCOPE, "/home")?.entries.map((entry) => entry.name)).toEqual([
+      "notes.txt",
+      "site",
+    ]);
+    // A reload lists the folder behind them, which is remembered as the folder's; they stay.
+    await act(async () => void view.pane.refresh());
+    await server.answer("/home", ["notes.txt", "site", "todo.txt"]);
+    expect(view.pane.showingResults).toBe(true);
+    expect(view.pane.listing).toBe(found);
+    expect(view.pane.stale).toBeNull();
+    expect(cache.get(SCOPE, "/home")?.entries.map((entry) => entry.name)).toEqual([
+      "notes.txt",
+      "site",
+      "todo.txt",
+    ]);
+  });
+
+  it("leave the folder's own listing behind them", async () => {
+    const server = new FakeServer();
+    const view = await paneWithResults(server);
+    expect(view.pane.listing).toBe(found);
+    expect(view.pane.folder?.path).toBe("/home");
+    expect(view.pane.folder?.parent).toBe("/");
+    expect(view.pane.folder?.entries.map((entry) => entry.name)).toEqual(["notes.txt", "site"]);
+    // More results do not touch it; a reload of the folder does.
+    const more = { ...found, entries: [...found.entries, file("/home/site/b.html")] };
+    const before = view.pane.folder;
+    await view.rerender({ ...REMEMBERING, results: more });
+    expect(view.pane.folder).toBe(before);
+    await act(async () => void view.pane.refresh());
+    await server.answer("/home", ["notes.txt", "site", "todo.txt"]);
+    expect(view.pane.listing).toBe(more);
+    expect(view.pane.folder?.entries.map((entry) => entry.name)).toEqual([
+      "notes.txt",
+      "site",
+      "todo.txt",
+    ]);
+    await act(async () => view.pane.closeResults());
+    expect(view.pane.folder).toBe(view.pane.listing);
+  });
+
+  it("go back to the folder they were found in, shown at once from memory", async () => {
+    const server = new FakeServer();
+    const view = await paneWithResults(server);
+    await act(async () => view.pane.goBack());
+    expect(view.pane.showingResults).toBe(false);
+    expect(view.pane.listing?.path).toBe("/home");
+    expect(names(view.pane)).toEqual(["notes.txt", "site"]);
+    expect(view.pane.stale).toBe("refreshing");
+    await server.answer("/home", ["notes.txt", "site", "todo.txt"]);
+    expect(names(view.pane)).toEqual(["notes.txt", "site", "todo.txt"]);
+    expect(view.pane.stale).toBeNull();
+    // And forward to them again, as they were.
+    await act(async () => view.pane.goForward());
+    expect(view.pane.showingResults).toBe(true);
+    expect(view.pane.listing).toBe(found);
+  });
+
+  it("are not replaced by a listing of their folder another pane remembers", async () => {
+    const server = new FakeServer();
+    const view = await paneWithResults(server);
+    const other = await mount(server.source("two"), REMEMBERING);
+    await server.answer("/home", ["notes.txt", "site", "new.txt"]);
+    expect(names(other.pane)).toEqual(["notes.txt", "site", "new.txt"]);
+    expect(view.pane.listing).toBe(found);
+    // Closing them shows the folder as the other pane last listed it.
+    await act(async () => view.pane.closeResults());
+    expect(view.pane.showingResults).toBe(false);
+    expect(names(view.pane)).toEqual(["notes.txt", "site", "new.txt"]);
+  });
+});

@@ -66,6 +66,34 @@ describe("sanitizeSettings", () => {
     expect(sorted.interface.sort).toEqual({ key: "type", direction: -1 });
   });
 
+  it("keeps the compare bar's options and checks them", () => {
+    const fromBefore = sanitizeSettings({ interface: { showHiddenFiles: true } }).interface;
+    expect(fromBefore.folderCompare).toEqual({
+      hideIdentical: false,
+      sizeRule: "sync",
+      ignoreHourOffsets: false,
+      includeHidden: true,
+      browseTogether: false,
+    });
+    const stored = sanitizeSettings({
+      interface: {
+        folderCompare: { hideIdentical: true, sizeRule: "sizeOnly", includeHidden: "no" },
+      },
+    }).interface.folderCompare;
+    expect(stored).toMatchObject({
+      hideIdentical: true,
+      sizeRule: "sizeOnly",
+      includeHidden: true,
+    });
+    const unknownRule = sanitizeSettings({
+      interface: { folderCompare: { sizeRule: "checksum" } },
+    });
+    expect(unknownRule.interface.folderCompare.sizeRule).toBe("sync");
+    expect(sanitizeSettings({ interface: { folderCompare: [] } }).interface.folderCompare).toEqual(
+      fromBefore.folderCompare,
+    );
+  });
+
   it("remembers listings and lists ahead unless turned off, as files saved before do", () => {
     const before = sanitizeSettings({ interface: { foldersFirst: false } }).interface;
     expect(before.foldersFirst).toBe(false);
@@ -97,6 +125,41 @@ describe("sanitizeSettings", () => {
       {},
     );
     expect(sanitizeSettings({}).interface.columnWidths).toEqual({});
+  });
+
+  it("keeps the whole entries of the rename history, and starts without one", () => {
+    expect(sanitizeSettings({}).interface.renameHistory).toEqual([]);
+    expect(
+      sanitizeSettings({ interface: { renameHistory: "IMG_" } }).interface.renameHistory,
+    ).toEqual([]);
+    const history = sanitizeSettings({
+      interface: {
+        renameHistory: [
+          { mode: "regex", pattern: "IMG_(\\d+)", replacement: "photo-$1", scope: "both" },
+          { pattern: 7 },
+          "IMG_",
+          { mode: "glob", pattern: " ", replacement: 3, caseSensitive: true, allMatches: false },
+        ],
+      },
+    }).interface.renameHistory;
+    expect(history).toEqual([
+      {
+        mode: "regex",
+        pattern: "IMG_(\\d+)",
+        replacement: "photo-$1",
+        caseSensitive: false,
+        allMatches: true,
+        scope: "both",
+      },
+      {
+        mode: "text",
+        pattern: " ",
+        replacement: "",
+        caseSensitive: true,
+        allMatches: false,
+        scope: "name",
+      },
+    ]);
   });
 
   it("checks the synchronization defaults", () => {

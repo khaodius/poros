@@ -1,6 +1,11 @@
 import { create } from "zustand";
 import { settingsStore as settingsIpc } from "../lib/ipc";
-import { DEFAULT_SETTINGS, sanitizeSettings, type Settings } from "../lib/settings";
+import {
+  DEFAULT_SETTINGS,
+  sanitizeSettings,
+  storableSettings,
+  type Settings,
+} from "../lib/settings";
 
 interface SettingsState {
   settings: Settings;
@@ -19,7 +24,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   },
   save: async (next) => {
     set({ settings: next });
-    const saved = await settingsIpc.set(next);
+    const saved = await settingsIpc.set(storableSettings(next));
     set({ settings: sanitizeSettings(saved) });
   },
 }));

@@ -29,12 +29,15 @@ import {
   type DetailColumn,
 } from "../lib/columns";
 import { stemLength } from "../lib/path";
+import type { RowCompare } from "../lib/folderCompare";
 import type { DateFormat } from "../lib/settings";
 import { isDirLike, typeLabel, type SortKey } from "../lib/sort";
 import type { FileEntry } from "../lib/types";
 import { useDragStore } from "../state/dragStore";
 import { rowKeyOf, useArriving, type FileSide } from "../state/fileFlight";
 import { FileIcon } from "./FileIcon";
+import { FolderCompareGlyph } from "./FolderCompareGlyph";
+import { COMPARE_CLASSES } from "./folderCompareMarks";
 
 /** Matches `--scrollbar-size`: the list always shows its vertical scrollbar. */
 const SCROLLBAR_GUTTER = 8;
@@ -63,6 +66,8 @@ export interface FileListActions {
   onDelete: () => void;
   /** Shows the name field in the entry's row. */
   onRename: (entry: FileEntry) => void;
+  /** Rename asked for with several entries selected. */
+  onRenameSeveral: () => void;
   /** Renames the entry; false when it could not be, which the pane has said why. */
   onRenameSubmit: (entry: FileEntry, newName: string) => Promise<boolean>;
   onRenameCancel: () => void;
@@ -80,6 +85,10 @@ export interface FileListActions {
   onCopy: () => void;
   onPaste: () => void;
   onProperties: () => void;
+  /** Ctrl+Shift+D: compares this pane with the other one looked at last, or stops. */
+  onCompareFolders: () => void;
+  /** Ctrl+Shift+F: searches the folder and the folders inside it. */
+  onSearch?: () => void;
 }
 
 interface Column {
@@ -89,6 +98,8 @@ interface Column {
   width: number;
   align?: "end";
   render: (entry: FileEntry) => string;
+  /** Shown on hovering the cell, where it says more than the cell has room for. */
+  title?: (entry: FileEntry) => string;
 }
 
 const NAME_COLUMN: Column = {
@@ -97,6 +108,8 @@ const NAME_COLUMN: Column = {
   width: 180,
   render: (entry) => entry.name,
 };
+/** Search results: the folder each one is in. It shares the room left with the name. */
+const FOLDER_COLUMN_WIDTH = 120;
 const MODIFIED_WIDTHS: Record<DateFormat, number> = { minutes: 136, seconds: 160, locale: 180 };
 /** The font size the column widths are made for; they grow and shrink with it. */
 const BASE_FONT_SIZE = 13;
@@ -196,6 +209,8 @@ interface FileRowProps {
   renaming: boolean;
   /** Names the row for files flying to it, which keep it hidden until they land. */
   arrivalKey: string;
+  /** How the entry compares with the one of its name in the pane this one is compared with. */
+  compare?: RowCompare;
   events: RowEvents;
 }
 
@@ -216,6 +231,7 @@ const FileRow = memo(function FileRow({
   dropTarget,
   renaming,
   arrivalKey,
+  compare,
   events,
 }: FileRowProps) {
   const folder = isDirLike(entry);
@@ -231,6 +247,8 @@ const FileRow = memo(function FileRow({
         cut && "is-cut",
         dropTarget && "is-drop-folder",
         arriving && "is-arriving",
+        compare && compare.state !== "both" && "is-compared",
+        compare && `is-compare-${COMPARE_CLASSES[compare.state]}`,
       ]
         .filter(Boolean)
         .join(" ")}
@@ -259,12 +277,14 @@ const FileRow = memo(function FileRow({
             ) : (
               <span className="file-name-text">{entry.name}</span>
             )}
+            {compare && <FolderCompareGlyph mark={compare} />}
           </span>
         ) : (
           <span
             key={column.key}
             role="gridcell"
             className={`file-cell file-${column.key} ${column.align === "end" ? "align-end" : ""}`}
+            title={column.title?.(entry)}
           >
             {column.render(entry)}
           </span>
@@ -431,6 +451,13 @@ interface FileListProps extends FileListActions {
   cutPaths?: ReadonlySet<string>;
   /** The entry whose row shows the name field. */
   renaming?: string | null;
+  /** While the pane is compared with another: the mark of each compared row, by name. */
+  compareMarks?: ReadonlyMap<string, RowCompare>;
+  /** Where each entry is, for entries from several folders such as search results; shows a
+   * Folder column. */
+  folderOf?: (entry: FileEntry) => string;
+  /** Said in place of the rows while there are none, instead of what an empty folder says. */
+  emptyMessage?: string;
   /** Rows the user is in the middle of something with, which a newer listing leaves in place. */
   heldPaths?: ReadonlySet<string>;
 }
@@ -457,6 +484,9 @@ export function FileList({
   dropFolder,
   cutPaths,
   renaming,
+  compareMarks,
+  folderOf,
+  emptyMessage: givenEmptyMessage,
   heldPaths = NO_HELD_PATHS,
   ...actions
 }: FileListProps) {
@@ -495,19 +525,37 @@ export function FileList({
     (column: Column) => Math.round((column.width * fontSize) / BASE_FONT_SIZE),
     [fontSize],
   );
+  const folderColumn = useMemo<Column | null>(
+    () =>
+      folderOf
+        ? {
+            key: "folder",
+            label: "Folder",
+            width: FOLDER_COLUMN_WIDTH,
+            render: folderOf,
+            title: folderOf,
+          }
+        : null,
+    [folderOf],
+  );
   const widthNeeded = useMemo(() => {
-    let total = widthOf(NAME_COLUMN) + SCROLLBAR_GUTTER + DROP_STRIP_WIDTH;
+    let total =
+      widthOf(NAME_COLUMN) +
+      (folderColumn ? widthOf(folderColumn) : 0) +
+      SCROLLBAR_GUTTER +
+      DROP_STRIP_WIDTH;
     return detailColumns.map((column) => (total += widthOf(column)));
-  }, [detailColumns, widthOf]);
+  }, [detailColumns, folderColumn, widthOf]);
   const fittingColumns = useFitCount(rootRef, widthNeeded);
   const columns = useMemo(() => {
     const fitting = detailColumns.slice(0, fittingColumns);
     const inOrder = DETAIL_COLUMNS.flatMap((key) => fitting.filter((column) => column.key === key));
-    return [NAME_COLUMN, ...inOrder];
-  }, [detailColumns, fittingColumns]);
+    return [NAME_COLUMN, ...(folderColumn ? [folderColumn] : []), ...inOrder];
+  }, [detailColumns, fittingColumns, folderColumn]);
+  const flexible = (column: Column) => column === NAME_COLUMN || column === folderColumn;
   const gridTemplateColumns = columns
     .map((column) =>
-      column === NAME_COLUMN ? `minmax(${widthOf(column)}px, 1fr)` : `${widthOf(column)}px`,
+      flexible(column) ? `minmax(${widthOf(column)}px, 1fr)` : `${widthOf(column)}px`,
     )
     .join(" ");
 
@@ -534,11 +582,13 @@ export function FileList({
     if (renamingRow >= 0) virtualizer.scrollToIndex(renamingRow, { align: "auto" });
   }, [renamingRow, virtualizer]);
 
+  // Results shown in place of the folder they were found in are another place than the folder.
+  const shownPlace = `${pane.showingResults ? "results:" : ""}${pane.listing?.path ?? ""}`;
   // The folder on show listed again, as when the server answers for a remembered listing,
-  // leaves the list where the user has it.
+  // leaves the list where the user has it; so do results as more of them come in.
   const rowKeys = useMemo(() => rows.map(rowKey), [rows]);
   const keptInPlace = useListAnchor(scrollRef, {
-    folder: pane.listing?.path,
+    folder: pane.listing ? shownPlace : undefined,
     listing: pane.listing,
     rowKeys,
     cursor: pane.cursorPath,
@@ -551,9 +601,10 @@ export function FileList({
   // list where it is, rather than bringing the cursor back into view.
   const scrolledPath = useRef<string | undefined>(undefined);
   const groupToggled = useRef(false);
+  // Results shown in place of the folder they were found in open at the top too.
   useEffect(() => {
-    const opened = scrolledPath.current !== pane.listing?.path;
-    scrolledPath.current = pane.listing?.path;
+    const opened = scrolledPath.current !== shownPlace;
+    scrolledPath.current = shownPlace;
     const toggled = groupToggled.current;
     groupToggled.current = false;
     if (keptInPlace(rowKeys)) return;
@@ -570,16 +621,7 @@ export function FileList({
     } else if (opened) {
       scrollRef.current?.scrollTo({ top: 0 });
     }
-  }, [
-    pane.listing?.path,
-    pane.cursorPath,
-    rows,
-    rowKeys,
-    rowOfPath,
-    rowHeight,
-    virtualizer,
-    keptInPlace,
-  ]);
+  }, [shownPlace, pane.cursorPath, rows, rowKeys, rowOfPath, rowHeight, virtualizer, keptInPlace]);
 
   useEffect(() => {
     virtualizer.measure();
@@ -628,9 +670,8 @@ export function FileList({
   );
   const emptyMessage = pane.filter
     ? "Nothing matches the filter"
-    : pane.hiddenCount > 0
-      ? "Only hidden items here"
-      : "This folder is empty";
+    : (givenEmptyMessage ??
+      (pane.hiddenCount > 0 ? "Only hidden items here" : "This folder is empty"));
   const cursorIndex = entries.findIndex((entry) => entry.path === pane.cursorPath);
   const cursorEntry = cursorIndex >= 0 ? entries[cursorIndex] : undefined;
 
@@ -704,6 +745,7 @@ export function FileList({
         case "F2": {
           const [only] = pane.selectedEntries();
           if (pane.selection.size === 1 && only) actions.onRename(only);
+          else if (pane.selection.size > 1) actions.onRenameSeveral();
           return true;
         }
         case "F4":
@@ -755,6 +797,10 @@ export function FileList({
         actions.onEditPath();
         return true;
       }
+      if (primary && event.shiftKey && event.key.toLowerCase() === "f" && actions.onSearch) {
+        actions.onSearch();
+        return true;
+      }
       if (primary && event.key.toLowerCase() === "f") {
         actions.onFocusFilter();
         return true;
@@ -765,6 +811,10 @@ export function FileList({
       }
       if (primary && event.shiftKey && event.key.toLowerCase() === "n") {
         actions.onNewFolder();
+        return true;
+      }
+      if (primary && event.shiftKey && event.key.toLowerCase() === "d") {
+        actions.onCompareFolders();
         return true;
       }
       if (!primary && !event.altKey && event.key.length === 1) {
@@ -1095,7 +1145,7 @@ export function FileList({
                 <span>{column.label}</span>
                 {sorted && <SortIcon size={12} />}
               </button>
-              {column !== NAME_COLUMN && (
+              {!flexible(column) && (
                 <div
                   className="column-resizer"
                   role="separator"
@@ -1197,6 +1247,7 @@ export function FileList({
                 dropTarget={isDirLike(entry) && dropFolder === entry.path}
                 renaming={renaming === entry.path}
                 arrivalKey={rowKeyOf(side, entry.path)}
+                compare={compareMarks?.get(entry.name)}
                 events={rowEvents}
               />
             );
