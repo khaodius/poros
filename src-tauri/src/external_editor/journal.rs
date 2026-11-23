@@ -138,6 +138,28 @@ pub fn make_private_file(file: &Path) -> AppResult<()> {
     Ok(())
 }
 
+/// What Windows reads in a file's `Zone.Identifier` stream to know it came from another
+/// computer: SmartScreen checks such a file before it runs, and Office opens it in Protected
+/// View. Zone 3 is the internet; where the file came from is left unsaid.
+#[cfg(any(windows, test))]
+fn zone_identifier() -> &'static str {
+    "[ZoneTransfer]\r\nZoneId=3\r\nHostUrl=about:internet\r\n"
+}
+
+/// Marks a working copy as come from another computer, before any program is given it. Only
+/// Windows keeps such a mark.
+#[cfg(windows)]
+pub fn mark_from_elsewhere(file: &Path) -> std::io::Result<()> {
+    let mut stream = file.as_os_str().to_os_string();
+    stream.push(":Zone.Identifier");
+    std::fs::write(PathBuf::from(stream), zone_identifier())
+}
+
+#[cfg(not(windows))]
+pub fn mark_from_elsewhere(_file: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
 pub fn write_record(root: &Path, record: &Record) -> AppResult<()> {
     storage::write_json(&record_file(root, &record.id), record)
 }
@@ -413,6 +435,24 @@ mod tests {
         assert!(!root.join("vault-file.json").exists());
         // Discarding what is not there is not an error.
         discard(&root, "vault-file", false);
+    }
+
+    #[test]
+    fn working_copies_are_marked_as_from_the_internet() {
+        let mark = zone_identifier();
+        assert!(mark.starts_with("[ZoneTransfer]\r\n"));
+        assert!(mark.lines().any(|line| line == "ZoneId=3"));
+        assert!(mark.ends_with("\r\n"));
+        // It names no server, path or account.
+        assert!(mark
+            .lines()
+            .all(|line| !line.contains('/') || line == "HostUrl=about:internet"));
+        // Elsewhere than Windows nothing is written, and that is not an error.
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("report.docx");
+        std::fs::write(&file, "words").unwrap();
+        mark_from_elsewhere(&file).unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), b"words");
     }
 
     #[test]

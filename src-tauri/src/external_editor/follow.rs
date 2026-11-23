@@ -178,6 +178,14 @@ impl Follower {
                 "{name} is a program or a script. Pick an editor to open it with."
             )));
         }
+        // On Windows, SmartScreen and Office's Protected View then treat it as from the
+        // internet. A program that saves by replacing the file drops the mark, so it is
+        // written again each time the copy is opened.
+        if let Err(error) = journal::mark_from_elsewhere(&self.edit.local_path) {
+            log::warn!(
+                "Could not mark the working copy of {name} as from another computer: {error}"
+            );
+        }
         match &launch {
             Launch::Default => {
                 launch::open_with_default(&self.edit.local_path).await?;

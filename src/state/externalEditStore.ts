@@ -121,10 +121,15 @@ export async function openFile(
   }
 }
 
-/** Open: the program set for the file's kind, else the system's own. */
+/**
+ * Open: the program set for the file's kind, else the system's own. Setting a program for a
+ * kind of file is the user's word that such files open there, scripts among them, so they are
+ * not asked about each time; the system's own program never gets a script.
+ */
 export function openWithDefault(target: OpenTarget): Promise<void> {
   const programs = useSettingsStore.getState().settings.editing.programs;
-  return openFile(target, defaultOpenWith(target.name, programs));
+  const openWith = defaultOpenWith(target.name, programs);
+  return openFile(target, openWith, openWith.kind === "program");
 }
 
 /** Asks for a program file; null when the user picks none. */
