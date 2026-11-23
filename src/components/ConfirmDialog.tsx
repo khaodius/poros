@@ -6,6 +6,10 @@ interface ConfirmDialogProps {
   children: ReactNode;
   confirmLabel: string;
   danger?: boolean;
+  /** Shown on the confirm button, which does nothing meanwhile, while what is asked is checked. */
+  waiting?: string;
+  /** There is nothing to confirm. */
+  disabled?: boolean;
   onConfirm: () => Promise<void>;
   onClose: () => void;
 }
@@ -15,6 +19,8 @@ export function ConfirmDialog({
   children,
   confirmLabel,
   danger,
+  waiting,
+  disabled,
   onConfirm,
   onClose,
 }: ConfirmDialogProps) {
@@ -46,9 +52,9 @@ export function ConfirmDialog({
           data-autofocus
           className={`button ${danger ? "button-danger" : "button-primary"}`}
           onClick={confirm}
-          disabled={busy}
+          disabled={busy || disabled || waiting !== undefined}
         >
-          {busy ? "Working..." : confirmLabel}
+          {busy ? "Working..." : (waiting ?? confirmLabel)}
         </button>
       </div>
     </Dialog>
