@@ -6072,6 +6072,249 @@ textarea::placeholder {
   gap: 10px;
 }
 
+/* Search below a folder: the bar over a pane's list, and its dialogs. */
+
+.search-bar {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 5px;
+  padding: 6px;
+  background: var(--surface-base);
+  border-bottom: 1px solid var(--border);
+}
+
+/* The name beside Search and Close, and the filters below them, at any pane width. */
+.search-row {
+  display: grid;
+  grid-template-areas:
+    "field actions"
+    "filters filters";
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 5px 6px;
+  align-items: center;
+}
+
+.search-field {
+  display: flex;
+  grid-area: field;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 2px 0 8px;
+  color: var(--text-faint);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+}
+
+.search-field:focus-within {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.search-field input,
+.search-field input:hover,
+.search-field input:focus {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0 0 0 2px;
+  color: var(--text);
+  background: none;
+  border: none;
+  box-shadow: none;
+}
+
+.search-field .icon-button {
+  width: 22px;
+  height: 22px;
+}
+
+.search-switch.is-pressed {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.search-filters {
+  display: flex;
+  grid-area: filters;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.search-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 170px;
+  height: 26px;
+  padding: 0 6px 0 8px;
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-small);
+  cursor: pointer;
+}
+
+.search-filter > span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.search-filter > svg {
+  flex: none;
+  color: var(--text-faint);
+}
+
+.search-filter:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.search-filter.is-narrowing {
+  color: var(--accent);
+  background: var(--accent-softer);
+  border-color: var(--accent-soft);
+}
+
+.search-filter.is-narrowing > svg {
+  color: inherit;
+}
+
+.search-options.is-pressed {
+  color: var(--accent);
+  background: var(--accent-softer);
+}
+
+.search-actions {
+  display: flex;
+  grid-area: actions;
+  align-items: center;
+  gap: 2px;
+}
+
+.search-go {
+  color: var(--text-on-accent);
+  background: var(--accent);
+  border-color: transparent;
+}
+
+.search-go:hover {
+  color: var(--text-on-accent);
+  background: var(--accent-hover);
+}
+
+.search-stop {
+  color: var(--danger);
+  border-color: var(--danger-soft);
+}
+
+.search-stop:hover {
+  color: var(--danger-hover);
+  background: var(--danger-soft);
+}
+
+.search-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 18px;
+  padding: 0 4px;
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+}
+
+.search-status > svg {
+  flex: none;
+}
+
+.search-status-text {
+  flex: none;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.search-status-detail {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-faint);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+
+.search-status.tone-warning .search-status-text {
+  color: var(--warning);
+}
+
+.search-status.tone-danger .search-status-text {
+  color: var(--danger);
+}
+
+.search-unreadable {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  color: var(--warning);
+  font-size: var(--font-size-small);
+}
+
+.search-range {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.search-failures {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 260px;
+  margin: 12px 0 0;
+  padding: 6px;
+  overflow: auto;
+  list-style: none;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+}
+
+.search-failures li {
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 3px 4px;
+  font-size: var(--font-size-small);
+}
+
+.search-failure-path {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.search-failure-message {
+  flex: none;
+  color: var(--text-muted);
+}
+
 /* Cached listings */
 
 /* A thin line under the location bar while a remembered listing waits for the server's. */
@@ -6124,6 +6367,354 @@ textarea::placeholder {
   flex-wrap: wrap;
   gap: 8px;
   justify-content: center;
+}
+
+/* Bulk rename */
+
+.bulk-rename-dialog .dialog-body {
+  padding-bottom: 16px;
+}
+
+.rename-form {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-columns: 368px minmax(0, 1fr);
+  gap: 12px 18px;
+  height: min(720px, calc(100vh - 130px));
+}
+
+.rename-rules {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  padding-right: 8px;
+  overflow-y: auto;
+}
+
+.rename-rule {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.rename-rule > header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  margin-bottom: -2px;
+}
+
+.rename-rule h3 {
+  flex: 1;
+  margin: 0;
+  font-size: inherit;
+  font-weight: 600;
+}
+
+.rename-rule > header select {
+  flex: none;
+  width: 150px;
+}
+
+.rename-step {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  color: var(--text-muted);
+  font-size: var(--font-size-tiny);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  background: var(--surface-pressed);
+  border-radius: 50%;
+}
+
+.rename-rule.is-off {
+  padding-bottom: 8px;
+}
+
+.rename-rule.is-off h3 {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.rename-find {
+  display: flex;
+  gap: 6px;
+}
+
+.rename-find input {
+  flex: 1;
+}
+
+.rename-find select {
+  flex: none;
+  width: 96px;
+}
+
+.rename-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+}
+
+.rename-options .segmented {
+  flex: none;
+}
+
+.rename-options .segmented button {
+  flex: none;
+  height: 22px;
+  padding: 0 10px;
+  font-size: var(--font-size-small);
+}
+
+.rename-option-label {
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+  font-weight: 500;
+}
+
+.rename-tokens {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.rename-token {
+  height: 22px;
+  padding: 0 6px;
+  color: var(--accent);
+  font-size: var(--font-size-tiny);
+  background: var(--accent-soft);
+  border: 1px solid transparent;
+  border-radius: 11px;
+  cursor: pointer;
+  transition: border-color var(--transition-fast);
+}
+
+.rename-token:hover {
+  border-color: var(--accent);
+}
+
+.rename-number-field {
+  flex: 0 0 62px;
+}
+
+.rename-short-field {
+  flex: 0 0 76px;
+  width: 76px;
+}
+
+.rename-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.rename-preview-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.rename-preview-bar .toggle:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.rename-preview-bar .toggle.is-bad {
+  color: var(--danger);
+}
+
+/* Cut from the start, so the end of the path stays in view. */
+.rename-folder {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: var(--font-size-small);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  direction: rtl;
+}
+
+.rename-table {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.rename-table-header,
+.rename-table-row {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) 12px minmax(0, 1fr) minmax(96px, 1.15fr);
+  gap: 8px;
+  align-items: center;
+  padding: 0 10px;
+}
+
+.rename-table-header {
+  flex: none;
+  height: 26px;
+  color: var(--text-muted);
+  font-size: var(--font-size-tiny);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  background: var(--list-header);
+  border-bottom: 1px solid var(--border);
+}
+
+.rename-table-body {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  contain: strict;
+}
+
+.rename-table-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 26px;
+  font-size: var(--font-size-small);
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* Spaces show as they are, so names that differ in them can be told apart. */
+.rename-table-row > span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: pre;
+  text-overflow: ellipsis;
+}
+
+.rename-table-row > svg {
+  color: var(--text-faint);
+}
+
+.rename-table-row:hover {
+  background: var(--row-hover);
+}
+
+.rename-table-row mark {
+  color: inherit;
+  background: var(--diff-added-word);
+  border-radius: 2px;
+}
+
+/* Where the new name only lost something, a bar marks the place. */
+.rename-table-row mark.is-cut {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  vertical-align: text-bottom;
+  background: var(--danger);
+  border-radius: 1px;
+}
+
+.rename-table-row em,
+.rename-table-status {
+  color: var(--text-faint);
+}
+
+.rename-table-row.is-dim {
+  color: var(--text-faint);
+}
+
+.rename-table-row.is-bad {
+  background: var(--danger-soft);
+}
+
+.rename-table-row.is-bad .rename-table-status {
+  color: var(--danger);
+}
+
+.rename-table-empty {
+  padding: 28px 16px;
+  color: var(--text-faint);
+  text-align: center;
+}
+
+.rename-footer {
+  display: flex;
+  grid-column: 1 / -1;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.rename-footer .dialog-actions {
+  margin-top: 0;
+}
+
+.rename-footer .pane-notice {
+  border-bottom: 0;
+  border-radius: var(--radius-small);
+}
+
+.rename-summary {
+  padding: 8px 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+}
+
+.rename-report {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.rename-report .toggle-group {
+  align-self: flex-start;
+}
+
+/* A header and eleven whole rows. */
+.rename-report .rename-table {
+  flex: none;
+  height: min(315px, calc(100vh - 380px));
+  min-height: 120px;
+}
+
+.rename-report .dialog-actions {
+  margin-top: 4px;
+}
+
+/* A narrow window stacks the rules over the preview, and the dialog scrolls as a whole. */
+@media (max-width: 860px) {
+  .rename-form {
+    grid-template-rows: none;
+    grid-template-columns: minmax(0, 1fr);
+    height: auto;
+  }
+
+  .rename-rules {
+    padding-right: 0;
+    overflow-y: visible;
+  }
+
+  .rename-preview {
+    height: 280px;
+  }
 }
 
 /* Preview pane */

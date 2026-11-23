@@ -3,6 +3,7 @@
 // stored as given, so they are checked here.
 
 import { CUSTOM_ARGUMENTS_EXAMPLE, type ExtractorSettings } from "./archives";
+import { sanitizeFindHistory, type FindHistoryEntry } from "./bulkRename";
 import {
   DETAIL_COLUMNS,
   sanitizeColumnWidths,
@@ -158,6 +159,8 @@ export interface InterfaceSettings {
   prefetchListings: boolean;
   /** Does so on cloud storage too, which counts and limits requests. */
   prefetchOnCloud: boolean;
+  /** The latest find and replace patterns of bulk renames, newest first. */
+  renameHistory: FindHistoryEntry[];
 }
 
 export interface AppearanceSettings {
@@ -342,6 +345,7 @@ export const DEFAULT_SETTINGS: Settings = {
     cachedListings: true,
     prefetchListings: true,
     prefetchOnCloud: false,
+    renameHistory: [],
   },
   appearance: {
     theme: "builtin:system",
@@ -450,6 +454,7 @@ export function sanitizeSettings(stored: unknown): Settings {
   options.hiddenColumns = DETAIL_COLUMNS.filter((column) => options.hiddenColumns.includes(column));
   options.columnWidths = sanitizeColumnWidths(asSection(source.interface).columnWidths);
   options.preview = sanitizeFilePreview(options.preview);
+  options.renameHistory = sanitizeFindHistory(asSection(source.interface).renameHistory);
 
   const appearance = settings.appearance;
   const storedAppearance = asSection(source.appearance);

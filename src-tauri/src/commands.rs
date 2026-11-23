@@ -24,7 +24,7 @@ use crate::file_ops::archive::{self, ExtractSummary, InstalledTool};
 use crate::file_ops::{
     CompareRequest, Comparison, DeleteRequest, DeleteSummary, Details, ExtractRequest,
     FileOperations, Location, MoveCopyRequest, OperationSummary, PermissionRequest,
-    PermissionSummary, Usage,
+    PermissionSummary, RenameRequest, RenameSummary, Usage,
 };
 use crate::file_preview::{FilePreviews, ReadRequest};
 use crate::fonts::{self, FontFamily};
@@ -34,6 +34,7 @@ use crate::import::{
 use crate::local;
 use crate::model::{DirListing, FileEntry};
 use crate::route;
+use crate::search::{Recheck, SearchManager, SearchReport, SearchRequest, SearchSummary};
 use crate::session::{SessionInfo, SessionManager};
 use crate::settings::{Settings, SettingsStore};
 use crate::ssh::{AuthMethod, ConnectProfile, HostKeyApproval};
@@ -314,6 +315,14 @@ pub async fn files_delete(
     request: DeleteRequest,
 ) -> AppResult<DeleteSummary> {
     operations.delete(request).await
+}
+
+#[tauri::command]
+pub async fn files_rename(
+    operations: State<'_, FileOperations>,
+    request: RenameRequest,
+) -> AppResult<RenameSummary> {
+    operations.rename(request).await
 }
 
 #[tauri::command]
@@ -761,6 +770,38 @@ pub fn file_preview_cancel(
     request_id: String,
 ) {
     previews.cancel(window.label(), &request_id);
+}
+
+/// Searches below a folder; what is found arrives on `reports` while the search runs.
+#[tauri::command]
+pub async fn search_start(
+    searches: State<'_, SearchManager>,
+    request: SearchRequest,
+    reports: Channel<SearchReport>,
+) -> AppResult<SearchSummary> {
+    // A report that cannot be sent means the page that asked is gone: the search stops.
+    let page_gone = tokio_util::sync::CancellationToken::new();
+    let gone = page_gone.clone();
+    let sink = Arc::new(move |report| {
+        if reports.send(report).is_err() {
+            gone.cancel();
+        }
+    });
+    searches.run_until(request, sink, page_gone).await
+}
+
+#[tauri::command]
+pub fn search_cancel(searches: State<'_, SearchManager>, search_id: String) {
+    searches.cancel(&search_id);
+}
+
+#[tauri::command]
+pub async fn search_recheck(
+    searches: State<'_, SearchManager>,
+    location: Location,
+    paths: Vec<String>,
+) -> AppResult<Recheck> {
+    searches.recheck(&location, paths).await
 }
 
 fn terminal_sink(output: Channel<TerminalEvent>) -> Sink {

@@ -30,6 +30,7 @@ pub mod remote_path;
 pub mod route;
 pub mod rsync;
 pub mod runtime;
+pub mod search;
 pub mod session;
 pub mod settings;
 pub mod sftp;
@@ -71,6 +72,7 @@ use {
     events::Events,
     file_ops::FileOperations,
     file_preview::FilePreviews,
+    search::SearchManager,
     session::SessionManager,
     settings::SettingsStore,
     sync::SyncManager,
@@ -155,6 +157,7 @@ pub fn run() {
             app.manage(CommandRunner::new(sessions.clone(), events.clone()));
             app.manage(FileOperations::new(sessions.clone(), events.clone()));
             app.manage(FilePreviews::new(sessions.clone()));
+            app.manage(SearchManager::new(sessions.clone()));
             app.manage(sessions);
             app.manage(settings);
             app.manage(connections);
@@ -297,6 +300,7 @@ pub fn run() {
             commands::files_conflicts,
             commands::files_move_or_copy,
             commands::files_delete,
+            commands::files_rename,
             commands::files_cancel,
             commands::files_details,
             commands::files_measure,
@@ -348,6 +352,9 @@ pub fn run() {
             commands::file_preview_read,
             commands::file_preview_list,
             commands::file_preview_cancel,
+            commands::search_start,
+            commands::search_cancel,
+            commands::search_recheck,
             commands::terminal_open,
             commands::terminal_attach,
             commands::terminal_write,
