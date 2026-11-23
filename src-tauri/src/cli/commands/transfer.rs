@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{absolute_local, expand, make_dirs, missing, operand};
+use super::{absolute_local, expand, make_dirs, missing, operand, same_name};
 use crate::cli::args::TransferArgs;
 use crate::cli::context::Context;
 use crate::cli::output::Reply;
@@ -90,6 +90,7 @@ pub async fn upload(context: &Context, arguments: &TransferArgs) -> AppResult<Re
     if let Some(name) = &placement.rename_to {
         items[0].name = name.clone();
     }
+    refuse_same_names(&items, &placement.folder)?;
     match files.stat(&placement.folder).await? {
         Some(stat) if stat.is_dir => {}
         Some(_) => return Err(protocol::not_a_folder(&placement.folder)),
@@ -156,6 +157,7 @@ pub async fn download(context: &Context, arguments: &TransferArgs) -> AppResult<
     if let Some(name) = &placement.rename_to {
         items[0].name = name.clone();
     }
+    refuse_same_names(&items, &placement.folder)?;
     let folder = PathBuf::from(&placement.folder);
     if !folder.is_dir() {
         if folder.exists() {
@@ -201,6 +203,14 @@ fn local_item(source: &str) -> AppResult<TransferItem> {
         is_dir: metadata.is_dir(),
         size: if metadata.is_dir() { 0 } else { metadata.len() },
     })
+}
+
+/// Two items with one name would go to one path, and the second would replace the first.
+fn refuse_same_names(items: &[TransferItem], folder: &str) -> AppResult<()> {
+    let named = items
+        .iter()
+        .map(|item| (item.name.as_str(), item.path.as_str()));
+    same_name(named, folder).map_or(Ok(()), Err)
 }
 
 fn missing_folder(folder: &str) -> AppError {

@@ -378,6 +378,13 @@ impl<'a> Work<'a> {
         destination: &Destination,
         rename_error: AppError,
     ) -> AppResult<()> {
+        // A rename onto a name something took since it was found free fails the same way, and
+        // `mv` or a copy would then write over that.
+        if let Destination::Fresh(target) = destination {
+            if self.fs.lstat_entry(target).await?.is_some() {
+                return Err(crate::protocol::already_exists(target));
+            }
+        }
         if self.runs_commands().await {
             let target = destination.path();
             self.run(&format!(

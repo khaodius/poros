@@ -691,6 +691,89 @@ fn copying_without_sftp_is_refused_and_renames_nothing() {
 }
 
 #[test]
+fn sources_with_one_name_never_replace_each_other() {
+    let Some(run) = Run::online("samename") else {
+        return;
+    };
+    for folder in ["in/a", "in/b", "archive", "kept", "skipped"] {
+        let (code, _) = run.json(&["mkdir", "-p", &run.remote(folder)]);
+        assert_eq!(code, 0);
+    }
+    run.write("in/a/report.csv", "first\n");
+    run.write("in/b/report.csv", "second\n");
+    let first = run.remote("in/a/report.csv");
+    let second = run.remote("in/b/report.csv");
+
+    // Nothing is placed when one would have to give way to the other.
+    for options in [
+        &["mv"][..],
+        &["cp"],
+        &["mv", "--conflict", "replace"],
+        &["cp", "--conflict", "replace"],
+    ] {
+        let archive = run.remote("archive");
+        let (code, value) = run.json(&[options, &[&first, &second, &archive]].concat());
+        assert_eq!(code, 9, "{options:?}: {value}");
+        assert!(run.names("archive").is_empty(), "{options:?}");
+        assert_eq!(run.read("in/a/report.csv").as_deref(), Some("first\n"));
+        assert_eq!(run.read("in/b/report.csv").as_deref(), Some("second\n"));
+    }
+
+    // Transfers are refused the same way, whatever --exists says.
+    write_tree(
+        run.local.path(),
+        &[("a/report.csv", b"first\n"), ("b/report.csv", b"second\n")],
+    );
+    std::fs::create_dir(run.local("downloaded")).unwrap();
+    for exists in ["overwrite", "rename"] {
+        let archive = run.remote("archive");
+        let (code, value) = run.json(&[
+            "put",
+            "--exists",
+            exists,
+            "a/report.csv",
+            "b/report.csv",
+            &archive,
+        ]);
+        assert_eq!(code, 9, "put --exists {exists}: {value}");
+        assert!(run.names("archive").is_empty(), "{exists}");
+        let (code, value) = run.json(&["get", "--exists", exists, &first, &second, "downloaded"]);
+        assert_eq!(code, 9, "get --exists {exists}: {value}");
+        assert_eq!(
+            std::fs::read_dir(run.local("downloaded")).unwrap().count(),
+            0
+        );
+    }
+
+    let (code, value) = run.json(&[
+        "cp",
+        "--conflict",
+        "keep-both",
+        &first,
+        &second,
+        &run.remote("kept"),
+    ]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(run.names("kept"), ["report (2).csv", "report.csv"]);
+    assert_eq!(run.read("kept/report.csv").as_deref(), Some("first\n"));
+    assert_eq!(run.read("kept/report (2).csv").as_deref(), Some("second\n"));
+
+    let (code, value) = run.json(&[
+        "mv",
+        "--conflict",
+        "skip",
+        &first,
+        &second,
+        &run.remote("skipped"),
+    ]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(value["skipped"], 1);
+    assert_eq!(run.read("skipped/report.csv").as_deref(), Some("first\n"));
+    assert_eq!(run.read("in/b/report.csv").as_deref(), Some("second\n"));
+    assert_eq!(run.read("in/a/report.csv"), None);
+}
+
+#[test]
 fn an_empty_path_is_never_the_folder_the_connection_starts_in() {
     let Some(run) = Run::online("empty") else {
         return;

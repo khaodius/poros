@@ -5,6 +5,7 @@ mod manage;
 mod sync;
 mod transfer;
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::{Component, Path, PathBuf};
 
@@ -99,6 +100,24 @@ where
 
 fn missing(path: &str) -> AppError {
     AppError::new(ErrorKind::NotFound, format!("{path} does not exist")).with_path(path)
+}
+
+/// Two of the items, as (name, path) pairs, that have one name, so that in `folder` one would
+/// replace the other.
+fn same_name<'a>(
+    items: impl IntoIterator<Item = (&'a str, &'a str)>,
+    folder: &str,
+) -> Option<AppError> {
+    let mut seen = HashMap::new();
+    for (name, path) in items {
+        if let Some(first) = seen.insert(name, path) {
+            let message = format!(
+                "{first} and {path} have the same name, so one would replace the other in {folder}"
+            );
+            return Some(AppError::new(ErrorKind::AlreadyExists, message).with_path(path));
+        }
+    }
+    None
 }
 
 /// Creates `path` and the folders above it that are missing; returns whether it made any.
@@ -259,6 +278,29 @@ mod tests {
         assert!(matches_wildcards("*", ""));
         assert!(!matches_wildcards("?", ""));
         assert!(has_wildcards("*.txt") && !has_wildcards("plain.txt"));
+    }
+
+    #[test]
+    fn items_with_one_name_are_found() {
+        let named = |paths: &[&'static str]| {
+            paths
+                .iter()
+                .map(|path| (remote_path::file_name(path), *path))
+                .collect::<Vec<_>>()
+        };
+        let found = same_name(
+            named(&["/in/a/report.csv", "/in/b/notes.txt", "/in/b/report.csv"]),
+            "/archive",
+        )
+        .unwrap();
+        assert_eq!(found.kind, ErrorKind::AlreadyExists);
+        assert_eq!(
+            found.message,
+            "/in/a/report.csv and /in/b/report.csv have the same name, so one would replace the \
+             other in /archive"
+        );
+        assert!(same_name(named(&["/in/a/report.csv", "/in/a/report"]), "/archive").is_none());
+        assert!(same_name(named(&["/only.txt"]), "/archive").is_none());
     }
 
     #[test]

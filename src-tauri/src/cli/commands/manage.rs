@@ -4,7 +4,7 @@
 
 use serde_json::json;
 
-use super::{each, expand, make_dirs, missing, operand, refuse_dots};
+use super::{each, expand, make_dirs, missing, operand, refuse_dots, same_name};
 use crate::cli::args::{ChmodArgs, ChownArgs, Conflict, MakeDirArgs, PlaceArgs, RemoveArgs};
 use crate::cli::context::{Connected, Context};
 use crate::cli::exit::Exit;
@@ -213,35 +213,48 @@ pub async fn place(context: &Context, arguments: &PlaceArgs, moving: bool) -> Ap
         let clash = found.map(|_| arguments.conflict);
         return rename_in_place(&*files, source, stat.is_dir, &folder, name, clash).await;
     }
-    let names: Vec<String> = sources
-        .iter()
-        .map(|source| remote_path::file_name(source).to_string())
-        .collect();
+    if matches!(arguments.conflict, Conflict::Fail | Conflict::Replace) {
+        let named = sources
+            .iter()
+            .map(|source| (remote_path::file_name(source), source.as_str()));
+        if let Some(mut error) = same_name(named, &folder) {
+            error
+                .message
+                .push_str("; keep both with --conflict keep-both");
+            return Err(error);
+        }
+    }
     let operations = operations(context);
     let conflict = match arguments.conflict {
-        // Nothing has the new name. Should something take it meanwhile, both are kept.
-        Conflict::Fail if new_name.is_some() => file_ops::Conflict::KeepBoth,
         Conflict::Fail => {
-            let taken = operations
-                .conflicts(
-                    Location::Remote {
-                        session_id: connected.info.id.clone(),
-                    },
-                    names,
-                    folder.clone(),
-                )
-                .await?;
-            if !taken.is_empty() {
-                return Err(AppError::new(
-                    ErrorKind::AlreadyExists,
-                    format!(
-                        "{folder} already has {}; choose what happens with --conflict",
-                        taken.join(", ")
-                    ),
-                )
-                .with_path(folder));
+            if new_name.is_none() {
+                let names: Vec<String> = sources
+                    .iter()
+                    .map(|source| remote_path::file_name(source).to_string())
+                    .collect();
+                let taken = operations
+                    .conflicts(
+                        Location::Remote {
+                            session_id: connected.info.id.clone(),
+                        },
+                        names,
+                        folder.clone(),
+                    )
+                    .await?;
+                if !taken.is_empty() {
+                    return Err(AppError::new(
+                        ErrorKind::AlreadyExists,
+                        format!(
+                            "{folder} already has {}; choose what happens with --conflict",
+                            taken.join(", ")
+                        ),
+                    )
+                    .with_path(folder));
+                }
             }
-            file_ops::Conflict::Replace
+            // Nothing is in the way. Should something take one of the names meanwhile, both
+            // are kept rather than one replaced.
+            file_ops::Conflict::KeepBoth
         }
         Conflict::Replace => file_ops::Conflict::Replace,
         Conflict::Skip => file_ops::Conflict::Skip,
