@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use reqwest::header::{HeaderMap, CONTENT_LENGTH, ETAG, LAST_MODIFIED};
+use reqwest::header::{HeaderMap, CONTENT_LENGTH, DATE, ETAG, LAST_MODIFIED};
 use reqwest::{Client, Method, Request, Response, StatusCode, Url};
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +28,9 @@ use crate::protocol::{
     WriteStream,
 };
 use crate::remote_path;
+use crate::share::{
+    self, Audience, Expiry, LinkKind, LinkSharing, ShareCapabilities, ShareLink, ShareOptions,
+};
 use crate::ssh::ConnectProfile;
 use crate::timestamp;
 use crate::tls::ServerTls;
@@ -45,6 +48,10 @@ const DELETE_BATCH: usize = 1000;
 const COPY_LIMIT: u64 = 5 * 1024 * 1024 * 1024;
 const COPY_PART: u64 = 1024 * 1024 * 1024;
 const MAX_PARTS: u64 = 10_000;
+/// How far this computer's clock may be from the service's before it refuses a signature.
+const MAX_CLOCK_SKEW_SECS: u64 = 15 * 60;
+/// A difference between the clocks that changes when a link ends enough to say so.
+const NOTABLE_CLOCK_SKEW_SECS: u64 = 30;
 
 /// Mirrored in `src/lib/types.ts`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -173,9 +180,18 @@ pub(super) fn split(path: &str) -> (Option<String>, String) {
     }
 }
 
-/// Escapes a query value the way the signature expects.
-fn escape(value: &str) -> String {
-    percent_encoding::utf8_percent_encode(value, super::URL_SEGMENT).to_string()
+/// The time of a request as signatures have it: `20130524T000000Z`.
+fn signing_time(seconds: i64) -> String {
+    timestamp::format_rfc3339(seconds).replace(['-', ':'], "")
+}
+
+/// Where a request goes.
+struct Address {
+    scheme: &'static str,
+    /// The `host` header: the name, with the port when it is not the scheme's own.
+    authority: String,
+    /// Escaped, starting with a slash.
+    path: String,
 }
 
 /// A request, kept so it can be signed again for a retry or another region.
@@ -217,21 +233,6 @@ impl S3Request {
         self.payload_hash = signing::sha256_hex(&body);
         self.body = body;
         self
-    }
-
-    /// Sorted and escaped, as both the address and the signature have it.
-    fn canonical_query(&self) -> String {
-        let mut pairs: Vec<(String, String)> = self
-            .query
-            .iter()
-            .map(|(name, value)| (escape(name), escape(value)))
-            .collect();
-        pairs.sort();
-        pairs
-            .iter()
-            .map(|(name, value)| format!("{name}={value}"))
-            .collect::<Vec<_>>()
-            .join("&")
     }
 }
 
@@ -314,23 +315,27 @@ impl S3Fs {
             .unwrap_or_else(|| self.region.clone())
     }
 
-    /// The address of a request, signed for `region`.
-    fn build(&self, request: &S3Request, region: &str) -> AppResult<Request> {
+    /// Where `key` in `bucket` is reached in `region`: under the bucket's own host name or
+    /// under a path, as the connection is set up.
+    fn address(&self, bucket: Option<&str>, key: &str, region: &str) -> Address {
         let aws = self.endpoint.aws_region();
-        let base_host = match (&aws, &request.bucket) {
+        let base_host = match (&aws, bucket) {
             // Amazon serves each bucket from its region's endpoint.
             (Some(_), Some(_)) => format!("s3.{region}.amazonaws.com"),
             _ => self.endpoint.host.clone(),
         };
-        let virtual_hosted = match (&request.bucket, self.addressing) {
+        let virtual_hosted = match (bucket, self.addressing) {
             (None, _) | (_, Addressing::Path) => false,
             (Some(_), Addressing::VirtualHosted) => true,
             (Some(bucket), Addressing::Automatic) => aws.is_some() && fits_in_host_name(bucket),
         };
-        let encoded_key = super::encode_path(&request.key);
-        let (host, path) = match &request.bucket {
+        let encoded_key = super::encode_path(key);
+        let (host, path) = match bucket {
             Some(bucket) if virtual_hosted => (format!("{bucket}.{base_host}"), encoded_key),
-            Some(bucket) => (base_host, format!("/{}{encoded_key}", escape(bucket))),
+            Some(bucket) => (
+                base_host,
+                format!("/{}{encoded_key}", signing::escape(bucket)),
+            ),
             None => (base_host, String::new()),
         };
         let mut path = if path.is_empty() {
@@ -339,23 +344,35 @@ impl S3Fs {
             path
         };
         // A folder marker keeps its trailing slash.
-        if request.key.ends_with('/') && !path.ends_with('/') {
+        if key.ends_with('/') && !path.ends_with('/') {
             path.push('/');
         }
-        let query = request.canonical_query();
-        let authority = self.endpoint.authority(&host);
-        let scheme = if self.endpoint.secure {
-            "https"
-        } else {
-            "http"
-        };
+        Address {
+            scheme: if self.endpoint.secure {
+                "https"
+            } else {
+                "http"
+            },
+            authority: self.endpoint.authority(&host),
+            path,
+        }
+    }
+
+    /// The address of a request, signed for `region`.
+    fn build(&self, request: &S3Request, region: &str) -> AppResult<Request> {
+        let Address {
+            scheme,
+            authority,
+            path,
+        } = self.address(request.bucket.as_deref(), &request.key, region);
+        let query = signing::canonical_query(&request.query);
         let address = match query.as_str() {
             "" => format!("{scheme}://{authority}{path}"),
             query => format!("{scheme}://{authority}{path}?{query}"),
         };
         let url = Url::parse(&address)
             .map_err(|error| AppError::invalid(format!("Invalid S3 address: {error}")))?;
-        let date_time = timestamp::format_rfc3339(timestamp::now_seconds()).replace(['-', ':'], "");
+        let date_time = signing_time(timestamp::now_seconds());
         let mut headers: Vec<(String, String)> = vec![
             ("host".to_string(), authority),
             (
@@ -651,7 +668,7 @@ impl S3Fs {
         size: u64,
         target: &str,
     ) -> AppResult<()> {
-        let mut copy_source = format!("/{}{}", escape(bucket), super::encode_path(source));
+        let mut copy_source = format!("/{}{}", signing::escape(bucket), super::encode_path(source));
         // A folder marker keeps its trailing slash.
         if source.ends_with('/') {
             copy_source.push('/');
@@ -727,6 +744,119 @@ impl S3Fs {
     fn bucket_and_key(&self, path: &str) -> (Option<String>, String) {
         split(&self.resolve(path))
     }
+
+    /// An address that reads the object without credentials, from `signed_at` until
+    /// `lifetime_secs` later. With `download_as`, browsers save it under that name.
+    fn presigned_address(
+        &self,
+        bucket: &str,
+        key: &str,
+        region: &str,
+        signed_at: i64,
+        lifetime_secs: u64,
+        download_as: Option<&str>,
+    ) -> String {
+        let Address {
+            scheme,
+            authority,
+            path,
+        } = self.address(Some(bucket), key, region);
+        let parameters: Vec<(String, String)> = download_as
+            .map(|name| ("response-content-disposition".to_string(), attachment(name)))
+            .into_iter()
+            .collect();
+        let query = signing::presigned_query(
+            &signing::Presigning {
+                access_key: &self.access_key,
+                secret_key: &self.secret_key,
+                // Connections hold long-term keys, which come without a session token.
+                session_token: None,
+                region,
+                date_time: &signing_time(signed_at),
+                expires_secs: lifetime_secs,
+            },
+            Method::GET.as_str(),
+            &authority,
+            &path,
+            &parameters,
+        );
+        format!("{scheme}://{authority}{path}?{query}")
+    }
+}
+
+/// A `Content-Disposition` that has browsers save the file under `name`. A name beyond
+/// plain ASCII goes in the extended form too (RFC 6266), beside a stand-in for clients
+/// that do not read it.
+fn attachment(name: &str) -> String {
+    let plain: String = name
+        .chars()
+        .map(|character| match character {
+            '"' | '\\' => '_',
+            character if character.is_ascii() && !character.is_ascii_control() => character,
+            _ => '_',
+        })
+        .collect();
+    if plain == name {
+        format!("attachment; filename=\"{plain}\"")
+    } else {
+        format!(
+            "attachment; filename=\"{plain}\"; filename*=UTF-8''{}",
+            signing::escape(name)
+        )
+    }
+}
+
+fn span_text(seconds: u64) -> String {
+    match seconds {
+        0..=119 => format!("{seconds} seconds"),
+        120..=7199 => format!("{} minutes", seconds / 60),
+        _ => format!("{} hours", seconds / 3600),
+    }
+}
+
+/// What a gap between this computer's clock and the service's does to an address signed
+/// now. The service counts the lifetime from the time written into the address, so a clock
+/// that is behind shortens the link and one that is ahead lengthens it; too far apart and
+/// the service refuses the signature outright.
+fn clock_note(
+    local_time: i64,
+    server_time: Option<i64>,
+    lifetime_secs: u64,
+) -> AppResult<Option<String>> {
+    let Some(server_time) = server_time else {
+        return Ok(None);
+    };
+    let behind = local_time < server_time;
+    let apart = local_time.abs_diff(server_time);
+    let direction = if behind { "behind" } else { "ahead of" };
+    if apart >= MAX_CLOCK_SKEW_SECS || (behind && apart >= lifetime_secs) {
+        return Err(AppError::new(
+            ErrorKind::AuthFailed,
+            format!(
+                "This computer's clock is {} {direction} the server's, so a signed link would not work. Set the clock to the right time and try again.",
+                span_text(apart)
+            ),
+        ));
+    }
+    if apart < NOTABLE_CLOCK_SKEW_SECS {
+        return Ok(None);
+    }
+    let effect = if behind {
+        "stops working that much sooner"
+    } else {
+        "works that much longer"
+    };
+    Ok(Some(format!(
+        "This computer's clock is {} {direction} the server's, so the link {effect} than chosen.",
+        span_text(apart)
+    )))
+}
+
+fn files_only(path: &str) -> AppError {
+    AppError::unsupported(
+        "S3 signs links for single files, not for folders or buckets. Select the files inside instead.",
+    )
+    .with_path(path)
 }
 
 fn header_text(headers: &HeaderMap, name: &str) -> Option<String> {
@@ -810,6 +940,10 @@ impl RemoteFileSystem for S3Fs {
             ranged_reads: true,
             resumable_writes: false,
         }
+    }
+
+    fn link_sharing(&self) -> Option<&dyn LinkSharing> {
+        Some(self)
     }
 
     async fn canonicalize(&self, path: &str) -> AppResult<String> {
@@ -1119,6 +1253,87 @@ impl RemoteFileSystem for S3Fs {
     }
 }
 
+#[async_trait]
+impl LinkSharing for S3Fs {
+    fn share_capabilities(&self) -> ShareCapabilities {
+        ShareCapabilities {
+            kinds: vec![LinkKind::View, LinkKind::Download],
+            audiences: vec![Audience::Anyone],
+            expiry: Expiry::Required,
+            max_lifetime_secs: Some(share::MAX_SIGNED_LIFETIME_SECS),
+            password: false,
+            revocable: false,
+            folders: false,
+            organization: None,
+        }
+    }
+
+    /// Signs an address that reads the object. Nothing is kept on the service, so the link
+    /// cannot be taken back: it works until it expires or the keys that signed it are
+    /// removed.
+    async fn create_share_link(&self, path: &str, options: &ShareOptions) -> AppResult<ShareLink> {
+        let path = protocol::normalize(&self.resolve(path));
+        let (Some(bucket), key) = split(&path) else {
+            return Err(files_only(&path));
+        };
+        if key.is_empty() {
+            return Err(files_only(&path));
+        }
+        let lifetime_secs = options
+            .lifetime_secs
+            .unwrap_or(share::DEFAULT_LIFETIME_SECS)
+            .clamp(1, share::MAX_SIGNED_LIFETIME_SECS);
+        // Asking for the object finds the bucket's region, shows that these keys may read
+        // it, and brings the service's clock.
+        let response = self
+            .send(&S3Request::new(Method::HEAD, Some(&bucket), &key))
+            .await?;
+        let signed_at = timestamp::now_seconds();
+        let server_time = header_text(response.headers(), DATE.as_str())
+            .and_then(|date| timestamp::parse_http_date(&date));
+        // An answer to `HEAD` has no body to name the reason, so a refusal over the clock
+        // is told from one over permissions by the clocks themselves.
+        let note = clock_note(signed_at, server_time, lifetime_secs)?;
+        match response.status() {
+            status if status.is_success() => {}
+            StatusCode::NOT_FOUND => {
+                return Err(match self.folder_exists(&bucket, &key).await? {
+                    true => files_only(&path),
+                    false => super::not_found(&path),
+                })
+            }
+            StatusCode::FORBIDDEN => {
+                return Err(AppError::new(
+                    ErrorKind::PermissionDenied,
+                    "These keys may not read this file, so a link signed with them would not open it. Use keys with read access (s3:GetObject) to the bucket.",
+                )
+                .with_path(path))
+            }
+            _ => return Err(failure(response, &path).await),
+        }
+        let download_as =
+            (options.kind == LinkKind::Download).then(|| remote_path::file_name(&path));
+        let url = self.presigned_address(
+            &bucket,
+            &key,
+            &self.region_of(Some(&bucket)),
+            signed_at,
+            lifetime_secs,
+            download_as,
+        );
+        Ok(ShareLink {
+            id: String::new(),
+            url,
+            kind: options.kind,
+            audience: Audience::Anyone,
+            expires_at: Some(signed_at.saturating_add_unsigned(lifetime_secs)),
+            has_password: false,
+            revocable: false,
+            notes: note.into_iter().collect(),
+        })
+    }
+}
+
 /// Replaces whatever object is at the key: in one request up to a chunk's size, as a
 /// multipart upload above it.
 struct S3Upload {
@@ -1367,5 +1582,160 @@ mod tests {
         assert!(fits_in_host_name("my-bucket-1"));
         assert!(!fits_in_host_name("My_Bucket"));
         assert!(!fits_in_host_name("a.b.c"));
+    }
+
+    /// 24 May 2013, midnight UTC: the time of the examples in the S3 API reference.
+    const EXAMPLE_TIME: i64 = 1_369_353_600;
+
+    fn example_keys(files: S3Fs) -> S3Fs {
+        S3Fs {
+            secret_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".into(),
+            ..files
+        }
+    }
+
+    /// The signatures are the ones botocore, Amazon's own client library, makes for the
+    /// same keys, time and address.
+    #[test]
+    fn presigns_path_style_addresses_on_a_custom_endpoint() {
+        let minio = example_keys(files("http://127.0.0.1:9000", 443, Addressing::Path));
+        assert_eq!(
+            minio.presigned_address("data", "a b/c+d.txt", "us-east-1", EXAMPLE_TIME, 3600, None),
+            "http://127.0.0.1:9000/data/a%20b/c%2Bd.txt\
+             ?X-Amz-Algorithm=AWS4-HMAC-SHA256\
+             &X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20130524%2Fus-east-1%2Fs3%2Faws4_request\
+             &X-Amz-Date=20130524T000000Z\
+             &X-Amz-Expires=3600\
+             &X-Amz-SignedHeaders=host\
+             &X-Amz-Signature=4a1c7ec6f82db0d55a622e9bc01e413dfd6fe8991a9ba11d289eefea88ee3cd7"
+        );
+        let download = minio.presigned_address(
+            "data",
+            "a b/c+d.txt",
+            "us-east-1",
+            EXAMPLE_TIME,
+            60,
+            Some("c+d.txt"),
+        );
+        assert!(download
+            .contains("&response-content-disposition=attachment%3B%20filename%3D%22c%2Bd.txt%22&"));
+        assert!(download.ends_with(
+            "&X-Amz-Signature=5c450c7af230f55979c29afaac5a037c39c1b3bb44959a127c1e72d7a6ee7dda"
+        ));
+    }
+
+    #[test]
+    fn presigns_keys_with_unicode_and_reserved_characters() {
+        let server = example_keys(files(
+            "https://minio.example.com:9443",
+            443,
+            Addressing::Path,
+        ));
+        assert_eq!(
+            server.presigned_address(
+                "data",
+                "reports/2024/\u{dc}bersicht (final) #1 & more=yes?.pdf",
+                "eu-central-1",
+                EXAMPLE_TIME,
+                604_800,
+                None,
+            ),
+            "https://minio.example.com:9443/data/reports/2024/%C3%9Cbersicht%20%28final%29%20%231%20%26%20more%3Dyes%3F.pdf\
+             ?X-Amz-Algorithm=AWS4-HMAC-SHA256\
+             &X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20130524%2Feu-central-1%2Fs3%2Faws4_request\
+             &X-Amz-Date=20130524T000000Z\
+             &X-Amz-Expires=604800\
+             &X-Amz-SignedHeaders=host\
+             &X-Amz-Signature=2486537d815d09a3c32b40255ede63d8260f08bcfc06485e3e958f3586a7da75"
+        );
+    }
+
+    #[test]
+    fn presigns_virtual_hosted_addresses() {
+        let wasabi = example_keys(files(
+            "https://s3.eu-central-1.wasabisys.com",
+            443,
+            Addressing::VirtualHosted,
+        ));
+        assert_eq!(
+            wasabi.presigned_address(
+                "my-bucket",
+                "tilde~star*quote'(paren)!.txt",
+                "eu-central-1",
+                EXAMPLE_TIME,
+                1,
+                None,
+            ),
+            "https://my-bucket.s3.eu-central-1.wasabisys.com/tilde~star%2Aquote%27%28paren%29%21.txt\
+             ?X-Amz-Algorithm=AWS4-HMAC-SHA256\
+             &X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20130524%2Feu-central-1%2Fs3%2Faws4_request\
+             &X-Amz-Date=20130524T000000Z\
+             &X-Amz-Expires=1\
+             &X-Amz-SignedHeaders=host\
+             &X-Amz-Signature=e63566a601b0dc38f43ac702d294b2eca29f7629cec17a046b215d5ac8e18378"
+        );
+        // On Amazon the bucket's host name carries its region, which the signature covers.
+        let aws = example_keys(files("", 443, Addressing::Automatic));
+        let regional = aws.presigned_address(
+            "my-bucket",
+            "folder/file name.txt",
+            "eu-west-1",
+            EXAMPLE_TIME,
+            900,
+            None,
+        );
+        assert!(regional
+            .starts_with("https://my-bucket.s3.eu-west-1.amazonaws.com/folder/file%20name.txt?"));
+        assert!(regional.contains("%2F20130524%2Feu-west-1%2Fs3%2Faws4_request&"));
+        let dotted = aws.presigned_address("my.bucket", "k", "us-east-1", EXAMPLE_TIME, 900, None);
+        assert!(dotted.starts_with("https://s3.us-east-1.amazonaws.com/my.bucket/k?"));
+    }
+
+    #[test]
+    fn names_the_download_in_a_content_disposition() {
+        assert_eq!(
+            attachment("report.pdf"),
+            "attachment; filename=\"report.pdf\""
+        );
+        assert_eq!(
+            attachment("a \"quoted\" \\ name.txt"),
+            "attachment; filename=\"a _quoted_ _ name.txt\"; filename*=UTF-8''a%20%22quoted%22%20%5C%20name.txt"
+        );
+        assert_eq!(
+            attachment("\u{dc}bersicht\r\n.pdf"),
+            "attachment; filename=\"_bersicht__.pdf\"; filename*=UTF-8''%C3%9Cbersicht%0D%0A.pdf"
+        );
+    }
+
+    #[test]
+    fn weighs_this_computer_s_clock_against_the_server_s() {
+        let now = EXAMPLE_TIME;
+        assert_eq!(clock_note(now, None, 3600).unwrap(), None);
+        assert_eq!(clock_note(now, Some(now + 5), 3600).unwrap(), None);
+        assert_eq!(
+            clock_note(now, Some(now + 180), 3600).unwrap().unwrap(),
+            "This computer's clock is 3 minutes behind the server's, so the link stops working that much sooner than chosen."
+        );
+        assert_eq!(
+            clock_note(now + 45, Some(now), 3600).unwrap().unwrap(),
+            "This computer's clock is 45 seconds ahead of the server's, so the link works that much longer than chosen."
+        );
+        // The link would have expired before anyone could open it.
+        let expired = clock_note(now, Some(now + 90), 60).unwrap_err();
+        assert_eq!(expired.kind, ErrorKind::AuthFailed);
+        assert!(expired.message.contains("90 seconds behind"));
+        assert!(expired.message.contains("Set the clock"));
+        let refused = clock_note(now + 3 * 3600, Some(now), 86_400).unwrap_err();
+        assert!(refused.message.contains("3 hours ahead of"));
+    }
+
+    #[test]
+    fn offers_signed_links_for_files_only() {
+        let capabilities = files("", 443, Addressing::Automatic).share_capabilities();
+        assert_eq!(capabilities.kinds, [LinkKind::View, LinkKind::Download]);
+        assert_eq!(capabilities.audiences, [Audience::Anyone]);
+        assert_eq!(capabilities.expiry, Expiry::Required);
+        assert_eq!(capabilities.max_lifetime_secs, Some(604_800));
+        assert!(!capabilities.revocable && !capabilities.folders && !capabilities.password);
     }
 }

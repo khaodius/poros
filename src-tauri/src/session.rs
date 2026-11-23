@@ -16,6 +16,7 @@ use crate::events::{Events, LogLevel};
 use crate::ftp::FtpFs;
 use crate::protocol::{self, Protocol, RemoteFileSystem};
 use crate::sftp::RemoteFs;
+use crate::share::{self, ShareCapabilities};
 use crate::ssh::known_hosts::KnownHosts;
 use crate::ssh::{self, ConnectProfile, HostKeyApproval, SshHandle};
 use crate::tls::TrustedCertificates;
@@ -218,6 +219,9 @@ pub struct SessionInfo {
     /// server's.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vault: Option<VaultInfo>,
+    /// The share links the session can make; absent when the service has none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sharing: Option<ShareCapabilities>,
 }
 
 /// An unlocked Cryptomator vault, as its session describes it. Mirrored in `src/lib/types.ts`.
@@ -542,6 +546,7 @@ impl SessionManager {
             saved_connection_id: profile.saved_connection_id.clone(),
             protocol: profile.protocol,
             vault: None,
+            sharing: share::capabilities(files.as_ref()),
         };
         let session = Arc::new(Session {
             id: id.to_string(),
@@ -729,6 +734,8 @@ fn vault_session_of(id: &str, server: &Session, files: Arc<VaultFs>, owner: &str
             root: files.root().to_string(),
             name: files.name().to_string(),
         }),
+        // The server holds a vault's files encrypted, so a link to one would be unreadable.
+        sharing: None,
     };
     Session {
         id: id.to_string(),

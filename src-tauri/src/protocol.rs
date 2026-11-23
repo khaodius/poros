@@ -261,6 +261,12 @@ pub trait RemoteFileSystem: Send + Sync {
     fn as_ftp(&self) -> Option<&crate::ftp::FtpFs> {
         None
     }
+
+    /// The service's share links, where it has them: an address that opens a file for
+    /// someone without an account.
+    fn link_sharing(&self) -> Option<&dyn crate::share::LinkSharing> {
+        None
+    }
 }
 
 pub fn resolve_against(home: &str, path: &str) -> String {
