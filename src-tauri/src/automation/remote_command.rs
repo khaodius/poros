@@ -217,10 +217,11 @@ pub async fn run_on(
                 continue;
             }
             Some(ChannelMsg::Failure) => {
+                let _ = channel.close().await;
                 return Err(AppError::new(
                     ErrorKind::Ssh,
                     "The server does not allow running commands",
-                ))
+                ));
             }
             Some(ChannelMsg::Close) | None => break,
             Some(_) => continue,

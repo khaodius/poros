@@ -249,6 +249,7 @@ impl TerminalManager {
         }
         .await;
         if let Err(error) = started {
+            let _ = channel.close().await;
             disconnect(terminal).await;
             return Err(error);
         }
@@ -333,6 +334,9 @@ async fn forward_input(
             break;
         }
     }
+    // Dropping the halves of a split channel tells the server nothing. On a connection of its
+    // own the disconnect ends the shell; on the shared browsing connection only this does.
+    let _ = writer.close().await;
 }
 
 async fn read_output(terminal: Arc<Terminal>, mut reader: russh::ChannelReadHalf, events: Events) {
