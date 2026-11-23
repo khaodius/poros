@@ -240,6 +240,8 @@ export function SyncDialog({ onClose, ...given }: SyncDialogProps) {
       onClose();
     } catch (caught) {
       held.current = {};
+      // Whatever the run changed before it failed or was cancelled is not what was remembered.
+      forgetListingsWithin(sessionId, plan.remoteRoot);
       setError(toAppError(caught).message);
       setStage({ step: "preview", plan, sessionId });
     }
