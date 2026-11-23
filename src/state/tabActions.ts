@@ -24,6 +24,7 @@ import { landingCorner, landingCornerHere, type ScreenPoint } from "../lib/windo
 import type { DropTarget } from "./dragStore";
 import { askToSave, closeEditorTab } from "./editorActions";
 import { getEditor } from "./editorRegistry";
+import { editsHoldClose } from "./externalEditStore";
 import { useLayoutStore } from "./layoutStore";
 import { getPane, lastActivePane } from "./paneRegistry";
 import { reopenWithSession, serverKey } from "./restoreActions";
@@ -187,6 +188,8 @@ export async function requestCloseTab(tabId: string): Promise<void> {
   }
   const [serverId, ...vaultIds] = familyOf(tab.sessionId);
   const server = useSessionStore.getState().sessions[serverId];
+  const label = server?.info.label ?? "this server";
+  if (editsHoldClose(tabId, label, [serverId, ...vaultIds])) return;
   const confirm = useSettingsStore.getState().settings.interface.confirmCloseWithTransfers;
   const jobsOf = (sessionId: string) => transfers.sessionJobs(sessionId).catch(() => 0);
   const [serverTransfers, ...transfersOfVaults] = confirm
@@ -198,7 +201,7 @@ export async function requestCloseTab(tabId: string): Promise<void> {
       kind: "closeTab",
       tabId,
       sessionId: tab.sessionId,
-      label: server?.info.label ?? "this server",
+      label,
       pendingTransfers: serverTransfers + vaultTransfers,
       vaultTransfers,
     });

@@ -7,6 +7,7 @@ import { serverEntry, useSessionStore } from "../state/sessionStore";
 import { useSettingsStore } from "../state/settingsStore";
 import { useTransferStore } from "../state/transferStore";
 import { useUiStore } from "../state/uiStore";
+import { ExternalEditsStatus } from "./ExternalEditsStatus";
 import {
   percentDownloaded,
   showUpdateNotice,
@@ -101,6 +102,7 @@ export function StatusBar() {
         {session.text}
       </span>
       <span className="status-right">
+        <ExternalEditsStatus />
         {pending > 0 && (
           <span className="status-item status-queue">
             {pluralize(pending, "transfer")} left
