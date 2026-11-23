@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::board::{Claim, TaskBoard};
 use super::remote_command;
-use super::task::{LastRun, Outcome, ScheduledTask, TaskAction};
+use super::task::{LastRun, Outcome, ScheduledTask, TaskAction, CUT_SHORT};
 use super::transfer_task;
 use crate::connections::ConnectionStore;
 use crate::error::{AppError, AppResult, ErrorKind};
@@ -26,8 +26,6 @@ use crate::transfer::{JobBatch, TransferManager};
 const TASK_OWNER: &str = "scheduler";
 /// The last output line of a command task is kept as its result, cut to this length.
 const MAX_RESULT_LINE_CHARS: usize = 200;
-/// The result of a run whose process was stopped under it.
-const CUT_SHORT: &str = "Stopped before it finished";
 const QUEUE_PAUSED: &str = "The transfer queue is paused, so this run was skipped";
 
 /// A run that would copy files while the user has paused the queue ends at once, before it
@@ -72,7 +70,8 @@ pub struct TaskContext<'a> {
 }
 
 /// A run under way. Dropped before it ends, as when its process is interrupted, it is written
-/// down as cut short, so the task never keeps the result of the run before.
+/// down as cut short. A process that dies without dropping it leaves the same result, written
+/// when the task was claimed.
 struct Run<'a> {
     board: &'a TaskBoard,
     claim: Option<Claim>,
@@ -89,6 +88,7 @@ impl Run<'_> {
                     finished: Local::now().timestamp(),
                     succeeded,
                     message,
+                    under_way: false,
                 },
             );
         }

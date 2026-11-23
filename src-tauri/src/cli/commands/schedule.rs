@@ -78,6 +78,10 @@ struct ListedRun {
     finished: Option<String>,
     succeeded: bool,
     message: String,
+    /// Written as the run began and never replaced: the run is still going,
+    /// or its process ended before it could say how the run went.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    under_way: bool,
 }
 
 impl Listed {
@@ -97,6 +101,7 @@ impl Listed {
                 finished: time_iso(Some(last_run.finished)),
                 succeeded: last_run.succeeded,
                 message: last_run.message.clone(),
+                under_way: last_run.under_way,
             }),
         }
     }
@@ -356,7 +361,12 @@ async fn run_now(file: &Path, context: &Context, arguments: &ScheduleRunArgs) ->
             return Ok(Reply::new(Vec::<RunReport>::new(), "No task is due"));
         }
     } else {
-        // Every name is found before anything runs, so a mistyped one starts nothing.
+        // Every name is found before any task is taken, so a mistyped one starts nothing and
+        // leaves no task marked as stopped.
+        let tasks: Vec<_> = board.list().into_iter().map(|view| view.task).collect();
+        for wanted in &arguments.tasks {
+            task::find(&tasks, wanted)?;
+        }
         for wanted in &arguments.tasks {
             match board.claim_named(wanted)? {
                 Claimed::Run(claim) => claims.push(claim),
@@ -419,19 +429,6 @@ async fn run_now(file: &Path, context: &Context, arguments: &ScheduleRunArgs) ->
     Ok(Reply::new(&reports, text).with_exit(exit))
 }
 
-/// Resolves when the service manager asks the process to stop.
-async fn terminated() {
-    #[cfg(unix)]
-    {
-        use tokio::signal::unix::{signal, SignalKind};
-        if let Ok(mut terminate) = signal(SignalKind::terminate()) {
-            terminate.recv().await;
-            return;
-        }
-    }
-    std::future::pending::<()>().await;
-}
-
 /// Prints each result as its run ends: a line of text, or a JSON object per line.
 fn announce(report: &RunReport, json: bool) {
     if json {
@@ -467,9 +464,8 @@ async fn daemon(file: PathBuf, context: &Context) -> AppResult<Reply> {
     let runner = Runner::new(context, false)?;
     let task_context = runner.task_context(context);
     let json = context.options.json;
-    log::info!("Running scheduled tasks as they fall due; Ctrl+C stops");
+    log::info!("Running scheduled tasks as they fall due; Ctrl+C or SIGTERM stops");
     let mut running: FuturesUnordered<Running<'_>> = FuturesUnordered::new();
-    let mut terminate = std::pin::pin!(terminated());
     loop {
         for claim in board.take_due(&Local::now()) {
             running.push(start(&board, claim, &task_context));
@@ -479,7 +475,6 @@ async fn daemon(file: PathBuf, context: &Context) -> AppResult<Reply> {
             Some(report) = running.next(), if !running.is_empty() => announce(&report, json),
             _ = tokio::time::sleep(wait) => {}
             _ = context.interrupt.cancelled() => break,
-            _ = &mut terminate => break,
         }
     }
     // Each run that is dropped is written down as stopped.

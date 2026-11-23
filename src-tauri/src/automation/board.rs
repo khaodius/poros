@@ -218,7 +218,7 @@ impl TaskBoard {
     }
 
     /// Keeps the tasks as the file has them now, and which of them other processes are
-    /// running. Returns what to log about runs that finished in another process.
+    /// running. Returns what to log about runs that ended in another process.
     fn remember(&self, tasks: Vec<ScheduledTask>, held: &StoreLock) -> Vec<(LogLevel, String)> {
         let here = self.here.lock().unwrap().clone();
         let elsewhere: HashSet<String> = tasks
@@ -232,16 +232,32 @@ impl TaskBoard {
             .filter_map(|task| {
                 let result = task.last_run.as_ref()?;
                 let known = state.tasks.iter().find(|known| known.id == task.id)?;
-                (known.last_run.as_ref() != Some(result)).then(|| {
+                let new = known.last_run.as_ref() != Some(result);
+                if !result.under_way {
+                    return new.then(|| {
+                        (
+                            if result.succeeded {
+                                LogLevel::Info
+                            } else {
+                                LogLevel::Error
+                            },
+                            format!(
+                                "Scheduled task \"{}\" was run by another Poros process: {}",
+                                task.name, result.message
+                            ),
+                        )
+                    });
+                }
+                // A run another process began has no result until it ends. One that ended
+                // with its process, killed or lost, keeps what was written as it began.
+                let running = here.contains(&task.id) || elsewhere.contains(&task.id);
+                let ended = !running && (new || state.elsewhere.contains(&task.id));
+                ended.then(|| {
                     (
-                        if result.succeeded {
-                            LogLevel::Info
-                        } else {
-                            LogLevel::Error
-                        },
+                        LogLevel::Error,
                         format!(
-                            "Scheduled task \"{}\" was run by another Poros process: {}",
-                            task.name, result.message
+                            "Scheduled task \"{}\" stopped before it finished: the Poros process running it ended",
+                            task.name
                         ),
                     )
                 })
@@ -366,10 +382,20 @@ impl TaskBoard {
         })
     }
 
-    fn claim(&self, task: &ScheduledTask, held: &StoreLock) -> AppResult<Option<Claim>> {
+    /// Takes `task` for a run, if no run of it is under way anywhere. The task is given a
+    /// failed result to keep until the run ends, written with the claim: a process that is
+    /// killed, or a computer that loses power, then leaves that rather than the result of the
+    /// run before.
+    fn claim(
+        &self,
+        task: &mut ScheduledTask,
+        held: &StoreLock,
+        now: i64,
+    ) -> AppResult<Option<Claim>> {
         let Some(lock) = self.locks.try_run(held, &task.id)? else {
             return Ok(None);
         };
+        task.last_run = Some(LastRun::under_way(now));
         self.here.lock().unwrap().insert(task.id.clone());
         Ok(Some(Claim {
             task: task.clone(),
@@ -397,8 +423,8 @@ impl TaskBoard {
             let due = task::take_due(tasks, now);
             let mut claims = Vec::new();
             for index in &due {
-                let task = &tasks[*index];
-                match self.claim(task, held) {
+                let task = &mut tasks[*index];
+                match self.claim(task, held, now.timestamp()) {
                     Ok(Some(claim)) => claims.push(claim),
                     Ok(None) => self.events.log(
                         LogLevel::Warn,
@@ -448,10 +474,14 @@ impl TaskBoard {
         find: impl FnOnce(&[ScheduledTask]) -> AppResult<&ScheduledTask>,
     ) -> AppResult<Claimed> {
         self.change(|tasks, held| {
-            let task = find(tasks)?.clone();
-            Ok(match self.claim(&task, held)? {
-                Some(claim) => (Claimed::Run(claim), Changed::Runs),
-                None => (Claimed::Busy(task), Changed::Nothing),
+            let id = find(tasks)?.id.clone();
+            let task = tasks
+                .iter_mut()
+                .find(|task| task.id == id)
+                .expect("the task was just found");
+            Ok(match self.claim(task, held, chrono::Utc::now().timestamp())? {
+                Some(claim) => (Claimed::Run(claim), Changed::Tasks),
+                None => (Claimed::Busy(task.clone()), Changed::Nothing),
             })
         })
     }
@@ -540,6 +570,7 @@ mod tests {
 
     fn result(message: &str) -> LastRun {
         LastRun {
+            under_way: false,
             started: 1,
             finished: 2,
             succeeded: true,
@@ -854,21 +885,65 @@ mod tests {
     }
 
     #[test]
-    fn a_run_that_dies_with_its_process_stops_counting_as_running() {
+    fn a_run_that_dies_with_its_process_stops_counting_as_running_and_shows_a_failure() {
         let (_folder, file) = folder();
-        let app = TaskBoard::open(file.clone(), Events::default());
-        let saved = app.save(every(60), &at(9, 30)).unwrap();
-        let cli = TaskBoard::borrow(file, Events::default()).unwrap();
-        let Claimed::Run(claim) = run_now(&cli, &saved.task.id) else {
+        let events = Events::keeping_startup_log();
+        let app = TaskBoard::open(file.clone(), events.clone());
+        let mut task = app.save(every(60), &at(9, 30)).unwrap().task;
+        task.last_run = Some(result("the night before"));
+        let saved = app.change(|tasks, _| Ok((task::put(tasks, task), Changed::Tasks)));
+        let id = saved.unwrap().id;
+        let cli = TaskBoard::borrow(file.clone(), Events::default()).unwrap();
+        let Claimed::Run(claim) = run_now(&cli, &id) else {
             panic!("the task is not running");
         };
         assert!(app.refresh());
         assert!(app.list()[0].running);
-        // The process is killed: its lock goes, and nothing is written.
+        // What the run leaves should it never end is written as it begins, and is not taken
+        // for a result while it runs.
+        let under_way = app.list()[0].task.last_run.clone().unwrap();
+        assert!(under_way.under_way && !under_way.succeeded);
+        assert_eq!(under_way.message, task::CUT_SHORT);
+
+        // The process is killed: its lock goes, and nothing more is written.
         drop(claim);
         assert!(app.refresh());
-        assert!(!app.list()[0].running);
-        assert_eq!(app.list()[0].task.last_run, None);
+        let view = app.list()[0].clone();
+        assert!(!view.running);
+        assert_eq!(view.task.last_run.as_ref(), Some(&under_way));
+        // A process that comes later sees the failure, not the result of the night before.
+        let later = TaskBoard::borrow(file, Events::default()).unwrap();
+        assert_eq!(later.list()[0].task.last_run.as_ref(), Some(&under_way));
+        assert!(!app.refresh());
+
+        // Said once, when the run ended, and not while it ran.
+        let notices = events.take_startup_log();
+        assert_eq!(notices.len(), 1, "{notices:?}");
+        assert_eq!(
+            notices[0].message,
+            format!(
+                "Scheduled task \"{}\" stopped before it finished: the Poros process running it ended",
+                view.task.name
+            )
+        );
+    }
+
+    #[test]
+    fn a_run_that_ends_replaces_what_was_written_as_it_began() {
+        let (_folder, board) = board();
+        let saved = board.save(every(60), &at(9, 30)).unwrap();
+        let claims = board.take_due(&at(10, 0));
+        assert_eq!(claims.len(), 1);
+        let begun = board.list()[0].task.last_run.clone().unwrap();
+        assert!(begun.under_way);
+        assert_eq!(begun.started, at(10, 0).timestamp());
+        let claim = claims.into_iter().next().unwrap();
+        board.finish(claim, result("12 files uploaded"));
+        let other = TaskBoard::borrow(board.file.clone(), Events::default()).unwrap();
+        let ended = other.list()[0].task.last_run.clone().unwrap();
+        assert_eq!(ended, result("12 files uploaded"));
+        assert!(!ended.under_way);
+        assert_eq!(other.list()[0].task.id, saved.task.id);
     }
 
     #[test]

@@ -284,13 +284,21 @@ export function serverChanges(action: TaskAction): ServerChange[] {
   }
 }
 
-/** The tasks in `after` with a run that finished since `before`, in Poros or in poros-cli. */
+/**
+ * The tasks in `after` with a run that finished since `before`, in Poros or in poros-cli. What
+ * a run writes as it begins is not a result, and the result that replaces it is.
+ */
 export function finishedRuns(before: readonly TaskView[], after: readonly TaskView[]): TaskView[] {
   return after.filter((task) => {
     const run = task.lastRun;
-    if (!run) return false;
+    if (!run || run.underWay) return false;
     const known = before.find((previous) => previous.id === task.id)?.lastRun;
-    return !known || known.started !== run.started || known.finished !== run.finished;
+    return (
+      !known ||
+      known.underWay === true ||
+      known.started !== run.started ||
+      known.finished !== run.finished
+    );
   });
 }
 

@@ -305,4 +305,26 @@ describe("what runs change", () => {
     expect(finishedRuns(before, after).map((found) => found.id)).toEqual(["b", "c"]);
     expect(finishedRuns(after, after)).toEqual([]);
   });
+
+  it("does not take what a run writes as it begins for its result", () => {
+    const run = (finished: number, underWay?: boolean) => ({
+      started: 100,
+      finished,
+      succeeded: !underWay,
+      message: underWay ? "Stopped before it finished" : "Done",
+      ...(underWay ? { underWay } : {}),
+    });
+    const task = (lastRun: ReturnType<typeof run>) => ({
+      ...newTask(transferAction("web")),
+      id: "a",
+      running: true,
+      lastRun,
+    });
+    const before = [task({ ...run(50), started: 40 })];
+    const begun = [task(run(100, true))];
+    expect(finishedRuns(before, begun)).toEqual([]);
+    // Its result replaces it, even in the second it began.
+    expect(finishedRuns(begun, [task(run(100))]).map((found) => found.id)).toEqual(["a"]);
+    expect(finishedRuns(begun, [task(run(160))]).map((found) => found.id)).toEqual(["a"]);
+  });
 });

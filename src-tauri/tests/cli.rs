@@ -599,6 +599,17 @@ impl Run {
             .find(|task| task["name"] == name)
             .unwrap_or_else(|| panic!("no task {name}"))
     }
+
+    fn wait_until_running(&self, name: &str) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while self.task(name)["running"] != true {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{name} never started"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
 }
 
 fn now() -> i64 {
@@ -764,6 +775,16 @@ fn scheduled_tasks_run_now_when_due_and_never_twice_at_once() {
                 })
             ),
             task(
+                "long",
+                "Long",
+                now() + 3600,
+                serde_json::json!({
+                    "type": "command",
+                    "connectionId": "by-key",
+                    "command": "sleep 20; echo slept",
+                })
+            ),
+            task(
                 "password",
                 "Needs a password",
                 now() + 3600,
@@ -821,14 +842,7 @@ fn scheduled_tasks_run_now_when_due_and_never_twice_at_once() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-    while run.task("Slow")["running"] != true {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the first run never started"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
+    run.wait_until_running("Slow");
     let (code, value) = run.schedule_json(&["run", "slow"]);
     assert_eq!(code, 13, "{value}");
     assert_eq!(value[0]["state"], "alreadyRunning");
@@ -839,6 +853,47 @@ fn scheduled_tasks_run_now_when_due_and_never_twice_at_once() {
         "Slow: Command finished: slept"
     );
     assert_eq!(run.task("Slow")["running"], false);
+
+    // SIGTERM, as systemctl stop sends, stops a run the way Ctrl+C does, and it is written down.
+    #[cfg(unix)]
+    {
+        let stopped = run
+            .schedule(&["run", "Long"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        run.wait_until_running("Long");
+        let killed = Command::new("kill")
+            .args(["-TERM", &stopped.id().to_string()])
+            .status()
+            .unwrap();
+        assert!(killed.success());
+        let stopped = stopped.wait_with_output().unwrap();
+        assert_eq!(status(&stopped), 130, "{stopped:?}");
+        let long = run.task("Long");
+        assert_eq!(long["running"], false);
+        assert_eq!(long["lastRun"]["succeeded"], false);
+        assert_eq!(long["lastRun"]["message"], "Stopped before it finished");
+        assert!(long["lastRun"].get("underWay").is_none(), "{long}");
+    }
+
+    // A run whose process is killed outright leaves the result written as it began: a failure,
+    // not the result of the run before.
+    let mut killed = run
+        .schedule(&["run", "Long"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    run.wait_until_running("Long");
+    killed.kill().unwrap();
+    killed.wait().unwrap();
+    let long = run.task("Long");
+    assert_eq!(long["running"], false);
+    assert_eq!(long["lastRun"]["succeeded"], false);
+    assert_eq!(long["lastRun"]["message"], "Stopped before it finished");
+    assert_eq!(long["lastRun"]["underWay"], true, "{long}");
 
     // Without a keychain, a connection that needs its password says how to give one.
     let (code, value) = run.schedule_json(&["run", "Needs a password"]);

@@ -342,6 +342,9 @@ fn validate_items(items: &[TaskItem], direction: Direction) -> AppResult<()> {
     Ok(())
 }
 
+/// The result of a run whose process was stopped, killed or lost under it.
+pub const CUT_SHORT: &str = "Stopped before it finished";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LastRun {
@@ -350,6 +353,23 @@ pub struct LastRun {
     pub finished: i64,
     pub succeeded: bool,
     pub message: String,
+    /// Written as a run begins and replaced as it ends, so a run whose process is killed, or
+    /// whose computer loses power, leaves a failure rather than the result of the run before.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub under_way: bool,
+}
+
+impl LastRun {
+    /// What a run that began at `started` leaves until it ends.
+    pub fn under_way(started: i64) -> Self {
+        Self {
+            started,
+            finished: started,
+            succeeded: false,
+            message: CUT_SHORT.into(),
+            under_way: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -597,6 +617,7 @@ pub(crate) mod tests {
             finished: 2,
             succeeded: true,
             message: "ok".into(),
+            under_way: false,
         });
         let edited = ScheduledTask {
             name: "Hourly".into(),

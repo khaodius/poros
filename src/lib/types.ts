@@ -736,6 +736,11 @@ export interface LastRun {
   finished: number;
   succeeded: boolean;
   message: string;
+  /**
+   * Written as a run begins, a failure that its end replaces: true while the run goes on, or
+   * when the process running it ended before it could say how the run went.
+   */
+  underWay?: boolean;
 }
 
 export interface ScheduledTask {

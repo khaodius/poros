@@ -54,8 +54,11 @@ Or from a systemd timer, as a user service:
   systemctl --user enable --now poros-schedule.timer
 
 Or keep a daemon running, as a service of Type=simple with ExecStart=/usr/bin/poros-cli
-schedule daemon. It notices tasks edited in Poros, a wake from sleep and a clock that was set,
-and stops on Ctrl+C or SIGTERM; a run it stops is written to the task as stopped.
+schedule daemon. It notices tasks edited in Poros, a wake from sleep and a clock that was set.
+
+Ctrl+C or SIGTERM, as systemctl stop and a shutdown send, stops a run or the daemon, and each
+run it stops is written to the task as stopped. A run whose process is killed outright leaves
+the same result.
 
 A run more than --missed-after minutes late, because nothing was there to start it, counts as
 missed: it happens once, late, when the task makes up for missed runs, and is passed over
