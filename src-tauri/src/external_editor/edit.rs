@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tokio::sync::Notify;
@@ -74,6 +74,63 @@ pub(super) enum Phase {
     },
 }
 
+impl Phase {
+    /// The content the phase is about; `None` while the working copy holds what the server has.
+    pub fn content(&self) -> Option<&Fingerprint> {
+        match self {
+            Phase::Downloading { .. } | Phase::Watching => None,
+            Phase::Changed { content }
+            | Phase::WaitingForServer { content, .. }
+            | Phase::Conflict { content, .. }
+            | Phase::Uploading { content, .. }
+            | Phase::Failed { content, .. } => Some(content),
+        }
+    }
+}
+
+/// How long a working copy is kept once its program seems done with it.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Lifetime {
+    /// When the program started on the file was seen to end, with no change to the file since.
+    program_closed: Option<Instant>,
+    /// When the working copy last took new content: its download, a save, or an upload.
+    last_change: Instant,
+}
+
+impl Lifetime {
+    pub fn new(now: Instant) -> Self {
+        Self {
+            program_closed: None,
+            last_change: now,
+        }
+    }
+
+    pub fn program_started(&mut self) {
+        self.program_closed = None;
+    }
+
+    pub fn program_closed(&mut self, now: Instant) {
+        self.program_closed = Some(now);
+    }
+
+    /// The file changed. A change after its program seemed to close proves the file is still
+    /// open somewhere, as when a launcher handed it to a window and ended.
+    pub fn changed(&mut self, now: Instant) {
+        self.program_closed = None;
+        self.last_change = now;
+    }
+
+    pub fn uploaded(&mut self, now: Instant) {
+        self.last_change = now;
+    }
+
+    /// Whether the copy has been kept long enough: its program closed, and `keep` has passed
+    /// since the copy last changed, rather than since the program ended.
+    pub fn is_over(&self, keep: Duration, now: Instant) -> bool {
+        self.program_closed.is_some() && now.saturating_duration_since(self.last_change) >= keep
+    }
+}
+
 /// What the user asked for, picked up by the task following the edit.
 #[derive(Debug, Default)]
 pub(super) struct Requests {
@@ -116,8 +173,7 @@ pub(super) struct Core {
     pub blocked: bool,
     /// When the working copy was last found at rest, changed or not.
     pub looked: Option<Instant>,
-    /// When the program that had the file open was seen to close.
-    pub program_closed: Option<Instant>,
+    pub lifetime: Lifetime,
     /// Ends once the server has the working copy's content, as for a file taken up from an
     /// earlier run, which no program has open.
     pub ends_when_clean: bool,
@@ -276,4 +332,65 @@ pub struct EditView {
     pub uploads: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_upload: Option<u64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const KEEP: Duration = Duration::from_secs(600);
+
+    #[test]
+    fn a_change_after_the_program_ended_keeps_the_copy() {
+        let opened = Instant::now();
+        let mut lifetime = Lifetime::new(opened);
+        lifetime.program_started();
+        // A launcher handed the file to a window already open, and ended.
+        lifetime.program_closed(opened + Duration::from_secs(6));
+        assert!(!lifetime.is_over(KEEP, opened + Duration::from_secs(60)));
+        // The file is saved from that window: it is plainly still open.
+        lifetime.changed(opened + Duration::from_secs(120));
+        assert!(!lifetime.is_over(KEEP, opened + Duration::from_secs(3600)));
+        assert!(!lifetime.is_over(Duration::ZERO, opened + Duration::from_secs(3600)));
+    }
+
+    #[test]
+    fn the_keep_time_runs_from_the_last_save_or_upload() {
+        let opened = Instant::now();
+        let at = |seconds: u64| opened + Duration::from_secs(seconds);
+        let mut lifetime = Lifetime::new(opened);
+        lifetime.program_started();
+        lifetime.changed(at(100));
+        lifetime.uploaded(at(400));
+        lifetime.program_closed(at(500));
+        // Ten minutes from the upload, not from the program's end.
+        assert!(!lifetime.is_over(KEEP, at(999)));
+        assert!(lifetime.is_over(KEEP, at(1000)));
+        // Nothing ends while the program is open, however long ago the last change.
+        let mut open = Lifetime::new(opened);
+        open.program_started();
+        assert!(!open.is_over(KEEP, at(100_000)));
+        // Started again on the file, the program is waited for anew.
+        lifetime.program_started();
+        assert!(!lifetime.is_over(KEEP, at(5000)));
+    }
+
+    #[test]
+    fn a_phase_knows_the_content_it_is_about() {
+        let content = Fingerprint {
+            size: 4,
+            sha256: "ab".repeat(32),
+        };
+        assert_eq!(Phase::Watching.content(), None);
+        let changed = Phase::Changed {
+            content: content.clone(),
+        };
+        assert_eq!(changed.content(), Some(&content));
+        let failed = Phase::Failed {
+            job: None,
+            content: content.clone(),
+            message: String::new(),
+        };
+        assert_eq!(failed.content(), Some(&content));
+    }
 }

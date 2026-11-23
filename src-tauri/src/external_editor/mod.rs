@@ -33,7 +33,7 @@ pub use edit::{ConflictView, EditState, EditView};
 pub use watch::Timing;
 
 use conflict::ServerState;
-use edit::{Core, Edit, Launch, Phase, Requests};
+use edit::{Core, Edit, Launch, Lifetime, Phase, Requests};
 use journal::{Leftover, ServerIdentity};
 use watch::Fingerprint;
 
@@ -451,7 +451,7 @@ impl ExternalEditManager {
             runs,
             blocked: false,
             looked: None,
-            program_closed: None,
+            lifetime: Lifetime::new(Instant::now()),
             ends_when_clean: false,
             abandoned: false,
         };
@@ -772,7 +772,7 @@ impl ExternalEditManager {
                 runs,
                 blocked: false,
                 looked: None,
-                program_closed: None,
+                lifetime: Lifetime::new(Instant::now()),
                 ends_when_clean: true,
                 abandoned: false,
             }),

@@ -49,7 +49,7 @@ export function ExternalEditorSettings({ settings }: { settings: Settings }) {
       />
       <NumberSetting
         label="Keep copies after the program closes"
-        hint="Copies of files in vaults are wiped at once."
+        hint="Counted from the last save or upload. Copies of files in vaults are wiped at once."
         value={editing.keepMinutes}
         min={0}
         max={MAX_KEEP_WORKING_COPY_MINUTES}
