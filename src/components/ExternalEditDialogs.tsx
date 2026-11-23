@@ -426,6 +426,8 @@ function LeftoversDialog() {
           When Poros last closed, {leftovers.length === 1 ? "this file was" : "these files were"}{" "}
           saved in another program but not uploaded. Upload once its server is connected, or discard
           the changes. The status bar keeps the list.
+          {leftovers.some((leftover) => leftover.vaultRoot) &&
+            " Copies of files from vaults stay unencrypted on this computer until then."}
         </p>
         <div className="edits-dialog-list">
           <LeftoverList leftovers={leftovers} onConfirm={setConfirming} />

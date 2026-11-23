@@ -165,14 +165,19 @@ pub fn write_record(root: &Path, record: &Record) -> AppResult<()> {
 }
 
 /// Removes a working copy with everything a program left beside it, and its record. `wipe`
-/// overwrites the files first, for the decrypted files of a vault.
+/// overwrites the files first, for the decrypted files of a vault, and the record with them,
+/// which names the file and its path inside the vault.
 pub fn discard(root: &Path, id: &str, wipe: bool) {
     let folder = edit_folder(root, id);
+    let record = record_file(root, id);
     if wipe {
         wipe_files(&folder);
+        if record.is_file() {
+            let _ = overwrite_with_zeros(&record);
+        }
     }
     let _ = std::fs::remove_dir_all(&folder);
-    let _ = std::fs::remove_file(record_file(root, id));
+    let _ = std::fs::remove_file(record);
 }
 
 /// Writes zeros over every file under `folder`, as far as the file system writes in place.
@@ -390,6 +395,51 @@ mod tests {
             kept,
             ["changed", "changed.json", "still-open", "still-open.json"]
         );
+    }
+
+    #[test]
+    fn a_vault_s_copies_outlast_a_crash_only_with_a_save_in_them() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("editing");
+        prepare_root(&root).unwrap();
+        let in_vault = |id: &str, synced: Option<&str>| {
+            let mut record = record(id, synced);
+            record.server.vault_root = Some("/srv/vault".to_string());
+            record
+        };
+        left_behind(
+            &root,
+            &in_vault("saved", Some("first")),
+            Some("second, saved later"),
+        );
+        let unchanged = in_vault("unchanged", Some("first"));
+        left_behind(&root, &unchanged, Some("first"));
+        // A second name for each file sees what is written over it before it goes.
+        let copy_seen = temp.path().join("copy");
+        let record_seen = temp.path().join("record");
+        std::fs::hard_link(working_copy(&root, &unchanged), &copy_seen).unwrap();
+        std::fs::hard_link(root.join("unchanged.json"), &record_seen).unwrap();
+
+        let leftovers = collect_leftovers(&root, &[]);
+        assert_eq!(leftovers.len(), 1);
+        assert_eq!(leftovers[0].record.id, "saved");
+        assert!(leftovers[0].record.server.in_vault());
+        assert!(!edit_folder(&root, "unchanged").exists());
+        assert!(!root.join("unchanged.json").exists());
+        assert_eq!(std::fs::read(&copy_seen).unwrap(), vec![0u8; 5]);
+        let record_left = std::fs::read(&record_seen).unwrap();
+        assert!(!record_left.is_empty());
+        assert!(record_left.iter().all(|byte| *byte == 0));
+
+        // Discarding the saved one wipes it and its record too.
+        let saved_seen = temp.path().join("saved-record");
+        std::fs::hard_link(root.join("saved.json"), &saved_seen).unwrap();
+        discard(&root, "saved", true);
+        assert!(std::fs::read(&saved_seen)
+            .unwrap()
+            .iter()
+            .all(|byte| *byte == 0));
+        assert!(!root.join("saved.json").exists());
     }
 
     #[test]

@@ -336,6 +336,12 @@ export function LeftoverList({ leftovers, onConfirm }: LeftoverListProps) {
                     </span>
                   )}
                 </div>
+                {leftover.vaultRoot && (
+                  <p className="edit-detail">
+                    This copy of a vault file is not encrypted on this computer. Upload or discard
+                    it.
+                  </p>
+                )}
                 {!session && (
                   <p className="edit-detail">
                     Connect to {server}
@@ -363,15 +369,6 @@ export function LeftoverList({ leftovers, onConfirm }: LeftoverListProps) {
                 <button
                   type="button"
                   className="icon-button"
-                  title="Show the working copy's folder"
-                  aria-label={`Show the folder of ${leftover.name}`}
-                  onClick={() => editAction(() => external.revealLeftover(leftover.id))}
-                >
-                  <FolderOpen size={14} />
-                </button>
-                <button
-                  type="button"
-                  className="icon-button"
                   title="Discard the saved changes"
                   aria-label={`Discard ${leftover.name}`}
                   onClick={() =>
@@ -381,7 +378,7 @@ export function LeftoverList({ leftovers, onConfirm }: LeftoverListProps) {
                       body: (
                         <p>
                           The changes saved to it never reached {leftover.server}. Discarding
-                          deletes them.
+                          {leftover.vaultRoot ? " wipes" : " deletes"} them.
                         </p>
                       ),
                       action: async () => {
@@ -392,6 +389,15 @@ export function LeftoverList({ leftovers, onConfirm }: LeftoverListProps) {
                   }
                 >
                   <Trash2 size={14} />
+                </button>
+                <button
+                  type="button"
+                  className="icon-button"
+                  title="Show the working copy's folder"
+                  aria-label={`Show the folder of ${leftover.name}`}
+                  onClick={() => editAction(() => external.revealLeftover(leftover.id))}
+                >
+                  <FolderOpen size={14} />
                 </button>
               </div>
             </li>

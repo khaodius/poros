@@ -420,16 +420,24 @@ pub fn run() {
             handle.state::<PendingUpdate>().note_quit();
         }
         RunEvent::Exit => {
-            handle.state::<TransferManager>().save_queue();
-            handle.state::<ExternalEditManager>().shutdown();
-            let sessions = handle.state::<Arc<SessionManager>>();
-            let terminals = handle.state::<TerminalManager>();
-            tauri::async_runtime::block_on(async {
-                terminals.close_all().await;
-                sessions.disconnect_all().await;
-            });
+            shut_down(handle);
             handle.state::<PendingUpdate>().install_on_exit();
         }
         _ => {}
+    });
+}
+
+/// What Poros does on its way out, however it goes: the queue is saved, files open in other
+/// programs are kept for the next run or removed, and terminals and connections are closed.
+/// Running it again finds nothing left to do.
+#[cfg(feature = "gui")]
+pub(crate) fn shut_down(handle: &tauri::AppHandle) {
+    handle.state::<TransferManager>().save_queue();
+    handle.state::<ExternalEditManager>().shutdown();
+    let sessions = handle.state::<Arc<SessionManager>>();
+    let terminals = handle.state::<TerminalManager>();
+    tauri::async_runtime::block_on(async {
+        terminals.close_all().await;
+        sessions.disconnect_all().await;
     });
 }

@@ -817,7 +817,9 @@ impl ExternalEditManager {
 
     /// The app is closing. Working copies the server has are deleted. The ones holding
     /// changes that were never uploaded stay for the next run to offer back, except a
-    /// vault's, whose decrypted files never outlast the app.
+    /// vault's, which are wiped: the page asks before it lets the app close with them. Only a
+    /// crash or a kill, which skips this, leaves a vault's changed copy decrypted on disk, for
+    /// the next run to offer back; its unchanged copies are wiped as that run starts.
     pub fn shutdown(&self) {
         let edits = std::mem::take(&mut *self.inner.edits.lock().unwrap());
         for edit in edits {

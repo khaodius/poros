@@ -1200,12 +1200,8 @@ pub async fn update_find_release(webview: Webview, version: String) -> AppResult
 }
 
 #[tauri::command]
-pub fn update_restart(
-    app: AppHandle,
-    pending: State<'_, PendingUpdate>,
-    transfers: State<'_, TransferManager>,
-) -> AppResult<()> {
-    update::restart(&app, &pending, &transfers)
+pub fn update_restart(app: AppHandle, pending: State<'_, PendingUpdate>) -> AppResult<()> {
+    update::restart(&app, &pending)
 }
 
 fn now_millis() -> u64 {
