@@ -5,17 +5,20 @@ import { formatSize, pluralize } from "../lib/format";
 import { fileOperations, onFileOperation } from "../lib/ipc";
 import { baseName } from "../lib/path";
 import type { NameClash } from "../lib/types";
+import { closeRenameReport, useBulkRenameStore } from "../state/bulkRename";
 import {
   useOperationStore,
   type NameClashQuestion,
   type RunningOperation,
 } from "../state/operationStore";
 import { Dialog } from "./Dialog";
+import { RenameReportDialog } from "./RenameReportDialog";
 
 /** The moves and copies running in this window, and the question when names are taken. */
 export function FileOperationsHost() {
   const update = useOperationStore((state) => state.update);
   const question = useOperationStore((state) => state.question);
+  const renameReport = useBulkRenameStore((state) => state.report);
 
   useEffect(() => {
     const subscription = onFileOperation(update);
@@ -26,6 +29,7 @@ export function FileOperationsHost() {
     <>
       <OperationTray />
       {question && <NameClashDialog question={question} />}
+      {renameReport && <RenameReportDialog report={renameReport} onClose={closeRenameReport} />}
     </>
   );
 }
@@ -56,6 +60,8 @@ function OperationTray() {
               <DeleteDetail operation={operation} />
             ) : operation.kind === "extract" ? (
               <ExtractDetail operation={operation} />
+            ) : operation.kind === "rename" ? (
+              <RenameDetail operation={operation} />
             ) : (
               <span className="operation-detail">
                 {pluralize(operation.files, "file")} done, {formatSize(operation.bytes)}
@@ -84,6 +90,36 @@ function ExtractDetail({ operation }: { operation: RunningOperation }) {
       <span className="progress-track is-indeterminate" role="progressbar">
         <span className="progress-fill" />
       </span>
+    </>
+  );
+}
+
+/** How many items have their new name, and the one being renamed. */
+function RenameDetail({ operation }: { operation: RunningOperation }) {
+  const { files, total, current } = operation;
+  const fraction = total ? Math.min(1, files / total) : null;
+  return (
+    <>
+      <span className="operation-detail">
+        {total ? `${formatCount(files)} of ${formatCount(total)} renamed` : "Starting"}
+      </span>
+      <span
+        className={`progress-track ${fraction === null ? "is-indeterminate" : ""}`}
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={fraction === null ? undefined : Math.round(fraction * 100)}
+      >
+        <span
+          className="progress-fill"
+          style={fraction === null ? undefined : { width: `${fraction * 100}%` }}
+        />
+      </span>
+      {current && (
+        <span className="operation-path" title={current}>
+          <bdi>{current}</bdi>
+        </span>
+      )}
     </>
   );
 }
