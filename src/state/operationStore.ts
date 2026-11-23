@@ -7,8 +7,9 @@ import type { NameClash, OperationFailure, OperationProgress, PlaceMode } from "
 /** Quick operations finish before the tray would show them, so it waits this long. */
 const SHOW_AFTER_MILLIS = 400;
 
-/** Deletes count entries; extractions say which program runs; the rest count files and bytes. */
-export type OperationKind = "place" | "delete" | "extract";
+/** Deletes and restores of deleted files count entries; extractions say which program runs; the
+ * rest count files and bytes. */
+export type OperationKind = "place" | "delete" | "restore" | "extract";
 
 export interface RunningOperation {
   id: string;

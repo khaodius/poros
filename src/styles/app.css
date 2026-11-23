@@ -6071,3 +6071,219 @@ textarea::placeholder {
   flex-wrap: wrap;
   gap: 10px;
 }
+
+/* Object versions: the Versions dialog, deleted files in a pane and older versions in the editor */
+.file-row.is-deleted,
+.file-row.is-deleted .file-name {
+  color: var(--text-muted);
+}
+
+.file-row.is-deleted .file-name-text {
+  text-decoration: line-through;
+  text-decoration-color: var(--text-faint);
+}
+
+.file-row.is-deleted .file-icon {
+  opacity: 0.55;
+}
+
+.deleted-tag {
+  flex: none;
+  padding: 0 6px;
+  color: var(--danger);
+  font-size: var(--font-size-tiny);
+  line-height: 16px;
+  background: var(--danger-soft);
+  border-radius: 999px;
+}
+
+.versions-path {
+  margin: 0 0 12px;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-small);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.versions-note {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+  background: var(--surface-sunken);
+  border-left: 2px solid var(--warning);
+  border-radius: var(--radius-small);
+}
+
+.versions-empty {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 0;
+  padding: 18px 12px;
+  color: var(--text-muted);
+  background: var(--surface-sunken);
+  border-radius: var(--radius);
+}
+
+.versions-empty > svg {
+  flex: none;
+  color: var(--text-faint);
+}
+
+.versions-table {
+  max-height: min(420px, 55vh);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.versions-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 6px 0 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.versions-row:last-child {
+  border-bottom: none;
+}
+
+.versions-row:not(.versions-heading):hover {
+  background: var(--row-hover);
+}
+
+.versions-heading {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  min-height: 28px;
+  color: var(--text-muted);
+  font-size: var(--font-size-tiny);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: var(--list-header);
+}
+
+.versions-time {
+  flex: 1;
+  min-width: 150px;
+  font-variant-numeric: tabular-nums;
+}
+
+.versions-row.is-latest .versions-time {
+  font-weight: 600;
+}
+
+.versions-row.is-marker .versions-time {
+  color: var(--text-muted);
+}
+
+.versions-size {
+  flex: none;
+  width: 72px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.versions-state {
+  flex: none;
+  width: 104px;
+}
+
+.versions-detail {
+  flex: none;
+  width: 124px;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.versions-tag {
+  width: 92px;
+  font-family: var(--font-mono);
+}
+
+.versions-actions {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  justify-content: flex-end;
+  width: 138px;
+}
+
+.versions-heading .versions-actions {
+  padding-right: 4px;
+}
+
+.versions-action-gap {
+  flex: none;
+  width: 26px;
+}
+
+.versions-delete:hover {
+  color: var(--danger);
+}
+
+.version-status {
+  display: inline-block;
+  padding: 1px 8px;
+  font-size: var(--font-size-tiny);
+  font-weight: 500;
+  line-height: 16px;
+  border-radius: 999px;
+}
+
+.version-status.is-current {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.version-status.is-deleted {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.version-status.is-marker {
+  color: var(--text-muted);
+  background: var(--surface-hover);
+}
+
+.versions-notice {
+  margin: 12px 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+}
+
+.versions-table + .form-error,
+.versions-empty + .form-error {
+  margin-top: 12px;
+}
+
+.versions-dialog .dialog-actions {
+  align-items: center;
+}
+
+.versions-count {
+  margin-right: auto;
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+}
+
+.version-read-only {
+  flex: none;
+  margin-left: auto;
+  padding: 0 8px;
+  color: var(--warning);
+  font-size: var(--font-size-tiny);
+  line-height: 16px;
+  background: var(--surface-sunken);
+  border-radius: 999px;
+}

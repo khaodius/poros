@@ -264,6 +264,19 @@ describe("layout", () => {
     expect(parseLayout({ type: "group", id: "g", tabs: [badServer] })).toBeNull();
   });
 
+  it("does not reopen an older version of a file", () => {
+    const older: PaneTab = {
+      ...editorTab({ id: "doc-3", name: "a.txt (2024)", path: "/bucket/a.txt", origin: "s3" }, "s"),
+      id: "v",
+      version: "3HL4kqtJlcpXroDTDmJ",
+    };
+    const root = group([{ id: "a", kind: "local" }, older]);
+    expect(parseLayout(JSON.parse(JSON.stringify(root)))).toEqual(root);
+    const restored = throughStorage(root, current({}, { s: server("s3") }));
+    expect(restored && allTabs(restored).map((tab) => tab.id)).toEqual(["a"]);
+    expect(parseLayout({ type: "group", id: "g", tabs: [{ ...older, version: 7 }] })).toBeNull();
+  });
+
   it("reopens a tab showing a vault on the vault's folder on its server", () => {
     const vault: VaultInfo = { parentSessionId: "s", root: "/srv/private", name: "private" };
     const inVault: PaneTab = { id: "v", kind: "remote", sessionId: "vault-1" };

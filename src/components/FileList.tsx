@@ -189,6 +189,8 @@ interface FileRowProps {
   selected: boolean;
   cursor: boolean;
   cut: boolean;
+  /** A file or folder a delete hid in a bucket that keeps versions, dated when it was deleted. */
+  deleted: boolean;
   /** Files dragged over the list would drop into this folder. */
   dropTarget: boolean;
   /** The row shows a field to type a new name in. */
@@ -212,6 +214,7 @@ const FileRow = memo(function FileRow({
   selected,
   cursor,
   cut,
+  deleted,
   dropTarget,
   renaming,
   arrivalKey,
@@ -228,6 +231,7 @@ const FileRow = memo(function FileRow({
         cursor && "is-cursor",
         entry.hidden && "is-hidden",
         cut && "is-cut",
+        deleted && "is-deleted",
         dropTarget && "is-drop-folder",
         arriving && "is-arriving",
       ]
@@ -258,6 +262,7 @@ const FileRow = memo(function FileRow({
             ) : (
               <span className="file-name-text">{entry.name}</span>
             )}
+            {deleted && <span className="deleted-tag">deleted</span>}
           </span>
         ) : (
           <span
@@ -428,6 +433,8 @@ interface FileListProps extends FileListActions {
   dropFolder?: string;
   /** Entries cut to the clipboard, shown faded until they are pasted. */
   cutPaths?: ReadonlySet<string>;
+  /** Deleted entries shown among the others, struck through and tagged. */
+  deletedPaths?: ReadonlySet<string>;
   /** The entry whose row shows the name field. */
   renaming?: string | null;
 }
@@ -445,6 +452,7 @@ export function FileList({
   fontSize,
   dropFolder,
   cutPaths,
+  deletedPaths,
   renaming,
   ...actions
 }: FileListProps) {
@@ -1160,6 +1168,7 @@ export function FileList({
                 selected={pane.selection.has(entry.path)}
                 cursor={pane.cursorPath === entry.path}
                 cut={cutPaths?.has(entry.path) ?? false}
+                deleted={deletedPaths?.has(entry.path) ?? false}
                 dropTarget={isDirLike(entry) && dropFolder === entry.path}
                 renaming={renaming === entry.path}
                 arrivalKey={rowKeyOf(side, entry.path)}

@@ -5,6 +5,7 @@ import { formatSize, pluralize } from "../lib/format";
 import { fileOperations, onFileOperation } from "../lib/ipc";
 import { baseName } from "../lib/path";
 import type { NameClash } from "../lib/types";
+import { restoreProgressText } from "../lib/versions";
 import {
   useOperationStore,
   type NameClashQuestion,
@@ -52,7 +53,7 @@ function OperationTray() {
           <LoaderCircle size={16} className="spin" />
           <div className="operation-text">
             <span className="operation-title">{operation.title}</span>
-            {operation.kind === "delete" ? (
+            {operation.kind === "delete" || operation.kind === "restore" ? (
               <DeleteDetail operation={operation} />
             ) : operation.kind === "extract" ? (
               <ExtractDetail operation={operation} />
@@ -88,14 +89,16 @@ function ExtractDetail({ operation }: { operation: RunningOperation }) {
   );
 }
 
-/** How many entries are gone, where the delete is, and the latest that would not go. */
+/** How many entries are gone or back, where the operation is, and the latest that failed. */
 function DeleteDetail({ operation }: { operation: RunningOperation }) {
   const fraction = deleteFraction(operation);
   const { current, failed, lastFailure } = operation;
   return (
     <>
       <span className="operation-detail">
-        {deleteProgressText(operation)}
+        {operation.kind === "restore"
+          ? restoreProgressText(operation)
+          : deleteProgressText(operation)}
         {failed ? `, ${formatCount(failed)} failed` : ""}
       </span>
       <span
