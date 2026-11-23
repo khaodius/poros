@@ -1458,7 +1458,9 @@ async fn finalize_download(context: &JobContext<'_>) -> AppResult<()> {
 }
 
 /// Checks a download against the checksums and signatures published beside its source. A file
-/// that fails is not saved: its temporary file is deleted.
+/// that fails is not saved: its temporary file is deleted, and so is a file written in place
+/// that holds only this attempt's bytes. One resumed onto what was already there, or written
+/// through a link, is left where it is, and the error says so.
 pub(super) async fn check_published(
     job: &JobRef<'_>,
     source: published::Source<'_>,
@@ -1478,16 +1480,20 @@ pub(super) async fn check_published(
         .map_err(|error| AppError::from(error).with_path(plan.target.clone()))?;
     }
     let checked = published::check(job, source, &job.spec.source, Path::new(&plan.target)).await;
-    if checked
-        .as_ref()
-        .is_err_and(|error| error.kind == ErrorKind::Untrusted)
-    {
-        job.run.restart.store(true, Ordering::Relaxed);
-        if plan.rename_to.is_some() {
-            let _ = tokio::fs::remove_file(&plan.target).await;
-        }
+    let Err(error) = checked else {
+        return Ok(());
+    };
+    if error.kind != ErrorKind::Untrusted {
+        return Err(error);
     }
-    checked
+    job.run.restart.store(true, Ordering::Relaxed);
+    let only_this_attempt = plan.rename_to.is_some()
+        || (job.run.start() == Some(0) && !delta::is_local_symlink(Path::new(&plan.target)).await);
+    if only_this_attempt {
+        let _ = tokio::fs::remove_file(&plan.target).await;
+        return Err(published::rejected(error, None));
+    }
+    Err(published::rejected(error, Some(&plan.target)))
 }
 
 /// Where the downloaded file ends, once the source is known not to have changed meanwhile.

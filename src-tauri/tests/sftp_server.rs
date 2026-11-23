@@ -1355,6 +1355,49 @@ b8QN6w9nN4iHOGzT0ZtAWu0ompwKIV0AbzYpASmLBK/h/eoAYgEHHv1o8tnMS49ecYBqp8a2A9O1g2hb
         "{log:#?}"
     );
 
+    // Written without a temporary file, a download that fails its published checksum is not
+    // left under its name either.
+    let in_place = fixture.local.path().join("in place");
+    std::fs::create_dir_all(&in_place).unwrap();
+    let remote_tampered = remote_path_join(&remote_published, "tampered.bin");
+    let transfers = fixture.transfers(TransferSettings {
+        temporary_files: false,
+        ..transfer_settings()
+    });
+    fixture
+        .download(&transfers, &[&remote_tampered], &in_place)
+        .await;
+    let (list, _) = wait_until_settled(&transfers).await;
+    drop(transfers);
+    assert_eq!(list.jobs[0].state, JobState::Failed);
+    let error = list.jobs[0].error.clone().unwrap_or_default();
+    assert!(error.ends_with("so it was not saved"), "{error}");
+    assert!(!in_place.join("tampered.bin").exists());
+
+    // Resumed onto a part that was already there, it is not the job's own to delete, so the
+    // error says where it is instead.
+    let tampered = pattern(1000, 11);
+    std::fs::write(in_place.join("tampered.bin"), &tampered[..400]).unwrap();
+    let transfers = fixture.transfers(TransferSettings {
+        exists_action: ExistsAction::Resume,
+        ..transfer_settings()
+    });
+    fixture
+        .download(&transfers, &[&remote_tampered], &in_place)
+        .await;
+    let (list, _) = wait_until_settled(&transfers).await;
+    drop(transfers);
+    assert_eq!(list.jobs[0].state, JobState::Failed);
+    let error = list.jobs[0].error.clone().unwrap_or_default();
+    assert!(!error.contains("not saved"), "{error}");
+    assert!(
+        error.contains(&in_place.join("tampered.bin").display().to_string()),
+        "{error}"
+    );
+    assert_eq!(
+        std::fs::read(in_place.join("tampered.bin")).unwrap(),
+        tampered
+    );
     fixture.close().await;
 }
 

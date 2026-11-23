@@ -285,6 +285,11 @@ impl JobRun {
         }
     }
 
+    /// Where this run began writing: 0 unless it continued an earlier one.
+    pub fn start(&self) -> Option<u64> {
+        self.pieces.lock().unwrap().as_ref().map(Pieces::start)
+    }
+
     pub fn end(&self) -> Option<u64> {
         self.pieces.lock().unwrap().as_ref().map(Pieces::end)
     }

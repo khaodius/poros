@@ -299,6 +299,22 @@ fn untrusted(message: String) -> AppError {
     AppError::new(ErrorKind::Untrusted, message)
 }
 
+/// The error of a download that failed its check, saying what became of the copy: deleted, or
+/// left at `kept`, where it was written in place.
+pub(super) fn rejected(error: AppError, kept: Option<&str>) -> AppError {
+    if error.kind != ErrorKind::Untrusted {
+        return error;
+    }
+    let message = match kept {
+        None => format!("{}, so it was not saved", error.message),
+        Some(path) => format!(
+            "{}; it was written in place, so the copy at {path} should not be trusted",
+            error.message
+        ),
+    };
+    AppError { message, ..error }
+}
+
 fn log(job: &JobRef<'_>, level: LogLevel, message: String) {
     job.shared
         .events
@@ -324,7 +340,7 @@ async fn check_digests(
         }
         if computed[label] != listed.digest {
             return Err(untrusted(format!(
-                "{name} does not match the {label} checksum published in {}, so it was not saved",
+                "{name} does not match the {label} checksum published in {}",
                 listed.file
             )));
         }
@@ -378,7 +394,7 @@ async fn check_minisign(
             Ok(())
         }
         SignatureCheck::Bad => Err(untrusted(format!(
-            "The minisign signature of {name} does not match the file, so it was not saved"
+            "The minisign signature of {name} does not match the file"
         ))),
         SignatureCheck::UnknownKey => {
             log(
@@ -475,7 +491,7 @@ async fn check_openpgp(
             Ok(())
         }
         Some(SignatureCheck::Bad) => Err(untrusted(format!(
-            "The OpenPGP signature of {name} does not match the file, or its key was revoked, so it was not saved"
+            "The OpenPGP signature of {name} does not match the file, or its key was revoked"
         ))),
         Some(SignatureCheck::UnknownKey) => {
             log(
