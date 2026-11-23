@@ -259,7 +259,11 @@ export function useFolderCompare({
       dismissDeep: () => folderCompare.dismissDeep(tabId),
       select,
       synchronize,
-      close: toggle,
+      // The bar and its buttons go away, so the keyboard goes back to the rows.
+      close: () => {
+        toggle();
+        focusList();
+      },
     },
   };
 }
