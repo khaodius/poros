@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react"
 import type { FileSource } from "../lib/fileSource";
 import {
   legendCounts,
+  outdatedNote,
   namesIn,
   sizeOnlyIn,
   type LegendCounts,
@@ -31,6 +32,8 @@ export interface FolderCompareBarModel {
   deep: DeepState | undefined;
   /** Why the two panes stopped browsing together. */
   note: string | undefined;
+  /** Why the marks may be out of date: a listing on show could not be refreshed. */
+  outdated: string | undefined;
   options: FolderCompareSettings;
   /** Size alone decides, by the bar's option or by Settings > Sync. */
   sizeOnly: boolean;
@@ -130,6 +133,7 @@ export function useFolderCompare({
 
   const comparing = pairId !== undefined;
   const listing = pane.listing;
+  const outdated = pane.stale === "outdated";
   const snapshot = useMemo<PaneSnapshot | null>(
     () =>
       comparing
@@ -143,9 +147,10 @@ export function useFolderCompare({
             info,
             lost,
             covered,
+            outdated,
           })
         : null,
-    [comparing, listing, covered, source.kind, source.pathStyle, sessionId, info, lost],
+    [comparing, listing, covered, source.kind, source.pathStyle, sessionId, info, lost, outdated],
   );
   // Before the browser paints, so a folder never shows with the marks of the one before it.
   useLayoutEffect(() => {
@@ -240,6 +245,11 @@ export function useFolderCompare({
       counts,
       deep,
       note,
+      outdated: outdatedNote(
+        snapshot?.outdated === true,
+        partnerSnapshot?.outdated === true,
+        partner.label,
+      ),
       options,
       sizeOnly: sizeOnlyIn(options, syncCompare),
       setOptions: (change) =>

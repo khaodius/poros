@@ -41,6 +41,7 @@ function listed(
     pathStyle: "posix",
     ignoresCase: false,
     coarseTimes: false,
+    outdated: false,
     path,
     parent: path === "/" ? null : parent,
     entries,
@@ -303,6 +304,7 @@ describe("what a pane gives the comparison", () => {
     info: info(),
     lost: false,
     covered: false,
+    outdated: false,
     ...more,
   });
 
@@ -313,6 +315,7 @@ describe("what a pane gives the comparison", () => {
       protocol: "ftp",
       ignoresCase: false,
       coarseTimes: true,
+      outdated: false,
       path: "/www",
       parent: "/",
       entries: [
@@ -330,6 +333,24 @@ describe("what a pane gives the comparison", () => {
     expect(snapshotOf(shown({ lost: true }))).toBeNull();
     expect(snapshotOf(shown({ covered: true }))).toBeNull();
     expect(snapshotOf(shown({ listing: null }))).toBeNull();
+  });
+
+  it("compares a listing that could not be refreshed, and again once the folder is listed", async () => {
+    expect(snapshotOf(shown({ outdated: true }))?.outdated).toBe(true);
+    const { main, pairId, state } = await comparedPair();
+    const right = paneKey(state().pairs[pairId].right);
+    const remembered = [...THERE, file("gone.txt", 1, 1)];
+    main.compare.publish("right", listed("/var/www", remembered, { outdated: true }));
+    expect(state().snapshots[right]?.outdated).toBe(true);
+    expect(states(state().comparisons[pairId]?.right)["gone.txt"]).toBe("onlyHere");
+    // The folder listed again: what it holds now decides.
+    main.compare.publish("right", listed("/var/www", THERE));
+    expect(state().snapshots[right]?.outdated).toBe(false);
+    expect(states(state().comparisons[pairId]?.right)).toEqual({
+      docs: "both",
+      "same.txt": "identical",
+      "edited.txt": "older",
+    });
   });
 
   it("takes the marks off both panes when a connection is lost", async () => {
@@ -493,6 +514,7 @@ describe("panes in two windows", () => {
     };
     const good = listed("/var/www", THERE, { location: { kind: "remote", sessionId: "s-1" } });
     expect(snapshot(good)).toEqual(good);
+    expect(snapshot({ ...good, outdated: true })?.outdated).toBe(true);
     // Not a listing at all.
     expect(snapshot({ ...good, location: { kind: "remote" } })).toBeNull();
     expect(snapshot({ ...good, location: "local" })).toBeNull();
@@ -505,6 +527,7 @@ describe("panes in two windows", () => {
         ...good,
         ignoresCase: "yes",
         coarseTimes: 1,
+        outdated: "no",
         parent: 7,
         entries: [
           { name: "a.txt", shape: "file", size: 1, modified: null, hidden: "no" },

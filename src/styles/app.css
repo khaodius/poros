@@ -6271,6 +6271,10 @@ textarea::placeholder {
   color: var(--danger);
 }
 
+.folder-compare-status.is-outdated > svg {
+  color: var(--warning);
+}
+
 .folder-compare-status > span {
   flex: 1;
   min-width: 0;

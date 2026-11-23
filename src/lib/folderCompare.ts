@@ -348,6 +348,20 @@ function differences(summary: FolderSummary): number {
   );
 }
 
+/**
+ * What the compare bar says while a pane shows a remembered listing that could not be refreshed:
+ * the rows are compared as shown, and compared again once the folder is listed.
+ */
+export function outdatedNote(here: boolean, there: boolean, partner: string): string | undefined {
+  const after = "so the marks may be out of date until it is listed again";
+  if (here && there) {
+    return "Neither pane's listing could be refreshed, so the marks may be out of date until both are listed again";
+  }
+  if (here) return `This pane's listing could not be refreshed, ${after}`;
+  if (there) return `The listing in ${partner} could not be refreshed, ${after}`;
+  return undefined;
+}
+
 /** What a folder's summary says in words, seen from one side: "2 newer here, 1 only there". */
 export function describeSummary(summary: FolderSummary, side: "left" | "right"): string {
   const here = side === "left";

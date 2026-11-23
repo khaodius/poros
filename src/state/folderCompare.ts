@@ -48,6 +48,11 @@ export interface PaneSnapshot {
   protocol?: Protocol;
   ignoresCase: boolean;
   coarseTimes: boolean;
+  /**
+   * The listing is a remembered one that could not be refreshed, so it may be out of date. It
+   * is compared all the same, as the pane shows it, and the bar says so.
+   */
+  outdated: boolean;
   path: string;
   parent: string | null;
   entries: readonly CompareEntry[];
@@ -64,6 +69,8 @@ export interface ShownFolder {
   lost: boolean;
   /** Something stands in for the rows, as a locked vault's card does. */
   covered: boolean;
+  /** The listing on show is a remembered one the server could not be asked for again. */
+  outdated: boolean;
 }
 
 /**
@@ -80,6 +87,7 @@ export function snapshotOf(shown: ShownFolder): PaneSnapshot | null {
     protocol: info?.protocol,
     ignoresCase: ignoresCase(pathStyle, info?.protocol),
     coarseTimes: info?.coarseTimes === true,
+    outdated: shown.outdated,
     path: listing.path,
     parent: listing.parent,
     entries: compareEntries(listing.entries),
@@ -302,6 +310,7 @@ function asSnapshot(value: unknown): PaneSnapshot | null {
     protocol: typeof snapshot.protocol === "string" ? (snapshot.protocol as Protocol) : undefined,
     ignoresCase: snapshot.ignoresCase === true,
     coarseTimes: snapshot.coarseTimes === true,
+    outdated: snapshot.outdated === true,
     path,
     parent: typeof snapshot.parent === "string" ? snapshot.parent : null,
     entries: entries.map(asEntry).filter((entry) => entry !== null),

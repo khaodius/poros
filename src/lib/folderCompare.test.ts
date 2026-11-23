@@ -10,6 +10,7 @@ import {
   ignoresCase,
   legendCounts,
   namesIn,
+  outdatedNote,
   pathBelow,
   rowMarks,
   sameEntries,
@@ -251,6 +252,13 @@ describe("what the page knows of each side", () => {
     expect(compareEntry(entry({ kind: "symlink", linkTarget: "broken" })).shape).toBe("other");
     expect(compareEntry(entry({ kind: "symlink" })).shape).toBe("other");
     expect(compareEntry(entry({ kind: "other" })).shape).toBe("other");
+  });
+
+  it("says which pane's listing could not be refreshed", () => {
+    expect(outdatedNote(false, false, "web")).toBeUndefined();
+    expect(outdatedNote(true, false, "web")).toMatch(/^This pane's listing could not be/);
+    expect(outdatedNote(false, true, "web")).toMatch(/^The listing in web could not be/);
+    expect(outdatedNote(true, true, "web")).toMatch(/^Neither pane's listing/);
   });
 
   it("knows where case does not tell names apart", () => {

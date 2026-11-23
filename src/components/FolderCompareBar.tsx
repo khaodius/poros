@@ -8,6 +8,7 @@ import {
   ListChecks,
   LoaderCircle,
   SlidersHorizontal,
+  TriangleAlert,
   X,
 } from "lucide-react";
 import type { FolderCompareBarModel } from "../hooks/useFolderCompare";
@@ -129,6 +130,12 @@ export function FolderCompareBar({ bar, onMenu }: FolderCompareBarProps) {
         <p className="folder-compare-status">
           <Info size={13} aria-hidden />
           <span>There are too many subfolders to mark them all. The deepest are not marked.</span>
+        </p>
+      )}
+      {bar.outdated && (
+        <p className="folder-compare-status is-outdated" role="status">
+          <TriangleAlert size={13} aria-hidden />
+          <span>{bar.outdated}.</span>
         </p>
       )}
       {bar.note && (
