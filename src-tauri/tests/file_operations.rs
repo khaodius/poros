@@ -521,6 +521,68 @@ async fn copies_within_the_server_every_way() {
     fixture.close().await;
 }
 
+/// `album` is a link to `photos`, so `album/inside` is a folder inside `photos` however it is
+/// spelled, and `photos` cannot go into it.
+#[tokio::test]
+async fn a_folder_does_not_go_into_itself_through_a_link() {
+    let Some(server) = server() else { return };
+    let fixture = Fixture::new(&server, "into-itself").await;
+
+    for (index, features) in [EVERY_WAY[0], EVERY_WAY[3]].into_iter().enumerate() {
+        let operations = fixture.operations(features);
+        let base = format!("case-{index}");
+        for folder in ["", "/photos", "/photos/inside"] {
+            fixture.mkdir(&format!("{base}{folder}")).await;
+        }
+        fixture.write(&format!("{base}/photos/a.jpg"), b"a").await;
+        fixture
+            .session()
+            .await
+            .sftp()
+            .unwrap()
+            .make_symlink(&fixture.path(&format!("{base}/album")), "photos")
+            .await
+            .unwrap();
+
+        for (mode, verb) in [(Mode::Copy, "copy"), (Mode::Move, "move")] {
+            let summary = fixture
+                .run(
+                    &operations,
+                    mode,
+                    &[&format!("{base}/photos")],
+                    &format!("{base}/album/inside"),
+                    Conflict::KeepBoth,
+                )
+                .await;
+            assert!(summary.placed.is_empty(), "{features:?} {verb}");
+            let messages: Vec<&str> = summary
+                .failures
+                .iter()
+                .map(|failure| failure.message.as_str())
+                .collect();
+            assert_eq!(
+                messages,
+                [format!("Cannot {verb} the folder photos into itself")],
+                "{features:?}"
+            );
+            assert_eq!(
+                fixture.names(&format!("{base}/photos")).await,
+                ["a.jpg", "inside"],
+                "{features:?} {verb}"
+            );
+            assert!(
+                fixture
+                    .names(&format!("{base}/photos/inside"))
+                    .await
+                    .is_empty(),
+                "{features:?} {verb}"
+            );
+        }
+    }
+
+    fixture.close().await;
+}
+
 /// /dev/shm is a separate filesystem on Linux, so a rename there fails and the move falls back
 /// to `mv`, or without commands to copying and deleting.
 #[tokio::test]

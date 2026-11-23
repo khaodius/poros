@@ -123,7 +123,7 @@ impl Work<'_> {
             .ok_or_else(|| AppError::invalid("Cannot move or copy a filesystem root"))?
             .to_string_lossy()
             .into_owned();
-        if kind == Kind::Dir && directory.starts_with(source) {
+        if kind == Kind::Dir && is_inside(directory, source) {
             let verb = if mode == Mode::Move { "move" } else { "copy" };
             return Err(AppError::invalid(format!(
                 "Cannot {verb} the folder {name} into itself"
@@ -385,6 +385,17 @@ fn destination(
     }
 }
 
+/// Whether `directory` is `folder` or inside it, as spelled or once links are followed.
+fn is_inside(directory: &Path, folder: &Path) -> bool {
+    if directory.starts_with(folder) {
+        return true;
+    }
+    match (fs::canonicalize(directory), fs::canonicalize(folder)) {
+        (Ok(directory), Ok(folder)) => directory.starts_with(folder),
+        _ => false,
+    }
+}
+
 fn free_name(directory: &Path, name: &str, kind: Kind) -> AppResult<PathBuf> {
     names::numbered(name, kind == Kind::Dir)
         .take(MAX_FREE_NAME_ATTEMPTS)
@@ -549,6 +560,35 @@ mod tests {
         assert_eq!(summary.failures.len(), 1);
         assert!(summary.failures[0].message.contains("into itself"));
         assert!(!root.join("a/b/a").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_a_folder_into_itself_through_a_link() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let root = temp_dir.path();
+        fs::create_dir_all(root.join("photos/inside")).unwrap();
+        fs::write(root.join("photos/a.jpg"), b"a").unwrap();
+        std::os::unix::fs::symlink("photos", root.join("album")).unwrap();
+        for (mode, verb) in [(Mode::Copy, "copy"), (Mode::Move, "move")] {
+            let summary = run(&request(
+                mode,
+                &[&root.join("photos")],
+                &root.join("album/inside"),
+                Conflict::KeepBoth,
+            ));
+            let messages: Vec<&str> = summary
+                .failures
+                .iter()
+                .map(|failure| failure.message.as_str())
+                .collect();
+            assert_eq!(
+                messages,
+                [format!("Cannot {verb} the folder photos into itself")]
+            );
+            assert!(root.join("photos/a.jpg").exists());
+            assert_eq!(fs::read_dir(root.join("photos/inside")).unwrap().count(), 0);
+        }
     }
 
     #[test]

@@ -92,6 +92,12 @@ pub struct Work<'a> {
     runs_commands: OnceCell<bool>,
 }
 
+/// The folder items go into, as given and with links followed.
+struct Target<'b> {
+    directory: &'b str,
+    real_directory: &'b str,
+}
+
 impl<'a> Work<'a> {
     pub async fn new(
         session: &'a Session,
@@ -122,13 +128,21 @@ impl<'a> Work<'a> {
                 .with_path(directory))
             }
         }
+        let real_directory = match self.fs.canonicalize(&directory).await {
+            Ok(real) => trim_trailing_slash(&real),
+            Err(_) => directory.clone(),
+        };
+        let target = Target {
+            directory: &directory,
+            real_directory: &real_directory,
+        };
         let results = stream::iter(request.sources.iter().cloned())
             .map(|source| {
                 let source = trim_trailing_slash(&self.fs.resolve(&source));
-                let directory = &directory;
+                let target = &target;
                 async move {
                     let result = self
-                        .place(&source, directory, request.mode, request.conflict)
+                        .place(&source, target, request.mode, request.conflict)
                         .await;
                     (source, result)
                 }
@@ -155,20 +169,21 @@ impl<'a> Work<'a> {
         }
     }
 
-    /// Moves or copies one item into `directory`; `None` when it was skipped.
+    /// Moves or copies one item into the target folder; `None` when it was skipped.
     async fn place(
         &self,
         source: &str,
-        directory: &str,
+        target: &Target<'_>,
         mode: Mode,
         conflict: Conflict,
     ) -> AppResult<Option<String>> {
         self.check_cancelled()?;
+        let directory = target.directory;
         let name = remote_path::file_name(source).to_string();
         let stat = self.fs.lstat_entry(source).await?.ok_or_else(|| {
             AppError::new(ErrorKind::NotFound, format!("{name} no longer exists")).with_path(source)
         })?;
-        if stat.kind == EntryKind::Dir && is_within(directory, source) {
+        if stat.kind == EntryKind::Dir && self.goes_into_itself(source, target).await {
             let verb = if mode == Mode::Move { "move" } else { "copy" };
             return Err(AppError::invalid(format!(
                 "Cannot {verb} the folder {name} into itself"
@@ -194,6 +209,18 @@ impl<'a> Work<'a> {
             Mode::Copy => self.copy_to(source, stat, &destination, true).await?,
         }
         Ok(Some(destination.path().to_string()))
+    }
+
+    /// Whether the target folder is the folder `source` or inside it, as spelled or once links
+    /// are followed.
+    async fn goes_into_itself(&self, source: &str, target: &Target<'_>) -> bool {
+        if is_within(target.directory, source) {
+            return true;
+        }
+        match self.fs.canonicalize(source).await {
+            Ok(real_source) => is_within(target.real_directory, &trim_trailing_slash(&real_source)),
+            Err(_) => false,
+        }
     }
 
     /// Where an item named `name` goes in `directory`; `None` to skip it.
