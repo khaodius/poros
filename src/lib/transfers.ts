@@ -15,6 +15,8 @@ export const EMPTY_STATS: TransferStats = {
   uploadSpeed: 0,
   downloadSpeed: 0,
   queuePaused: false,
+  heldForStart: false,
+  unattendedRunning: false,
   limits: {
     upload: { mode: "unlimited", kib: 0 },
     download: { mode: "unlimited", kib: 0 },
@@ -116,6 +118,17 @@ export function jobProgress(job: JobSnapshot): number {
   if (job.state === "done") return 1;
   if (job.kind === "folder" || job.size <= 0) return 0;
   return Math.min(1, job.transferred / job.size);
+}
+
+/**
+ * Whether the queue is paused as the user sees it, with Start queue to press. One that only waits
+ * for Start while files of scheduled runs go on is not: Pause stops them. Scheduled files the
+ * speed limit schedule holds back do not go on, and the backend leaves them out of
+ * `unattendedRunning`. A direction the schedule pauses never reads as the queue paused: the status
+ * bar names it on its own, and Pause still stops everything else.
+ */
+export function showsPaused(stats: TransferStats): boolean {
+  return stats.queuePaused && !(stats.heldForStart && stats.unattendedRunning);
 }
 
 /** Seconds until the queue drains at the current speed, or null when it is not moving. */

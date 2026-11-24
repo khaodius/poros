@@ -420,6 +420,11 @@ pub(super) struct JobRef<'a> {
 impl JobRef<'_> {
     pub fn exists_action(&self, resolution: Option<ExistsAction>) -> ExistsAction {
         resolution
+            .or(self
+                .spec
+                .batch
+                .as_ref()
+                .and_then(|batch| batch.exists_action))
             .or(self.shared.queue.lock().unwrap().conflict_override)
             .unwrap_or(self.settings.exists_action)
     }
@@ -909,6 +914,7 @@ pub(super) async fn expand_folder(
             size: if is_dir { 0 } else { entry.size },
             ancestors: ancestors.clone(),
             options: spec.options.clone(),
+            batch: spec.batch.clone(),
             name: entry.name,
         });
     }

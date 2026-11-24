@@ -63,7 +63,7 @@ import { activePane } from "./state/paneRegistry";
 import { askToSave, unsavedEditorTabs } from "./state/editorActions";
 import { editsHoldExit } from "./state/externalEditStore";
 import { useSavedConnections } from "./state/savedConnectionsStore";
-import { reloadSchedules } from "./state/scheduleStore";
+import { reloadSchedules, useScheduleStore } from "./state/scheduleStore";
 import { useSessionStore } from "./state/sessionStore";
 import { saveSettingsSection, useSettingsStore } from "./state/settingsStore";
 import { adoptHandoff, isMainWindow, receiveTabs, requestCloseTab } from "./state/tabActions";
@@ -95,6 +95,12 @@ function startApp(): Promise<void> {
         .catch((caught) => reportError("Could not read saved connections", caught)),
       useThemeStore.getState().load(),
       useTransferStore.getState().load(),
+      // What scheduled runs finish from now on is compared with this, to forget the listings
+      // of folders they change. Every window looks, for the sessions of its own tabs.
+      useScheduleStore
+        .getState()
+        .load()
+        .catch((caught) => reportError("Could not read scheduled tasks", caught)),
     ]);
     if (isMainWindow()) {
       const restored = await restoreWorkspace();

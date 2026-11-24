@@ -16,6 +16,7 @@ import {
   ArrowUp,
   ArrowUpDown,
   Bookmark,
+  CalendarClock,
   ClipboardCopy,
   ClipboardPaste,
   Copy,
@@ -103,6 +104,7 @@ import {
 } from "../state/fileOperations";
 import { useLayoutStore } from "../state/layoutStore";
 import { useLogStore } from "../state/logStore";
+import { scheduleBlocker, scheduleFiles } from "../state/scheduleActions";
 import {
   getPane,
   lastActivePane,
@@ -878,6 +880,18 @@ export function FilePane({
     };
   };
 
+  /** Makes a scheduled task that copies the files to the other side, as the item above does. */
+  const scheduleMenuItem = (targets: FileEntry[]): MenuItem => {
+    const label = source.kind === "local" ? "Schedule upload" : "Schedule download";
+    const blocker = scheduleBlocker(tabId);
+    return {
+      label: blocker ? `${label} (${blocker})` : `${label}...`,
+      icon: <CalendarClock size={14} />,
+      disabled: blocker !== null,
+      onSelect: () => scheduleFiles(tabId, targets),
+    };
+  };
+
   /** Synchronizes the folder clicked, or the one shown, with the other side. A file among
    * search results stands for the folder it is in. */
   const syncMenuItem = (entry: FileEntry | null): MenuItem => {
@@ -1146,7 +1160,9 @@ export function FilePane({
           )
         : null;
     return [
-      ...(targets.length > 0 ? [transferMenuItem(targets), "separator" as const] : []),
+      ...(targets.length > 0
+        ? [transferMenuItem(targets), scheduleMenuItem(targets), "separator" as const]
+        : []),
       ...(entry && isDirLike(entry)
         ? [
             {

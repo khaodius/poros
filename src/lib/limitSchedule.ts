@@ -245,15 +245,18 @@ export function holds(limits: LimitStatus, direction: Direction): boolean {
 
 /**
  * For a queued job the schedule holds: what it waits for, and until when if that is known.
- * `null` while the whole queue is paused, as nothing continues then until the queue is started.
+ * `null` while the whole queue is paused, as nothing continues then until the queue is started;
+ * a scheduled run's job is the exception while the queue only waits for Start, since it goes
+ * without one.
  */
 export function scheduleWait(
-  job: Pick<JobSnapshot, "state" | "direction">,
-  stats: Pick<TransferStats, "limits" | "queuePaused">,
+  job: Pick<JobSnapshot, "state" | "direction" | "unattended">,
+  stats: Pick<TransferStats, "limits" | "queuePaused" | "heldForStart">,
   now: Date,
 ): string | null {
   const { limits } = stats;
-  if (stats.queuePaused || job.state !== "queued" || !holds(limits, job.direction)) return null;
+  const stopped = stats.queuePaused && !(stats.heldForStart && job.unattended === true);
+  if (stopped || job.state !== "queued" || !holds(limits, job.direction)) return null;
   const end = limits.pauseEnds[job.direction];
   return end === null
     ? "Waiting for the speed limit schedule"

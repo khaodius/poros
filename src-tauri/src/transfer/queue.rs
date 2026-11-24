@@ -10,9 +10,11 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
+use super::batch::{BatchTally, JobBatch};
 use super::conflict::ExistsAction;
 use super::options::JobOptions;
 use super::pieces::Pieces;
+use super::TransferStats;
 use crate::error::AppError;
 use crate::settings::TransferSettings;
 use crate::sftp::RemoteStat;
@@ -80,11 +82,19 @@ pub struct JobSpec {
     pub ancestors: Arc<[String]>,
     /// What a synchronization asks of the file beyond the transfer settings.
     pub options: Option<Arc<JobOptions>>,
+    /// The jobs it was queued with for a caller that follows them all, such as a scheduled
+    /// task.
+    pub batch: Option<Arc<JobBatch>>,
 }
 
 impl JobSpec {
     pub fn involves(&self, session_id: &str) -> bool {
         self.session_id == session_id || self.source_session_id.as_deref() == Some(session_id)
+    }
+
+    /// Queued for a caller no one is there to press Start for, such as a scheduled task.
+    pub fn runs_unattended(&self) -> bool {
+        self.batch.as_ref().is_some_and(|batch| batch.unattended)
     }
 
     /// The file a file job writes, told apart from the files other jobs write.
@@ -428,6 +438,8 @@ impl Job {
             delta_bytes: self.delta_bytes,
             direct: self.direct,
             reconnecting: self.reconnecting,
+            label: self.spec.batch.as_ref().map(|batch| batch.label.clone()),
+            unattended: self.spec.runs_unattended(),
         }
     }
 }
@@ -463,6 +475,12 @@ pub struct JobSnapshot {
     pub direct: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub reconnecting: bool,
+    /// What queued the job when it was not the user: a scheduled task's name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// A run follows it, so it goes while transfers wait for Start.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub unattended: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
@@ -667,6 +685,9 @@ pub struct Queue {
     top_rank: u32,
     bottom_rank: u32,
     pub paused: bool,
+    /// The queue is paused only because transfers wait for Start, not by the user, so jobs
+    /// that run unattended still go.
+    pub held_for_start: bool,
     held: Held,
     blocked_since: BlockedSince,
     pub conflict_override: Option<ExistsAction>,
@@ -804,9 +825,10 @@ impl Queue {
     }
 
     pub fn claim(&mut self, now: Instant) -> Option<Claim> {
-        if self.paused {
+        if self.paused && !self.held_for_start {
             return None;
         }
+        let unattended_only = self.paused;
         for &id in &self.segmented {
             let Some(job) = self.jobs.get_mut(&id) else {
                 continue;
@@ -814,6 +836,9 @@ impl Queue {
             let Some(run) = job.run.clone() else {
                 continue;
             };
+            if unattended_only && !job.spec.runs_unattended() {
+                continue;
+            }
             if job.stop.is_none() && run.wants_helper(job.workers) {
                 job.workers += 1;
                 self.dirty.insert(id);
@@ -833,7 +858,10 @@ impl Queue {
             .iter()
             .find(|(_, id)| {
                 let job = &self.jobs[id];
-                job.not_before.is_none_or(|not_before| not_before <= now)
+                // Jobs that run unattended pass a queue waiting for Start, not the
+                // directions the speed limit schedule holds.
+                (!unattended_only || job.spec.runs_unattended())
+                    && job.not_before.is_none_or(|not_before| not_before <= now)
                     && !self.held.holds(job.spec.direction)
                     && !self.server_unreachable(&job.spec.session_id, now)
                     && job
@@ -1024,6 +1052,8 @@ impl Queue {
                 let rank = job.rank.clone();
                 let changed = changed_directory(&job.spec);
                 self.changed_directories.push(changed);
+                // Its children stand for it in its batch from here on.
+                job.spec.batch = None;
                 self.forget(id);
                 // Paused while it was being listed: what it holds waits as the folder would.
                 let paused = matches!(stop, Some(StopReason::Pause));
@@ -1269,6 +1299,9 @@ impl Queue {
 
     fn forget(&mut self, id: JobId) {
         if let Some(job) = self.jobs.remove(&id) {
+            if let Some(batch) = &job.spec.batch {
+                batch.departs(&job);
+            }
             if self.watched.remove(&id) {
                 self.ended.insert(
                     id,
@@ -1416,6 +1449,27 @@ impl Queue {
         }
     }
 
+    /// Takes the jobs of `batch` that have ended off the queue. How the batch went stays as it
+    /// was.
+    pub fn clear_batch(&mut self, batch: &Arc<JobBatch>) {
+        let ids: Vec<JobId> = self
+            .jobs
+            .values()
+            .filter(|job| {
+                job.is_finished()
+                    && job
+                        .spec
+                        .batch
+                        .as_ref()
+                        .is_some_and(|other| Arc::ptr_eq(other, batch))
+            })
+            .map(|job| job.id)
+            .collect();
+        for id in ids {
+            self.forget(id);
+        }
+    }
+
     pub fn session_job_ids(&self, session_id: &str) -> Vec<JobId> {
         self.jobs
             .values()
@@ -1490,6 +1544,7 @@ impl Queue {
     /// Pausing the queue interrupts running transfers; they continue from where they stopped.
     pub fn set_paused(&mut self, paused: bool, now: Instant) {
         self.paused = paused;
+        self.held_for_start = false;
         if paused {
             for job in self.jobs.values_mut() {
                 if job.state == JobState::Running && job.stop.is_none() {
@@ -1529,7 +1584,8 @@ impl Queue {
         let before = self.blocked_since;
         let mut let_go = false;
         for direction in DIRECTIONS {
-            let blocked = self.paused || self.held.holds(direction);
+            // A queue waiting for Start still lets unattended jobs try their servers.
+            let blocked = self.paused_by_user() || self.held.holds(direction);
             let since = self.blocked_since.of(direction);
             match (blocked, since.is_some()) {
                 (true, false) => *since = Some(now),
@@ -1570,6 +1626,48 @@ impl Queue {
             if let Some(Some(kept_back)) = untried_since.get(session_id) {
                 outage.untried += now.saturating_duration_since(outage.since.max(*kept_back));
             }
+        }
+    }
+
+    /// Pauses an idle queue until the user presses Start, as transfers do when they do not start
+    /// on their own. Jobs that run unattended go on, and a queue the user paused stays so.
+    pub fn hold_for_start(&mut self) {
+        let waiting_or_running = self.jobs.values().any(|job| {
+            !job.spec.runs_unattended()
+                && matches!(
+                    job.state,
+                    JobState::Queued | JobState::Running | JobState::Conflict
+                )
+        });
+        if !self.paused && !waiting_or_running {
+            self.paused = true;
+            self.held_for_start = true;
+        }
+    }
+
+    /// The user paused the queue, so nothing starts, unattended or not.
+    pub fn paused_by_user(&self) -> bool {
+        self.paused && !self.held_for_start
+    }
+
+    /// How the queue stands, for the transfer lists. Speeds are left for the caller to add.
+    pub fn stats(&self) -> TransferStats {
+        TransferStats {
+            counts: self.counts(),
+            remaining_bytes: self.remaining_bytes(),
+            queue_paused: self.paused,
+            held_for_start: self.paused && self.held_for_start,
+            // Ones the speed limit schedule holds back are not going anywhere, so Pause would
+            // stop nothing.
+            unattended_running: self.jobs.values().any(|job| {
+                job.spec.runs_unattended()
+                    && match job.state {
+                        JobState::Running => true,
+                        JobState::Queued => !self.held.holds(job.spec.direction),
+                        _ => false,
+                    }
+            }),
+            ..TransferStats::default()
         }
     }
 
@@ -1633,6 +1731,22 @@ impl Queue {
             }
             job.sample = Some((now, transferred));
         }
+    }
+
+    /// How the jobs of `batch` stand: the ones that left the queue, and the ones still in it
+    /// by the state they are in.
+    pub fn batch_tally(&self, batch: &Arc<JobBatch>) -> BatchTally {
+        let mut tally = batch.departed();
+        let in_batch = |job: &&Job| {
+            job.spec
+                .batch
+                .as_ref()
+                .is_some_and(|other| Arc::ptr_eq(other, batch))
+        };
+        for job in self.jobs.values().filter(in_batch) {
+            tally.count(job);
+        }
+        tally
     }
 
     pub fn snapshots(&self) -> Vec<JobSnapshot> {
@@ -1733,6 +1847,7 @@ mod tests {
             size,
             ancestors: Arc::from([]),
             options: None,
+            batch: None,
         }
     }
 
@@ -1800,6 +1915,213 @@ mod tests {
         let (_, removed, changed) = queue.take_changes();
         assert_eq!(removed, vec![folder_id]);
         assert_eq!(changed[0].path, "/remote");
+    }
+
+    #[test]
+    fn a_batch_follows_its_jobs_through_folders_and_out_of_the_queue() {
+        let batch = JobBatch::new("Nightly", Some(ExistsAction::Ask));
+        // No one is there to answer.
+        assert_eq!(batch.exists_action, Some(ExistsAction::Overwrite));
+        let in_batch = |spec: JobSpec| JobSpec {
+            batch: Some(batch.clone()),
+            ..spec
+        };
+        let mut queue = Queue::new();
+        let folder_id = queue.add(in_batch(folder("dir")));
+        let other = queue.add(file("someone else's", 5));
+        assert_eq!(queue.batch_tally(&batch).unfinished, 1);
+        let labels: Vec<Option<String>> =
+            queue.snapshots().into_iter().map(|job| job.label).collect();
+        assert_eq!(labels, [Some("Nightly".to_string()), None]);
+
+        // The folder lists, and what it held stands for it from then on.
+        queue.claim(Instant::now()).unwrap();
+        let children = ["one", "two", "three", "four"].map(|name| in_batch(file(name, 10)));
+        finish(
+            &mut queue,
+            folder_id,
+            RunOutcome::Expanded(children.to_vec()),
+        );
+        let listed = queue.batch_tally(&batch);
+        assert_eq!((listed.unfinished, listed.done, listed.removed), (4, 0, 0));
+
+        let ids: Vec<JobId> = (0..4)
+            .map(|_| queue.claim(Instant::now()).unwrap().id)
+            .collect();
+        finish(&mut queue, ids[0], RunOutcome::Completed);
+        let denied = AppError::new(ErrorKind::PermissionDenied, "denied");
+        finish(&mut queue, ids[1], RunOutcome::Failed(denied));
+        finish(&mut queue, ids[2], RunOutcome::Skipped("is there".into()));
+        // Taken off the queue while it runs.
+        queue.remove(&[ids[3]]);
+        finish(&mut queue, ids[3], RunOutcome::Stopped);
+        let ended = BatchTally {
+            done: 1,
+            skipped: 1,
+            failed: 1,
+            removed: 1,
+            unfinished: 0,
+            bytes: 10,
+            failures: vec!["/local/two: denied".into()],
+        };
+        assert_eq!(queue.batch_tally(&batch), ended);
+        assert!(!ended.is_clean());
+
+        // Clearing the list afterwards changes nothing about how the batch ended.
+        queue.clear(&[JobState::Done, JobState::Skipped, JobState::Failed]);
+        assert_eq!(queue.batch_tally(&batch), ended);
+        // The other job was never part of it.
+        assert_eq!(queue.job(other).unwrap().state, JobState::Queued);
+    }
+
+    #[test]
+    fn a_batch_that_has_been_counted_leaves_the_queue_without_its_neighbours() {
+        let batch = JobBatch::new("Nightly", None);
+        let in_batch = |name: &str| JobSpec {
+            batch: Some(batch.clone()),
+            ..file(name, 10)
+        };
+        let mut queue = Queue::new();
+        let failing = queue.add(in_batch("one"));
+        let skipped = queue.add(in_batch("two"));
+        let running = queue.add(in_batch("three"));
+        let others = JobBatch::new("Weekly", None);
+        let other = queue.add(JobSpec {
+            batch: Some(others.clone()),
+            ..file("weekly", 1)
+        });
+        let by_hand = queue.add(file("by hand", 1));
+        for _ in 0..3 {
+            queue.claim(Instant::now()).unwrap();
+        }
+        let denied = AppError::new(ErrorKind::PermissionDenied, "denied");
+        finish(&mut queue, failing, RunOutcome::Failed(denied));
+        finish(&mut queue, skipped, RunOutcome::Skipped("is there".into()));
+        let other_claim = queue.claim(Instant::now()).unwrap();
+        assert_eq!(other_claim.id, other);
+        let gone = AppError::new(ErrorKind::PermissionDenied, "gone");
+        finish(&mut queue, other, RunOutcome::Failed(gone));
+        let counted = queue.batch_tally(&batch);
+
+        queue.clear_batch(&batch);
+        assert!(queue.job(failing).is_none() && queue.job(skipped).is_none());
+        assert_eq!(queue.batch_tally(&batch), counted);
+        // A job that still runs stays until it ends; other batches and hand-queued files stay.
+        assert_eq!(queue.job(running).unwrap().state, JobState::Running);
+        assert_eq!(queue.job(other).unwrap().state, JobState::Failed);
+        assert_eq!(queue.job(by_hand).unwrap().state, JobState::Queued);
+    }
+
+    #[test]
+    fn unattended_jobs_go_while_the_users_wait_for_start_but_not_while_paused() {
+        let task = JobBatch::new("Nightly", None);
+        let scheduled = |name: &str| JobSpec {
+            batch: Some(task.clone()),
+            ..file(name, 1)
+        };
+        let mut queue = Queue::new();
+        // Scheduled files are queued without holding an idle queue for Start.
+        queue.add(scheduled("first run"));
+        assert_eq!(claim_name(&mut queue).as_deref(), Some("first run"));
+        let stats = queue.stats();
+        assert!(!stats.queue_paused && !stats.held_for_start && stats.unattended_running);
+
+        // The user queues by hand while it runs: their file waits for Start.
+        queue.hold_for_start();
+        let by_hand = queue.add(file("by hand", 1));
+        assert!(queue.paused && queue.held_for_start && !queue.paused_by_user());
+        assert_eq!(claim_name(&mut queue), None);
+        queue.add(scheduled("second run"));
+        assert_eq!(claim_name(&mut queue).as_deref(), Some("second run"));
+        assert_eq!(queue.job(by_hand).unwrap().state, JobState::Queued);
+        // The lists say the queue waits for Start while scheduled files go on, so it is shown
+        // as going, with Pause.
+        let stats = queue.stats();
+        assert!(stats.queue_paused && stats.held_for_start && stats.unattended_running);
+        assert_eq!((stats.counts.running, stats.counts.queued), (2, 1));
+        // When they are through, only the user's file is left, waiting for Start.
+        let running: Vec<JobId> = queue
+            .jobs
+            .values()
+            .filter(|job| job.state == JobState::Running)
+            .map(|job| job.id)
+            .collect();
+        for id in running {
+            finish(&mut queue, id, RunOutcome::Completed);
+        }
+        let stats = queue.stats();
+        assert!(stats.queue_paused && stats.held_for_start && !stats.unattended_running);
+        // Jobs brought back from the saved queue are followed by no one, and wait too.
+        queue.add(JobSpec {
+            batch: Some(JobBatch::restored("Nightly".into(), None)),
+            ..file("restored", 1)
+        });
+        assert_eq!(claim_name(&mut queue), None);
+
+        // Pausing holds back everything, and Start lets everything go.
+        queue.add(scheduled("third run"));
+        queue.set_paused(true, Instant::now());
+        assert!(queue.paused_by_user());
+        assert_eq!(claim_name(&mut queue), None);
+        let stats = queue.stats();
+        assert!(stats.queue_paused && !stats.held_for_start && stats.unattended_running);
+        // A queue the user paused stays paused when more is queued.
+        queue.hold_for_start();
+        assert!(queue.paused_by_user());
+        queue.set_paused(false, Instant::now());
+        let mut started: Vec<String> = std::iter::from_fn(|| claim_name(&mut queue)).collect();
+        started.sort();
+        assert_eq!(started, ["by hand", "restored", "third run"]);
+    }
+
+    #[test]
+    fn scheduled_files_pass_a_queue_waiting_for_start_but_not_the_speed_schedule() {
+        let task = JobBatch::new("Nightly", None);
+        let scheduled = |spec: JobSpec| JobSpec {
+            batch: Some(task.clone()),
+            ..spec
+        };
+        let mut queue = Queue::new();
+        queue.hold_for_start();
+        let by_hand = queue.add(file("by hand", 1));
+        queue.add(scheduled(file("nightly upload", 1)));
+        queue.add(scheduled(download("nightly download", 1)));
+
+        // A window that pauses uploads holds the scheduled upload too; the download goes.
+        queue.set_held(UPLOADS_HELD, Instant::now());
+        assert_eq!(claim_name(&mut queue).as_deref(), Some("nightly download"));
+        assert_eq!(claim_name(&mut queue), None);
+        let stats = queue.stats();
+        assert!(stats.held_for_start && stats.unattended_running);
+        let running: Vec<JobId> = queue
+            .jobs
+            .values()
+            .filter(|job| job.state == JobState::Running)
+            .map(|job| job.id)
+            .collect();
+        for id in running {
+            finish(&mut queue, id, RunOutcome::Completed);
+        }
+        // Only a held upload is left of the run: nothing of it moves, so the queue reads as
+        // waiting for Start, and Start would send only the user's file.
+        let stats = queue.stats();
+        assert!(stats.queue_paused && stats.held_for_start && !stats.unattended_running);
+
+        // When the window ends, the scheduled upload goes, and the user's file still waits.
+        queue.set_held(Held::default(), Instant::now());
+        assert!(queue.stats().unattended_running);
+        assert_eq!(claim_name(&mut queue).as_deref(), Some("nightly upload"));
+        assert_eq!(claim_name(&mut queue), None);
+        assert_eq!(queue.job(by_hand).unwrap().state, JobState::Queued);
+
+        // A window that starts while it runs stops it, as it stops any upload.
+        queue.set_held(UPLOADS_HELD, Instant::now());
+        let upload = queue
+            .jobs
+            .values()
+            .find(|job| job.spec.name == "nightly upload")
+            .unwrap();
+        assert!(upload.stop.is_some());
     }
 
     #[test]

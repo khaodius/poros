@@ -27,7 +27,7 @@ use crate::error::{AppError, AppResult};
 use crate::events::Events;
 use crate::remote_path;
 use crate::session::SessionManager;
-use crate::transfer::TransferManager;
+use crate::transfer::{JobBatch, TransferManager};
 pub use chmod::Chmod;
 use filter::Filter;
 pub use folder_compare::{FolderCompareRequest, FolderComparison, FolderRef, FolderSummary};
@@ -405,6 +405,17 @@ impl SyncManager {
         transfers: &TransferManager,
         request: SyncRunRequest,
     ) -> AppResult<SyncRunSummary> {
+        self.run_in_batch(transfers, request, None).await
+    }
+
+    /// `run` with the files queued as `batch`, as a scheduled task queues them: under its name,
+    /// and starting even while transfers wait for Start.
+    pub async fn run_in_batch(
+        &self,
+        transfers: &TransferManager,
+        request: SyncRunRequest,
+        batch: Option<Arc<JobBatch>>,
+    ) -> AppResult<SyncRunSummary> {
         let stored = {
             let mut plans = self.plans.lock().unwrap();
             let position = plans
@@ -442,7 +453,7 @@ impl SyncManager {
         }
         let session_id = stored.session_id.clone();
         let outcome = run::start(run, work, |files| {
-            transfers.enqueue_files(&session_id, files)
+            transfers.enqueue_files_in(&session_id, files, batch.clone())
         })
         .await?;
         match outcome.follow_up {
