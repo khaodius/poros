@@ -19,17 +19,15 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use tokio::sync::OwnedSemaphorePermit;
-use tokio_util::sync::CancellationToken;
 
 use super::backend::{Backend, Gate, Lease, Limits, Purpose};
-use crate::automation::remote_command::{self, OutputStream};
-use crate::checksum::{parse_output, Algorithm};
+use crate::checksum::{server_digest, Algorithm};
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::events::Events;
 use crate::ftp::FtpFs;
 use crate::protocol::RemoteFileSystem;
-use crate::rsync::shell_quote;
 use crate::session::{Session, SessionManager};
+use crate::ssh::exec;
 use crate::ssh::HostKeyApproval;
 
 /// How long a request waits for a dropped connection to come back before it fails.
@@ -338,35 +336,17 @@ impl Backend for SessionBackend {
         if session.vault().is_some() {
             return None;
         }
-        let command = format!("{} -- {}", Algorithm::Sha256.command(), shell_quote(path));
-        let mut output = String::new();
-        let ran = tokio::time::timeout(
-            HASH_LIMIT,
-            remote_command::run_on(
-                &session,
-                &command,
-                None,
-                &CancellationToken::new(),
-                |stream, text| {
-                    if stream == OutputStream::Stdout {
-                        output.push_str(text);
-                    }
-                },
-            ),
-        )
-        .await;
-        let digest = match ran {
-            Ok(Ok(result)) if result.succeeded() => parse_output(&output, Algorithm::Sha256)
-                .into_iter()
-                .next()
-                .map(|(_, digest)| digest),
-            _ => None,
-        };
-        if digest.is_none() {
-            // Shell-less accounts and servers without the command stay that way.
+        // A name goes to the server's sha256sum in a script for `sh`, never on the exec line,
+        // where the account's login shell (fish, csh, ...) would read its quotes its own way.
+        let hashed =
+            ServerHash::within(HASH_LIMIT, server_digest(&session, path, Algorithm::Sha256)).await;
+        if hashed.ends_hashing(path) {
             self.cannot_hash.store(true, Ordering::Relaxed);
         }
-        digest
+        match hashed {
+            ServerHash::Digest(digest) => Some(digest),
+            ServerHash::Failed | ServerHash::TimedOut => None,
+        }
     }
 
     async fn close(&self) {
@@ -377,6 +357,42 @@ impl Backend for SessionBackend {
         };
         for own in idle {
             own.connection.close().await;
+        }
+    }
+}
+
+/// How asking the server for a file's SHA-256 went.
+#[derive(Debug, PartialEq, Eq)]
+enum ServerHash {
+    Digest(Vec<u8>),
+    /// The server answered, or refused to start the command, without a digest.
+    Failed,
+    /// No answer within the time allowed.
+    TimedOut,
+}
+
+impl ServerHash {
+    async fn within(
+        limit: Duration,
+        asked: impl std::future::Future<Output = AppResult<Option<Vec<u8>>>>,
+    ) -> Self {
+        match tokio::time::timeout(limit, asked).await {
+            Ok(Ok(Some(digest))) => Self::Digest(digest),
+            Ok(_) => Self::Failed,
+            Err(_) => Self::TimedOut,
+        }
+    }
+
+    /// Whether the drive stops asking the server. A server that does not answer is not asked
+    /// again whatever the name, so no later upload waits as long. One that fails at once is a
+    /// shell-less account or one without the command, unless the name is not portable: a
+    /// server without `sh` that runs the command itself (SFTPGo) hashes only names any shell
+    /// reads alike, so such a name says nothing about the next one.
+    fn ends_hashing(&self, path: &str) -> bool {
+        match self {
+            Self::Digest(_) => false,
+            Self::Failed => exec::portable(path),
+            Self::TimedOut => true,
         }
     }
 }
@@ -394,5 +410,36 @@ mod tests {
         assert!(Carrier::Sftp.opens_own(Purpose::Stream));
         assert!(Carrier::Sftp.opens_own(Purpose::Upload));
         assert!(!Carrier::Shared.opens_own(Purpose::Upload));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_server_that_does_not_answer_is_not_asked_again_whatever_the_name() {
+        let hung = ServerHash::within(
+            HASH_LIMIT,
+            std::future::pending::<AppResult<Option<Vec<u8>>>>(),
+        )
+        .await;
+        assert_eq!(hung, ServerHash::TimedOut);
+        assert!(hung.ends_hashing("/srv/plain.txt"));
+        assert!(hung.ends_hashing("/srv/it's caf\u{e9} & co"));
+    }
+
+    #[tokio::test]
+    async fn a_quick_failure_stops_hashing_only_for_a_portable_name() {
+        let failed = ServerHash::within(HASH_LIMIT, async { Ok(None) }).await;
+        assert_eq!(failed, ServerHash::Failed);
+        assert!(failed.ends_hashing("/srv/plain.txt"));
+        assert!(!failed.ends_hashing("/srv/it's caf\u{e9} & co"));
+        let refused = ServerHash::within(HASH_LIMIT, async {
+            Err(AppError::new(
+                ErrorKind::Ssh,
+                "The server does not allow running commands",
+            ))
+        })
+        .await;
+        assert_eq!(refused, ServerHash::Failed);
+        let hashed = ServerHash::within(HASH_LIMIT, async { Ok(Some(vec![1, 2])) }).await;
+        assert_eq!(hashed, ServerHash::Digest(vec![1, 2]));
+        assert!(!hashed.ends_hashing("/srv/plain.txt"));
     }
 }

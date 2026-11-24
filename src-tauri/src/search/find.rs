@@ -20,9 +20,9 @@ use crate::error::{AppError, AppResult, ErrorKind};
 use crate::file_ops::Failure;
 use crate::model::{EntryKind, FileEntry, LinkTarget};
 use crate::protocol;
-use crate::rsync::{run_command, shell_quote};
 use crate::session::Session;
 use crate::sftp::RemoteFs;
+use crate::ssh::exec::{self, shell_quote, ScriptInput};
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const PROBE_OUTPUT_LIMIT: usize = 4 * 1024;
@@ -65,22 +65,16 @@ pub(super) async fn is_usable(session: &Session) -> bool {
     };
     let probe = tokio::time::timeout(
         PROBE_TIMEOUT,
-        run_command(channel, &probe_command(), PROBE_OUTPUT_LIMIT),
+        exec::run_script(channel, &probe_script(), PROBE_OUTPUT_LIMIT),
     )
     .await;
     matches!(probe, Ok(Ok(output)) if output.exit_status == Some(0) && probe_passed(&output.output))
 }
 
 /// Has `find` describe `/` with every test and format the search uses.
-fn probe_command() -> String {
-    in_shell(&probe_script())
-}
-
-/// The probe holds no name, nor a backslash before a quote or another backslash, so every
-/// login shell reads its quoting as `sh` does.
 fn probe_script() -> String {
     format!(
-        r"find / -maxdepth 0 -mindepth 0 \( -iname x -o -newermt @0 -o -size +0c -o -xtype l -o -true \) {ENTRY_RECORD}"
+        r"{C_LOCALE} find / -maxdepth 0 -mindepth 0 \( -iname x -o -newermt @0 -o -size +0c -o -xtype l -o -true \) {ENTRY_RECORD}"
     )
 }
 
@@ -92,23 +86,13 @@ fn probe_passed(output: &[u8]) -> bool {
     ) && parser.is_empty()
 }
 
-/// What the account's login shell is asked to run for a search: `sh`, reading the search from
-/// standard input. Nothing of the search is in it, so a login shell that quotes otherwise than
-/// `sh` (fish reads `\'` inside single quotes) never parses a name. Only `sh` does, quoted for
-/// `sh` alone.
-pub(super) const SEARCH_SHELL: &str = "sh -s";
-
 /// The C locale, so that names are bytes and messages are in English.
 const C_LOCALE: &str = "LC_ALL=C; export LC_ALL;";
 
-/// Runs `script` in `sh` whatever the account's own shell is. Only for scripts that hold no
-/// name or pattern: the script is quoted once more for the login shell.
-fn in_shell(script: &str) -> String {
-    format!("sh -c {}", shell_quote(&format!("{C_LOCALE} {script}")))
-}
-
-/// The script [`SEARCH_SHELL`] reads to search below `root`, an absolute path. The first
-/// record describes `root` itself, to tell whether commands see the same folder as SFTP does.
+/// The script `sh` runs to search below `root`, an absolute path. It goes to `sh` on standard
+/// input (see [`exec`]), so a login shell that quotes otherwise than `sh` (fish reads `\'`
+/// inside single quotes) never parses a name or pattern. The first record describes `root`
+/// itself, to tell whether commands see the same folder as SFTP does.
 pub(super) fn command(root: &str, criteria: &Criteria) -> String {
     let root = shell_quote(root);
     let mut search = vec!["find".to_string()];
@@ -406,15 +390,9 @@ pub(super) async fn search(
         .open_command_channel()
         .await
         .map_err(|_| Stop::Unusable)?;
-    channel
-        .exec(true, SEARCH_SHELL)
+    exec::start_script(&channel, &command(&root, criteria), ScriptInput::Empty)
         .await
         .map_err(|_| Stop::Unusable)?;
-    channel
-        .data(command(&root, criteria).as_bytes())
-        .await
-        .map_err(|_| Stop::Unusable)?;
-    let _ = channel.eof().await;
 
     let mut parser = Parser::new(&root);
     let mut error_output: Vec<u8> = Vec::new();
@@ -733,15 +711,43 @@ mod tests {
             hidden: true,
             ..request(pattern)
         });
-        assert_eq!(SEARCH_SHELL, "sh -s");
         let words = search_words(&command(folder, &criteria));
         assert_eq!(words[1], folder, "the folder is one argument");
         let name = words.iter().position(|word| word == "-name").unwrap();
         assert_eq!(words[name + 1], criteria.name.find_pattern().unwrap());
         assert!(!words.iter().any(|word| word == "touch"));
-        // The probe still goes through the login shell, holding nothing fish reads otherwise.
-        let probe = probe_script();
-        assert!(!probe.contains(r"\'") && !probe.contains(r"\\"), "{probe}");
+    }
+
+    /// The search and the probe, run by `sh` as a server runs them, find what they are meant to
+    /// and nothing a name or pattern could add.
+    #[cfg(unix)]
+    #[test]
+    fn hostile_names_and_patterns_reach_find_whole() {
+        use crate::ssh::exec::tests::{printed_words, run_locally, HOSTILE_NAMES};
+
+        let stub = "find() { printf '%s\\0' \"$@\"; }\n";
+        for name in HOSTILE_NAMES {
+            let folder = format!("/srv/{name}");
+            let criteria = criteria(SearchRequest {
+                case_sensitive: true,
+                hidden: true,
+                ..request(name)
+            });
+            let words = printed_words(&run_locally(
+                &format!("{stub}{}", command(&folder, &criteria)),
+                ScriptInput::Empty,
+            ));
+            assert_eq!(words.iter().filter(|word| **word == folder).count(), 2);
+            if let Some(pattern) = criteria.name.find_pattern() {
+                let at = words.iter().position(|word| word == "-name").unwrap();
+                assert_eq!(words[at + 1], pattern);
+            }
+        }
+        let words = printed_words(&run_locally(
+            &format!("{stub}{}", probe_script()),
+            ScriptInput::Empty,
+        ));
+        assert_eq!(&words[..2], ["/", "-maxdepth"]);
     }
 
     #[test]
@@ -1054,9 +1060,8 @@ mod tests {
         assert!(!probe_passed(b"poros-ready\n"));
         assert!(!probe_passed(&good[..good.len() - 1]));
         assert!(!probe_passed(&[good.clone(), good].concat()));
-        let words = shell_words(&probe_command());
-        assert_eq!(&words[..2], ["sh", "-c"]);
-        assert_eq!(words.len(), 3);
+        let words = shell_words(&probe_script());
+        assert_eq!(&words[..4], ["LC_ALL=C;", "export", "LC_ALL;", "find"]);
     }
 
     #[test]

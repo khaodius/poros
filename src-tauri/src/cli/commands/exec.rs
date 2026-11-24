@@ -55,6 +55,7 @@ pub async fn execute(context: &Context, arguments: &ExecArgs, json: bool) -> App
         &connected.session,
         &command,
         arguments.cwd.as_deref(),
+        &[],
         &context.interrupt,
         |stream, text| match (stream, json) {
             (OutputStream::Stdout, true) => stdout.push_str(text),

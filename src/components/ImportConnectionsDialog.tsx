@@ -428,7 +428,10 @@ function ImportReview({
           <ul>
             {scan.skipped.map((skipped, index) => (
               <li key={index}>
-                <strong>{skipped.name || t("connect.unnamed")}</strong>: {skipped.reason}
+                {t.rich("common.labelWithMessage", {
+                  label: <strong>{skipped.name || t("connect.unnamed")}</strong>,
+                  message: skipped.reason,
+                })}
               </li>
             ))}
           </ul>

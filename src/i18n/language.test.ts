@@ -139,6 +139,7 @@ describe("formats in the active language", () => {
     // ICU puts a narrow or a plain space before PM, depending on its version.
     expect(formatDate(moment, "locale")).toMatch(/^May 14, 2026, 6:30\s+PM$/);
     show(GERMAN);
+    // en-US is the default of many computers elsewhere, so its 12-hour clock is not carried.
     expect(formatDate(moment, "locale")).toBe("14.05.2026, 18:30");
     // The fixed formats stay as they are in every language.
     expect(formatDate(moment, "minutes")).toBe("2026-05-14 18:30");
@@ -175,11 +176,22 @@ describe("formatLocaleFor", () => {
     expect(formatLocaleFor("en", "it-IT")).toBe("en-IT-u-nu-latn");
     expect(formatLocaleFor("en", "sv-se")).toBe("en-SE-u-nu-latn");
     expect(formatLocaleFor("en", "de-DE")).toBe("en-DE-u-nu-latn");
-    expect(formatLocaleFor("en", "ar-EG")).toBe("en-EG-u-nu-latn");
-    expect(formatLocaleFor("en", "fa-IR")).toBe("en-IR-u-nu-latn");
-    expect(formatLocaleFor("de", "en-US")).toBe("de-US-u-nu-latn");
     // Traditional Chinese is another script.
-    expect(formatLocaleFor("zh-Hans", "zh-TW")).toBe("zh-Hans-TW-u-nu-latn");
+    expect(formatLocaleFor("zh-Hans", "zh-HK")).toBe("zh-Hans-HK-u-nu-latn");
+  });
+
+  it("uses the language's own formats where Intl has no data for that region, with the computer's 24-hour clock", () => {
+    expect(formatLocaleFor("en", "ru-RU")).toBe("en-u-hc-h23-nu-latn");
+    expect(formatLocaleFor("en", "pt-BR")).toBe("en-u-hc-h23-nu-latn");
+    expect(formatLocaleFor("en", "tr-TR")).toBe("en-u-hc-h23-nu-latn");
+    expect(formatLocaleFor("en", "fa-IR")).toBe("en-u-hc-h23-nu-latn");
+  });
+
+  it("leaves a 12-hour clock to the language's own formats there", () => {
+    expect(formatLocaleFor("en", "ko-KR")).toBe("en-u-nu-latn");
+    expect(formatLocaleFor("en", "ar-EG")).toBe("en-u-nu-latn");
+    expect(formatLocaleFor("de", "en-US")).toBe("de-u-nu-latn");
+    expect(formatLocaleFor("zh-Hans", "zh-TW")).toBe("zh-Hans-u-nu-latn");
   });
 
   it("uses the translation's formats when the computer gives no usable tag", () => {
@@ -224,19 +236,38 @@ describe("formats of the user's region", () => {
     expect(driveCount(1234)).toBe("1.234 drives");
   });
 
-  it.each(["ar-EG", "fa-IR"])(
-    "keeps Latin digits under the English interface on an %s computer",
+  it.each(["ru-RU", "pt-BR", "tr-TR"])(
+    "writes English dates with a 24-hour clock under the English interface on a %s computer",
     (computer) => {
       onComputerIn(computer);
       setLanguage("en");
+      expect(formatDate(moment, "locale")).toBe("May 14, 2026, 18:30");
       expect(formatNumber(1234567.5)).toBe("1,234,567.5");
-      expect(formatSize(1536)).toBe("1.5 KB");
-      expect(formatSpeed(2048)).toBe("2.0 KB/s");
-      expect(formatPercent(62)).toBe("62%");
-      expect(driveCount(1234)).toBe("1,234 drives");
-      expect(formatDate(moment, "locale")).toMatch(/^May 14, 2026, 6:30\s+PM$/);
+      expect(weekdayName(0)).toBe("Mon");
     },
   );
+
+  it("keeps the 12-hour clock under the English interface on an en-US computer", () => {
+    onComputerIn("en-US");
+    setLanguage("en");
+    expect(formatLocale()).toBe("en-US");
+    expect(formatDate(moment, "locale")).toMatch(/^May 14, 2026, 6:30\s+PM$/);
+  });
+
+  it.each([
+    ["ko-KR", /^May 14, 2026, 6:30\s+PM$/],
+    ["ar-EG", /^May 14, 2026, 6:30\s+PM$/],
+    ["fa-IR", /^May 14, 2026, 18:30$/],
+  ])("writes Latin digits under the English interface on %s", (computer, date) => {
+    onComputerIn(computer);
+    setLanguage("en");
+    expect(formatNumber(1234567.5)).toBe("1,234,567.5");
+    expect(formatSize(1536)).toBe("1.5 KB");
+    expect(formatSpeed(2048)).toBe("2.0 KB/s");
+    expect(formatPercent(62)).toBe("62%");
+    expect(driveCount(1234)).toBe("1,234 drives");
+    expect(formatDate(moment, "locale")).toMatch(date);
+  });
 
   it("writes Austrian formats under German on a de-AT computer, words in German", () => {
     onComputerIn("de-AT");

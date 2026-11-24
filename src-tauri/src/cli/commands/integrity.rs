@@ -6,19 +6,17 @@ use serde_json::json;
 
 use super::browse::read_range;
 use super::{absolute_local, each, expand, missing};
-use crate::checksum::{hash_file, parse_output, Algorithm};
+use crate::checksum::{hash_file, server_digest, Algorithm};
 use crate::cli::args::{ChecksumArgs, HashAlgorithm, VerifyArgs};
 use crate::cli::context::{Connected, Context};
 use crate::cli::exit::Exit;
 use crate::cli::output::{plural, Reply};
 use crate::error::{AppError, AppResult};
 use crate::protocol::Protocol;
-use crate::rsync::{run_command, shell_quote};
+use crate::rsync::shell_quote;
 use crate::sync::{
     SyncAction, SyncDirection, SyncManager, SyncOptions, SyncPlanView, SyncReason, SyncRequest,
 };
-
-const COMMAND_OUTPUT_LIMIT: usize = 64 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Method {
@@ -63,7 +61,7 @@ async fn remote_digest(
         return Err(AppError::invalid(format!("{path} is a folder")).with_path(path));
     }
     if !stream_only && connected.info.protocol == Protocol::Sftp {
-        match server_digest(connected, path, algorithm).await {
+        match server_digest(&connected.session, path, algorithm).await {
             Ok(Some(digest)) => return Ok((digest, Method::ServerCommand)),
             Ok(None) => log::info!(
                 "The server could not run {} on {path}; reading it instead",
@@ -79,25 +77,6 @@ async fn remote_digest(
     })
     .await?;
     Ok((hasher.finish(), Method::Streamed))
-}
-
-async fn server_digest(
-    connected: &Connected,
-    path: &str,
-    algorithm: Algorithm,
-) -> AppResult<Option<Vec<u8>>> {
-    let channel = connected.session.open_command_channel().await?;
-    // One file per command: SFTPGo hashes only the last argument.
-    let command = format!("{} -- {}", algorithm.command(), shell_quote(path));
-    let output = run_command(channel, &command, COMMAND_OUTPUT_LIMIT).await?;
-    if output.exit_status != Some(0) {
-        return Ok(None);
-    }
-    let text = String::from_utf8_lossy(&output.output);
-    Ok(parse_output(&text, algorithm)
-        .into_iter()
-        .next()
-        .map(|(_, digest)| digest))
 }
 
 pub async fn checksum(context: &Context, arguments: &ChecksumArgs) -> AppResult<Reply> {

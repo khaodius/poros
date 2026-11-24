@@ -102,6 +102,11 @@ export const automation = {
   theFullPathsOfAll: "the full paths of all selected items",
   theNamesOfAllSelected: "the names of all selected items",
   theFolderShown: "the folder shown",
+  keepPlaceholdersOutOfAnotherShell:
+    "Keep placeholders out of a command string another shell reads, such as {bashExample} or {sshExample}: that shell would read a name as part of its command.",
+  cannotTellHowTheShellReads:
+    "Poros cannot tell for sure how the shell reads this command: it has a here-document, {ansiQuoted}, or a quote or bracket left open. Each placeholder goes in as {parameter} and so on, which keeps a name one word only outside quotes.",
+  commandWithParameters: "{command} with {parameters}",
   stoppedAfter: "Stopped after {elapsed}",
   endedBySignal: "Ended by signal {signal} after {elapsed}",
   endedWithoutStatus: "Ended without an exit status after {elapsed}",
