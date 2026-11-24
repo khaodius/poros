@@ -38,6 +38,7 @@ use crate::route;
 use crate::search::{Recheck, SearchManager, SearchReport, SearchRequest, SearchSummary};
 use crate::session::{SessionInfo, SessionManager};
 use crate::settings::{Settings, SettingsStore};
+use crate::share::{self, ShareLink, ShareOptions};
 use crate::ssh::{AuthMethod, ConnectProfile, HostKeyApproval};
 use crate::sync::{
     FolderCompareRequest, FolderComparison, OptionCheck, SyncDirection, SyncManager, SyncOptions,
@@ -865,6 +866,48 @@ pub async fn clipboard_write_text(
 ) -> AppResult<()> {
     let clipboard = clipboard.inner().clone();
     tokio::task::spawn_blocking(move || clipboard.write_text(text)).await?
+}
+
+#[tauri::command]
+pub async fn share_links(
+    sessions: State<'_, Arc<SessionManager>>,
+    session_id: String,
+    path: String,
+) -> AppResult<Vec<ShareLink>> {
+    let files = sessions.get(&session_id).await?.files();
+    share::links(files.as_ref(), &path).await
+}
+
+#[tauri::command]
+pub async fn share_create(
+    sessions: State<'_, Arc<SessionManager>>,
+    events: State<'_, Events>,
+    session_id: String,
+    path: String,
+    options: ShareOptions,
+) -> AppResult<ShareLink> {
+    let files = sessions.get(&session_id).await?.files();
+    share::create(files.as_ref(), &events, &session_id, &path, &options).await
+}
+
+#[tauri::command]
+pub async fn share_remove(
+    sessions: State<'_, Arc<SessionManager>>,
+    events: State<'_, Events>,
+    session_id: String,
+    path: String,
+    link_id: String,
+) -> AppResult<()> {
+    let files = sessions.get(&session_id).await?.files();
+    // A link removed elsewhere since the page listed it is gone either way.
+    share::remove(files.as_ref(), &events, &session_id, &path, &link_id)
+        .await
+        .map(drop)
+}
+
+#[tauri::command]
+pub async fn share_open(url: String) -> AppResult<()> {
+    cloud::open_link(&share::web_address(&url)?)
 }
 
 #[tauri::command]

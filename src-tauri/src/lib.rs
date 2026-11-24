@@ -34,6 +34,7 @@ pub mod search;
 pub mod session;
 pub mod settings;
 pub mod sftp;
+pub mod share;
 pub mod ssh;
 pub mod stall;
 pub mod storage;
@@ -376,6 +377,10 @@ pub fn run() {
             commands::terminal_restart,
             commands::terminal_close,
             commands::clipboard_write_text,
+            commands::share_links,
+            commands::share_create,
+            commands::share_remove,
+            commands::share_open,
             commands::save_text_file,
             commands::remote_command_run,
             commands::remote_command_stop,

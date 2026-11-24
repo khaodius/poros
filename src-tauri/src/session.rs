@@ -16,6 +16,7 @@ use crate::events::{Events, LogLevel};
 use crate::ftp::FtpFs;
 use crate::protocol::{self, Protocol, RemoteFileSystem};
 use crate::sftp::RemoteFs;
+use crate::share::{self, ShareCapabilities};
 use crate::ssh::known_hosts::KnownHosts;
 use crate::ssh::{self, ConnectProfile, HostKeyApproval, SshHandle};
 use crate::tls::TrustedCertificates;
@@ -225,6 +226,9 @@ pub struct SessionInfo {
     /// server's.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vault: Option<VaultInfo>,
+    /// The share links the session can make; absent when the service has none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sharing: Option<ShareCapabilities>,
     /// Listings give times only to the minute, or to the day, as FTP's `LIST` does.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub coarse_times: bool,
@@ -552,6 +556,7 @@ impl SessionManager {
             saved_connection_id: profile.saved_connection_id.clone(),
             protocol: profile.protocol,
             vault: None,
+            sharing: share::capabilities(files.as_ref()),
             coarse_times: files.coarse_times(),
         };
         let session = Arc::new(Session {
@@ -802,6 +807,8 @@ fn vault_session_of(id: &str, server: &Session, files: Arc<VaultFs>, owner: &str
             root: files.root().to_string(),
             name: files.name().to_string(),
         }),
+        // The server holds a vault's files encrypted, so a link to one would be unreadable.
+        sharing: None,
         coarse_times: files.coarse_times(),
     };
     Session {
@@ -936,6 +943,7 @@ mod tests {
                 protocol: profile.protocol,
                 vault: None,
                 coarse_times: NoFiles.coarse_times(),
+                sharing: None,
             },
             profile,
             host_key_fingerprint: host_key.to_string(),

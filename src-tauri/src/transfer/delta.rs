@@ -134,7 +134,8 @@ pub(super) async fn try_download(
             {
                 context.run.restart.store(true, Ordering::Relaxed);
             }
-            checked?;
+            // The partial file is deleted below.
+            checked.map_err(|error| published::rejected(error, None))?;
         }
         put_in_place(context.settings, &partial, &target, file, backup).await?;
         Ok(report)

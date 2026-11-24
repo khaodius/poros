@@ -8013,6 +8013,281 @@ textarea::placeholder {
   background: var(--surface-hover);
 }
 
+/* Share links */
+
+.share-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.share-subject {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 12px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.share-subject > svg,
+.share-subject > .file-icon {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.share-subject-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.share-subject-text strong,
+.share-subject-text span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.share-subject-text strong {
+  font-weight: 500;
+}
+
+.share-subject-text span {
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+}
+
+.share-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.share-section-title {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+  font-weight: 600;
+}
+
+.share-links {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.share-link {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 12px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  transition: border-color var(--transition-fast);
+}
+
+.share-link.is-new {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px var(--accent-softer);
+}
+
+.share-link-field,
+.share-batch-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.share-address {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-small);
+  text-overflow: ellipsis;
+}
+
+.button.share-copy {
+  min-width: 86px;
+}
+
+.share-copy.is-copied,
+.share-copy.is-copied:hover:not(:disabled) {
+  color: var(--success);
+}
+
+.share-link-facts {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.share-link-statement {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--font-size-small);
+  line-height: 1.45;
+}
+
+.share-link-note {
+  margin: 0;
+  color: var(--warning);
+  font-size: var(--font-size-small);
+  line-height: 1.45;
+}
+
+.share-stop {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  font-size: var(--font-size-small);
+  background: var(--danger-soft);
+  border-radius: var(--radius-small);
+}
+
+.share-stop span {
+  flex: 1;
+  min-width: 180px;
+}
+
+.share-lifetime {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.share-lifetime .segmented {
+  flex: 1 1 320px;
+}
+
+.share-lifetime .segmented button {
+  padding: 0 8px;
+  white-space: nowrap;
+}
+
+.share-custom-lifetime {
+  display: flex;
+  gap: 6px;
+}
+
+.share-custom-lifetime input {
+  width: 64px;
+}
+
+.share-statement {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: var(--font-size-small);
+  line-height: 1.45;
+  background: var(--accent-softer);
+  border: 1px solid var(--accent-soft);
+  border-radius: var(--radius-small);
+}
+
+.share-batch {
+  max-height: 260px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.share-batch-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: 4px 10px;
+  align-items: center;
+  min-height: 38px;
+  padding: 5px 6px 5px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.share-batch-row:last-child {
+  border-bottom: none;
+}
+
+.share-batch-row.is-new {
+  background: var(--accent-softer);
+}
+
+.share-batch-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.share-batch-name .file-icon {
+  flex: none;
+}
+
+.share-batch-name span,
+.share-batch-status {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.share-batch-link .share-address {
+  height: 24px;
+}
+
+.share-batch-status {
+  color: var(--text-faint);
+  font-size: var(--font-size-small);
+}
+
+.share-batch-error {
+  grid-column: 1 / -1;
+  color: var(--danger);
+  font-size: var(--font-size-small);
+  overflow-wrap: anywhere;
+}
+
+.share-batch-where {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.share-batch-where .share-batch-place {
+  color: var(--text-faint);
+  font-size: var(--font-size-small);
+}
+
+.share-batch-label,
+.share-batch-note {
+  grid-column: 1 / -1;
+  padding-left: 24px;
+  font-size: var(--font-size-small);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.share-batch-label {
+  color: var(--text-muted);
+}
+
+.share-batch-note {
+  color: var(--warning);
+}
+
 /* Mounted drives */
 
 .drive-status {
