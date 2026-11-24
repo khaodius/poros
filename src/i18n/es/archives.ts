@@ -23,7 +23,7 @@ export const archives = {
     "No se encontró ningún programa que extraiga archivos comprimidos. Instala 7-Zip o indica un programa arriba.",
   onServers: "En servidores",
   archivesOnAnSftpServer:
-    "Los archivos comprimidos de un servidor SFTP se extraen en el servidor, con los programas que tenga. Poros busca {programs} la primera vez y usa el que mejor abre cada formato. Los servidores que solo permiten SFTP no pueden extraer; descarga el archivo comprimido para extraerlo aquí.",
+    "Los archivos comprimidos de un servidor SFTP se extraen en el servidor, con los programas que tenga. Poros busca {programs} y {lastProgram} la primera vez y usa el que mejor abre cada formato. Los servidores que solo permiten SFTP no pueden extraer; descarga el archivo comprimido para extraerlo aquí.",
   programsFileType: "Programas",
 
   // lib/archives

@@ -132,6 +132,7 @@ export const connect = {
   },
   foundFiles: "Encontrado: {files}",
   notFoundInChoose: "No se encontró en {places}. {choose}",
+  placeOrPlace: "{first} o {second}",
   keepThePasswordsInTheKeychain: {
     one: "Guardar la contraseña en el llavero del sistema",
     many: "Guardar los {count} de contraseñas en el llavero del sistema",

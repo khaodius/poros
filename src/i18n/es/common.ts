@@ -10,6 +10,7 @@ export const common = {
 
   // components/ArchiveSettings
   browse: "Examinar",
+  listSeparator: ", ",
 
   // components/AutomationSettings
   refresh: "Actualizar",
@@ -45,14 +46,14 @@ export const common = {
   discard: "Descartar",
   open: "Abrir",
 
-  // components/DrivesGoing
-  listSeparator: ", ",
-
   // components/EditorPane
   dismiss: "Cerrar aviso",
 
   // components/ExternalEditDialogs
   upload: "Subir",
+
+  // components/ExternalEditorSettings
+  minutesUnit: "min",
 
   // components/FileList
   folder: "Carpeta",
@@ -83,12 +84,14 @@ export const common = {
 
   // components/PropertiesDialog
   apply: "Aplicar",
+  ok: "Aceptar",
 
   // components/SearchBar
   search: "Buscar",
 
   // components/SettingsDialog
   askMe: "Preguntarme",
+  secondsUnit: "s",
 
   // components/SyncPlanList
   path: "Ruta",
