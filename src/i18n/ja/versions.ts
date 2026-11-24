@@ -45,7 +45,7 @@ export const versions = {
   isNoLongerDeleted: "{name} は削除済みではなくなりました。",
   theseItemsAreNoLongerDeleted: "これらの項目は削除済みではなくなりました。",
   removeWithEveryVersion:
-    "{what}と、保持されているすべてのバージョンを完全に削除しますか? この操作は元に戻せません。",
+    "{what} と、保持されているすべてのバージョンを完全に削除しますか? この操作は元に戻せません。",
 
   // components/versionMenu
   versions: "バージョン...",

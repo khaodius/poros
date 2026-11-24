@@ -61,7 +61,7 @@ export const dialogs = {
   extensionFile: "{extension} ファイル",
   nameWithId: "{name} ({id})",
   measuringFolderSize: "フォルダーのサイズを計算中",
-  changingPermissionsOf: "{what}のパーミッションを変更中",
+  changingPermissionsOf: "{what} のパーミッションを変更中",
   applyToEverythingInside: {
     other: "フォルダー内のすべての項目に適用",
   },

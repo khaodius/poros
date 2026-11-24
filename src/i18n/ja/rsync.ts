@@ -27,8 +27,8 @@ export const rsync = {
   skipFilesLargerThan: "これより大きいファイルをスキップ",
   sizesSuchAs500k10m: "500K、10M、2G などのサイズです。数値だけの場合はバイト単位です。",
   transferBehaviour: "転送の動作",
-  goIntoFolders: "フォルダーの中に入る",
-  withoutGoingIntoFoldersStill: "フォルダーの中に入らない場合も、最上位のフォルダーは作成する",
+  goIntoFolders: "サブフォルダーも処理する",
+  withoutGoingIntoFoldersStill: "サブフォルダーを処理しない場合も、最上位のフォルダーは作成する",
   createTheWholePathTo: "転送先フォルダーまでのパスをすべて作成",
   withoutItOnlyTheTarget:
     "オフの場合は、転送先フォルダーがないときにそのフォルダーだけを作成します。",

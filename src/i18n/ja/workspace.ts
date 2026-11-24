@@ -17,11 +17,11 @@ export const workspace = {
   resumeSelected: "選択項目を再開",
   moveSelectedToTheTop: "選択項目を先頭へ移動",
   moveSelectedToTheBottom: "選択項目を末尾へ移動",
-  removeSelected: "選択項目を削除",
+  removeSelected: "選択項目を一覧から削除",
   retryAll: "すべて再試行",
   retrySelected: "選択項目を再試行",
   clearFailedTransfers: "失敗した転送をクリア",
-  keepEachTransferInView: "転送が終わるたびに、その転送を表示し続けます",
+  keepEachTransferInView: "完了した転送が見えるように一覧を自動でスクロールします",
   follow: "追従",
   clearFinishedTransfers: "完了した転送をクリア",
   simultaneousTransfers: "同時に実行する転送の数",
@@ -120,7 +120,7 @@ export const workspace = {
   importFromFilezillaWinscpAnd: "FileZilla、WinSCP などのアプリからインポート",
   savedConnections: "保存済みの接続",
   serversYouSaveFromThe:
-    "接続ダイアログやサーバータブのブックマークボタンから保存したサーバーがここに表示されます。FileZilla、WinSCP、PuTTY などのアプリに保存したサイトもインポートできます。",
+    "接続ダイアログやサーバーのタブのブックマークボタンから保存したサーバーがここに表示されます。FileZilla、WinSCP、PuTTY などのアプリに保存したサイトもインポートできます。",
   connecting: "接続しています...",
 
   // components/WindowControls

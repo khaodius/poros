@@ -8,7 +8,7 @@ export const fileList = {
   resize: "{label}の幅を変更",
   dragToResizeDoubleClick: "ドラッグで幅を変更、ダブルクリックで内容に合わせます",
   nothingMatchesTheFilter: "フィルターに一致する項目はありません",
-  onlyHiddenItemsHere: "隠しファイルのみです",
+  onlyHiddenItemsHere: "非表示の項目のみです",
   thisFolderIsEmpty: "このフォルダーは空です",
   deletedTag: "削除済み",
 
@@ -27,11 +27,11 @@ export const fileList = {
   inTheFuture: "未来の日付",
   today: "今日",
   yesterday: "昨日",
-  earlierThisWeek: "今週の前半",
+  earlierThisWeek: "今週に入って (昨日より前)",
   lastWeek: "先週",
-  earlierThisMonth: "今月の前半",
+  earlierThisMonth: "今月に入って (先週より前)",
   lastMonth: "先月",
-  earlierThisYear: "今年の前半",
+  earlierThisYear: "今年に入って (先月より前)",
   aLongTimeAgo: "かなり前",
   dateUnknown: "日付不明",
 } satisfies TranslatedArea<"fileList">;

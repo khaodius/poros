@@ -54,7 +54,7 @@ export const search = {
   stoppedAfterSoFar: "{folders}で停止: これまでに {found}",
   firstResultsShown:
     "最初の {limit} 件を表示しています。残りを見るには検索条件を絞り込んでください。",
-  connectionLostDuringTheSearch: "検索中に接続が切れました。それまでに {found}が見つかりました。",
+  connectionLostDuringTheSearch: "検索中に接続が切れました。それまでに{found}が見つかりました。",
   theSearchFailed: "検索に失敗しました",
 
   // lib/search

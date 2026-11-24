@@ -150,9 +150,9 @@ export const connect = {
   chooseFileZillaFiles:
     "sitemanager.xml、またはサイトマネージャーから書き出したファイル (ファイル > エクスポート) を選択してください。",
   chooseWinScpFiles:
-    "WinSCP.ini、または「ツール > 設定のエクスポート/バックアップ」で書き出したファイルを選択してください。",
+    "WinSCP.ini、または「Tools > Export/Backup Configuration」で書き出したファイルを選択してください。",
   chooseSmartFtpFiles:
-    "「お気に入り > ツール > エクスポート」で書き出した一覧、または古いバージョンの .xml のお気に入りを選択してください。",
+    "「Favorites > Tools > Export」で書き出した一覧、または古いバージョンの .xml のお気に入りを選択してください。",
   chooseCyberduckFiles: "ブックマークファイル (.duck) を選択してください。",
   choosePuttyFiles:
     "Sessions レジストリキーを書き出した .reg ファイル、または PuTTY のセッションファイルを選択してください。",

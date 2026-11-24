@@ -36,7 +36,7 @@ export const compare = {
   couldNotCompareSubfolders: "サブフォルダーを比較できませんでした: {message}",
   thereAreTooManySubfolders:
     "サブフォルダーが多すぎるため、すべてには印を付けられません。最も深い階層には印が付きません。",
-  thePanesAreNoLonger: "{note}。ペインは連動していません。",
+  thePanesAreNoLonger: "{note}。ペインは連動しなくなりました。",
   inAnotherWindow: "別のウィンドウの {label}",
   nothingToCompareYet: "比較するものがまだありません",
   stateCount: "{state}: {amount}",

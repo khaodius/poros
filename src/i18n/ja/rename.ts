@@ -10,7 +10,7 @@ export const rename = {
   regularExpression: "正規表現",
   recentPatterns: "最近使ったパターン",
   recent: "最近",
-  replaceWith: "置換後の文字列",
+  replaceWith: "置換",
   replaceWith1OrName: "置換後の文字列 (グループは $1 または $<name>)",
   patternIs: "パターンの種類",
   matchCase: "大文字と小文字を区別",

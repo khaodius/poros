@@ -37,7 +37,7 @@ export const appearance = {
   grouping: "グループ化",
   groupLocalFilesByDate: "ローカルのファイルを日付でグループ化する",
   groupLocalFilesByDateHint:
-    "Windows のエクスプローラーと同じように、ファイルを「今日」「昨日」「今週の前半」などに分けて表示します。見出しをクリックするとその中の項目を選択し、矢印をクリックすると折りたたみます。",
+    "Windows のエクスプローラーと同じように、ファイルを「今日」「昨日」「今週に入って」などに分けて表示します。見出しをクリックするとその中の項目を選択し、矢印をクリックすると折りたたみます。",
   groupServerFilesByDate: "サーバーのファイルを日付でグループ化する",
   groupServerFilesByDateHint: "サーバー上のファイルにも同じことを行います。",
   value: "{label}の値",

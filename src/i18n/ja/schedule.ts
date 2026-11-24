@@ -92,7 +92,7 @@ export const schedule = {
   intoTheFolderOnThe: "サーバー上のフォルダーへ",
   intoTheFolderOnThis: "このコンピューター上のフォルダーへ",
   itemsToCopy: "コピーする項目",
-  remove: "{path} を削除",
+  remove: "{path} をタスクから削除",
   removeFromTheTask: "タスクから削除",
   serverPathToAdd: "追加するサーバーのパス",
   theFolderToDownloadInto: "ダウンロード先のフォルダー",

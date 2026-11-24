@@ -13,7 +13,8 @@
 //
 // Punctuation: 。 and 、 in sentences; ?, :, ( ) half-width as Windows writes them. A half-width
 // space between Japanese and Latin words, numbers or placeholders ("{count} 個のファイル",
-// "SFTP サーバー"), none next to 。、「」. Katakana words ending in -er, -or, -ar take the long
+// "SFTP サーバー"), none next to 。、「」. A placeholder that is always Japanese ending in a unit,
+// such as {elapsed} ("5 秒") or {found} ("3 件"), joins the next word ("{elapsed}後に"). Katakana words ending in -er, -or, -ar take the long
 // vowel mark as Windows writes them (フォルダー, サーバー, ユーザー, エディター, ブラウザー), words
 // ending in -y do not (プロパティ, ディレクトリ, ライブラリ).
 //

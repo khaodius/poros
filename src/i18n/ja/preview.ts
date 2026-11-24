@@ -21,7 +21,7 @@ export const preview = {
   theVaultIsLocked: "金庫はロックされています",
   theVaultIsLockedDetail: "ファイルをプレビューするには、もう一度ロックを解除してください。",
   thePreviewTriesAgainAs: "接続が空いたらすぐに、プレビューを再試行します。",
-  itStayedBusyForA: "しばらく混雑していました。少し待ってからもう一度お試しください。",
+  itStayedBusyForA: "接続がしばらく使用中でした。少し待ってからもう一度お試しください。",
   thePreviewWaitsRatherThan: "転送を遅くしないように、プレビューは待機します。",
   couldNotLoadThePreview: "プレビューを読み込めませんでした",
   openInEditorF4: "エディターで開く (F4)",

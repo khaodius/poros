@@ -25,10 +25,10 @@ export const cloud = {
     "どのアカウントでもサインインできるようにするには空欄にします。1 つの組織に限るには、ディレクトリ ID を入力します。",
   box: "Box",
   inTheBoxDeveloperConsole:
-    "Box 開発者コンソールで「新しいアプリ」を選択し、OAuth 2.0 でサインインする「ユーザーアプリ」の種類を選びます。",
+    "Box 開発者コンソールで「新規アプリ」を選択し、OAuth 2.0 でサインインする「ユーザー」の種類を選びます。",
   onTheConfigurationTabAdd: "「構成」タブで、OAuth 2.0 のリダイレクト URI {uri} を追加します。",
   underApplicationScopesKeepRead:
-    "「アプリケーションスコープ」で、「Box に格納されているすべてのファイルとフォルダーの読み取り」はそのままにし、「Box に格納されているすべてのファイルとフォルダーへの書き込み」をオンにして、変更を保存します。",
+    "「アプリケーションスコープ」で、「Read all files and folders stored in Box」はそのままにし、「Write all files and folders stored in Box」をオンにして、変更を保存します。",
   copyTheClientIdAnd:
     "同じタブの「OAuth 2.0 資格情報」から、クライアント ID とクライアントシークレットをコピーします。",
   clientSecretHint2: "Box はサインインのたびにこれを求めます。",

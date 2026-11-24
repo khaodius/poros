@@ -23,8 +23,7 @@ export const automation = {
   synchronizeFoldersOrRunCommandsHint:
     "タスクは Poros を開いている間、保存済みの接続を使ってバックグラウンドで実行されます。",
   output: "出力",
-  openAWindowWithWhat:
-    "コマンドが出力した内容をウィンドウに表示します。オフにすると何も表示せずに実行します",
+  openAWindowWithWhat: "コマンドの出力をウィンドウに表示する (オフの場合は何も表示せずに実行)",
   reloadTheServersFoldersWhen: "コマンドが終わったらサーバーのフォルダーを再読み込みする",
   deleteCommand: "コマンドを削除",
   nameOfTheNewCommand: "新しいコマンドの名前",
@@ -108,11 +107,11 @@ export const automation = {
   cannotTellHowTheShellReads:
     "このコマンドにはヒアドキュメント、{ansiQuoted}、または閉じていない引用符か括弧があるため、シェルがどう読み込むかを Poros では確実に判断できません。各プレースホルダーは {parameter} のような形で順に挿入されます。この形で名前が 1 つの単語のまま保たれるのは、引用符の外にある場合だけです。",
   commandWithParameters: "{command} (引数: {parameters})",
-  stoppedAfter: "{elapsed} 後に停止しました",
-  endedBySignal: "{elapsed} 後にシグナル {signal} で終了しました",
-  endedWithoutStatus: "{elapsed} 後に終了コードなしで終了しました",
-  exitedWithStatus: "{elapsed} 後に終了コード {status} で終了しました",
-  finishedIn: "{elapsed} で完了しました",
+  stoppedAfter: "{elapsed}後に停止しました",
+  endedBySignal: "{elapsed}後にシグナル {signal} で終了しました",
+  endedWithoutStatus: "{elapsed}後に終了コードなしで終了しました",
+  exitedWithStatus: "{elapsed}後に終了コード {status} で終了しました",
+  finishedIn: "{elapsed}で完了しました",
 
   // state/commandStore
   stopped: "停止しました",
