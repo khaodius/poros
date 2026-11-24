@@ -32,7 +32,7 @@ use super::names::{self, FolderNames, NameStyle};
 use super::spool::{Spool, UnsentNote};
 use super::upload::{self, ChooseCheck, UploadCheck, UploadRequest};
 use crate::error::{AppError, AppResult, ErrorKind};
-use crate::model::{DirListing, EntryKind, FileEntry, LinkTarget};
+use crate::model::{DirListing, EntryKind, FileEntry};
 use crate::protocol::{self, ReadStream, RemoteFileSystem};
 use crate::remote_path;
 
@@ -111,6 +111,9 @@ impl std::fmt::Display for VfsError {
 pub enum NodeKind {
     Folder,
     File,
+    /// A symbolic link on the server. It is shown as one, so programs that walk folders do
+    /// not follow it into what it leads to, and removing it removes the link alone.
+    Link,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -455,11 +458,12 @@ fn now_seconds() -> i64 {
 }
 
 fn entry_of(file: &FileEntry) -> Option<Entry> {
-    let kind = match (file.kind, file.link_target) {
-        (EntryKind::Dir, _) | (EntryKind::Symlink, Some(LinkTarget::Dir)) => NodeKind::Folder,
-        (EntryKind::File, _) | (EntryKind::Symlink, Some(LinkTarget::File)) => NodeKind::File,
-        // Links that lead nowhere, devices and sockets have nothing to read or write.
-        _ => return None,
+    let kind = match file.kind {
+        EntryKind::Dir => NodeKind::Folder,
+        EntryKind::File => NodeKind::File,
+        EntryKind::Symlink => NodeKind::Link,
+        // Devices and sockets have nothing to read or write.
+        EntryKind::Other => return None,
     };
     Some(Entry {
         kind,
@@ -594,7 +598,7 @@ impl MountFs {
     fn folder_path(&self, id: NodeId) -> VfsResult<String> {
         match self.node_path(id)? {
             (path, NodeKind::Folder) => Ok(path),
-            (_, NodeKind::File) => Err(VfsError::NotAFolder),
+            (_, NodeKind::File | NodeKind::Link) => Err(VfsError::NotAFolder),
         }
     }
 
@@ -856,6 +860,90 @@ impl MountFs {
         Ok(entries)
     }
 
+    /// Where a link leads, as a path from the link's folder that stays on the drive. A link
+    /// the server keeps leading outside the drive's root is refused: followed here, it would
+    /// lead to files on this computer.
+    pub async fn read_link(&self, id: NodeId) -> VfsResult<String> {
+        let (path, kind) = self.node_path(id)?;
+        if kind != NodeKind::Link {
+            return Err(VfsError::InvalidName);
+        }
+        let target = self
+            .request(|files| {
+                let path = path.clone();
+                async move { files.read_link(&path).await }
+            })
+            .await?;
+        self.on_drive(&path, &target).ok_or_else(|| {
+            log::debug!("A link on a drive leads outside its root: {path}");
+            VfsError::PermissionDenied
+        })
+    }
+
+    /// The way from the folder of the link at `link` to where `target` leads, in local names
+    /// and with every step up first; `None` if it leads outside the root. Steps up go through
+    /// the folders the link is in, and only names follow them, so no link met on the way can
+    /// lead out either.
+    fn on_drive(&self, link: &str, target: &str) -> Option<String> {
+        if target.is_empty() || target.contains('\0') {
+            return None;
+        }
+        let folder = remote_path::parent(link)?;
+        let resolved = if target.starts_with('/') {
+            protocol::normalize(target)
+        } else {
+            protocol::normalize(&format!("{folder}/{target}"))
+        };
+        let from = self.below_root(&folder)?;
+        let to = self.below_root(&resolved)?;
+        let shared = from
+            .iter()
+            .zip(&to)
+            .take_while(|(first, second)| first == second)
+            .count();
+        let mut steps = vec!["..".to_string(); from.len() - shared];
+        let mut current = self.root.clone();
+        for remote in &to[..shared] {
+            current = remote_path::join(&current, remote);
+        }
+        for remote in &to[shared..] {
+            steps.push(self.local_name_in(&current, remote)?);
+            current = remote_path::join(&current, remote);
+        }
+        Some(if steps.is_empty() {
+            ".".to_string()
+        } else {
+            steps.join("/")
+        })
+    }
+
+    /// The names of the folders from the root down to `path`, or `None` if it is not at or
+    /// below the root.
+    fn below_root(&self, path: &str) -> Option<Vec<String>> {
+        let rest = if self.root == "/" || path == self.root {
+            path.strip_prefix(&self.root)?
+        } else {
+            path.strip_prefix(&format!("{}/", self.root))?
+        };
+        Some(
+            rest.split('/')
+                .filter(|part| !part.is_empty())
+                .map(str::to_string)
+                .collect(),
+        )
+    }
+
+    /// The local name a remote name in `folder` is shown under.
+    fn local_name_in(&self, folder: &str, remote: &str) -> Option<String> {
+        let listed = self
+            .listings
+            .lock()
+            .unwrap()
+            .get(folder)
+            .and_then(|listing| listing.names.local(remote).map(str::to_string));
+        listed.or_else(|| names::local_name(remote, self.options.style))
+    }
+
     // ---- opening and closing ----
 
     fn register(&self, node: NodeId, mode: OpenMode) -> HandleId {
@@ -885,8 +973,11 @@ impl MountFs {
 
     pub async fn open(self: &Arc<Self>, id: NodeId, mode: OpenMode) -> VfsResult<HandleId> {
         let (path, kind) = self.node_path(id)?;
-        if kind == NodeKind::Folder {
-            return Err(VfsError::IsAFolder);
+        match kind {
+            NodeKind::Folder => return Err(VfsError::IsAFolder),
+            // The kernel follows a link before it opens anything.
+            NodeKind::Link => return Err(VfsError::Unsupported),
+            NodeKind::File => {}
         }
         if mode.write || mode.truncate {
             self.writable()?;
@@ -1101,10 +1192,12 @@ impl MountFs {
         Ok(local)
     }
 
-    /// Fetches a whole file into a spool. Returns how many bytes arrived.
+    /// Fetches a whole file of `size` bytes into a spool. One byte more is asked for, so a
+    /// file that grew on the server since it was listed shows as well as one that shrank.
     async fn download_into(&self, path: &str, size: u64, spool: &Spool) -> VfsResult<u64> {
         let lease = self.backend.lease(Purpose::Stream).await?;
-        let mut stream = read_step(lease.files.clone().open_read(path, 0..size)).await?;
+        let wanted = 0..size.saturating_add(1);
+        let mut stream = read_step(lease.files.clone().open_read(path, wanted)).await?;
         let mut offset = 0;
         let outcome: VfsResult<()> = async {
             while let Some(chunk) = read_step(stream.next_chunk()).await? {
@@ -1119,6 +1212,14 @@ impl MountFs {
         match outcome {
             Ok(()) => {
                 stream.finish().await?;
+                if offset != size {
+                    // Changed on the server since it was listed, or cut short: a copy edited
+                    // and sent back from this would lose what is missing.
+                    return Err(VfsError::Io(format!(
+                        "The server sent {offset} of the {size} bytes of {}",
+                        remote_path::file_name(path)
+                    )));
+                }
                 Ok(offset)
             }
             Err(error) => {
@@ -1403,7 +1504,10 @@ impl MountFs {
         }
     }
 
-    /// Tries again every upload that failed or never ran, for files no program has open.
+    /// Tries again every upload that failed or never ran. An attempt under way may have
+    /// started before whatever made trying again worth it, so it is waited for and the file
+    /// sent again if it is still not on the server. A file a program has open is sent only
+    /// once an attempt for it was made: until then the program is still writing it.
     pub fn retry_unsent(self: &Arc<Self>) {
         let waiting: Vec<NodeId> = {
             let nodes = self.nodes.lock().unwrap();
@@ -1411,11 +1515,13 @@ impl MountFs {
                 .by_id
                 .iter()
                 .filter(|(_, node)| {
-                    node.handles == 0
-                        && !node.removed
+                    !node.removed
                         && node.local.as_ref().is_some_and(|local| {
                             let state = local.state.lock().unwrap();
-                            state.generation != state.uploaded && state.uploading.is_none()
+                            state.generation != state.uploaded
+                                && (node.handles == 0
+                                    || state.failed.is_some()
+                                    || state.uploading.is_some())
                         })
                 })
                 .map(|(id, _)| *id)
@@ -1424,10 +1530,13 @@ impl MountFs {
         for id in waiting {
             let fs = self.clone();
             tokio::spawn(async move {
+                fs.wait_for_upload(id).await;
                 if let Some(local) = fs.local_of(id) {
                     local.state.lock().unwrap().failed = None;
                 }
-                let _ = fs.send(id).await;
+                if let Err(error) = fs.send(id).await {
+                    fs.report_failure(id, &error.to_string());
+                }
                 fs.settle(id);
             });
         }
@@ -1781,7 +1890,7 @@ impl MountFs {
         self.writable()?;
         let folder = self.folder_path(parent)?;
         let (remote, entry) = self.find(&folder, name).await?.ok_or(VfsError::NotFound)?;
-        if entry.kind == NodeKind::File {
+        if entry.kind != NodeKind::Folder {
             return Err(VfsError::NotAFolder);
         }
         let path = remote_path::join(&folder, &remote);
@@ -1855,8 +1964,12 @@ impl MountFs {
                 return Err(VfsError::AlreadyExists);
             }
             match (source.kind, target.kind) {
-                (NodeKind::File, NodeKind::Folder) => return Err(VfsError::IsAFolder),
-                (NodeKind::Folder, NodeKind::File) => return Err(VfsError::NotAFolder),
+                (NodeKind::File | NodeKind::Link, NodeKind::Folder) => {
+                    return Err(VfsError::IsAFolder)
+                }
+                (NodeKind::Folder, NodeKind::File | NodeKind::Link) => {
+                    return Err(VfsError::NotAFolder)
+                }
                 (NodeKind::Folder, NodeKind::Folder) => {
                     let listed = self
                         .request(|files| {
@@ -1868,16 +1981,22 @@ impl MountFs {
                         return Err(VfsError::NotEmpty);
                     }
                 }
-                (NodeKind::File, NodeKind::File) => {}
+                (NodeKind::File | NodeKind::Link, NodeKind::File | NodeKind::Link) => {}
             }
+        }
+        // What is not on the server yet goes there first: moving the server's copy would
+        // otherwise put an empty or old file where the program expects its new one.
+        for (id, _) in self.unsent_under(&source_path) {
+            self.send(id).await?;
         }
         // Uploads under way finish first, so none lands on a path that has moved on.
-        for path in [&source_path, &target_path] {
-            let known = self.nodes.lock().unwrap().by_path.get(path).copied();
-            if let Some(id) = known {
-                self.wait_for_upload(id).await;
-            }
+        for id in self.spooled_under(&source_path) {
+            self.wait_for_upload(id).await;
         }
+        for id in self.spooled_under(&target_path) {
+            self.wait_for_upload(id).await;
+        }
+        let source = self.entry_at(&source_path).await?.unwrap_or(source);
 
         let same_folder = source_folder == target_folder;
         let moved = self
@@ -1906,8 +2025,11 @@ impl MountFs {
             Err(error) => return Err(error.into()),
         }
 
-        if existing.is_some() {
-            self.forget_path(&target_path);
+        if let Some((_, replaced)) = &existing {
+            let file_for_file = replaced.kind == NodeKind::File && source.kind == NodeKind::File;
+            if !(file_for_file && self.keep_serving(&target_path, &source)) {
+                self.forget_path(&target_path);
+            }
         }
         self.drop_entry(&source_path);
         self.drop_listings_under(&source_path);
@@ -1920,6 +2042,43 @@ impl MountFs {
             self.note_unsent(id, &local);
         }
         Ok(())
+    }
+
+    /// Lets a program that has the file at `path` open go on reading it once `replacement` has
+    /// taken its place, from the new contents, as it would on the server. Not for a file with
+    /// a local copy: its changes go with it. Says whether the file was kept.
+    fn keep_serving(&self, path: &str, replacement: &Entry) -> bool {
+        let mut nodes = self.nodes.lock().unwrap();
+        let Some(id) = nodes.by_path.get(path).copied() else {
+            return false;
+        };
+        let Some(node) = nodes.by_id.get_mut(&id) else {
+            return false;
+        };
+        if node.local.is_some() {
+            return false;
+        }
+        node.version += 1;
+        node.seen = Some((replacement.size, replacement.modified));
+        // The path now belongs to the file moved there, which the kernel looks up anew.
+        nodes.by_path.remove(path);
+        self.blocks.forget_file(id);
+        nodes.release_if_unused(id);
+        true
+    }
+
+    /// The files at or below `path` that have a local copy.
+    fn spooled_under(&self, path: &str) -> Vec<NodeId> {
+        let prefix = format!("{path}/");
+        self.nodes
+            .lock()
+            .unwrap()
+            .by_id
+            .iter()
+            .filter(|(_, node)| node.path == path || node.path.starts_with(&prefix))
+            .filter(|(_, node)| node.local.is_some())
+            .map(|(id, _)| *id)
+            .collect()
     }
 
     /// The files at or below `path` whose changes are not on the server yet.
@@ -1950,6 +2109,11 @@ impl MountFs {
         }
         self.writable()?;
         let (path, kind) = self.node_path(id)?;
+        if kind == NodeKind::Link {
+            // Servers change what a link leads to instead, and a link has no times or
+            // permissions of its own to speak of.
+            return self.attributes(id).await;
+        }
         if let Some(size) = changes.size {
             if kind == NodeKind::Folder {
                 return Err(VfsError::IsAFolder);

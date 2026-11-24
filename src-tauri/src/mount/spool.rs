@@ -21,9 +21,34 @@ pub struct Spool {
     kept: AtomicBool,
 }
 
+/// Makes `directory` and the folders above it that are missing, readable by their owner
+/// alone: what programs wrote to a private server, or decrypted from a vault, waits there.
+fn make_private_folder(directory: &Path) -> io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(directory)
+}
+
+/// Writes a file readable by its owner alone.
+fn write_private(path: &Path, contents: &[u8]) -> io::Result<()> {
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    io::Write::write_all(&mut options.open(path)?, contents)
+}
+
 impl Spool {
     pub fn create(directory: &Path) -> io::Result<Self> {
-        std::fs::create_dir_all(directory)?;
+        make_private_folder(directory)?;
         let name = format!("{}.spool", uuid::Uuid::new_v4());
         let path = directory.join(name);
         let mut options = OpenOptions::new();
@@ -93,7 +118,7 @@ impl Spool {
             "{}.{NOTE_WRITING_EXTENSION}",
             uuid::Uuid::new_v4().simple()
         ));
-        std::fs::write(&writing, text)?;
+        write_private(&writing, &text)?;
         std::fs::rename(&writing, note_path(&self.path))?;
         self.kept.store(true, Ordering::Relaxed);
         Ok(())
@@ -164,7 +189,8 @@ pub struct UnsentFile {
 }
 
 /// The files kept under `directory` and its folders, newest first. A spool file has its note
-/// from the first change on, so one without a note holds nothing that was changed.
+/// from the first change on, so one without a note holds nothing that was changed. The size
+/// is the file's own: a note is written at the first change and may be older than the last.
 pub fn unsent_files(directory: &Path) -> Vec<UnsentFile> {
     let mut found = Vec::new();
     let mut folders = vec![directory.to_path_buf()];
@@ -185,14 +211,18 @@ pub fn unsent_files(directory: &Path) -> Vec<UnsentFile> {
             if !is_note {
                 continue;
             }
-            let Some(note) = std::fs::read(&path)
+            let Some(mut note) = std::fs::read(&path)
                 .ok()
                 .and_then(|text| serde_json::from_slice::<UnsentNote>(&text).ok())
             else {
                 continue;
             };
             let spool = path.with_extension("").with_extension("spool");
-            if spool.is_file() {
+            if let Some(metadata) = std::fs::metadata(&spool)
+                .ok()
+                .filter(|found| found.is_file())
+            {
+                note.size = metadata.len();
                 found.push(UnsentFile {
                     path: spool.to_string_lossy().into_owned(),
                     note,
@@ -291,20 +321,43 @@ mod tests {
         let spool = Spool::create(&folder.path().join("mount-1")).unwrap();
         spool.write_at(0, b"draft").unwrap();
         spool.keep(&note("/docs/draft.txt")).unwrap();
+        // Written after the note: the size listed is the file's.
+        spool.write_at(5, b" two").unwrap();
         let path = spool.path().to_path_buf();
         drop(spool);
         assert!(path.exists());
 
         let unsent = unsent_files(folder.path());
         assert_eq!(unsent.len(), 1);
-        assert_eq!(unsent[0].note, note("/docs/draft.txt"));
-        assert_eq!(std::fs::read(&unsent[0].path).unwrap(), b"draft");
+        assert_eq!(
+            unsent[0].note,
+            UnsentNote {
+                size: 9,
+                ..note("/docs/draft.txt")
+            }
+        );
+        assert_eq!(std::fs::read(&unsent[0].path).unwrap(), b"draft two");
 
         let outside = folder.path().join("../elsewhere.spool");
         assert!(discard_unsent(folder.path(), &outside).is_err());
         discard_unsent(folder.path(), &path).unwrap();
         assert!(unsent_files(folder.path()).is_empty());
         assert!(!path.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn spool_folders_and_notes_are_readable_by_their_owner_alone() {
+        use std::os::unix::fs::PermissionsExt;
+        let folder = tempfile::tempdir().unwrap();
+        let drive = folder.path().join("drives").join("4242-drive");
+        let spool = Spool::create(&drive).unwrap();
+        spool.keep(&note("/a")).unwrap();
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&drive), 0o700);
+        assert_eq!(mode(&folder.path().join("drives")), 0o700);
+        assert_eq!(mode(spool.path()), 0o600);
+        assert_eq!(mode(&note_path(spool.path())), 0o600);
     }
 
     #[test]

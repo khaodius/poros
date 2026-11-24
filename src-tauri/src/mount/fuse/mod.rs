@@ -3,8 +3,9 @@
 //! written back. Nothing else happens here: what a request means is decided in `vfs`.
 //!
 //! The kernel protocol is spoken directly instead of through libfuse or a binding to it, for
-//! one reason above all: a program waiting on a slow server must be interruptible, and that
-//! takes answering the kernel's `INTERRUPT` messages, which the bindings do not.
+//! one reason above all: a program waiting on a slow server to read or list must be
+//! interruptible, and that takes answering the kernel's `INTERRUPT` messages, which the
+//! bindings do not. Requests that change something are not cut short (see `carry_out`).
 
 mod device;
 #[cfg(test)]
@@ -35,10 +36,10 @@ pub use device::{clear_dead_drives, missing};
 
 /// How long the kernel may go on using a name or attributes without asking again.
 const KERNEL_VALID_SECONDS: u64 = 1;
-/// The longest a program waits for an answer about names and attributes, a listing, or a
-/// read. The file system has its own, shorter limits on each step it takes on a server;
-/// these catch whatever slips past them. Opening, writing and closing have none here: they
-/// wait on transfers, which may take as long as the file is large.
+/// The longest a program waits for an answer about names, attributes or links, a listing,
+/// or a read. The file system has its own, shorter limits on each step it takes on a server;
+/// these catch whatever slips past them. Requests that change something have none: they are
+/// answered with what came of them, however long that takes.
 const METADATA_LIMIT: Duration = Duration::from_secs(60);
 const LISTING_LIMIT: Duration = Duration::from_secs(180);
 const READ_LIMIT: Duration = Duration::from_secs(120);
@@ -79,10 +80,10 @@ impl From<VfsError> for Errno {
     }
 }
 
-/// Runs `work` to its end whatever happens, and waits for it until the program that asked is
-/// interrupted or `limit` passes. Work on a server is never cut off halfway, which could
-/// leave a connection or a file there in an unknown state. A result nobody waits for any
-/// more goes to `unwanted`, to give back what it holds.
+/// For requests that only look: runs `work` to its end whatever happens, and waits for it
+/// until the program that asked is interrupted or `limit` passes. Work on a server is never
+/// cut off halfway, which could leave a connection or a file there in an unknown state. A
+/// result nobody waits for any more goes to `unwanted`, to give back what it holds.
 async fn wait<T, Work, Unwanted>(
     interrupt: &CancellationToken,
     limit: Option<Duration>,
@@ -117,6 +118,21 @@ where
         _ = interrupted => Err(VfsError::Interrupted),
         _ = overdue => Err(VfsError::TimedOut),
     }
+}
+
+/// For requests that change something: runs `work` to its end and answers with what came of
+/// it, interrupted or not. Saying EINTR while the change goes ahead would leave the program
+/// to guess, and the many that try again on EINTR would make the change twice, as a write to
+/// a file opened for appending does. The kernel holds even a killed program until a request
+/// it already passed on is answered; unmounting by force ends every such wait.
+async fn carry_out<T, Work>(work: Work) -> VfsResult<T>
+where
+    T: Send + 'static,
+    Work: Future<Output = VfsResult<T>> + Send + 'static,
+{
+    tokio::spawn(work)
+        .await
+        .unwrap_or_else(|_| Err(VfsError::Io("The request was abandoned".into())))
 }
 
 fn nothing<T>(_: T) {}
@@ -170,6 +186,8 @@ struct Session {
     mounted_at: i64,
     /// Set once the kernel has let go of the drive.
     ended: AtomicBool,
+    /// Set when this process detaches the drive, which is then no surprise to report.
+    detaching: AtomicBool,
 }
 
 impl Session {
@@ -191,12 +209,18 @@ impl Session {
         let (kind, usual, links) = match attributes.kind {
             NodeKind::Folder => (libc::S_IFDIR, 0o755, 2),
             NodeKind::File => (libc::S_IFREG, 0o644, 1),
+            NodeKind::Link => (libc::S_IFLNK, 0o777, 1),
+        };
+        // A link's own permissions mean nothing; what it leads to has its own.
+        let permissions = match attributes.kind {
+            NodeKind::Link => usual,
+            _ => attributes.permissions.unwrap_or(usual) & 0o7777,
         };
         wire::Attr {
             node: attributes.node,
             size: attributes.size,
             modified: attributes.modified.unwrap_or(self.mounted_at),
-            mode: kind | (attributes.permissions.unwrap_or(usual) & 0o7777),
+            mode: kind | permissions,
             links,
             uid: self.user,
             gid: self.group,
@@ -335,15 +359,8 @@ impl Session {
                     },
                     permissions: (valid & setattr_flag::MODE != 0).then_some(mode & 0o7777),
                 };
-                // Changing a size may send the file, which takes as long as it is large.
-                let limit = changes.size.is_none().then_some(METADATA_LIMIT);
-                let found = wait(
-                    interrupt,
-                    limit,
-                    async move { core.set_attributes(node, changes).await },
-                    nothing,
-                )
-                .await?;
+                let found =
+                    carry_out(async move { core.set_attributes(node, changes).await }).await?;
                 Ok(Reply::attributes(
                     unique,
                     &self.attr(&found),
@@ -360,21 +377,13 @@ impl Session {
                     return Err(Errno(libc::EPERM));
                 }
                 let permissions = mode & !umask & 0o7777;
-                let made = wait(
-                    interrupt,
-                    Some(METADATA_LIMIT),
-                    {
-                        let core = core.clone();
-                        async move {
-                            let (attributes, handle) = core
-                                .create(node, &name, OpenMode::READ_WRITE, true, Some(permissions))
-                                .await?;
-                            core.release(handle);
-                            Ok(attributes)
-                        }
-                    },
-                    move |made: Attributes| core.forget(made.node, 1),
-                )
+                let made = carry_out(async move {
+                    let (attributes, handle) = core
+                        .create(node, &name, OpenMode::READ_WRITE, true, Some(permissions))
+                        .await?;
+                    core.release(handle);
+                    Ok(attributes)
+                })
                 .await?;
                 Ok(Reply::entry(
                     unique,
@@ -385,16 +394,7 @@ impl Session {
             opcode::MKDIR => {
                 fields.skip(8)?;
                 let name = new_name(fields.name()?)?;
-                let made = wait(
-                    interrupt,
-                    Some(METADATA_LIMIT),
-                    {
-                        let core = core.clone();
-                        async move { core.make_folder(node, &name).await }
-                    },
-                    move |made: Attributes| core.forget(made.node, 1),
-                )
-                .await?;
+                let made = carry_out(async move { core.make_folder(node, &name).await }).await?;
                 Ok(Reply::entry(
                     unique,
                     &self.attr(&made),
@@ -403,24 +403,12 @@ impl Session {
             }
             opcode::UNLINK => {
                 let name = existing_name(fields.name()?)?;
-                wait(
-                    interrupt,
-                    Some(METADATA_LIMIT),
-                    async move { core.remove_file(node, &name).await },
-                    nothing,
-                )
-                .await?;
+                carry_out(async move { core.remove_file(node, &name).await }).await?;
                 Ok(Reply::empty(unique))
             }
             opcode::RMDIR => {
                 let name = existing_name(fields.name()?)?;
-                wait(
-                    interrupt,
-                    Some(METADATA_LIMIT),
-                    async move { core.remove_folder(node, &name).await },
-                    nothing,
-                )
-                .await?;
+                carry_out(async move { core.remove_folder(node, &name).await }).await?;
                 Ok(Reply::empty(unique))
             }
             opcode::RENAME | opcode::RENAME2 => {
@@ -438,27 +426,25 @@ impl Session {
                 let name = existing_name(fields.name()?)?;
                 let target = new_name(fields.name()?)?;
                 let replace = flags & wire::RENAME_NOREPLACE == 0;
-                wait(
-                    interrupt,
-                    Some(METADATA_LIMIT),
+                carry_out(
                     async move { core.rename(node, &name, new_parent, &target, replace).await },
-                    nothing,
                 )
                 .await?;
                 Ok(Reply::empty(unique))
             }
             opcode::OPEN => {
                 let mode = open_mode(fields.u32()?);
-                let handle = wait(
-                    interrupt,
-                    None,
-                    {
-                        let core = core.clone();
-                        async move { core.open(node, mode).await }
-                    },
-                    move |handle| core.release(handle),
-                )
-                .await?;
+                let opening = {
+                    let core = core.clone();
+                    async move { core.open(node, mode).await }
+                };
+                // Opening to read only looks, and may be given up on; truncating changes the
+                // file. Neither waits on a limit: an open may fetch the whole file first.
+                let handle = if mode.write || mode.truncate {
+                    carry_out(opening).await?
+                } else {
+                    wait(interrupt, None, opening, move |handle| core.release(handle)).await?
+                };
                 Ok(Reply::opened(unique, handle))
             }
             opcode::CREATE => {
@@ -469,21 +455,10 @@ impl Session {
                 let name = new_name(fields.name()?)?;
                 let exclusive = flags as i32 & libc::O_EXCL != 0;
                 let permissions = mode & !umask & 0o7777;
-                let (made, handle) = wait(
-                    interrupt,
-                    None,
-                    {
-                        let core = core.clone();
-                        async move {
-                            core.create(node, &name, open_mode(flags), exclusive, Some(permissions))
-                                .await
-                        }
-                    },
-                    move |(made, handle): (Attributes, u64)| {
-                        core.release(handle);
-                        core.forget(made.node, 1);
-                    },
-                )
+                let (made, handle) = carry_out(async move {
+                    core.create(node, &name, open_mode(flags), exclusive, Some(permissions))
+                        .await
+                })
                 .await?;
                 Ok(Reply::created(
                     unique,
@@ -514,26 +489,15 @@ impl Session {
                     return Err(Errno(libc::EINVAL));
                 }
                 let data = body.slice(WRITE_FIELDS..WRITE_FIELDS + size);
-                let written = wait(
-                    interrupt,
-                    None,
-                    async move { core.write(handle, offset, &data).await },
-                    nothing,
-                )
-                .await?;
+                let written =
+                    carry_out(async move { core.write(handle, offset, &data).await }).await?;
                 Ok(Reply::written(unique, written))
             }
             // Closing a descriptor and syncing a file both mean: have it on the server, and
             // say so if that fails.
             opcode::FLUSH | opcode::FSYNC => {
                 let handle = fields.u64()?;
-                wait(
-                    interrupt,
-                    None,
-                    async move { core.flush(handle).await },
-                    nothing,
-                )
-                .await?;
+                carry_out(async move { core.flush(handle).await }).await?;
                 Ok(Reply::empty(unique))
             }
             opcode::RELEASE => {
@@ -575,6 +539,7 @@ impl Session {
                                 match attributes.kind {
                                     NodeKind::Folder => wire::DIRENT_FOLDER,
                                     NodeKind::File => wire::DIRENT_FILE,
+                                    NodeKind::Link => wire::DIRENT_LINK,
                                 },
                                 name.as_str(),
                             ),
@@ -594,8 +559,17 @@ impl Session {
             }
             opcode::FSYNCDIR => Ok(Reply::empty(unique)),
             opcode::STATFS => Ok(Reply::statistics(unique)),
+            opcode::READLINK => {
+                let target = wait(
+                    interrupt,
+                    Some(METADATA_LIMIT),
+                    async move { core.read_link(node).await },
+                    nothing,
+                )
+                .await?;
+                Ok(Reply::data(unique, target.as_bytes()))
+            }
             opcode::SYMLINK | opcode::LINK => Err(Errno(libc::EPERM)),
-            opcode::READLINK => Err(Errno(libc::EINVAL)),
             opcode::FALLOCATE => Err(Errno(libc::EOPNOTSUPP)),
             opcode::IOCTL => Err(Errno(libc::ENOTTY)),
             // The kernel takes this answer as "never ask again" and does without: access
@@ -690,7 +664,9 @@ fn read_requests(
     };
     if !stopped {
         session.ended.store(true, Ordering::Relaxed);
-        on_end();
+        if !session.detaching.load(Ordering::Relaxed) {
+            on_end();
+        }
     }
 }
 
@@ -751,6 +727,7 @@ impl FuseMount {
             group,
             mounted_at: now_seconds(),
             ended: AtomicBool::new(false),
+            detaching: AtomicBool::new(false),
         });
         let reader = std::thread::Builder::new()
             .name("poros-drive".into())
@@ -781,9 +758,11 @@ impl FuseMount {
             return Ok(());
         }
         if !self.session.ended.load(Ordering::Relaxed) {
+            self.session.detaching.store(true, Ordering::Relaxed);
             match device::unmount(&self.mount_point, false) {
                 Ok(()) => {}
                 Err(UnmountError::Busy) if !force => {
+                    self.session.detaching.store(false, Ordering::Relaxed);
                     return Err(AppError::new(
                         ErrorKind::Io,
                         "A program is still using the drive. Close what it has open there, \
@@ -803,6 +782,7 @@ impl FuseMount {
                         .iter()
                         .any(|entry| entry.mount_point == self.mount_point);
                     if attached && !force {
+                        self.session.detaching.store(false, Ordering::Relaxed);
                         return Err(error);
                     }
                 }

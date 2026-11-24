@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 
 use crate::error::{AppError, AppResult, ErrorKind};
-use crate::model::{DirListing, EntryKind, FileEntry};
+use crate::model::{DirListing, EntryKind, FileEntry, LinkTarget};
 use crate::protocol::{
     self, Capabilities, Protocol, ReadStream, RemoteFileSystem, RemoteStat, WriteRequest,
     WriteStream,
@@ -28,6 +28,10 @@ enum Item {
         data: Bytes,
         modified: i64,
         permissions: Option<u32>,
+    },
+    /// A symbolic link, with its target as the server keeps it.
+    Link {
+        target: String,
     },
 }
 
@@ -115,6 +119,38 @@ impl MemoryFs {
         );
     }
 
+    /// Stores a symbolic link leading to `target`, a full path or one relative to its folder.
+    pub fn put_link(&self, path: &str, target: &str) {
+        if let Some(parent) = remote_path::parent(path) {
+            self.put_folder(&parent);
+        }
+        self.items.lock().unwrap().insert(
+            path.to_string(),
+            Item::Link {
+                target: target.to_string(),
+            },
+        );
+    }
+
+    /// What a link leads to, following further links a few times as a server would.
+    fn followed(items: &BTreeMap<String, Item>, path: &str) -> Option<(String, Item)> {
+        let mut current = path.to_string();
+        for _ in 0..8 {
+            match items.get(&current)? {
+                Item::Link { target } => {
+                    let folder = remote_path::parent(&current).unwrap_or_else(|| "/".into());
+                    current = if target.starts_with('/') {
+                        protocol::normalize(target)
+                    } else {
+                        protocol::normalize(&format!("{folder}/{target}"))
+                    };
+                }
+                item => return Some((current, item.clone())),
+            }
+        }
+        None
+    }
+
     pub fn file(&self, path: &str) -> Option<Bytes> {
         match self.items.lock().unwrap().get(path) {
             Some(Item::File { data, .. }) => Some(data.clone()),
@@ -190,13 +226,14 @@ impl RemoteFileSystem for MemoryFs {
         let items = self.items.lock().unwrap();
         match items.get(&path) {
             Some(Item::Folder) => {}
-            Some(Item::File { .. }) => return Err(AppError::invalid("Not a folder")),
+            Some(_) => return Err(AppError::invalid("Not a folder")),
             None => return Err(not_found(&path)),
         }
         let entries = Self::children(&items, &path)
             .into_iter()
             .map(|(child, item)| {
                 let name = remote_path::file_name(&child).to_string();
+                let mut link_target = None;
                 let (kind, size, modified, permissions) = match item {
                     Item::Folder => (EntryKind::Dir, 0, None, Some(0o755)),
                     Item::File {
@@ -209,13 +246,21 @@ impl RemoteFileSystem for MemoryFs {
                         Some(modified),
                         permissions,
                     ),
+                    Item::Link { target } => {
+                        link_target = Some(match Self::followed(&items, &child) {
+                            Some((_, Item::Folder)) => LinkTarget::Dir,
+                            Some((_, Item::File { .. })) => LinkTarget::File,
+                            _ => LinkTarget::Broken,
+                        });
+                        (EntryKind::Symlink, target.len() as u64, None, Some(0o777))
+                    }
                 };
                 FileEntry {
                     hidden: name.starts_with('.'),
                     name,
                     path: child,
                     kind,
-                    link_target: None,
+                    link_target,
                     size,
                     modified,
                     permissions,
@@ -263,6 +308,16 @@ impl RemoteFileSystem for MemoryFs {
         self.relocate(path, target)
     }
 
+    async fn read_link(&self, path: &str) -> AppResult<String> {
+        self.check_online()?;
+        match self.items.lock().unwrap().get(path) {
+            Some(Item::Link { target }) => Ok(target.clone()),
+            Some(_) => Err(AppError::invalid("Not a link")),
+            None => Err(not_found(path)),
+        }
+    }
+
+    /// A link goes by itself; what it leads to stays.
     async fn delete(&self, paths: &[String]) -> AppResult<()> {
         self.check_online()?;
         let mut items = self.items.lock().unwrap();
@@ -276,9 +331,11 @@ impl RemoteFileSystem for MemoryFs {
         Ok(())
     }
 
+    /// Follows links, as a server's `stat` does.
     async fn stat(&self, path: &str) -> AppResult<Option<RemoteStat>> {
         self.check_online()?;
-        Ok(match self.items.lock().unwrap().get(path) {
+        let items = self.items.lock().unwrap();
+        Ok(match Self::followed(&items, path).map(|(_, item)| item) {
             Some(Item::Folder) => Some(RemoteStat {
                 is_dir: true,
                 size: 0,
@@ -292,10 +349,10 @@ impl RemoteFileSystem for MemoryFs {
             }) => Some(RemoteStat {
                 is_dir: false,
                 size: data.len() as u64,
-                modified: Some(*modified),
-                permissions: *permissions,
+                modified: Some(modified),
+                permissions,
             }),
-            None => None,
+            Some(Item::Link { .. }) | None => None,
         })
     }
 
@@ -326,7 +383,7 @@ impl RemoteFileSystem for MemoryFs {
                 }
                 Ok(())
             }
-            Some(Item::Folder) => Ok(()),
+            Some(Item::Folder | Item::Link { .. }) => Ok(()),
             None => Err(not_found(path)),
         }
     }

@@ -259,6 +259,16 @@ pub trait RemoteFileSystem: Send + Sync {
         )))
     }
 
+    /// Where the symbolic link at `path` leads, as the server keeps it: a full path, or one
+    /// relative to the link's folder. Protocols that cannot tell leave this unsupported.
+    async fn read_link(&self, path: &str) -> AppResult<String> {
+        Err(AppError::unsupported(format!(
+            "{} cannot tell where the link {} leads",
+            self.protocol().display_name(),
+            remote_path::file_name(path)
+        )))
+    }
+
     /// Folders are removed with everything in them.
     async fn delete(&self, paths: &[String]) -> AppResult<()>;
 

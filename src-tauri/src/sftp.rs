@@ -671,6 +671,10 @@ impl RemoteFileSystem for RemoteFs {
         RemoteFs::replace(self, &self.resolve(path), &self.resolve(target)).await
     }
 
+    async fn read_link(&self, path: &str) -> AppResult<String> {
+        RemoteFs::read_link(self, &self.resolve(path)).await
+    }
+
     async fn delete(&self, paths: &[String]) -> AppResult<()> {
         RemoteFs::delete(self, paths).await
     }

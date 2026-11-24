@@ -5,7 +5,7 @@ use std::io::{Read, Write};
 use std::os::fd::IntoRawFd;
 use std::os::unix::fs::{FileExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
@@ -26,21 +26,35 @@ struct Drive {
 }
 
 fn core_for(server: &Arc<MemoryFs>, folder: &Path, read_only: bool) -> Arc<MountFs> {
+    core_showing(server, "/", folder, read_only)
+}
+
+fn core_showing(
+    server: &Arc<MemoryFs>,
+    root: &str,
+    folder: &Path,
+    read_only: bool,
+) -> Arc<MountFs> {
     let mut options = FsOptions::new("memory", folder.join("spool"));
     options.read_only = read_only;
     let backend = Arc::new(SharedBackend::new(server.clone(), Limits::SHARED));
-    MountFs::new(backend, "/", options)
+    MountFs::new(backend, root, options)
 }
 
 /// A drive showing `server`, or `None` where this computer cannot mount.
 fn mount_with(server: Arc<MemoryFs>, read_only: bool) -> Option<Drive> {
+    mount_showing(server, "/", read_only)
+}
+
+/// A drive showing the folder `root` of `server`.
+fn mount_showing(server: Arc<MemoryFs>, root: &str, read_only: bool) -> Option<Drive> {
     if let Some(missing) = device::missing() {
         eprintln!("Skipped: {}", missing.problem);
         return None;
     }
     let folder = tempfile::tempdir().unwrap();
     let at = folder.path().join("drive");
-    let core = core_for(&server, folder.path(), read_only);
+    let core = core_showing(&server, root, folder.path(), read_only);
     let ended = Arc::new(AtomicBool::new(false));
     let mount = FuseMount::start(
         core.clone(),
@@ -396,7 +410,11 @@ async fn unmounting_waits_for_open_files_unless_forced() {
     let mut held = program(move || std::fs::File::open(at.join("open.txt")).unwrap()).await;
 
     let Drive {
-        mount, at, folder, ..
+        mount,
+        at,
+        folder,
+        ended,
+        ..
     } = drive;
     let mount = Arc::new(mount);
     let refused = program({
@@ -421,6 +439,10 @@ async fn unmounting_waits_for_open_files_unless_forced() {
     assert!(!device::mounted()
         .iter()
         .any(|entry| entry.mount_point == at));
+    assert!(
+        !ended.load(Ordering::Relaxed),
+        "unmounting through the drive is not taken for something else ending it"
+    );
     assert!(!at.exists(), "the folder made for the drive goes with it");
     let mut contents = String::new();
     assert!(
@@ -509,4 +531,154 @@ async fn changes_made_behind_the_drive_show_up_when_listings_expire() {
     drive.core.forget_cached();
     let read = program(move || std::fs::read_to_string(at.join("second.txt")).unwrap()).await;
     assert_eq!(read, "2");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn links_are_links_and_removing_a_folder_leaves_what_they_lead_to() {
+    let server = MemoryFs::new();
+    server.put_file("/outside/keep.txt", "keep");
+    server.put_file("/outside/two.txt", "two");
+    server.put_file("/tree/docs/a.txt", "alpha");
+    server.put_link("/tree/dir/link", "../../outside");
+    server.put_link("/tree/dir/loop", ".");
+    server.put_link("/tree/dir/note", "../docs/a.txt");
+    let Some(drive) = mount_showing(server, "/tree", false) else {
+        return;
+    };
+    let at = drive.at.clone();
+    program(move || {
+        let dir = at.join("dir");
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let entry = entry.unwrap();
+            assert!(entry.file_type().unwrap().is_symlink(), "{entry:?}");
+        }
+        assert!(std::fs::symlink_metadata(dir.join("link"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(
+            std::fs::read_link(dir.join("note")).unwrap(),
+            Path::new("../docs/a.txt")
+        );
+        assert_eq!(std::fs::read_to_string(dir.join("note")).unwrap(), "alpha");
+        assert_eq!(
+            std::fs::read_link(dir.join("loop")).unwrap(),
+            Path::new(".")
+        );
+        // A link the server keeps leading out of the drive leads nowhere here.
+        let refused = std::fs::read_link(dir.join("link")).unwrap_err();
+        assert_eq!(errno(&refused), libc::EACCES);
+        assert_eq!(
+            errno(&std::fs::metadata(dir.join("link/keep.txt")).unwrap_err()),
+            libc::EACCES
+        );
+
+        let removed = std::process::Command::new("rm")
+            .arg("-r")
+            .arg(&dir)
+            .output()
+            .unwrap();
+        assert!(
+            removed.status.success(),
+            "{}",
+            String::from_utf8_lossy(&removed.stderr)
+        );
+        assert!(!dir.exists());
+        assert_eq!(
+            std::fs::read_to_string(at.join("docs/a.txt")).unwrap(),
+            "alpha"
+        );
+    })
+    .await;
+    assert_eq!(
+        drive.server.file("/outside/keep.txt").unwrap()[..],
+        b"keep"[..]
+    );
+    assert_eq!(
+        drive.server.file("/outside/two.txt").unwrap()[..],
+        b"two"[..]
+    );
+    assert!(!drive.server.exists("/tree/dir"));
+}
+
+/// Counts the signals the test below sends.
+static SIGNALS_HANDLED: AtomicUsize = AtomicUsize::new(0);
+
+extern "C" fn count_signal(_: libc::c_int) {
+    SIGNALS_HANDLED.fetch_add(1, Ordering::Relaxed);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_append_under_a_periodic_signal_is_made_once() {
+    let server = MemoryFs::new();
+    let original = pattern(2 * 1024 * 1024, 9);
+    server.put_file("/log.bin", original.clone());
+    // The first write fetches the file, which takes a while.
+    server.read_delay_millis.store(25, Ordering::Relaxed);
+    let Some(drive) = mount(server) else {
+        return;
+    };
+    let path = drive.at.join("log.bin");
+    let (interrupted, closed) = program(move || {
+        // A handler without SA_RESTART, so the calls it interrupts would fail with EINTR.
+        // SAFETY: the handler only adds to an atomic counter, which is safe in a handler.
+        unsafe {
+            let mut action: libc::sigaction = std::mem::zeroed();
+            action.sa_sigaction = count_signal as *const () as usize;
+            action.sa_flags = 0;
+            libc::sigemptyset(&mut action.sa_mask);
+            assert_eq!(
+                libc::sigaction(libc::SIGUSR1, &action, std::ptr::null_mut()),
+                0
+            );
+        }
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let writer = std::thread::spawn(move || {
+            // SAFETY: reads this thread's own identity.
+            sender.send(unsafe { libc::pthread_self() }).unwrap();
+            let file = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .unwrap();
+            let descriptor = file.into_raw_fd();
+            let line = b"LINE\n";
+            let mut interrupted = 0;
+            loop {
+                // SAFETY: the descriptor is open and the buffer is valid for its length.
+                let written = unsafe { libc::write(descriptor, line.as_ptr().cast(), line.len()) };
+                if written >= 0 {
+                    assert_eq!(written as usize, line.len());
+                    break;
+                }
+                // As Python, Go and most C programs do: try again on EINTR.
+                let error = std::io::Error::last_os_error();
+                assert_eq!(errno(&error), libc::EINTR, "{error}");
+                interrupted += 1;
+            }
+            // SAFETY: closes the descriptor this thread opened, once.
+            let closed = unsafe { libc::close(descriptor) };
+            (interrupted, closed)
+        });
+        let target = receiver.recv().unwrap();
+        while !writer.is_finished() {
+            // SAFETY: the thread is not joined yet, so its identity is still valid.
+            unsafe { libc::pthread_kill(target, libc::SIGUSR1) };
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        writer.join().unwrap()
+    })
+    .await;
+    // A thread waiting in the kernel takes a signal once its call returns, and signals of one
+    // kind sent meanwhile count as one.
+    assert!(
+        SIGNALS_HANDLED.load(Ordering::Relaxed) > 0,
+        "the program was interrupted while it waited"
+    );
+    assert_eq!(interrupted, 0, "no write was answered EINTR");
+    assert_eq!(closed, 0, "the close got the upload's real outcome");
+    let mut expected = original;
+    expected.extend_from_slice(b"LINE\n");
+    let stored = drive.server.file("/log.bin").unwrap();
+    assert_eq!(stored.len(), expected.len(), "the line was appended once");
+    assert!(stored[..] == expected[..]);
 }

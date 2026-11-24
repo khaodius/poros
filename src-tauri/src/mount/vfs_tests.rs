@@ -10,6 +10,7 @@ use super::memory::MemoryFs;
 use super::names::NameStyle;
 use super::spool;
 use super::vfs::{AttributeChanges, FsOptions, MountFs, NodeKind, OpenMode, VfsError, ROOT_NODE};
+use crate::protocol::RemoteFileSystem;
 
 struct Drive {
     server: Arc<MemoryFs>,
@@ -36,16 +37,35 @@ impl Drive {
 }
 
 fn drive_with(server: Arc<MemoryFs>, adjust: impl FnOnce(&mut FsOptions)) -> Drive {
+    drive_showing(server, "/", adjust)
+}
+
+/// A drive showing the folder `root` of `server`.
+fn drive_showing(server: Arc<MemoryFs>, root: &str, adjust: impl FnOnce(&mut FsOptions)) -> Drive {
     let folder = tempfile::tempdir().unwrap();
     let mut options = FsOptions::new("memory", folder.path().join("spool"));
     options.style = NameStyle::Unix;
     adjust(&mut options);
     let backend = Arc::new(SharedBackend::new(server.clone(), Limits::SHARED));
     Drive {
-        fs: MountFs::new(backend, "/", options),
+        fs: MountFs::new(backend, root, options),
         server,
         folder,
     }
+}
+
+/// The names the server holds in `folder`, in order.
+async fn server_names(server: &MemoryFs, folder: &str) -> Vec<String> {
+    let mut names: Vec<String> = server
+        .list_dir(folder)
+        .await
+        .unwrap()
+        .entries
+        .into_iter()
+        .map(|entry| entry.name)
+        .collect();
+    names.sort();
+    names
 }
 
 fn drive() -> Drive {
@@ -840,6 +860,13 @@ async fn unsent_changes_carry_a_note_from_the_first_write_on() {
         .rename(ROOT_NODE, "draft.md", docs, "final.md", false)
         .await
         .unwrap();
+    // Sent before it moved, so what moved on the server is whole.
+    assert_eq!(
+        drive.server.file("/docs/final.md").unwrap()[..],
+        b"words"[..]
+    );
+    assert!(spool::unsent_files(&drive.spool_folder()).is_empty());
+    drive.fs.write(handle, 5, b" more").await.unwrap();
     let unsent = spool::unsent_files(&drive.spool_folder());
     assert_eq!(unsent[0].note.remote_path, "/docs/final.md");
 
@@ -1261,4 +1288,364 @@ async fn every_change_on_the_server_is_reported_with_its_folder() {
     drive.fs.release(handle);
     drive.fs.read_folder(ROOT_NODE).await.unwrap();
     assert!(take().is_empty());
+}
+
+#[tokio::test]
+async fn links_are_shown_as_links_and_removed_alone() {
+    let server = MemoryFs::new();
+    server.put_file("/outside/keep.txt", "keep");
+    server.put_file("/tree/docs/a.txt", "alpha");
+    server.put_link("/tree/dir/out", "../../outside");
+    server.put_link("/tree/dir/loop", ".");
+    server.put_link("/tree/dir/note", "/tree/docs/a.txt");
+    server.put_link("/tree/dir/up", "../docs");
+    // Inside the root by its letters, outside once `loop` is followed.
+    server.put_link("/tree/dir/sneaky", "loop/../../../outside");
+    server.put_link("/tree/dir/gone", "missing");
+    let drive = drive_showing(server, "/tree", |_| {});
+
+    let dir = node(&drive, "/dir").await;
+    let listed: Vec<(String, NodeKind)> = drive
+        .fs
+        .read_folder(dir)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|(name, attributes)| (name, attributes.kind))
+        .collect();
+    let links = ["gone", "loop", "note", "out", "sneaky", "up"];
+    assert_eq!(
+        listed,
+        links
+            .iter()
+            .map(|name| (name.to_string(), NodeKind::Link))
+            .collect::<Vec<_>>()
+    );
+
+    let target = |name: &'static str| {
+        let drive = &drive;
+        async move {
+            let link = drive.fs.lookup(dir, name).await.unwrap().node;
+            drive.fs.read_link(link).await
+        }
+    };
+    assert_eq!(target("loop").await, Ok(".".to_string()));
+    assert_eq!(target("note").await, Ok("../docs/a.txt".to_string()));
+    assert_eq!(target("up").await, Ok("../docs".to_string()));
+    assert_eq!(target("gone").await, Ok("missing".to_string()));
+    assert_eq!(target("out").await, Err(VfsError::PermissionDenied));
+    assert_eq!(target("sneaky").await, Err(VfsError::PermissionDenied));
+    let file = node(&drive, "/docs/a.txt").await;
+    assert_eq!(drive.fs.read_link(file).await, Err(VfsError::InvalidName));
+
+    let out = drive.fs.lookup(dir, "out").await.unwrap().node;
+    assert_eq!(
+        drive.fs.open(out, OpenMode::READ).await,
+        Err(VfsError::Unsupported)
+    );
+    assert_eq!(
+        drive.fs.lookup(out, "keep.txt").await,
+        Err(VfsError::NotAFolder),
+        "nothing is looked up through a link"
+    );
+    let note = drive.fs.lookup(dir, "note").await.unwrap().node;
+    let unchanged = drive
+        .fs
+        .set_attributes(
+            note,
+            AttributeChanges {
+                permissions: Some(0o600),
+                ..AttributeChanges::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(unchanged.kind, NodeKind::Link);
+    assert_eq!(drive.server.permissions("/tree/docs/a.txt"), Some(0o644));
+
+    assert_eq!(
+        drive.fs.remove_folder(dir, "out").await,
+        Err(VfsError::NotAFolder)
+    );
+    drive.fs.remove_file(dir, "out").await.unwrap();
+    drive.fs.remove_file(dir, "loop").await.unwrap();
+    assert!(!drive.server.exists("/tree/dir/out"));
+    assert_eq!(
+        drive.server.file("/outside/keep.txt").unwrap()[..],
+        b"keep"[..]
+    );
+    assert!(drive.server.exists("/tree/dir"));
+
+    drive
+        .fs
+        .rename(dir, "note", ROOT_NODE, "moved", false)
+        .await
+        .unwrap();
+    let moved = node(&drive, "/moved").await;
+    assert_eq!(
+        drive.fs.read_link(moved).await,
+        Ok("docs/a.txt".to_string()),
+        "the server's target stays, and reads from where the link is now"
+    );
+    assert_eq!(
+        drive.server.file("/tree/docs/a.txt").unwrap()[..],
+        b"alpha"[..]
+    );
+}
+
+#[tokio::test]
+async fn an_upload_is_written_beside_the_file_and_moved_into_its_place() {
+    for moves_between_folders in [true, false] {
+        let drive = drive();
+        drive
+            .server
+            .moves_between_folders
+            .store(moves_between_folders, Ordering::Relaxed);
+        drive.server.put_file("/docs/log.txt", "the whole original");
+        drive
+            .server
+            .set_attributes("/docs/log.txt", None, Some(0o640))
+            .await
+            .unwrap();
+        let id = node(&drive, "/docs/log.txt").await;
+        let handle = drive.fs.open(id, OpenMode::WRITE_TRUNCATE).await.unwrap();
+        drive.fs.write(handle, 0, b"new").await.unwrap();
+
+        // Refused, then cut short: either way the original stays whole, and nothing is left
+        // beside it.
+        drive.server.failing_uploads.store(1, Ordering::Relaxed);
+        assert!(drive.fs.flush(handle).await.is_err());
+        drive.server.short_uploads.store(true, Ordering::Relaxed);
+        assert!(drive.fs.flush(handle).await.is_err());
+        drive.server.short_uploads.store(false, Ordering::Relaxed);
+        assert_eq!(
+            drive.server.file("/docs/log.txt").unwrap()[..],
+            b"the whole original"[..]
+        );
+        assert_eq!(server_names(&drive.server, "/docs").await, ["log.txt"]);
+
+        drive.fs.flush(handle).await.unwrap();
+        drive.fs.release(handle);
+        assert_eq!(drive.server.file("/docs/log.txt").unwrap()[..], b"new"[..]);
+        assert_eq!(drive.server.permissions("/docs/log.txt"), Some(0o640));
+        assert_eq!(server_names(&drive.server, "/docs").await, ["log.txt"]);
+    }
+}
+
+#[tokio::test]
+async fn a_file_nobody_may_write_is_not_replaced() {
+    let drive = drive();
+    drive.server.put_file("/locked.txt", "the original");
+    drive
+        .server
+        .set_attributes("/locked.txt", None, Some(0o444))
+        .await
+        .unwrap();
+    let id = node(&drive, "/locked.txt").await;
+    let handle = drive.fs.open(id, OpenMode::WRITE_TRUNCATE).await.unwrap();
+    drive.fs.write(handle, 0, b"the replacement").await.unwrap();
+    let Err(VfsError::Io(reason)) = drive.fs.flush(handle).await else {
+        panic!("the upload must be refused");
+    };
+    assert!(reason.contains("read-only on the server"), "{reason}");
+    assert_eq!(
+        drive.server.file("/locked.txt").unwrap()[..],
+        b"the original"[..]
+    );
+    drive
+        .server
+        .set_attributes("/locked.txt", None, Some(0o644))
+        .await
+        .unwrap();
+    drive.fs.flush(handle).await.unwrap();
+    drive.fs.release(handle);
+    assert_eq!(
+        drive.server.file("/locked.txt").unwrap()[..],
+        b"the replacement"[..]
+    );
+}
+
+#[tokio::test]
+async fn a_rename_sends_what_is_unsent_first_and_fails_if_it_cannot() {
+    let drive = drive();
+    drive.server.put_file("/report.docx", "the good report");
+    let (_, handle) = drive
+        .fs
+        .create(
+            ROOT_NODE,
+            "report.tmp",
+            OpenMode::WRITE_TRUNCATE,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+    drive.fs.write(handle, 0, b"the new report").await.unwrap();
+    drive.server.failing_uploads.store(2, Ordering::Relaxed);
+    assert!(drive.fs.flush(handle).await.is_err());
+
+    // Still open, as POSIX allows, and its contents only here.
+    let refused = drive
+        .fs
+        .rename(ROOT_NODE, "report.tmp", ROOT_NODE, "report.docx", true)
+        .await;
+    assert_eq!(
+        refused,
+        Err(VfsError::Io("The server refused the upload".into()))
+    );
+    assert_eq!(
+        drive.server.file("/report.docx").unwrap()[..],
+        b"the good report"[..],
+        "the good file is not replaced by an empty one"
+    );
+    assert!(drive.server.exists("/report.tmp"));
+
+    drive
+        .fs
+        .rename(ROOT_NODE, "report.tmp", ROOT_NODE, "report.docx", true)
+        .await
+        .unwrap();
+    assert_eq!(
+        drive.server.file("/report.docx").unwrap()[..],
+        b"the new report"[..]
+    );
+    assert!(!drive.server.exists("/report.tmp"));
+    drive.fs.flush(handle).await.unwrap();
+    drive.fs.release(handle);
+    assert_eq!(
+        drive.server.file("/report.docx").unwrap()[..],
+        b"the new report"[..]
+    );
+}
+
+#[tokio::test]
+async fn moving_a_folder_waits_for_uploads_below_it() {
+    let drive = drive();
+    let folder = drive.fs.make_folder(ROOT_NODE, "album").await.unwrap().node;
+    let (_, handle) = drive
+        .fs
+        .create(folder, "photo.raw", OpenMode::WRITE_TRUNCATE, false, None)
+        .await
+        .unwrap();
+    drive.fs.write(handle, 0, &pattern(9000, 3)).await.unwrap();
+    drive
+        .server
+        .upload_delay_millis
+        .store(300, Ordering::Relaxed);
+    // Closed without a flush: the upload runs in the background.
+    drive.fs.release(handle);
+    until("the upload runs", || {
+        drive
+            .fs
+            .pending_uploads()
+            .iter()
+            .any(|pending| pending.uploading)
+    })
+    .await;
+    drive
+        .fs
+        .rename(ROOT_NODE, "album", ROOT_NODE, "trip", false)
+        .await
+        .unwrap();
+    assert_eq!(
+        drive.server.file("/trip/photo.raw").unwrap()[..],
+        pattern(9000, 3)[..]
+    );
+    assert!(!drive.server.exists("/album"));
+    assert!(drive.fs.pending_uploads().is_empty());
+}
+
+#[tokio::test]
+async fn a_reader_of_a_replaced_file_reads_what_replaced_it() {
+    let drive = drive();
+    drive.server.put_file("/doc.txt", "the old words");
+    let reader = node(&drive, "/doc.txt").await;
+    let handle = drive.fs.open(reader, OpenMode::READ).await.unwrap();
+    assert_eq!(
+        drive.fs.read(handle, 0, 7).await.unwrap()[..],
+        b"the old"[..]
+    );
+
+    save(&drive, ROOT_NODE, ".doc.txt.new", b"the new words, longer").await;
+    drive
+        .fs
+        .rename(ROOT_NODE, ".doc.txt.new", ROOT_NODE, "doc.txt", true)
+        .await
+        .unwrap();
+    assert_eq!(
+        drive.fs.read(handle, 0, 100).await.unwrap()[..],
+        b"the new words, longer"[..]
+    );
+    assert_eq!(drive.fs.attributes(reader).await.unwrap().size, 21);
+    drive.fs.release(handle);
+    drive.fs.forget(reader, 1);
+    assert_eq!(
+        read_whole(&drive, "/doc.txt", 100).await,
+        b"the new words, longer"
+    );
+}
+
+#[tokio::test]
+async fn trying_again_covers_an_attempt_under_way_and_open_files() {
+    let drive = drive();
+    let (_, handle) = drive
+        .fs
+        .create(ROOT_NODE, "held.txt", OpenMode::WRITE_TRUNCATE, false, None)
+        .await
+        .unwrap();
+    drive.fs.write(handle, 0, b"held open").await.unwrap();
+    drive
+        .server
+        .upload_delay_millis
+        .store(300, Ordering::Relaxed);
+    drive.server.failing_uploads.store(1, Ordering::Relaxed);
+    let flushing = {
+        let fs = drive.fs.clone();
+        tokio::spawn(async move { fs.flush(handle).await })
+    };
+    until("the attempt runs", || {
+        drive
+            .fs
+            .pending_uploads()
+            .iter()
+            .any(|pending| pending.uploading)
+    })
+    .await;
+    // Asked while the attempt that is to fail still runs, and the file is open. The flush
+    // hears of that failure, or of the retry's success if it came first.
+    drive.fs.retry_unsent();
+    let _ = flushing.await.unwrap();
+    until("the retry got through", || {
+        drive
+            .server
+            .file("/held.txt")
+            .is_some_and(|data| data[..] == b"held open"[..])
+    })
+    .await;
+    until("nothing is pending", || {
+        drive.fs.pending_uploads().is_empty()
+    })
+    .await;
+    drive.fs.release(handle);
+}
+
+#[tokio::test]
+async fn a_file_changed_on_the_server_since_it_was_listed_is_not_edited() {
+    for now in ["grown since the listing", "short"] {
+        let drive = drive();
+        drive.server.put_file("/notes.txt", "as listed");
+        let id = node(&drive, "/notes.txt").await;
+        // Behind the drive's back, within the listing's lifetime.
+        drive.server.put_file("/notes.txt", now);
+        let handle = drive.fs.open(id, OpenMode::READ_WRITE).await.unwrap();
+        let Err(VfsError::Io(reason)) = drive.fs.write(handle, 0, b"edit").await else {
+            panic!("the edit must fail");
+        };
+        assert!(reason.contains("The server sent"), "{reason}");
+        drive.fs.release(handle);
+        assert_eq!(
+            drive.server.file("/notes.txt").unwrap()[..],
+            now.as_bytes()[..]
+        );
+    }
 }

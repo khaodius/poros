@@ -470,6 +470,14 @@ impl MountManager {
                 "The folder to mount at must be a full path",
             ));
         }
+        // Links and `..` resolved, so the drive is mounted where they lead, compared with the
+        // others where it really is, and only the folders it needs are made.
+        let mount_point = resolved(&mount_point).map_err(|error| {
+            AppError::invalid(format!(
+                "Cannot mount at {}: {error}",
+                mount_point.display()
+            ))
+        })?;
         let taken = self.drives.lock().unwrap().values().any(|drive| {
             drive.mount_point.starts_with(&mount_point)
                 || mount_point.starts_with(&drive.mount_point)
@@ -530,7 +538,10 @@ impl MountManager {
     }
 
     async fn finish(&self, drive: &Arc<Drive>, kept: &[String], how: &str) {
-        self.drives.lock().unwrap().remove(&drive.id);
+        // Told once, whoever got here first.
+        if self.drives.lock().unwrap().remove(&drive.id).is_none() {
+            return;
+        }
         drive.backend.close().await;
         let session_id = drive.backend.session_id();
         self.events.log(
@@ -750,6 +761,32 @@ fn folder_name(name: &str) -> String {
     }
 }
 
+/// `path` with every link and `..` in it resolved, for a folder that may not exist yet: the
+/// part that exists is resolved by the system, and what follows it, which holds no links,
+/// by its names.
+fn resolved(path: &Path) -> std::io::Result<PathBuf> {
+    let parts: Vec<std::path::Component<'_>> = path.components().collect();
+    for existing in (1..=parts.len()).rev() {
+        let start: PathBuf = parts[..existing].iter().collect();
+        let mut found = match std::fs::canonicalize(&start) {
+            Ok(found) => found,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
+        for part in &parts[existing..] {
+            match part {
+                std::path::Component::ParentDir => {
+                    found.pop();
+                }
+                std::path::Component::Normal(name) => found.push(name),
+                _ => {}
+            }
+        }
+        return Ok(found);
+    }
+    Ok(path.to_path_buf())
+}
+
 /// Missing, or an empty folder.
 fn is_free_folder(path: &Path) -> bool {
     match std::fs::read_dir(path) {
@@ -813,6 +850,26 @@ mod tests {
             ]
         );
         assert!(process_alive(std::process::id()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn mount_points_are_resolved_through_links_and_steps_up() {
+        let root = tempfile::tempdir().unwrap();
+        let real = root.path().canonicalize().unwrap();
+        std::fs::create_dir(real.join("empty")).unwrap();
+        std::os::unix::fs::symlink(real.join("empty"), real.join("link")).unwrap();
+        assert_eq!(resolved(&real.join("link")).unwrap(), real.join("empty"));
+        assert_eq!(
+            resolved(&real.join("missing/../new")).unwrap(),
+            real.join("new")
+        );
+        assert_eq!(
+            resolved(&real.join("link/inner/../deeper")).unwrap(),
+            real.join("empty/deeper")
+        );
+        std::fs::write(real.join("file"), b"x").unwrap();
+        assert!(resolved(&real.join("file/below")).is_err());
     }
 
     #[test]

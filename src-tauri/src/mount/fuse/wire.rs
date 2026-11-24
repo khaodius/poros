@@ -333,6 +333,7 @@ impl Reply {
 
 pub const DIRENT_FOLDER: u32 = 4;
 pub const DIRENT_FILE: u32 = 8;
+pub const DIRENT_LINK: u32 = 10;
 
 /// The entries of a folder, packed for as many as fit the size the kernel asked for.
 pub struct FolderReply {

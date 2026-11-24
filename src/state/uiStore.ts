@@ -43,6 +43,8 @@ export type AppDialog =
       /** Where the vault is mounted as a drive, which goes when it locks. */
       drives?: string[];
     }
+  /** Asks before quitting while programs have files open on drives or uploads are pending. */
+  | { kind: "quit"; drives: string[] }
   /** Mounts a session's server or vault, starting from the folder `path` its pane shows. */
   | { kind: "mount"; sessionId: string; path: string | null }
   /** Editor tabs with unsaved changes that are about to close, or whose window is. */

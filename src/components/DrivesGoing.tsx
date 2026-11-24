@@ -1,13 +1,14 @@
+import type { DriveView } from "../lib/types";
 import { useMountStore } from "../state/mountStore";
 
 /** Warns that drives are unmounted by an action, and what that means for the files on them. */
 export function DrivesGoing({ drives, when }: { drives: string[]; when: string }) {
-  const busy = useMountStore((state) =>
-    state.drives.some(
-      (drive) =>
-        drives.includes(drive.mountPoint) &&
-        (drive.openFiles.length > 0 || drive.uploads.length > 0),
-    ),
+  const isBusy = (drive: DriveView) =>
+    drives.includes(drive.mountPoint) && (drive.openFiles.length > 0 || drive.uploads.length > 0);
+  const busy = useMountStore((state) => state.drives.some(isBusy));
+  // What a vault's drive keeps is its decrypted contents.
+  const busyVault = useMountStore((state) =>
+    state.drives.some((drive) => isBusy(drive) && drive.protocol === "cryptomator"),
   );
   if (drives.length === 0) return null;
   return (
@@ -27,6 +28,8 @@ export function DrivesGoing({ drives, when }: { drives: string[]; when: string }
           Programs still have files open on it, or uploads are pending. They lose the open files,
           and what is not on the server yet is kept on this computer, listed under the drives in the
           status bar.
+          {busyVault &&
+            " Files kept from a vault are stored unencrypted until you save or discard them."}
         </p>
       )}
     </>

@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde_json::json;
 
@@ -14,10 +14,22 @@ use super::super::output::Reply;
 use crate::error::AppResult;
 use crate::mount::manager::{MountManager, MountRequest, SPOOL_FOLDER};
 
-/// How long Ctrl+C waits for uploads under way before the drive goes regardless, inside the
-/// time the command line gives a command to stop.
-const UPLOAD_GRACE: Duration = Duration::from_secs(2);
 const WATCH_INTERVAL: Duration = Duration::from_millis(500);
+const UPLOAD_WATCH_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Whether the drive still has uploads that will end by themselves: under way, or about to
+/// start for a file just closed. A file still open waits for its program, and one whose
+/// upload failed for someone to try again, so neither is waited for. `None` once the drive
+/// is gone.
+fn uploads_to_wait_for(manager: &MountManager, drive_id: &str) -> Option<bool> {
+    let shown = manager
+        .list()
+        .into_iter()
+        .find(|shown| shown.id == drive_id)?;
+    Some(shown.uploads.iter().any(|upload| {
+        upload.uploading || (upload.error.is_none() && !shown.open_files.contains(&upload.path))
+    }))
+}
 
 pub async fn mount(context: &Context, arguments: &MountArgs) -> AppResult<Reply> {
     let connected = context.connected().await?;
@@ -76,16 +88,29 @@ pub async fn mount(context: &Context, arguments: &MountArgs) -> AppResult<Reply>
         .find(|shown| shown.id == drive.id)
         .unwrap_or(drive.clone());
     if !ended_elsewhere {
-        let waiting = Instant::now();
-        while waiting.elapsed() < UPLOAD_GRACE
-            && manager
-                .list()
-                .iter()
-                .any(|shown| shown.id == drive.id && !shown.uploads.is_empty())
-        {
-            tokio::time::sleep(Duration::from_millis(100)).await;
+        // Ctrl+C waits for the uploads under way, which would otherwise leave only the copy
+        // on this computer; a second one unmounts at once and keeps them there.
+        if uploads_to_wait_for(&manager, &drive.id) == Some(true) {
+            if !context.options.quiet {
+                eprintln!(
+                    "Waiting for the uploads under way to finish. Press Ctrl+C again to unmount \
+                     now and keep what is not uploaded on this computer."
+                );
+            }
+            loop {
+                tokio::select! {
+                    _ = context.force.cancelled() => break,
+                    _ = tokio::time::sleep(UPLOAD_WATCH_INTERVAL) => {
+                        if uploads_to_wait_for(&manager, &drive.id) != Some(true) {
+                            break;
+                        }
+                    }
+                }
+            }
         }
-        if let Err(refused) = manager.unmount(&drive.id, false).await {
+        if uploads_to_wait_for(&manager, &drive.id).is_none() {
+            ended_elsewhere = true;
+        } else if let Err(refused) = manager.unmount(&drive.id, false).await {
             log::info!("{}", refused.message);
             manager.unmount(&drive.id, true).await?;
         }

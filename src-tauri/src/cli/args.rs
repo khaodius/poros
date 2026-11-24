@@ -232,6 +232,12 @@ impl Command {
     pub fn needs_connection(&self) -> bool {
         !matches!(self, Self::Connections)
     }
+
+    /// Whether the first Ctrl+C lets the command finish what is under way, and only a second
+    /// one stops it: a drive waits for its uploads before it goes.
+    pub fn finishes_on_interrupt(&self) -> bool {
+        matches!(self, Self::Mount(_))
+    }
 }
 
 #[derive(Debug, Args)]

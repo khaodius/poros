@@ -721,6 +721,14 @@ async fn an_upload_the_server_refuses_reaches_the_program_and_is_sent_when_tried
     })
     .await;
     assert_eq!(read_remote(&setup.files, &remote).await, b"the original");
+    // The close and the release each try once more. Both are over before the file is let
+    // write again, so neither can be the attempt that gets through.
+    until("the program let go of the file and no attempt runs", || {
+        let shown = &setup.mounts.list()[0];
+        shown.open_files.is_empty() && shown.uploads.iter().all(|upload| !upload.uploading)
+    })
+    .await;
+    assert_eq!(read_remote(&setup.files, &remote).await, b"the original");
     let refused = setup.mounts.unmount(&drive.id, false).await.unwrap_err();
     assert!(
         refused
@@ -743,6 +751,98 @@ async fn an_upload_the_server_refuses_reaches_the_program_and_is_sent_when_tried
     assert_eq!(read_remote(&setup.files, &remote).await, b"the replacement");
     setup.mounts.unmount(&drive.id, false).await.unwrap();
     assert!(setup.mounts.unsent().is_empty(), "{label}");
+    setup.finish().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn removing_a_folder_with_links_in_it_removes_only_the_links() {
+    let Some(server) = sftp_server() else {
+        return;
+    };
+    if !can_mount() {
+        return;
+    }
+    let setup = Setup::new(&server, "links").await;
+    let label = setup.label;
+    let outside = remote_path::join(&setup.scratch, "outside");
+    let tree = remote_path::join(&setup.scratch, "tree");
+    // Parents first: folders are made one at a time.
+    for folder in [
+        outside.clone(),
+        tree.clone(),
+        remote_path::join(&tree, "dir"),
+        remote_path::join(&tree, "docs"),
+    ] {
+        setup.files.ensure_dir(&folder).await.unwrap();
+    }
+    write_remote(
+        &setup.files,
+        &remote_path::join(&outside, "keep.txt"),
+        b"keep",
+    )
+    .await;
+    write_remote(
+        &setup.files,
+        &remote_path::join(&outside, "two.txt"),
+        b"two",
+    )
+    .await;
+    let note = remote_path::join(&tree, "docs/a.txt");
+    write_remote(&setup.files, &note, b"alpha").await;
+    {
+        let session = setup.sessions.get(&setup.session.id).await.unwrap();
+        let sftp = session.sftp().unwrap();
+        let dir = remote_path::join(&tree, "dir");
+        sftp.make_symlink(&remote_path::join(&dir, "link"), "../../outside")
+            .await
+            .unwrap();
+        sftp.make_symlink(&remote_path::join(&dir, "loop"), ".")
+            .await
+            .unwrap();
+        sftp.make_symlink(&remote_path::join(&dir, "note"), &note)
+            .await
+            .unwrap();
+    }
+    let at = setup.mount_point("drive");
+    let Some(_drive) = setup.mount(&setup.session.id, &tree, &at, false).await else {
+        setup.finish().await;
+        return;
+    };
+    program(move || {
+        let dir = at.join("dir");
+        assert!(
+            std::fs::symlink_metadata(dir.join("link"))
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "{label}"
+        );
+        assert_eq!(
+            std::fs::read_link(dir.join("note")).unwrap(),
+            Path::new("../docs/a.txt"),
+            "{label}: a full path on the server leads to the same file on the drive"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("note")).unwrap(),
+            "alpha",
+            "{label}"
+        );
+        let refused = std::fs::read_link(dir.join("link")).unwrap_err();
+        assert_eq!(errno(&refused), libc::EACCES, "{label}: {refused}");
+        // A walk lists the links and goes neither round the loop nor out of the drive.
+        let found = run("find", &[&dir]);
+        assert_eq!(found.lines().count(), 4, "{label}: {found}");
+        run("rm", &[Path::new("-r"), &dir]);
+        assert!(!dir.exists(), "{label}");
+    })
+    .await;
+    assert_eq!(
+        names_in(&setup.files, &outside).await,
+        ["keep.txt", "two.txt"],
+        "{label}: what the link led to stays"
+    );
+    assert_eq!(names_in(&setup.files, &tree).await, ["docs"], "{label}");
+    assert_eq!(read_remote(&setup.files, &note).await, b"alpha", "{label}");
     setup.finish().await;
 }
 

@@ -11,6 +11,7 @@ import { FileFlights } from "./components/FileFlights";
 import { FileOperationsHost } from "./components/FileOperationsHost";
 import { HostKeyDialog } from "./components/HostKeyDialog";
 import { QuickConnectBar } from "./components/QuickConnectBar";
+import { QuitDialog } from "./components/QuitDialog";
 import { PorosLogo } from "./components/PorosLogo";
 import { RunCommandDialog } from "./components/RunCommandDialog";
 import { ImportConnectionsDialog } from "./components/ImportConnectionsDialog";
@@ -49,6 +50,7 @@ import {
   windows,
 } from "./lib/ipc";
 import { findGroup, group, welcomeTab } from "./lib/layout";
+import { busyDrives } from "./lib/mounts";
 import { DEFAULT_SETTINGS, FONT_SIZE_LIMITS } from "./lib/settings";
 import { dragWindowFrom } from "./lib/windowDrag";
 import { matchWindowCorners } from "./lib/windowCorners";
@@ -59,6 +61,7 @@ import { hitTest, useDragStore, type DragPayload } from "./state/dragStore";
 import { useLayoutStore } from "./state/layoutStore";
 import { startSharingListings } from "./state/listings";
 import { useLogStore } from "./state/logStore";
+import { useMountStore } from "./state/mountStore";
 import { activePane } from "./state/paneRegistry";
 import { askToSave, unsavedEditorTabs } from "./state/editorActions";
 import { useSavedConnections } from "./state/savedConnectionsStore";
@@ -271,11 +274,21 @@ function useSystemFileDrops() {
   }, []);
 }
 
-/** Keeps the tabs for the next start and asks about unsaved files before the window closes. */
+/** Keeps the tabs for the next start and asks about unsaved files, and about drives in use when
+ * Poros quits, before the window closes. */
 function useCloseGuard() {
   useEffect(() => {
     const subscription = getCurrentWindow().onCloseRequested(async (event) => {
       await saveWorkspaceNow();
+      if (isMainWindow()) {
+        await useMountStore.getState().load();
+        const drives = busyDrives(useMountStore.getState().drives);
+        if (drives.length > 0) {
+          event.preventDefault();
+          useUiStore.getState().open({ kind: "quit", drives });
+          return;
+        }
+      }
       const unsaved = unsavedEditorTabs();
       if (unsaved.length === 0) return;
       event.preventDefault();
@@ -600,6 +613,8 @@ export function AppDialog() {
       );
     case "mount":
       return <MountDialog sessionId={dialog.sessionId} path={dialog.path} onClose={close} />;
+    case "quit":
+      return <QuitDialog drives={dialog.drives} onClose={close} />;
     case "unsavedChanges":
       return (
         <UnsavedChangesDialog

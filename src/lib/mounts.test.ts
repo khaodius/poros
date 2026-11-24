@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  busyDrives,
   connectionRoot,
   driveActivity,
   driveName,
@@ -59,6 +60,18 @@ describe("drivesShowing", () => {
       "c",
     ]);
     expect(drivesShowing(drives, [])).toEqual([]);
+  });
+});
+
+describe("busyDrives", () => {
+  it("names the drives with open files or pending uploads", () => {
+    const drives = [
+      drive("idle"),
+      drive("open", { openFiles: ["notes.txt"] }),
+      drive("failed", { uploads: [upload("a.txt", { error: "Refused" })] }),
+    ];
+    expect(busyDrives(drives)).toEqual(["/home/me/Poros/open", "/home/me/Poros/failed"]);
+    expect(busyDrives([drive("idle")])).toEqual([]);
   });
 });
 

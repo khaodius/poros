@@ -6,6 +6,13 @@ export function drivesShowing(drives: DriveView[], sessionIds: string[]): DriveV
   return drives.filter((drive) => sessionIds.includes(drive.sessionId));
 }
 
+/** Where the drives are that programs have files open on or that have uploads pending. */
+export function busyDrives(drives: DriveView[]): string[] {
+  return drives
+    .filter((drive) => drive.openFiles.length > 0 || drive.uploads.length > 0)
+    .map((drive) => drive.mountPoint);
+}
+
 export function failedUploads(drives: DriveView[]): number {
   return drives.reduce(
     (total, drive) => total + drive.uploads.filter((upload) => upload.error).length,
