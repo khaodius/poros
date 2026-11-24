@@ -18,6 +18,7 @@ import {
 import {
   DEFAULT_PROGRESS_BARS,
   sanitizeProgressBars,
+  storableProgressBars,
   type ProgressBarSettings,
 } from "./progressBars";
 import { DEFAULT_SYNC_OPTIONS, legacySyncOptions, sanitizeSyncOptions } from "./rsyncOptions";
@@ -131,6 +132,21 @@ const DOUBLE_CLICK_ACTIONS: DoubleClickAction[] = ["transfer", "edit", "nothing"
 export type DateFormat = "minutes" | "seconds" | "locale";
 export const DATE_FORMATS: DateFormat[] = ["minutes", "seconds", "locale"];
 
+/** `sync` takes the rule from Settings > Sync until the compare bar sets one. */
+export type CompareSizeRule = "sync" | "sizeAndTime" | "sizeOnly";
+const COMPARE_SIZE_RULES: CompareSizeRule[] = ["sync", "sizeAndTime", "sizeOnly"];
+
+/** The options of the bar over two compared panes (Compare folders), as last set. */
+export interface FolderCompareSettings {
+  hideIdentical: boolean;
+  sizeRule: CompareSizeRule;
+  /** Times a whole number of hours apart count as the same, as with a server in another zone. */
+  ignoreHourOffsets: boolean;
+  includeHidden: boolean;
+  /** Entering a folder or going up in one pane does the same in the other. */
+  browseTogether: boolean;
+}
+
 export interface InterfaceSettings {
   doubleClickFile: DoubleClickAction;
   showHiddenFiles: boolean;
@@ -153,6 +169,7 @@ export interface InterfaceSettings {
   extractor: ExtractorSettings;
   /** The preview pane beside a file list. */
   preview: FilePreviewSettings;
+  folderCompare: FolderCompareSettings;
   /** A server folder seen before shows its last listing at once, while it is asked for again. */
   cachedListings: boolean;
   /** Lists the parent folder and the folder under the cursor ahead, while a server is idle. */
@@ -342,6 +359,13 @@ export const DEFAULT_SETTINGS: Settings = {
     columnWidths: {},
     extractor: { choice: "", program: "", arguments: CUSTOM_ARGUMENTS_EXAMPLE },
     preview: DEFAULT_FILE_PREVIEW,
+    folderCompare: {
+      hideIdentical: false,
+      sizeRule: "sync",
+      ignoreHourOffsets: false,
+      includeHidden: true,
+      browseTogether: false,
+    },
     cachedListings: true,
     prefetchListings: true,
     prefetchOnCloud: false,
@@ -454,6 +478,9 @@ export function sanitizeSettings(stored: unknown): Settings {
   options.hiddenColumns = DETAIL_COLUMNS.filter((column) => options.hiddenColumns.includes(column));
   options.columnWidths = sanitizeColumnWidths(asSection(source.interface).columnWidths);
   options.preview = sanitizeFilePreview(options.preview);
+  if (!COMPARE_SIZE_RULES.includes(options.folderCompare.sizeRule)) {
+    options.folderCompare.sizeRule = DEFAULT_SETTINGS.interface.folderCompare.sizeRule;
+  }
   options.renameHistory = sanitizeFindHistory(asSection(source.interface).renameHistory);
 
   const appearance = settings.appearance;
@@ -470,7 +497,10 @@ export function sanitizeSettings(stored: unknown): Settings {
     appearance.rowHeight = COMPACT_ROW_HEIGHT;
   }
   appearance.rowHeight = clamp(appearance.rowHeight, ROW_HEIGHT_LIMITS.min, ROW_HEIGHT_LIMITS.max);
-  appearance.progressBars = sanitizeProgressBars(appearance.progressBars);
+  appearance.progressBars = sanitizeProgressBars(
+    appearance.progressBars,
+    asSection(storedAppearance.progressBars),
+  );
   settings.log.maxLines = clamp(settings.log.maxLines, LOG_LINE_LIMITS.min, LOG_LINE_LIMITS.max);
 
   settings.updates.skippedVersion = settings.updates.skippedVersion.trim();
@@ -487,6 +517,15 @@ export function sanitizeSettings(stored: unknown): Settings {
   }
   automation.commands = sanitizeCommands(automation.commands);
   return settings;
+}
+
+/** The settings as written to disk, with what older versions read beside the newer fields. */
+export function storableSettings(settings: Settings): Settings {
+  const appearance = settings.appearance;
+  return {
+    ...settings,
+    appearance: { ...appearance, progressBars: storableProgressBars(appearance.progressBars) },
+  };
 }
 
 /**

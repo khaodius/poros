@@ -191,5 +191,5 @@ export function applyTheme(theme: Theme, appearance: AppearanceSettings): void {
   for (const [property, value] of Object.entries(bars.properties)) {
     style.setProperty(property, value);
   }
-  Object.assign(root.dataset, bars.attributes);
+  for (const [name, value] of Object.entries(bars.attributes)) root.setAttribute(name, value);
 }

@@ -7,6 +7,7 @@ pub mod fxp;
 mod listing;
 
 use std::ops::Range;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
@@ -101,6 +102,9 @@ pub struct FtpFs {
     certificate: Option<String>,
     control: Arc<Mutex<Option<Control>>>,
     features: Features,
+    /// Listings come from `LIST`, as people read it, rather than `MLSD`: the server said it has
+    /// no `MLSD`, or refused it once asked.
+    coarse_listings: AtomicBool,
 }
 
 impl FtpFs {
@@ -137,6 +141,7 @@ impl FtpFs {
             certificate: certificate.clone(),
             control: Arc::new(Mutex::new(Some(control))),
             features,
+            coarse_listings: AtomicBool::new(!features.mlsd),
         });
         let keepalive = profile.keepalive_secs.unwrap_or(DEFAULT_KEEPALIVE_SECS);
         if keepalive > 0 {
@@ -345,6 +350,10 @@ impl RemoteFileSystem for FtpFs {
         }
     }
 
+    fn coarse_times(&self) -> bool {
+        self.coarse_listings.load(Ordering::Relaxed)
+    }
+
     async fn canonicalize(&self, path: &str) -> AppResult<String> {
         let path = self.resolve(path);
         self.with_control(move |control| {
@@ -360,6 +369,8 @@ impl RemoteFileSystem for FtpFs {
         let result = async {
             let directory = control.change_directory(&requested).await?;
             let entries = Self::entries_with_links(control, &directory).await?;
+            self.coarse_listings
+                .store(!control.features.mlsd, Ordering::Relaxed);
             Ok(DirListing {
                 parent: remote_path::parent(&directory),
                 path: directory,

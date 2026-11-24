@@ -792,6 +792,10 @@ impl RemoteFileSystem for VaultFs {
         }
     }
 
+    fn coarse_times(&self) -> bool {
+        self.server().coarse_times()
+    }
+
     async fn canonicalize(&self, path: &str) -> AppResult<String> {
         let keys = self.keys()?;
         let names = self.relative(path)?;

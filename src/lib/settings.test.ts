@@ -66,6 +66,34 @@ describe("sanitizeSettings", () => {
     expect(sorted.interface.sort).toEqual({ key: "type", direction: -1 });
   });
 
+  it("keeps the compare bar's options and checks them", () => {
+    const fromBefore = sanitizeSettings({ interface: { showHiddenFiles: true } }).interface;
+    expect(fromBefore.folderCompare).toEqual({
+      hideIdentical: false,
+      sizeRule: "sync",
+      ignoreHourOffsets: false,
+      includeHidden: true,
+      browseTogether: false,
+    });
+    const stored = sanitizeSettings({
+      interface: {
+        folderCompare: { hideIdentical: true, sizeRule: "sizeOnly", includeHidden: "no" },
+      },
+    }).interface.folderCompare;
+    expect(stored).toMatchObject({
+      hideIdentical: true,
+      sizeRule: "sizeOnly",
+      includeHidden: true,
+    });
+    const unknownRule = sanitizeSettings({
+      interface: { folderCompare: { sizeRule: "checksum" } },
+    });
+    expect(unknownRule.interface.folderCompare.sizeRule).toBe("sync");
+    expect(sanitizeSettings({ interface: { folderCompare: [] } }).interface.folderCompare).toEqual(
+      fromBefore.folderCompare,
+    );
+  });
+
   it("remembers listings and lists ahead unless turned off, as files saved before do", () => {
     const before = sanitizeSettings({ interface: { foldersFirst: false } }).interface;
     expect(before.foldersFirst).toBe(false);

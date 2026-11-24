@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { FileSearch, KeyRound, UserRound } from "lucide-react";
+import { useLatest } from "../hooks/useLatest";
 import {
   IMPORT_SOURCES,
   defaultSelection,
@@ -28,13 +29,17 @@ export function ImportConnectionsDialog({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState<string | null>(null);
   // The scan the backend still holds passwords for, to forget when the dialog closes.
   const pendingScan = useRef<string | null>(null);
+  const closed = useRef(false);
+  const latestOnClose = useLatest(onClose);
 
   useEffect(() => {
+    closed.current = false;
     connectionImport
       .sources()
       .then(setSources)
       .catch((caught) => setError(toAppError(caught).message));
     return () => {
+      closed.current = true;
       if (pendingScan.current) void connectionImport.discard(pendingScan.current).catch(() => {});
     };
   }, []);
@@ -50,6 +55,11 @@ export function ImportConnectionsDialog({ onClose }: { onClose: () => void }) {
     setError(null);
     try {
       const found = await connectionImport.scan(source, paths);
+      // Closed while reading: nothing will import this scan, so its passwords go at once.
+      if (closed.current) {
+        void connectionImport.discard(found.scanId).catch(() => {});
+        return;
+      }
       pendingScan.current = found.scanId;
       if (found.entries.length === 0 && found.skipped.length === 0) {
         setError(`There are no saved sites in ${found.origins.join(", ") || "that file"}.`);
@@ -70,7 +80,8 @@ export function ImportConnectionsDialog({ onClose }: { onClose: () => void }) {
       directory: false,
     });
     const paths = chosen === null ? [] : Array.isArray(chosen) ? chosen : [chosen];
-    if (paths.length > 0) await read(source, paths);
+    // Closed while the picker was open: nothing is to be read, passwords least of all.
+    if (paths.length > 0 && !closed.current) await read(source, paths);
   };
 
   const back = () => {
@@ -108,7 +119,7 @@ export function ImportConnectionsDialog({ onClose }: { onClose: () => void }) {
           "info",
           `Imported ${count} from ${IMPORT_SOURCES[scan.source].label}.${passwords}`,
         );
-        onClose();
+        latestOnClose.current();
         return;
       }
       setScan(null);
