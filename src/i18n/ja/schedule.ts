@@ -18,7 +18,7 @@ export const schedule = {
   theFolderOnThisComputer: "このコンピューター上のフォルダー",
   serverFolder: "サーバーのフォルダー",
   direction: "方向",
-  conflictsAreLeftAloneAnd: "{hint} 競合はそのままにして報告します。",
+  conflictsAreLeftAloneAnd: "{hint}競合はそのままにして報告します。",
   rsyncOptions: "rsync のオプション",
   typedAsOnRsyncsCommand:
     "rsync のコマンドラインと同じように入力します。タスクを実行するたびに、上のオプションより優先して適用されます。",
@@ -48,8 +48,8 @@ export const schedule = {
     "タスクは Poros を開いている間に実行されます。cron やタイマーを使って poros-cli から実行することもできます。保存したタスクはここに表示されます。",
   turnedOff: "オフ",
   chooseAConnection: "接続を選択",
-  noSavedConnections: "保存済みの接続はありません",
-  noSavedSftpConnections: "保存済みの SFTP 接続はありません",
+  noSavedConnections: "保存済みの接続なし",
+  noSavedSftpConnections: "保存済みの SFTP 接続なし",
   aDeletedConnection: "削除された接続",
   usesSynchronizingAndRunningCommands:
     "{name} は {label} を使用しています。同期とコマンドの実行には SFTP 接続が必要です。",
