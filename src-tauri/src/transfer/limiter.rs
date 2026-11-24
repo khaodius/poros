@@ -2,6 +2,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use tokio::sync::Notify;
+
 /// Smallest burst allowance, so one request-sized chunk never waits on an empty bucket.
 const MIN_BURST_BYTES: f64 = 256.0 * 1024.0;
 const BURST_SECONDS: f64 = 0.25;
@@ -12,6 +14,8 @@ const BURST_SECONDS: f64 = 0.25;
 pub struct RateLimiter {
     bytes_per_second: AtomicU64,
     bucket: Mutex<Bucket>,
+    /// Wakes the callers sleeping off a debt when the rate changes.
+    rate_changed: Notify,
 }
 
 struct Bucket {
@@ -27,18 +31,39 @@ impl RateLimiter {
                 available: 0.0,
                 refilled_at: Instant::now(),
             }),
+            rate_changed: Notify::new(),
         }
     }
 
-    /// Zero removes the limit.
+    /// Zero removes the limit, and the debt with it. Callers already waiting work out their
+    /// wait again at the new rate.
     pub fn set_rate(&self, bytes_per_second: u64) {
-        self.bytes_per_second
-            .store(bytes_per_second, Ordering::Relaxed);
+        let previous = self
+            .bytes_per_second
+            .swap(bytes_per_second, Ordering::Relaxed);
+        if previous == bytes_per_second {
+            return;
+        }
+        if bytes_per_second == 0 {
+            let mut bucket = self.bucket.lock().unwrap();
+            bucket.available = bucket.available.max(0.0);
+        }
+        self.rate_changed.notify_waiters();
     }
 
     pub async fn acquire(&self, bytes: u64) {
-        if let Some(wait) = self.reserve(bytes, Instant::now()) {
-            tokio::time::sleep(wait).await;
+        let mut bytes = bytes;
+        loop {
+            // Taken before reserving, so a change of rate just after is not missed.
+            let rate_changed = self.rate_changed.notified();
+            let Some(wait) = self.reserve(bytes, Instant::now()) else {
+                return;
+            };
+            tokio::select! {
+                () = tokio::time::sleep(wait) => return,
+                // The bytes are already in the debt; only the wait is worked out again.
+                () = rate_changed => bytes = 0,
+            }
         }
     }
 
@@ -85,5 +110,27 @@ mod tests {
         // Once the debt is slept off, the bucket refills at the configured rate.
         let later = start + Duration::from_secs(2);
         assert_eq!(limiter.reserve(0, later), None);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn raising_or_lifting_the_limit_ends_waits_worked_out_at_the_old_rate() {
+        for new_rate in [0, 1_000_000] {
+            let limiter = std::sync::Arc::new(RateLimiter::new());
+            limiter.set_rate(1_000);
+            // At the old rate these wait 100 and 200 seconds.
+            let waiting: Vec<_> = (0..2)
+                .map(|_| {
+                    let limiter = limiter.clone();
+                    tokio::spawn(async move { limiter.acquire(100_000).await })
+                })
+                .collect();
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            assert!(waiting.iter().all(|task| !task.is_finished()));
+            limiter.set_rate(new_rate);
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            for task in waiting {
+                assert!(task.is_finished(), "still waiting at {new_rate} B/s");
+            }
+        }
     }
 }
