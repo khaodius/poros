@@ -5,12 +5,11 @@
 // src-tauri/tests/fixtures/folder_compare_cases.json, so the two cannot drift apart unnoticed.
 
 import type { PathStyle } from "./fileSource";
-import { pluralize } from "./format";
 import { normalizedPath } from "./path";
 import type { FolderCompareSettings } from "./settings";
 import { isDirLike } from "./sort";
 import type { CompareMode, FileEntry, FolderSummary, Protocol } from "./types";
-import { t } from "../i18n";
+import { t, type MessageKey } from "../i18n";
 
 const MINUTE = 60;
 const HOUR = 60 * MINUTE;
@@ -394,40 +393,36 @@ function differences(summary: FolderSummary): number {
  * the rows are compared as shown, and compared again once the folder is listed.
  */
 export function outdatedNote(here: boolean, there: boolean, partner: string): string | undefined {
-  const after = "so the marks may be out of date until it is listed again";
-  if (here && there) {
-    return "Neither pane's listing could be refreshed, so the marks may be out of date until both are listed again";
-  }
-  if (here) return `This pane's listing could not be refreshed, ${after}`;
-  if (there) return `The listing in ${partner} could not be refreshed, ${after}`;
+  if (here && there) return t("compare.neitherListingRefreshed");
+  if (here) return t("compare.thisListingNotRefreshed");
+  if (there) return t("compare.partnerListingNotRefreshed", { partner });
   return undefined;
 }
 
 /** What the compare bar says while search results are on show in place of a compared folder. */
 export function pausedNote(here: boolean, there: boolean, partner: string): string | undefined {
-  const after = "The marks come back when the results are closed";
-  if (here && there) return `Comparing is paused while both panes show search results. ${after}`;
-  if (here) return `Comparing is paused while this pane shows search results. ${after}`;
-  if (there) return `Comparing is paused while ${partner} shows search results. ${after}`;
+  if (here && there) return t("compare.pausedBothShowResults");
+  if (here) return t("compare.pausedThisShowsResults");
+  if (there) return t("compare.pausedPartnerShowsResults", { partner });
   return undefined;
 }
 
 /** What a folder's summary says in words, seen from one side: "2 newer here, 1 only there". */
 export function describeSummary(summary: FolderSummary, side: "left" | "right"): string {
   const here = side === "left";
-  const parts: [number, string][] = [
-    [here ? summary.newerLeft : summary.newerRight, "newer here"],
-    [here ? summary.newerRight : summary.newerLeft, "older here"],
-    [here ? summary.onlyLeft : summary.onlyRight, "only here"],
-    [here ? summary.onlyRight : summary.onlyLeft, "only in the other pane"],
-    [summary.different, "different"],
-    [summary.identical, "identical"],
-    [summary.notCompared, "not compared"],
+  const parts: [number, MessageKey][] = [
+    [here ? summary.newerLeft : summary.newerRight, "compare.summaryNewerHere"],
+    [here ? summary.newerRight : summary.newerLeft, "compare.summaryOlderHere"],
+    [here ? summary.onlyLeft : summary.onlyRight, "compare.summaryOnlyHere"],
+    [here ? summary.onlyRight : summary.onlyLeft, "compare.summaryOnlyThere"],
+    [summary.different, "compare.summaryDifferent"],
+    [summary.identical, "compare.summaryIdentical"],
+    [summary.notCompared, "compare.summaryNotCompared"],
   ];
   return parts
     .filter(([count]) => count > 0)
-    .map(([count, label]) => `${count.toLocaleString()} ${label}`)
-    .join(", ");
+    .map(([count, key]) => t(key as "compare.summaryNewerHere", { count }))
+    .join(t("common.listSeparator"));
 }
 
 function folderMark(summary: FolderSummary, side: "left" | "right"): RowCompare {

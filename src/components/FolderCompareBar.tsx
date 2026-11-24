@@ -14,16 +14,15 @@ import {
 } from "lucide-react";
 import type { FolderCompareBarModel } from "../hooks/useFolderCompare";
 import { LEGEND_STATES, STATE_LABELS } from "../lib/folderCompare";
-import { pluralize } from "../lib/format";
 import type { MenuItem } from "./ContextMenu";
 import {
   COMPARE_FOLDERS_SHORTCUT,
-  DEEP_COMPARE_LABEL,
+  deepCompareLabel,
   optionItems,
   selectItems,
 } from "./folderCompareMenu";
 import { COMPARE_CLASSES, COMPARE_GLYPHS } from "./folderCompareMarks";
-import { useT } from "../i18n";
+import { formatNumber, useT } from "../i18n";
 
 interface FolderCompareBarProps {
   bar: FolderCompareBarModel;
@@ -40,7 +39,9 @@ export function FolderCompareBar({ bar, onMenu }: FolderCompareBarProps) {
   const { partner, counts, deep } = bar;
   const running = deep?.status === "running";
   const done = deep?.status === "done";
-  const where = partner.otherWindow ? `${partner.label} in another window` : partner.label;
+  const where = partner.otherWindow
+    ? t("compare.inAnotherWindow", { label: partner.label })
+    : partner.label;
   const menu = (items: MenuItem[]) => (event: MouseEvent<HTMLButtonElement>) =>
     onMenu(event.currentTarget.getBoundingClientRect(), items);
   const synchronize =
@@ -58,17 +59,21 @@ export function FolderCompareBar({ bar, onMenu }: FolderCompareBarProps) {
       <div className="folder-compare-main">
         <span
           className="folder-compare-partner"
-          title={`Compared with ${where}${partner.path ? `: ${partner.path}` : ""}`}
+          title={
+            partner.path
+              ? t("compare.comparedWithAt", { where, path: partner.path })
+              : t("compare.comparedWith", { where })
+          }
         >
           <GitCompareArrows size={13} aria-hidden />
           <span className="folder-compare-with">
-            {t("compare.comparedWith")} <strong>{where}</strong>
+            {t.rich("compare.comparedWith", { where: <strong>{where}</strong> })}
           </span>
           {partner.path && <span className="folder-compare-path">{partner.path}</span>}
         </span>
         <span className="folder-compare-actions">
           <BarButton
-            label={done ? t("compare.again", { value: DEEP_COMPARE_LABEL }) : DEEP_COMPARE_LABEL}
+            label={done ? t("compare.again", { action: deepCompareLabel() }) : deepCompareLabel()}
             pressed={done}
             disabled={!counts || running}
             onClick={bar.startDeep}
@@ -89,7 +94,7 @@ export function FolderCompareBar({ bar, onMenu }: FolderCompareBarProps) {
             <FolderSync size={14} />
           </BarButton>
           <BarButton
-            label={t("compare.stopComparing", { value: COMPARE_FOLDERS_SHORTCUT })}
+            label={t("compare.stopComparing", { shortcut: COMPARE_FOLDERS_SHORTCUT })}
             onClick={bar.close}
           >
             <X size={14} />
@@ -101,16 +106,23 @@ export function FolderCompareBar({ bar, onMenu }: FolderCompareBarProps) {
           const Glyph = COMPARE_GLYPHS[state];
           const count = counts?.[state];
           const concealed = state === "identical" && bar.options.hideIdentical;
-          const described = count === undefined ? "nothing to compare yet" : count.toLocaleString();
+          const described =
+            count === undefined ? t("compare.nothingToCompareYet") : formatNumber(count);
           return (
             <li
               key={state}
               className={`folder-compare-chip is-${COMPARE_CLASSES[state]} ${count ? "" : "is-empty"}`}
-              title={`${STATE_LABELS[state]}: ${described}${concealed ? ", not shown" : ""}`}
+              title={
+                concealed
+                  ? t("compare.stateCountHidden", { state: STATE_LABELS[state], amount: described })
+                  : t("compare.stateCount", { state: STATE_LABELS[state], amount: described })
+              }
             >
               <Glyph size={12} aria-hidden />
               <span>{STATE_LABELS[state]}</span>
-              <span className="folder-compare-count">{count?.toLocaleString() ?? "-"}</span>
+              <span className="folder-compare-count">
+                {count === undefined ? "-" : formatNumber(count)}
+              </span>
               {concealed && <EyeOff size={12} className="folder-compare-concealed" aria-hidden />}
             </li>
           );
@@ -120,8 +132,8 @@ export function FolderCompareBar({ bar, onMenu }: FolderCompareBarProps) {
         <p className="folder-compare-status" role="status">
           <LoaderCircle size={13} className="spin" aria-hidden />
           <span>
-            {t("compare.comparingSubfoldersListedSoFar", {
-              t: t("compare.items", { count: deep.leftEntries + deep.rightEntries }),
+            {t("compare.comparingSubfoldersItemsListedSo", {
+              count: deep.leftEntries + deep.rightEntries,
             })}
           </span>
           <button type="button" className="link-button" onClick={bar.stopDeep}>

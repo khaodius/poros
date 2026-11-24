@@ -56,7 +56,7 @@ export function ExternalEditsStatus() {
         onClick={() => setOpen(!open)}
       >
         <FilePen size={12} className={moving ? "is-moving" : ""} />
-        {summary ?? "Not editing any files"}
+        {summary ?? t("openWith.notEditingAnyFiles")}
       </button>
       {open && <EditsPopover edits={edits} leftovers={leftovers} onClose={close} />}
     </span>
@@ -166,9 +166,7 @@ function EditsPopover({ edits, leftovers, onClose }: EditsPopoverProps) {
       {leftovers.length > 0 && <LeftoverList leftovers={leftovers} onConfirm={setConfirming} />}
       {edits.length > 0 && (
         <p className="edits-footnote">
-          {uploadOnSave
-            ? "Each save is uploaded as soon as the program has written it."
-            : "Saves wait for you to upload them."}
+          {uploadOnSave ? t("openWith.eachSaveIsUploadedAs") : t("openWith.savesWaitForYouTo")}
         </p>
       )}
       {confirming && (

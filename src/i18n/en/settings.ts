@@ -181,4 +181,9 @@ export const settings = {
   overwriteIfTheSourceIs: "Overwrite if the source is newer",
   overwriteIfSizeOrDate: "Overwrite if size or date differ",
   keepBoth: "Keep both",
+  // components/SettingsDialog
+  checking: "Checking...",
+  checkForUpdates: "Check for updates",
+  listing: "Listing...",
+  showVersions: "Show versions",
 } as const satisfies MessageArea;

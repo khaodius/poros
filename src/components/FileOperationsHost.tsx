@@ -1,7 +1,7 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { LoaderCircle } from "lucide-react";
 import { deleteFraction, deleteProgressText, formatCount } from "../lib/deletion";
-import { formatSize, pluralize } from "../lib/format";
+import { formatSize } from "../lib/format";
 import { fileOperations, onFileOperation } from "../lib/ipc";
 import { baseName } from "../lib/path";
 import { progressReach } from "../lib/progressBars";
@@ -80,7 +80,7 @@ function OperationTray() {
             disabled={cancelling.has(operation.id)}
             onClick={() => cancel(operation.id)}
           >
-            {cancelling.has(operation.id) ? "Cancelling..." : "Cancel"}
+            {cancelling.has(operation.id) ? t("pane.cancelling") : t("common.cancel")}
           </button>
         </div>
       ))}
@@ -90,9 +90,10 @@ function OperationTray() {
 
 /** Which program unpacks the archive, under a bar that moves until it is done. */
 function ExtractDetail({ operation }: { operation: RunningOperation }) {
+  const t = useT();
   return (
     <>
-      <span className="operation-detail">{operation.current ?? "Unpacking"}</span>
+      <span className="operation-detail">{operation.current ?? t("pane.unpacking")}</span>
       <span className="progress-track is-indeterminate" role="progressbar">
         <span className="progress-fill" />
       </span>
@@ -102,12 +103,15 @@ function ExtractDetail({ operation }: { operation: RunningOperation }) {
 
 /** How many items have their new name, and the one being renamed. */
 function RenameDetail({ operation }: { operation: RunningOperation }) {
+  const t = useT();
   const { files, total, current } = operation;
   const fraction = total ? Math.min(1, files / total) : null;
   return (
     <>
       <span className="operation-detail">
-        {total ? `${formatCount(files)} of ${formatCount(total)} renamed` : "Starting"}
+        {total
+          ? t("pane.ofRenamed", { count: files, total: formatCount(total) })
+          : t("pane.starting")}
       </span>
       <span
         className={`progress-track ${fraction === null ? "is-indeterminate" : ""}`}
@@ -132,13 +136,14 @@ function RenameDetail({ operation }: { operation: RunningOperation }) {
 
 /** How many entries are gone, where the delete is, and the latest that would not go. */
 function DeleteDetail({ operation }: { operation: RunningOperation }) {
+  const t = useT();
   const fraction = deleteFraction(operation);
   const { current, failed, lastFailure } = operation;
   return (
     <>
       <span className="operation-detail">
         {deleteProgressText(operation)}
-        {failed ? `, ${formatCount(failed)} failed` : ""}
+        {failed ? t("pane.failed", { count: failed }) : ""}
       </span>
       <span
         className={`progress-track ${fraction === null ? "is-indeterminate" : ""}`}
@@ -211,7 +216,7 @@ function NameClashDialog({ question }: { question: NameClashQuestion }) {
                 <li key={name}>{name}</li>
               ))}
               {names.length > preview.length && (
-                <li>{t("pane.andMore", { value: names.length - preview.length })}</li>
+                <li>{t("pane.andMore", { count: names.length - preview.length })}</li>
               )}
             </ul>
           </>

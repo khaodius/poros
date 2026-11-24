@@ -122,45 +122,45 @@ export function segments(
 }
 
 const LINE_ENDING_NAMES: Record<LineEnding, string> = {
-  none: "none",
+  get none() {
+    return t("compare.lineEndingNone");
+  },
   get lf() {
     return t("compare.lfUnix");
   },
   get crlf() {
     return t("compare.crlfWindows");
   },
-  mixed: "mixed",
+  get mixed() {
+    return t("compare.lineEndingMixed");
+  },
 };
 
 /** Says how the files end their lines when they do it differently. */
 export function lineEndingNote(left: LineEnding, right: LineEnding): string | null {
   if (left === right || left === "none" || right === "none") return null;
-  return `Line endings differ: ${LINE_ENDING_NAMES[left]} on the left, ${LINE_ENDING_NAMES[right]} on the right.`;
-}
-
-function countLines(count: number, what: string): string {
-  return `${count} ${what} ${count === 1 ? "line" : "lines"}`;
+  return t("compare.lineEndingsDiffer", {
+    left: LINE_ENDING_NAMES[left],
+    right: LINE_ENDING_NAMES[right],
+  });
 }
 
 /** One sentence on how the files differ. */
 export function verdict(comparison: Comparison, ignoring: boolean): string {
   const { content, identical } = comparison;
-  if (identical) return "The files are identical.";
+  if (identical) return t("compare.filesIdentical");
   if (content.kind === "binary") {
-    return content.tooLarge
-      ? "The files differ. They are too large to show side by side."
-      : "The files differ. They are not text, so only their bytes were compared.";
+    return content.tooLarge ? t("compare.filesDifferTooLarge") : t("compare.filesDifferNotText");
   }
   const parts = [
-    content.changed > 0 && countLines(content.changed, "changed"),
-    content.added > 0 && countLines(content.added, "added"),
-    content.removed > 0 && countLines(content.removed, "removed"),
+    content.changed > 0 && t("compare.linesChanged", { count: content.changed }),
+    content.added > 0 && t("compare.linesAdded", { count: content.added }),
+    content.removed > 0 && t("compare.linesRemoved", { count: content.removed }),
   ].filter(Boolean);
-  if (parts.length > 0) return `${parts.join(", ")}.`;
-  if (content.leftLineEnding !== content.rightLineEnding) return "Only the line endings differ.";
-  return ignoring
-    ? "The files differ only in what is being ignored."
-    : "The lines are the same; the files differ in their bytes.";
+  if (parts.length > 0)
+    return t("compare.lineCounts", { counts: parts.join(t("common.listSeparator")) });
+  if (content.leftLineEnding !== content.rightLineEnding) return t("compare.onlyLineEndingsDiffer");
+  return ignoring ? t("compare.filesDifferInIgnored") : t("compare.filesDifferInBytes");
 }
 
 const SWAPPED_KIND: Record<CompareRowKind, CompareRowKind> = {

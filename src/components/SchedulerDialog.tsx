@@ -15,7 +15,8 @@ import { protocolInfo } from "../lib/protocols";
 import {
   INTERVAL_UNITS,
   MAX_INTERVAL_MINUTES,
-  WEEKDAY_NAMES,
+  WEEKDAYS,
+  weekdayName,
   convertTrigger,
   dateTimeInputValue,
   describeTrigger,
@@ -349,10 +350,10 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
                       <span className="site-item-name">{task.name}</span>
                       <span className="site-item-detail">
                         {task.running
-                          ? "Running now"
+                          ? t("schedule.runningNow")
                           : task.enabled
                             ? describeTrigger(task.trigger)
-                            : "Turned off"}
+                            : t("schedule.turnedOff")}
                       </span>
                     </span>
                   </button>
@@ -406,7 +407,7 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
               <span>
                 {draft.action.type === "transfer"
                   ? TRANSFER_CONNECTION_LABELS[draft.action.direction]
-                  : "Saved connection"}
+                  : t("schedule.savedConnection")}
               </span>
               <select
                 value={draft.action.connectionId}
@@ -414,14 +415,14 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
               >
                 <option value="">
                   {candidates.length > 0
-                    ? "Choose a connection"
+                    ? t("schedule.chooseAConnection")
                     : draft.action.type === "transfer"
-                      ? "No saved connections"
-                      : "No saved SFTP connections"}
+                      ? t("schedule.noSavedConnections")
+                      : t("schedule.noSavedSftpConnections")}
                 </option>
                 {unusable && (
                   <option value={draft.action.connectionId}>
-                    {connection?.name ?? "A deleted connection"}
+                    {connection?.name ?? t("schedule.aDeletedConnection")}
                   </option>
                 )}
                 {candidates.map((candidate) => (
@@ -435,8 +436,11 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
           {unusable && (
             <p className="warning-text">
               {connection
-                ? `${connection.name} uses ${protocolInfo(connection.protocol).label}; synchronizing and running commands need an SFTP connection.`
-                : "This task's saved connection was deleted. Choose another."}
+                ? t("schedule.usesSynchronizingAndRunningCommands", {
+                    name: connection.name,
+                    label: protocolInfo(connection.protocol).label,
+                  })
+                : t("schedule.thisTasksSavedConnectionWas")}
             </p>
           )}
           {!unusable && <UnsavedPasswords connections={signedInWith} />}
@@ -474,7 +478,7 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
                 className={`button ${confirmingDelete ? "button-danger" : ""} push-left`}
                 onClick={() => void deleteTask()}
               >
-                {confirmingDelete ? "Delete for good" : "Delete"}
+                {confirmingDelete ? t("schedule.deleteForGood") : t("common.delete")}
               </button>
             )}
             <button type="button" className="button" onClick={onClose}>
@@ -486,10 +490,10 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
               disabled={busy !== null || saved?.running}
               onClick={() => void runNow()}
             >
-              {busy === "running" ? "Starting..." : "Run now"}
+              {busy === "running" ? t("schedule.starting2") : t("schedule.runNow")}
             </button>
             <button type="submit" className="button button-primary" disabled={busy !== null}>
-              {busy === "saving" ? "Saving..." : "Save"}
+              {busy === "saving" ? t("schedule.saving") : t("common.save")}
             </button>
           </div>
         </form>
@@ -500,6 +504,7 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
 
 /** Says which connections cannot sign in on their own, because their password is not kept. */
 function UnsavedPasswords({ connections }: { connections: SavedConnection[] }) {
+  const t = useT();
   const unsaved = connections.filter(
     (connection) => connection.authType === "password" && !connection.saveSecret,
   );
@@ -508,13 +513,13 @@ function UnsavedPasswords({ connections }: { connections: SavedConnection[] }) {
   return (
     <p className="warning-text">
       {connections.length === 1
-        ? "This connection's password is not saved in the system keychain, so the task cannot log in."
+        ? t("schedule.thisConnectionsPasswordIsNotSaved")
         : unsaved.length === 1
-          ? `The password of ${names} is not saved in the system keychain, so the task cannot log in.`
-          : `The passwords of ${names} are not saved in the system keychain, so the task cannot log in.`}{" "}
+          ? t("schedule.thePasswordOfIsNot", { names })
+          : t("schedule.thePasswordsOfAreNot", { names })}{" "}
       {unsaved.length === 1
-        ? "Save it in the connection's settings."
-        : "Save them in the connections' settings."}
+        ? t("schedule.saveItInTheConnections")
+        : t("schedule.saveThemInTheConnections")}
     </p>
   );
 }
@@ -531,10 +536,10 @@ function TaskStatus({ task }: { task: TaskView }) {
   const t = useT();
   const dateFormat = useSettingsStore((state) => state.settings.interface.dateFormat);
   const next = !task.enabled
-    ? "Turned off"
+    ? t("schedule.turnedOff")
     : task.nextRun
       ? formatDate(task.nextRun, dateFormat)
-      : "None, the time has passed";
+      : t("schedule.noneTheTimeHasPassed");
   return (
     <div className="task-status">
       <span>
@@ -789,7 +794,7 @@ function IntervalFields({
       >
         {INTERVAL_UNITS.map((option) => (
           <option key={option.value} value={option.value}>
-            {option.label}
+            {t(option.label)}
           </option>
         ))}
       </select>
@@ -835,7 +840,8 @@ function DailyFields({
         }}
       />
       <div className="toggle-group" role="group" aria-label={t("schedule.daysOfTheWeek")}>
-        {WEEKDAY_NAMES.map((name, day) => {
+        {WEEKDAYS.map((day) => {
+          const name = weekdayName(day);
           const chosen = trigger.weekdays.includes(day);
           return (
             <button

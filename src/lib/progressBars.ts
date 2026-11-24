@@ -206,9 +206,13 @@ const look = (change: Partial<ProgressLook>): ProgressLook => ({
 
 /** Named looks offered in one click. The first is how bars look until they are changed. */
 export const PROGRESS_PRESETS: ProgressPreset[] = [
-  { id: "classic", get name() {
+  {
+    id: "classic",
+    get name() {
       return t("appearance.presetClassic");
-    }, look: look({}) },
+    },
+    look: look({}),
+  },
   {
     id: "showcase",
     get name() {

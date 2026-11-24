@@ -8,7 +8,7 @@ import {
   programFor,
   programLabel,
 } from "../lib/externalEditor";
-import { formatDate, formatSize, pluralize } from "../lib/format";
+import { formatDate, formatSize } from "../lib/format";
 import { external, onExternalEdits } from "../lib/ipc";
 import type { ExternalEdit, ExternalEditNotice, ExternalResolution } from "../lib/types";
 import {
@@ -187,7 +187,7 @@ function ConflictPrompt({ edit }: { edit: ExternalEdit }) {
             <tbody>
               <tr>
                 <th>{t("openWith.onTheServer")}</th>
-                <td>{deleted ? "Deleted" : formatSize(conflict.serverSize ?? 0)}</td>
+                <td>{deleted ? t("openWith.deleted") : formatSize(conflict.serverSize ?? 0)}</td>
                 <td>{deleted ? "" : formatDate(conflict.serverModified, dateFormat)}</td>
               </tr>
               <tr>
@@ -214,7 +214,7 @@ function ConflictPrompt({ edit }: { edit: ExternalEdit }) {
             title={overSftp ? undefined : t("openWith.comparingReadsTheServersCopy")}
             onClick={() => setComparing(true)}
           >
-            {overSftp ? "Compare" : "Compare (SFTP only)"}
+            {overSftp ? t("openWith.compare") : t("openWith.compareSftpOnly")}
           </button>
         )}
         <button type="button" className="button" onClick={() => answer("cancel")}>
@@ -564,7 +564,7 @@ function CloseTabPrompt({ closing }: { closing: ClosePrompt }) {
         </button>
         {stuck ? (
           <button type="button" className="button button-danger" onClick={close}>
-            {locking ? "Lock anyway" : "Close anyway"}
+            {locking ? t("openWith.lockAnyway") : t("openWith.closeAnyway")}
           </button>
         ) : (
           <>
@@ -586,12 +586,12 @@ function CloseTabPrompt({ closing }: { closing: ClosePrompt }) {
               onClick={() => void settle(false)}
             >
               {busy
-                ? "Uploading..."
+                ? t("openWith.uploading2")
                 : locking
-                  ? "Upload and lock"
+                  ? t("openWith.uploadAndLock")
                   : inVault.length > 0
-                    ? "Upload and close"
-                    : "Keep editing"}
+                    ? t("openWith.uploadAndClose")
+                    : t("openWith.keepEditing")}
             </button>
           </>
         )}
@@ -654,7 +654,11 @@ function ExitPrompt({ editIds }: { editIds: string[] }) {
           disabled={busy}
           onClick={() => void uploadAndQuit()}
         >
-          {busy ? "Uploading..." : failed ? "Try again" : "Upload and quit"}
+          {busy
+            ? t("openWith.uploading2")
+            : failed
+              ? t("common.tryAgain")
+              : t("openWith.uploadAndQuit")}
         </button>
       </div>
     </Dialog>

@@ -19,7 +19,7 @@ import {
   verdict,
   type DisplayItem,
 } from "../lib/compare";
-import { formatSize, pluralize } from "../lib/format";
+import { formatSize } from "../lib/format";
 import { fileOperations, toAppError } from "../lib/ipc";
 import type { CompareRow, CompareRowKind, Comparison, FileLocation } from "../lib/types";
 import { Dialog } from "./Dialog";
@@ -145,7 +145,7 @@ export function CompareDialog({ left, right, onClose }: CompareDialogProps) {
         </label>
         <span className="compare-verdict" role="status">
           {loading
-            ? "Comparing..."
+            ? t("compare.comparing")
             : comparison && content?.kind === "text" && verdict(comparison, ignoring)}
         </span>
       </div>
@@ -175,8 +175,8 @@ export function CompareDialog({ left, right, onClose }: CompareDialogProps) {
           {!comparison.identical && comparison.leftSize !== comparison.rightSize && (
             <p className="field-hint">
               {t("compare.onTheLeftOnThe", {
-                size: formatSize(comparison.leftSize),
-                size2: formatSize(comparison.rightSize),
+                left: formatSize(comparison.leftSize),
+                right: formatSize(comparison.rightSize),
               })}
             </p>
           )}
@@ -287,9 +287,9 @@ function CompareRows({
         </button>
         <span>
           {starts.length === 0
-            ? "No changes"
+            ? t("compare.noChanges")
             : currentIndex >= 0
-              ? `Change ${currentIndex + 1} of ${starts.length}`
+              ? t("compare.changeOf", { current: currentIndex + 1, count: starts.length })
               : t("compare.changes", { count: starts.length })}
         </span>
       </div>
@@ -315,9 +315,7 @@ function CompareRows({
                     style={style}
                     onClick={() => onExpand(item.start)}
                   >
-                    {t("compare.show", {
-                      t: t("compare.unchangedLines", { count: item.end - item.start }),
-                    })}
+                    {t("compare.showUnchangedLines", { count: item.end - item.start })}
                   </button>
                 );
               }

@@ -65,6 +65,11 @@ type PlaceholdersIn<Source> = Source extends string
 
 export type Placeholder<Key extends MessageKey> = PlaceholdersIn<EnglishMessage<Key>>;
 
+/** A key whose message has no placeholders, for keys picked at run time from a table. */
+export type PlainMessageKey = {
+  [Key in MessageKey]: [Placeholder<Key>] extends [never] ? Key : never;
+}[MessageKey];
+
 /** What a placeholder takes: numbers are written the way the language writes them. */
 export type ParamValue = string | number;
 

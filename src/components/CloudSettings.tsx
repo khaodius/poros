@@ -15,8 +15,8 @@ export function CloudSettingsPage({ settings }: { settings: Settings }) {
       <SettingGroup title={t("cloud.googleDrive")}>
         <p className="setting-note">
           {statuses?.google.builtIn
-            ? "This release signs in with its own Google app. To use yours instead:"
-            : "Poros signs in to Google Drive with a Google app you register:"}
+            ? t("cloud.thisReleaseSignsInWith")
+            : t("cloud.porosSignsInToGoogle")}
         </p>
         <ol className="setting-steps">
           <li>{t("cloud.inGoogleCloudConsoleCreate")}</li>
@@ -42,19 +42,21 @@ export function CloudSettingsPage({ settings }: { settings: Settings }) {
       <SettingGroup title={t("cloud.onedrive")}>
         <p className="setting-note">
           {statuses?.microsoft.builtIn
-            ? "This release signs in with its own Microsoft app. To use yours instead:"
-            : "Poros signs in to OneDrive with a Microsoft app you register:"}
+            ? t("cloud.thisReleaseSignsInWithIts")
+            : t("cloud.porosSignsInToOnedrive")}
         </p>
         <ol className="setting-steps">
           <li>{t("cloud.inTheMicrosoftEntraAdmin")}</li>
           <li>
-            {t("cloud.underAuthenticationAddTheMobile")} <code>{t("cloud.httpLocalhost")}</code>{" "}
-            {t("cloud.andAllowPublicClientFlows")}
+            {t.rich("cloud.underAuthenticationAddTheMobile", {
+              uri: <code>http://localhost</code>,
+            })}
           </li>
           <li>
-            {t("cloud.underApiPermissionsAddThe")}
-            <code>{t("cloud.filesReadwriteAll")}</code> {t("cloud.and")}{" "}
-            <code>{t("cloud.offlineAccess")}</code>.
+            {t.rich("cloud.underApiPermissionsAddThe", {
+              files: <code>Files.ReadWrite.All</code>,
+              offline: <code>offline_access</code>,
+            })}
           </li>
         </ol>
         <TextSetting
@@ -68,7 +70,7 @@ export function CloudSettingsPage({ settings }: { settings: Settings }) {
           label={t("cloud.directoryTenant")}
           hint={t("cloud.directoryTenantHint")}
           value={cloud.microsoftTenant}
-          placeholder={t("cloud.common")}
+          placeholder="common"
           wide
           onCommit={(microsoftTenant) => set({ microsoftTenant })}
         />
@@ -77,13 +79,13 @@ export function CloudSettingsPage({ settings }: { settings: Settings }) {
       <SettingGroup title={t("cloud.box")}>
         <p className="setting-note">
           {statuses?.box.builtIn
-            ? "This release signs in with its own Box app. To use yours instead:"
-            : "Poros signs in to Box with a Box app you register:"}
+            ? t("cloud.thisReleaseSignsInWithItsOwn")
+            : t("cloud.porosSignsInToBox")}
         </p>
         <ol className="setting-steps">
           <li>{t("cloud.inTheBoxDeveloperConsole")}</li>
           <li>
-            {t("cloud.onTheConfigurationTabAdd")} <code>{t("cloud.httpLocalhost")}</code>.
+            {t.rich("cloud.onTheConfigurationTabAdd", { uri: <code>http://localhost</code> })}
           </li>
           <li>{t("cloud.underApplicationScopesKeepRead")}</li>
           <li>{t("cloud.copyTheClientIdAnd")}</li>

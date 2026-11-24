@@ -65,8 +65,14 @@ export const connect = {
 
   // components/ImportConnectionsDialog
   importFrom: "Import from {label}",
-  importedFrom: "Imported {count} from {label}.{passwords}",
-  importedTheseCouldNotBe: "Imported {count}.{passwords} These could not be saved: {join}",
+  importedFrom: "Imported {imported} from {label}.{passwords}",
+  importedTheseCouldNotBe: "Imported {imported}.{passwords} These could not be saved: {failures}",
+  importedConnections: { one: "{count} connection", other: "{count} connections" },
+  passwordsLeftOut: {
+    one: " The system keychain is not available, so {count} password was left out; Poros asks for them when you connect.",
+    other:
+      " The system keychain is not available, so {count} passwords were left out; Poros asks for them when you connect.",
+  },
   porosWorksOutWhichApp: "Poros works out which app wrote the file",
   lookingForOtherApps: "Looking for other apps...",
   porosCopiesTheSavedSites:
@@ -124,4 +130,31 @@ export const connect = {
   vault: "Vault",
   google: "Google",
   microsoft: "Microsoft",
+  // components/ConnectDialog
+  endpoint: "Endpoint",
+  saveThisConnectionAndIts: "Save this connection and its sign-in",
+  saveThisConnection: "Save this connection",
+  deleteForGood: "Delete for good",
+  saving: "Saving...",
+  connecting: "Connecting...",
+
+  // components/HostKeyDialog
+  theCertificatePresentedBy: "The certificate presented by ",
+  thisComputerDoesNotTrust: "This computer does not trust the certificate presented by ",
+  type: "Type",
+  keyType: "Key type",
+  trustAndConnect: "Trust and connect",
+
+  // components/ImportConnectionsDialog
+  reading: "Reading...",
+  otherFile: "Other file...",
+  importing: "Importing...",
+  import: "Import",
+  unnamed: "Unnamed",
+
+  // lib/protocols
+  accessKeyId: "Access key ID",
+  secretAccessKey: "Secret access key",
+  applicationKeyId: "Application key ID",
+  applicationKey: "Application key",
 } as const satisfies MessageArea;

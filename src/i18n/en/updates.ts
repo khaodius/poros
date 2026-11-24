@@ -26,4 +26,6 @@ export const updates = {
     one: "Unsaved changes in {count} file will be lost when Poros restarts.",
     other: "Unsaved changes in {count} files will be lost when Poros restarts.",
   },
+  // components/UpdateNotice
+  of: "{size} of {size2}",
 } as const satisfies MessageArea;

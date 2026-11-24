@@ -69,7 +69,7 @@ import type { FileSource } from "../lib/fileSource";
 import { PANE_KEYBOARD_TARGET } from "../lib/focus";
 import { FOCUS_PREVIEW_SHORTCUT, isFocusPreviewKey, nextPane } from "../lib/paneFocus";
 import { toAppError } from "../lib/ipc";
-import { formatSize, pluralize } from "../lib/format";
+import { englishCount, formatSize } from "../lib/format";
 import { baseName, exampleFileName, samePath } from "../lib/path";
 import { protocolInfo } from "../lib/protocols";
 import {
@@ -884,10 +884,16 @@ export function FilePane({
 
   /** Makes a scheduled task that copies the files to the other side, as the item above does. */
   const scheduleMenuItem = (targets: FileEntry[]): MenuItem => {
-    const label = source.kind === "local" ? "Schedule upload" : "Schedule download";
+    const upload = source.kind === "local";
     const blocker = scheduleBlocker(tabId);
     return {
-      label: blocker ? `${label} (${blocker})` : `${label}...`,
+      label: blocker
+        ? upload
+          ? t("pane.scheduleUploadUnavailable", { reason: blocker })
+          : t("pane.scheduleDownloadUnavailable", { reason: blocker })
+        : upload
+          ? t("pane.scheduleUpload")
+          : t("pane.scheduleDownload"),
       icon: <CalendarClock size={14} />,
       disabled: blocker !== null,
       onSelect: () => scheduleFiles(tabId, targets),
@@ -1567,7 +1573,7 @@ export function FilePane({
               <TriangleAlert size={13} />
               <span>
                 {t("pane.couldNotRefreshThisFolder", {
-                  replace: pane.error?.message.trim().replace(/\.+$/, ""),
+                  reason: pane.error?.message.trim().replace(/\.+$/, "") ?? "",
                 })}
               </span>
               <button type="button" className="link-button" onClick={() => void pane.refresh()}>
@@ -1654,7 +1660,9 @@ export function FilePane({
           {pane.error ? (
             <>
               <p className="pane-empty-title">
-                {pane.failedPath ? "Could not refresh this folder" : "Could not open this folder"}
+                {pane.failedPath
+                  ? t("pane.couldNotRefreshThisFolder2")
+                  : t("pane.couldNotOpenThisFolder")}
               </p>
               <p className="pane-empty-detail">{pane.error.message}</p>
               <div className="pane-empty-actions">
@@ -1683,9 +1691,15 @@ export function FilePane({
 
       <footer className="pane-footer">
         <span>
-          {lockedCard ? "Locked vault" : pluralize(pane.entryCount, inResults ? "result" : "item")}
-          {!lockedCard && pane.hiddenCount > 0 && `, ${pane.hiddenCount} hidden`}
-          {!lockedCard && identicalHidden > 0 && `, ${identicalHidden} identical not shown`}
+          {lockedCard
+            ? t("pane.lockedVault")
+            : inResults
+              ? t("pane.results", { count: pane.entryCount })
+              : t("pane.items", { count: pane.entryCount })}
+          {!lockedCard && pane.hiddenCount > 0 && t("pane.hidden", { count: pane.hiddenCount })}
+          {!lockedCard &&
+            identicalHidden > 0 &&
+            t("pane.identicalNotShown", { count: identicalHidden })}
         </span>
         {selected.length > 0 && (
           <span>
@@ -1832,7 +1846,10 @@ export function FilePane({
               return;
             }
             await source.remove(removed);
-            writeLog("info", `Deleted ${pluralize(entries.length, `${where} item`)} in ${folder}`);
+            writeLog(
+              "info",
+              `Deleted ${englishCount(entries.length, `${where} item`)} in ${folder}`,
+            );
             if (inResults) await resultsChanged(entries, [], next, true);
             else await pane.refresh(next);
           }}
@@ -1849,13 +1866,14 @@ function DeleteSummary({ entries, where }: { entries: FileEntry[]; where: string
   return (
     <>
       <p>
-        Permanently delete{" "}
-        {entries.length === 1 ? (
-          <strong>{entries[0].name}</strong>
-        ) : (
-          t("pane.items", { count: entries.length })
-        )}{" "}
-        from the {where} side? This cannot be undone.
+        {t.rich(where === "remote" ? "pane.deleteFromRemoteSide" : "pane.deleteFromLocalSide", {
+          what:
+            entries.length === 1 ? (
+              <strong>{entries[0].name}</strong>
+            ) : (
+              t("pane.items", { count: entries.length })
+            ),
+        })}
       </p>
       {folders > 0 && <p className="warning-text">{t("pane.foldersAreDeletedWithEverything")}</p>}
       {entries.length > 1 && (
@@ -1864,7 +1882,7 @@ function DeleteSummary({ entries, where }: { entries: FileEntry[]; where: string
             <li key={entry.path}>{entry.name}</li>
           ))}
           {entries.length > preview.length && (
-            <li>{t("pane.andMore", { value: entries.length - preview.length })}</li>
+            <li>{t("pane.andMore", { count: entries.length - preview.length })}</li>
           )}
         </ul>
       )}

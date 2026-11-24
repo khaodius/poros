@@ -1,6 +1,6 @@
 // What Poros says and does when the transfer queue finishes.
 
-import { formatDuration, formatSize, pluralize } from "./format";
+import { formatDuration, formatSize } from "./format";
 import type { WhenDoneAction } from "./settings";
 import type { QueueFinished } from "./types";
 import { t } from "../i18n";
@@ -40,44 +40,59 @@ export const COUNTDOWN_TEXT: Record<CountdownAction, { title: string; confirm: s
     get title() {
       return t("automation.closingPoros");
     },
-    confirm: "Close now",
+    get confirm() {
+      return t("automation.confirmCloseNow");
+    },
   },
   lock: {
     get title() {
       return t("automation.lockingTheComputer");
     },
-    confirm: "Lock now",
+    get confirm() {
+      return t("automation.confirmLockNow");
+    },
   },
   sleep: {
     get title() {
       return t("automation.puttingTheComputerToSleep");
     },
-    confirm: "Sleep now",
+    get confirm() {
+      return t("automation.confirmSleepNow");
+    },
   },
   hibernate: {
     get title() {
       return t("automation.hibernatingTheComputer");
     },
-    confirm: "Hibernate now",
+    get confirm() {
+      return t("automation.confirmHibernateNow");
+    },
   },
   logOff: {
     get title() {
       return t("automation.loggingOff");
     },
-    confirm: "Log off now",
+    get confirm() {
+      return t("automation.confirmLogOffNow");
+    },
   },
   shutDown: {
     get title() {
       return t("automation.shuttingDownTheComputer");
     },
-    confirm: "Shut down now",
+    get confirm() {
+      return t("automation.confirmShutDownNow");
+    },
   },
 };
 
 export const COUNTDOWN_SECONDS = 30;
 
 export function describeQueueFinished(finished: QueueFinished): { title: string; body: string } {
-  const title = finished.failed > 0 ? "Transfers finished with errors" : "Transfers finished";
+  const title =
+    finished.failed > 0
+      ? t("automation.transfersFinishedWithErrors")
+      : t("automation.transfersFinished");
   const totals = [
     t("automation.filesTransferredIn", {
       count: finished.done,
@@ -85,9 +100,9 @@ export function describeQueueFinished(finished: QueueFinished): { title: string;
       duration: formatDuration(finished.elapsedMillis / 1000),
     }),
   ];
-  if (finished.failed > 0) totals.push(`${finished.failed} failed`);
-  if (finished.skipped > 0) totals.push(`${finished.skipped} skipped`);
-  return { title, body: totals.join(", ") };
+  if (finished.failed > 0) totals.push(t("automation.failedCount", { count: finished.failed }));
+  if (finished.skipped > 0) totals.push(t("automation.skippedCount", { count: finished.skipped }));
+  return { title, body: totals.join(t("common.listSeparator")) };
 }
 
 /** Handed to the command run when the queue finishes. */

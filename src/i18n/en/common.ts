@@ -98,4 +98,12 @@ export const common = {
   durationSeconds: "{seconds}s",
   durationMinutes: "{minutes}m {seconds}s",
   durationHours: "{hours}h {minutes}m",
+
+  // Between the parts of a list that reads as one line, such as totals
+  listSeparator: ", ",
+  // components/ConfirmDialog
+  working: "Working...",
+
+  // components/FontPicker
+  default: "Default",
 } as const satisfies MessageArea;

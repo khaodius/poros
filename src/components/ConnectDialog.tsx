@@ -323,7 +323,7 @@ export function ConnectDialog({
               {!b2 && (
                 <div className="form-row">
                   <label className="field grow">
-                    <span>{s3 ? "Endpoint" : "Host"}</span>
+                    <span>{s3 ? t("connect.endpoint") : t("connect.host")}</span>
                     <input
                       data-autofocus
                       value={draft.host}
@@ -359,7 +359,7 @@ export function ConnectDialog({
               )}
 
               <label className="field">
-                <span>{keys ? keys.id : "Username"}</span>
+                <span>{keys ? keys.id : t("connect.username")}</span>
                 <input
                   data-autofocus={b2 ? true : undefined}
                   value={draft.username}
@@ -396,7 +396,7 @@ export function ConnectDialog({
 
           {draft.authChoice === "password" && (
             <label className="field">
-              <span>{keys ? keys.secret : "Password"}</span>
+              <span>{keys ? keys.secret : t("connect.password")}</span>
               <input
                 type="password"
                 value={draft.password}
@@ -519,7 +519,7 @@ export function ConnectDialog({
                 checked={draft.saveConnection}
                 onChange={(event) => update("saveConnection", event.target.checked)}
               />
-              {browser ? "Save this connection and its sign-in" : "Save this connection"}
+              {browser ? t("connect.saveThisConnectionAndIts") : t("connect.saveThisConnection")}
             </label>
             {!browser && (
               <label className={`check ${draft.authChoice === "agent" ? "is-disabled" : ""}`}>
@@ -563,7 +563,7 @@ export function ConnectDialog({
                 className={`button ${confirmingDelete ? "button-danger" : ""} push-left`}
                 onClick={() => void deleteSelected()}
               >
-                {confirmingDelete ? "Delete for good" : "Delete"}
+                {confirmingDelete ? t("connect.deleteForGood") : t("common.delete")}
               </button>
             )}
             <button type="button" className="button" onClick={onClose}>
@@ -575,14 +575,14 @@ export function ConnectDialog({
               disabled={!canSave || busy !== null}
               onClick={() => void saveOnly()}
             >
-              {busy === "saving" ? "Saving..." : "Save"}
+              {busy === "saving" ? t("connect.saving") : t("common.save")}
             </button>
             <button
               type="submit"
               className="button button-primary"
               disabled={!ready || busy !== null}
             >
-              {busy === "connecting" ? "Connecting..." : "Connect"}
+              {busy === "connecting" ? t("connect.connecting") : t("common.connect")}
             </button>
           </div>
         </form>

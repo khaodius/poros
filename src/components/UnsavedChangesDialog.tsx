@@ -92,7 +92,7 @@ export function UnsavedChangesDialog({ tabIds, closeWindow, onClose }: UnsavedCh
           onClick={() => void save()}
           disabled={busy}
         >
-          {busy ? "Saving..." : names.length === 1 ? "Save" : "Save all"}
+          {busy ? t("editor.saving") : names.length === 1 ? t("common.save") : t("editor.saveAll")}
         </button>
       </div>
     </Dialog>

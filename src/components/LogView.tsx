@@ -132,7 +132,7 @@ export function LogView() {
           <option value={ALL_SESSIONS}>{t("log.allSessions")}</option>
           {loggedSessions.map((id) => (
             <option key={id} value={id}>
-              {sessions[id]?.info.label ?? `Closed session ${id.slice(0, 8)}`}
+              {sessions[id]?.info.label ?? t("log.closedSession", { slice: id.slice(0, 8) })}
             </option>
           ))}
         </select>
@@ -219,8 +219,8 @@ export function LogView() {
         {visible.length === 0 && (
           <p className="log-empty">
             {lines.length === 0
-              ? "Connection and transfer activity appears here."
-              : "No lines match the filters."}
+              ? t("log.connectionAndTransferActivityAppears")
+              : t("log.noLinesMatchTheFilters")}
           </p>
         )}
         {visible.map((line) => (

@@ -76,6 +76,11 @@ export function formatVersion(version: string): string {
   return patch === "0" ? `v${major}.${minor}` : `v${major}.${minor}.${patch}`;
 }
 
+/** `3 items`, for the log, which is written in English whatever the interface's language. */
+export function englishCount(count: number, singular: string, plural = `${singular}s`): string {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
 export function formatSpeed(bytesPerSecond: number): string {
   return `${formatSize(Math.max(0, Math.round(bytesPerSecond)))}/s`;
 }

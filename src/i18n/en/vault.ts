@@ -23,4 +23,11 @@ export const vault = {
   isACryptomatorVaultEnter: "is a Cryptomator vault. Enter its password to open it here.",
   vaultPassword: "Vault password",
   showEncryptedFiles: "Show encrypted files",
+  // components/NewVaultDialog
+  creating: "Creating...",
+  createVault: "Create vault",
+
+  // components/VaultUnlockCard
+  unlocking: "Unlocking...",
+  unlock: "Unlock",
 } as const satisfies MessageArea;

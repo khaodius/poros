@@ -40,8 +40,8 @@ export function HostKeyDialog() {
           {certificate ? (
             <p>
               {changed
-                ? "The certificate presented by "
-                : "This computer does not trust the certificate presented by "}
+                ? t("connect.theCertificatePresentedBy")
+                : t("connect.thisComputerDoesNotTrust")}
               <strong>{target}</strong>
               {changed ? " does not match the one you trusted before. " : ". "}
               {problem} Compare the fingerprint with the one your server administrator gave you
@@ -58,7 +58,7 @@ export function HostKeyDialog() {
             </p>
           )}
           <dl className="host-key-details">
-            <dt>{certificate ? "Type" : "Key type"}</dt>
+            <dt>{certificate ? t("connect.type") : t("connect.keyType")}</dt>
             <dd>{hostKey.algorithm}</dd>
             <dt>{t("connect.fingerprint")}</dt>
             <dd className="mono selectable">{hostKey.fingerprint}</dd>
@@ -80,7 +80,7 @@ export function HostKeyDialog() {
         >
           {changed
             ? `Replace ${certificate ? "certificate" : "key"} and connect`
-            : "Trust and connect"}
+            : t("connect.trustAndConnect")}
         </button>
       </div>
     </Dialog>

@@ -6,7 +6,6 @@ export const workspace = {
   couldNotReadScheduledTasks: "Could not read scheduled tasks",
   couldNotReadTheStart: "Could not read the start-up log",
   couldNotStart: "Could not start",
-  poros: "Poros",
   connectToServer: "Connect to server",
   synchronizeFolders: "Synchronize folders",
   scheduledTasks: "Scheduled tasks",
@@ -65,7 +64,7 @@ export const workspace = {
   updateTo: "Update to {version}",
   uploadSpeed: "Upload speed",
   downloadSpeed: "Download speed",
-  poros2: "Poros {value}",
+  appVersion: "Poros {version}",
 
   // components/TabBar
   openTerminal: "Open terminal",
@@ -115,27 +114,12 @@ export const workspace = {
   splitLeft: "Split left",
   splitUp: "Split up",
   // components/TransferTaskFields
-  copiesFilesAndFoldersFrom: "Copies files and folders from this computer to the server.",
-  copiesFilesAndFoldersFromThe: "Copies files and folders from the server to this computer.",
-  betweenServers: "Between servers",
-  copiesFilesAndFoldersFromOne: "Copies files and folders from one saved connection to another.",
-  addFolders: "Add folders",
-  addFiles: "Add files",
-  chooseTheFolderToDownload: "Choose the folder to download into",
-  direction: "Direction",
-  copyFrom: "Copy from",
-  chooseAConnection: "Choose a connection",
-  aDeletedConnection: "A deleted connection",
-  itemsToCopy: "Items to copy",
-  removeFromTheTask: "Remove from the task",
-  remove: "Remove {path}",
-  aFullPathOnThe: "A full path on the server; end a folder with /",
-  serverPathToAdd: "Server path to add",
-  intoTheFolderOnThis: "Into the folder on this computer",
-  theFolderToDownloadInto: "The folder to download into",
-  intoTheFolderOnThe: "Into the folder on the server",
-  varBackups: "/var/backups",
-  inAFolderOfIts: "In a folder of its own (optional)",
-  backup: "backup-{date}",
-  whenAFileIsAlready: "When a file is already there",
+  // components/TabContent
+  reconnectingInS: "Reconnecting in {secondsLeft} s",
+  reconnecting: "Reconnecting...",
+  attempt: " (attempt {value})",
+  reconnectNow: "Reconnect now",
+  reconnect: "Reconnect",
+
+  // components/TransferTaskFields
 } as const satisfies MessageArea;

@@ -15,7 +15,7 @@ import { forgetListing, listingsLeft } from "./listings";
 import { getPane } from "./paneRegistry";
 import { forgetSessionPreviews } from "./previewReads";
 import { useSettingsStore } from "./settingsStore";
-import { useT } from "../i18n";
+import { t } from "../i18n";
 
 export interface SessionEntry {
   info: SessionInfo;
@@ -129,7 +129,6 @@ function moveTabs(previousId: string, sessionId: string): void {
 }
 
 export const useSessionStore = create<SessionState>((set, get) => {
-  const t = useT();
   return {
     sessions: {},
 

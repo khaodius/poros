@@ -28,7 +28,6 @@ export const automation = {
   deleteCommand: "Delete command",
   nameOfTheNewCommand: "Name of the new command",
   newCommand: "New command",
-  duSh: "du -sh {paths}",
 
   // components/CommandOutputDialog
   earlierOutputWasDropped: "Earlier output was dropped.",
@@ -38,7 +37,7 @@ export const automation = {
   // components/RunCommandDialog
   runACommand: "Run a command",
   runACommandOnThe: "Run a command on the server",
-  commandToRunIn: "Command to run in",
+  commandToRunIn: "Command to run in {folder}",
   refreshTheServersFoldersWhen: "Refresh the server's folders when it finishes",
   selectFilesOrFoldersTo: "Select files or folders to fill in the placeholders.",
   run: "Run",
@@ -49,7 +48,7 @@ export const automation = {
   whenTheQueueFinishes: "When the queue finishes",
 
   // components/WhenDoneCountdown
-  theTransferQueueHasFinished: "The transfer queue has finished. {title} in",
+  theTransferQueueHasFinished: "The transfer queue has finished. {title} in {seconds}.",
   seconds: { one: "{count} second", other: "{count} seconds" },
 
   // components/commandMenu
@@ -89,4 +88,35 @@ export const automation = {
   theFullPathsOfAll: "the full paths of all selected items",
   theNamesOfAllSelected: "the names of all selected items",
   theFolderShown: "the folder shown",
+
+  // lib/automation: the countdown's button
+  confirmCloseNow: "Close now",
+  confirmLockNow: "Lock now",
+  confirmSleepNow: "Sleep now",
+  confirmHibernateNow: "Hibernate now",
+  confirmLogOffNow: "Log off now",
+  confirmShutDownNow: "Shut down now",
+
+  // lib/automation: the notification when the queue finishes
+  transfersFinishedWithErrors: "Transfers finished with errors",
+  transfersFinished: "Transfers finished",
+  failedCount: "{count} failed",
+  skippedCount: "{count} skipped",
+
+  // lib/commands: how a server command ended
+  stoppedAfter: "Stopped after {elapsed}",
+  endedBySignal: "Ended by signal {signal} after {elapsed}",
+  endedWithoutStatus: "Ended without an exit status after {elapsed}",
+  exitedWithStatus: "Exited with status {status} after {elapsed}",
+  finishedIn: "Finished in {elapsed}",
+
+  // components/CommandOutputDialog
+  commandIn: "{command} in {folder}",
+  commandsIn: { one: "{count} command in {folder}", other: "{count} commands in {folder}" },
+  theLoginFolder: "the login folder",
+
+  // state/whenDone: what failed, before the reason
+  whenTheQueueFinished: "When the queue finished",
+  theCommandAfterTheQueue: "The command after the queue finished",
+  // components/AutomationSettings
 } as const satisfies MessageArea;

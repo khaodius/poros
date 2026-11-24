@@ -111,17 +111,19 @@ export function ImportConnectionsDialog({ onClose }: { onClose: () => void }) {
         folderNames,
       });
       pendingScan.current = null;
-      const count = `${outcome.imported} connection${outcome.imported === 1 ? "" : "s"}`;
+      const imported = t("connect.importedConnections", { count: outcome.imported });
       const passwords =
         outcome.withoutPasswords > 0
-          ? ` The system keychain is not available, so ${outcome.withoutPasswords} password${
-              outcome.withoutPasswords === 1 ? " was" : "s were"
-            } left out; Poros asks for them when you connect.`
+          ? t("connect.passwordsLeftOut", { count: outcome.withoutPasswords })
           : "";
       if (outcome.failures.length === 0) {
         showToast(
           "info",
-          t("connect.importedFrom", { count, label: IMPORT_SOURCES[scan.source].label, passwords }),
+          t("connect.importedFrom", {
+            imported,
+            label: IMPORT_SOURCES[scan.source].label,
+            passwords,
+          }),
         );
         latestOnClose.current();
         return;
@@ -129,9 +131,9 @@ export function ImportConnectionsDialog({ onClose }: { onClose: () => void }) {
       setScan(null);
       setError(
         t("connect.importedTheseCouldNotBe", {
-          count,
+          imported,
           passwords,
-          join: outcome.failures.join("; "),
+          failures: outcome.failures.join("; "),
         }),
       );
     } catch (caught) {
@@ -183,7 +185,9 @@ export function ImportConnectionsDialog({ onClose }: { onClose: () => void }) {
             onClick={() => void chooseFiles(null)}
           >
             <FileSearch size={14} />
-            {busy?.kind === "scan" && busy.source === null ? "Reading..." : "Other file..."}
+            {busy?.kind === "scan" && busy.source === null
+              ? t("connect.reading")
+              : t("connect.otherFile")}
           </button>
         )}
         <button type="button" className="button" onClick={onClose}>
@@ -197,7 +201,7 @@ export function ImportConnectionsDialog({ onClose }: { onClose: () => void }) {
             onClick={() => void runImport()}
           >
             {busy?.kind === "import"
-              ? "Importing..."
+              ? t("connect.importing")
               : `Import ${planned.size} connection${planned.size === 1 ? "" : "s"}`}
           </button>
         )}
@@ -261,7 +265,7 @@ function SourceList({ sources, busy, onRead, onChoose }: SourceListProps) {
                   disabled={busy !== null}
                   onClick={() => onRead(info.source)}
                 >
-                  {reading ? "Reading..." : "Import"}
+                  {reading ? t("connect.reading") : t("connect.import")}
                 </button>
               )}
             </li>
@@ -404,7 +408,7 @@ function ImportReview({
           <ul>
             {scan.skipped.map((skipped, index) => (
               <li key={index}>
-                <strong>{skipped.name || "Unnamed"}</strong>: {skipped.reason}
+                <strong>{skipped.name || t("connect.unnamed")}</strong>: {skipped.reason}
               </li>
             ))}
           </ul>

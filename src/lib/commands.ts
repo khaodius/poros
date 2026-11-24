@@ -97,9 +97,13 @@ export function commandSucceeded(result: CommandResult): boolean {
 /** How a command ended, as the backend logs it. */
 export function describeResult(result: CommandResult): string {
   const elapsed = formatDuration(result.elapsedMillis / 1000);
-  if (result.stopped) return `Stopped after ${elapsed}`;
-  if (result.signal !== null) return `Ended by signal ${result.signal} after ${elapsed}`;
-  if (result.exitStatus === null) return `Ended without an exit status after ${elapsed}`;
-  if (result.exitStatus !== 0) return `Exited with status ${result.exitStatus} after ${elapsed}`;
-  return `Finished in ${elapsed}`;
+  if (result.stopped) return t("automation.stoppedAfter", { elapsed });
+  if (result.signal !== null) {
+    return t("automation.endedBySignal", { signal: result.signal, elapsed });
+  }
+  if (result.exitStatus === null) return t("automation.endedWithoutStatus", { elapsed });
+  if (result.exitStatus !== 0) {
+    return t("automation.exitedWithStatus", { status: String(result.exitStatus), elapsed });
+  }
+  return t("automation.finishedIn", { elapsed });
 }

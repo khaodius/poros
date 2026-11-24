@@ -1,6 +1,5 @@
 import { useMemo, useState } from "react";
 import type { OutcomeRow, OutcomeStatus } from "../lib/bulkRename";
-import { pluralize } from "../lib/format";
 import type { RenameReport } from "../state/bulkRename";
 import { Dialog } from "./Dialog";
 import { RenameTable, type RenameTableRow } from "./RenameTable";

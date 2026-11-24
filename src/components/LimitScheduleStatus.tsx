@@ -55,7 +55,7 @@ export function LimitScheduleStatus() {
         onClick={openScheduleSettings}
       >
         {limits.ignored ? (
-          `Schedule ignored${until}`
+          t("limits.scheduleIgnored", { until })
         ) : (
           <>
             {shownLimits(limits).map(({ direction, mode, text }) => {

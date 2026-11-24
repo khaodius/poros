@@ -21,7 +21,18 @@ import {
 } from "./settingsFields";
 import { formatList, useT } from "../i18n";
 
-const SERVER_PROGRAMS = ["7-Zip", "unrar", "unar", "bsdtar", "tar", "unzip", "gzip", "bzip2", "xz", "zstd"];
+const SERVER_PROGRAMS = [
+  "7-Zip",
+  "unrar",
+  "unar",
+  "bsdtar",
+  "tar",
+  "unzip",
+  "gzip",
+  "bzip2",
+  "xz",
+  "zstd",
+];
 
 /** Settings > Archives: the program that extracts on this computer, and what servers use. */
 export function ArchiveSettingsPage({ settings }: { settings: Settings }) {

@@ -202,8 +202,8 @@ export function taskFromFiles({
 
 /** Why a tab's files cannot be scheduled for download, in a few words for a menu; or null. */
 export function downloadBlocker(server: SessionFacts | undefined): string | null {
-  if (!server) return "no server";
-  if (server.vault) return "not in a vault";
-  if (!server.savedConnectionId) return "save the connection first";
+  if (!server) return t("schedule.blockedNoServer");
+  if (server.vault) return t("schedule.blockedInVault");
+  if (!server.savedConnectionId) return t("schedule.blockedUnsaved");
   return null;
 }

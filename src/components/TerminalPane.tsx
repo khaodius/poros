@@ -3,6 +3,7 @@ import { ClipboardPaste, Copy, Eraser, RotateCw, SquareTerminal, TextSelect } fr
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
+import { useLatest } from "../hooks/useLatest";
 import { clipboard, terminal as terminals, toAppError } from "../lib/ipc";
 import type { TerminalTab } from "../lib/layout";
 import { clipboardText } from "../lib/osc52";
@@ -54,6 +55,8 @@ function fitShown(host: HTMLElement, fit: FitAddon): void {
 /** A shell on the server, in a terminal that follows the theme and the monospace font. */
 export default function TerminalPane({ tab, visible, active }: TerminalPaneProps) {
   const t = useT();
+  // The terminal lives across language changes, so its clipboard toast reads the latest one.
+  const latestT = useLatest(t);
   const hostRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -136,7 +139,7 @@ export default function TerminalPane({ tab, visible, active }: TerminalPaneProps
       try {
         xterm.paste(await navigator.clipboard.readText());
       } catch {
-        showToast("info", t("terminal.couldNotReadTheClipboard"));
+        showToast("info", latestT.current("terminal.couldNotReadTheClipboard"));
       }
     };
     pasteRef.current = pasteFromClipboard;
@@ -206,7 +209,7 @@ export default function TerminalPane({ tab, visible, active }: TerminalPaneProps
       xtermRef.current = null;
       fitRef.current = null;
     };
-  }, [attempt, showToast, t]);
+  }, [attempt, latestT, showToast]);
 
   useEffect(() => {
     fontSizeRef.current = fontSize;
@@ -280,7 +283,11 @@ export default function TerminalPane({ tab, visible, active }: TerminalPaneProps
           <span title={tab.label}>{tab.label}</span>
         </div>
         <span className="terminal-state">
-          {phase === "connecting" ? "Connecting..." : phase === "running" ? "Connected" : ""}
+          {phase === "connecting"
+            ? t("terminal.connecting")
+            : phase === "running"
+              ? t("terminal.connected")
+              : ""}
         </span>
       </header>
       <div className="terminal-body" onContextMenu={showMenu}>

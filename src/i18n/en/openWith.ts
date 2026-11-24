@@ -103,4 +103,20 @@ export const openWith = {
   changedOnTheServer2: "Changed on the server",
   uploading: "Uploading",
   uploadFailed: "Upload failed",
+  // components/ExternalEditDialogs
+  deleted: "Deleted",
+  compare: "Compare",
+  compareSftpOnly: "Compare (SFTP only)",
+  lockAnyway: "Lock anyway",
+  closeAnyway: "Close anyway",
+  uploading2: "Uploading...",
+  uploadAndLock: "Upload and lock",
+  uploadAndClose: "Upload and close",
+  keepEditing: "Keep editing",
+  uploadAndQuit: "Upload and quit",
+
+  // components/ExternalEditsStatus
+  notEditingAnyFiles: "Not editing any files",
+  eachSaveIsUploadedAs: "Each save is uploaded as soon as the program has written it.",
+  savesWaitForYouTo: "Saves wait for you to upload them.",
 } as const satisfies MessageArea;

@@ -19,7 +19,13 @@ import {
   ordinaryLimits,
   ruleLabel,
 } from "../lib/limitSchedule";
-import { describeDays, minuteOfDayFrom, timeInputValue, WEEKDAY_NAMES } from "../lib/schedule";
+import {
+  describeDays,
+  minuteOfDayFrom,
+  timeInputValue,
+  WEEKDAYS,
+  weekdayName,
+} from "../lib/schedule";
 import type { TransferSettings } from "../lib/settings";
 import type { LimitMode, LimitRule, LimitSchedule, RateLimit } from "../lib/types";
 import { LIMIT_SCHEDULE_GROUP_ID, takeScheduleReveal } from "../state/scheduleSettingsReveal";
@@ -248,7 +254,7 @@ function RuleEditor({
             </span>
             <span className="limit-rule-facts">
               <span className={rule.days.length === 0 ? "is-never" : ""}>
-                {rule.days.length === 0 ? "No days, so it never applies" : describeDays(rule.days)}
+                {rule.days.length === 0 ? t("limits.noDaysSoItNever") : describeDays(rule.days)}
               </span>
               <span>{describeHours(rule)}</span>
               <LimitFact direction="upload" limit={rule.upload} />
@@ -302,7 +308,8 @@ function RuleEditor({
             </div>
             <div className="limit-rule-line">
               <div className="toggle-group" role="group" aria-label={t("limits.daysOfTheWeek")}>
-                {WEEKDAY_NAMES.map((name, day) => {
+                {WEEKDAYS.map((day) => {
+                  const name = weekdayName(day);
                   const chosen = rule.days.includes(day);
                   return (
                     <button

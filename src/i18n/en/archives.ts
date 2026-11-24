@@ -31,4 +31,5 @@ export const archives = {
   zstandard: "Zstandard",
   programsFileType: "Programs",
   extracting: "Extracting {name}",
+  // components/ArchiveSettings
 } as const satisfies MessageArea;

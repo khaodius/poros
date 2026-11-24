@@ -50,7 +50,7 @@ import {
   SettingRow,
   SwitchSetting,
 } from "./settingsFields";
-import { t, useT, type MessageKey } from "../i18n";
+import { t, useT, type PlainMessageKey } from "../i18n";
 
 const TOKENS = new Map(COLOR_TOKENS.map((token) => [token.key, token]));
 const BASES: { value: ThemeBase; label: string }[] = [
@@ -90,7 +90,7 @@ const LOOK_KEYS = (Object.keys(DEFAULT_SETTINGS.appearance) as (keyof Appearance
     ].includes(key),
 );
 /** How the system's icons are described: whose they are depends on the system. */
-const SYSTEM_ICONS_HINT: MessageKey = navigator.userAgent.includes("Windows")
+const SYSTEM_ICONS_HINT: PlainMessageKey = navigator.userAgent.includes("Windows")
   ? "appearance.systemIconsHintWindows"
   : "appearance.systemIconsHintLinux";
 const DEFAULT_LOOK: Partial<Appearance> = Object.fromEntries(

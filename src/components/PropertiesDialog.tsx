@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useLatest } from "../hooks/useLatest";
-import { formatDate, formatSize, pluralize } from "../lib/format";
+import { formatDate, formatSize } from "../lib/format";
 import { fileOperations, toAppError } from "../lib/ipc";
 import { baseName } from "../lib/path";
 import {
@@ -372,7 +372,7 @@ export function PropertiesDialog({
                     className={mask === kind ? "is-selected" : ""}
                     onClick={() => setMaskShown(kind)}
                   >
-                    {kind === "folders" ? "Folders" : "Files"}
+                    {kind === "folders" ? t("dialogs.folders2") : t("dialogs.files2")}
                   </button>
                 ))}
               </div>
@@ -400,8 +400,8 @@ export function PropertiesDialog({
           <div className="form-error">
             <p>
               {failures.length === 1
-                ? "One item could not be changed:"
-                : `${failures.length} items could not be changed:`}
+                ? t("dialogs.oneItemCouldNotBe")
+                : t("dialogs.itemsCouldNotBeChanged", { count: failures.length })}
             </p>
             <ul className="failure-list">
               {failures.slice(0, SHOWN_FAILURES).map((failure) => (
@@ -423,7 +423,7 @@ export function PropertiesDialog({
             <span className="field-hint push-left">
               {applying.progress && applying.progress.files > 0
                 ? t("dialogs.changedItems", { count: applying.progress.files })
-                : "Applying..."}
+                : t("dialogs.applying")}
             </span>
           )}
           <button
@@ -431,7 +431,11 @@ export function PropertiesDialog({
             className="button"
             onClick={applying.busy ? applying.cancel : onClose}
           >
-            {applying.busy ? "Stop" : failures.length > 0 ? "Close" : "Cancel"}
+            {applying.busy
+              ? t("common.stop")
+              : failures.length > 0
+                ? t("common.close")
+                : t("common.cancel")}
           </button>
           <button
             type="submit"
@@ -439,7 +443,7 @@ export function PropertiesDialog({
             className="button button-primary"
             disabled={applying.busy}
           >
-            {nothingToApply ? "OK" : "Apply"}
+            {nothingToApply ? "OK" : t("common.apply")}
           </button>
         </div>
       </form>

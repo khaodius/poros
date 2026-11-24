@@ -1,5 +1,4 @@
 import { useLatest } from "../hooks/useLatest";
-import { pluralize } from "../lib/format";
 import { transfers } from "../lib/ipc";
 import { closeRemoteTab, familyOf } from "../state/tabActions";
 import { Dialog } from "./Dialog";

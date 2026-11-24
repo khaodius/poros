@@ -55,6 +55,7 @@ function buildRows(fonts: FontOption[], kind: FontKind, query: string, t: Transl
 
 /** A searchable list of installed fonts, each name drawn in its own face. */
 export function FontPicker({ kind, label, value, fonts, onChange }: FontPickerProps) {
+  const t = useT();
   const buttonRef = useRef<HTMLButtonElement>(null);
   const [anchor, setAnchor] = useState<DOMRect | null>(null);
 
@@ -74,7 +75,7 @@ export function FontPicker({ kind, label, value, fonts, onChange }: FontPickerPr
           )
         }
       >
-        <span>{value || "Default"}</span>
+        <span>{value || t("common.default")}</span>
         <ChevronDown size={14} />
       </button>
       {anchor && (
@@ -279,7 +280,7 @@ function FontList({
                 onMouseMove={() => item.index !== active && setActiveIndex(item.index)}
                 onClick={() => onPick(row.name)}
               >
-                <span>{row.name || "Default"}</span>
+                <span>{row.name || t("common.default")}</span>
                 {selected && <Check size={14} />}
               </div>
             );

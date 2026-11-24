@@ -19,7 +19,7 @@ const DIRECTIONS: { value: Direction; label: string; hint: string }[] = [
       return t("common.upload");
     },
     get hint() {
-      return t("workspace.copiesFilesAndFoldersFrom");
+      return t("schedule.copiesFilesAndFoldersFrom");
     },
   },
   {
@@ -28,16 +28,16 @@ const DIRECTIONS: { value: Direction; label: string; hint: string }[] = [
       return t("common.download");
     },
     get hint() {
-      return t("workspace.copiesFilesAndFoldersFromThe");
+      return t("schedule.copiesFilesAndFoldersFromThe");
     },
   },
   {
     value: "relay",
     get label() {
-      return t("workspace.betweenServers");
+      return t("schedule.betweenServers");
     },
     get hint() {
-      return t("workspace.copiesFilesAndFoldersFromOne");
+      return t("schedule.copiesFilesAndFoldersFromOne");
     },
   },
 ];
@@ -60,7 +60,7 @@ export function TransferTaskFields({ action, connections, onChange }: TransferTa
 
   const pick = async (folders: boolean) => {
     const selected = await openFileDialog({
-      title: folders ? t("workspace.addFolders") : t("workspace.addFiles"),
+      title: folders ? t("schedule.addFolders") : t("schedule.addFiles"),
       directory: folders,
       multiple: true,
     });
@@ -86,7 +86,7 @@ export function TransferTaskFields({ action, connections, onChange }: TransferTa
 
   const browseDestination = async () => {
     const selected = await openFileDialog({
-      title: t("workspace.chooseTheFolderToDownload"),
+      title: t("schedule.chooseTheFolderToDownload"),
       directory: true,
       multiple: false,
       defaultPath: action.destination || undefined,
@@ -97,7 +97,7 @@ export function TransferTaskFields({ action, connections, onChange }: TransferTa
   return (
     <>
       <div className="field">
-        <span>{t("workspace.direction")}</span>
+        <span>{t("schedule.direction")}</span>
         <div className="segmented" role="radiogroup">
           {DIRECTIONS.map((option) => (
             <button
@@ -117,14 +117,14 @@ export function TransferTaskFields({ action, connections, onChange }: TransferTa
 
       {action.direction === "relay" && (
         <label className="field">
-          <span>{t("workspace.copyFrom")}</span>
+          <span>{t("schedule.copyFrom")}</span>
           <select
             value={action.sourceConnectionId ?? ""}
             onChange={(event) => onChange({ sourceConnectionId: event.target.value || null })}
           >
-            <option value="">{t("workspace.chooseAConnection")}</option>
+            <option value="">{t("schedule.chooseAConnection")}</option>
             {action.sourceConnectionId && !sourceKnown && (
-              <option value={action.sourceConnectionId}>{t("workspace.aDeletedConnection")}</option>
+              <option value={action.sourceConnectionId}>{t("schedule.aDeletedConnection")}</option>
             )}
             {connections.map((connection) => (
               <option key={connection.id} value={connection.id}>
@@ -137,17 +137,15 @@ export function TransferTaskFields({ action, connections, onChange }: TransferTa
 
       <div className="field">
         <span>
-          {local ? "Files and folders on this computer" : "Files and folders on the server"}
+          {local ? t("schedule.filesAndFoldersOnThis") : t("schedule.filesAndFoldersOnThe")}
         </span>
         <div className="task-items">
           {action.items.length === 0 ? (
             <p className="task-items-empty">
-              {local
-                ? "Add the files and folders the task uploads. A folder goes with everything in it."
-                : "Add the server paths the task copies, such as /var/www/site. A folder goes with everything in it."}
+              {local ? t("schedule.addTheFilesAndFolders") : t("schedule.addTheServerPathsThe")}
             </p>
           ) : (
-            <ul aria-label={t("workspace.itemsToCopy")}>
+            <ul aria-label={t("schedule.itemsToCopy")}>
               {action.items.map((item) => (
                 <li key={item.path} className="task-item">
                   {item.isDir ? (
@@ -161,8 +159,8 @@ export function TransferTaskFields({ action, connections, onChange }: TransferTa
                   <button
                     type="button"
                     className="icon-button"
-                    title={t("workspace.removeFromTheTask")}
-                    aria-label={t("workspace.remove", { path: item.path })}
+                    title={t("schedule.removeFromTheTask")}
+                    aria-label={t("schedule.remove", { path: item.path })}
                     onClick={() =>
                       onChange({
                         items: action.items.filter((existing) => existing.path !== item.path),
@@ -179,19 +177,19 @@ export function TransferTaskFields({ action, connections, onChange }: TransferTa
             {local ? (
               <>
                 <button type="button" className="button" onClick={() => void pick(false)}>
-                  <FilePlus size={14} /> {t("workspace.addFiles")}
+                  <FilePlus size={14} /> {t("schedule.addFiles")}
                 </button>
                 <button type="button" className="button" onClick={() => void pick(true)}>
-                  <FolderPlus size={14} /> {t("workspace.addFolders")}
+                  <FolderPlus size={14} /> {t("schedule.addFolders")}
                 </button>
               </>
             ) : (
               <div className="input-with-button grow">
                 <input
                   value={typedPath}
-                  placeholder={t("workspace.aFullPathOnThe")}
+                  placeholder={t("schedule.aFullPathOnThe")}
                   spellCheck={false}
-                  aria-label={t("workspace.serverPathToAdd")}
+                  aria-label={t("schedule.serverPathToAdd")}
                   onChange={(event) => setTypedPath(event.target.value)}
                   onKeyDown={(event) => {
                     if (event.key === "Enter") {
@@ -217,11 +215,11 @@ export function TransferTaskFields({ action, connections, onChange }: TransferTa
       <div className="form-row">
         {action.direction === "download" ? (
           <div className="field grow">
-            <span>{t("workspace.intoTheFolderOnThis")}</span>
+            <span>{t("schedule.intoTheFolderOnThis")}</span>
             <div className="input-with-button">
               <input
                 value={action.destination}
-                placeholder={t("workspace.theFolderToDownloadInto")}
+                placeholder={t("schedule.theFolderToDownloadInto")}
                 spellCheck={false}
                 onChange={(event) => onChange({ destination: event.target.value })}
               />
@@ -232,21 +230,21 @@ export function TransferTaskFields({ action, connections, onChange }: TransferTa
           </div>
         ) : (
           <label className="field grow">
-            <span>{t("workspace.intoTheFolderOnThe")}</span>
+            <span>{t("schedule.intoTheFolderOnThe")}</span>
             <input
               value={action.destination}
-              placeholder={t("workspace.varBackups")}
+              placeholder="/var/backups"
               spellCheck={false}
               onChange={(event) => onChange({ destination: event.target.value })}
             />
           </label>
         )}
         <label className="field grow">
-          <span>{t("workspace.inAFolderOfIts")}</span>
+          <span>{t("schedule.inAFolderOfIts")}</span>
           <input
             className="mono"
             value={action.subfolder}
-            placeholder={t("workspace.backup")}
+            placeholder="backup-{date}"
             spellCheck={false}
             autoCapitalize="off"
             aria-invalid={"error" in pattern}
@@ -258,12 +256,14 @@ export function TransferTaskFields({ action, connections, onChange }: TransferTa
         {"error" in pattern
           ? pattern.error
           : pattern.folder
-            ? `A run now goes into ${pattern.folder}.`
-            : `Each run can get a folder named from its time: ${PATTERN_PLACEHOLDERS.map((name) => `{${name}}`).join(" ")}.`}
+            ? t("schedule.aRunNowGoesInto", { folder: pattern.folder })
+            : t("schedule.eachRunCanGetAFolder", {
+                placeholders: PATTERN_PLACEHOLDERS.map((name) => `{${name}}`).join(" "),
+              })}
       </small>
 
       <label className="field">
-        <span>{t("workspace.whenAFileIsAlready")}</span>
+        <span>{t("schedule.whenAFileIsAlready")}</span>
         <select
           value={action.exists}
           onChange={(event) => onChange({ exists: event.target.value as ExistsAction })}

@@ -2,7 +2,7 @@
 // src-tauri/src/sync.
 
 import type { PathStyle } from "./fileSource";
-import { formatSize, pluralize } from "./format";
+import { formatSize } from "./format";
 import type {
   SyncAction,
   SyncChoice,
@@ -97,15 +97,17 @@ export function describeTotal(total: ActionTotal): string {
 /** What the chosen items will do, for the line beside the Synchronize button. */
 export function describePlanned(totals: ChosenTotals): string {
   const parts: string[] = [];
-  if (totals.upload.items > 0) parts.push(`Upload ${describeTotal(totals.upload)}`);
-  if (totals.download.items > 0) parts.push(`Download ${describeTotal(totals.download)}`);
-  if (totals.delete.items > 0) parts.push(t("sync.deleteItems", { count: totals.delete.items }));
-  if (totals.undecided > 0) {
-    parts.push(
-      `${pluralize(totals.undecided, "conflict")} left as ${totals.undecided === 1 ? "it is" : "they are"}`,
-    );
+  if (totals.upload.items > 0) {
+    parts.push(t("sync.plannedUpload", { total: describeTotal(totals.upload) }));
   }
-  return parts.length > 0 ? `${parts.join(". ")}.` : "Nothing selected.";
+  if (totals.download.items > 0) {
+    parts.push(t("sync.plannedDownload", { total: describeTotal(totals.download) }));
+  }
+  if (totals.delete.items > 0) parts.push(t("sync.deleteItems", { count: totals.delete.items }));
+  if (totals.undecided > 0) parts.push(t("sync.conflictsLeft", { count: totals.undecided }));
+  return parts.length > 0
+    ? t("sync.plannedSentences", { parts: parts.join(t("sync.plannedSeparator")) })
+    : t("sync.nothingSelected");
 }
 
 export const DIRECTION_OPTIONS: { value: SyncDirection; label: string; hint: string }[] = [

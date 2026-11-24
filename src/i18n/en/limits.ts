@@ -43,4 +43,9 @@ export const limits = {
   // components/LimitScheduleWeek
   limited: "Limited",
   paused: "Paused",
+  // components/LimitScheduleSettings
+  noDaysSoItNever: "No days, so it never applies",
+
+  // components/LimitScheduleStatus
+  scheduleIgnored: "Schedule ignored{until}",
 } as const satisfies MessageArea;

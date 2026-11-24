@@ -780,7 +780,7 @@ export function AnimationGroup() {
         </div>
         <button type="button" className="button" onClick={play}>
           <Play size={14} />
-          {toServer ? "Upload" : "Download"}
+          {toServer ? t("common.upload") : t("common.download")}
         </button>
         <div className="flight-demo-pane flight-demo-server">
           <span className="flight-demo-title">{t("appearance.server")}</span>

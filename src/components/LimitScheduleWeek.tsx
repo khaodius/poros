@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { daySpans, describeSpan, hourSpans, type Limits, type Span } from "../lib/limitSchedule";
-import { WEEKDAY_NAMES } from "../lib/schedule";
+import { WEEKDAYS, weekdayName } from "../lib/schedule";
 import type { LimitMode, LimitSchedule } from "../lib/types";
 import { useT, t } from "../i18n";
 
@@ -50,7 +50,7 @@ export function LimitScheduleWeek({ schedule, ordinary, now, onPickRule }: Limit
   const t = useT();
   // Switched off, it shows what the rules would do, so they can be set up first.
   const week = useMemo(
-    () => WEEKDAY_NAMES.map((_, day) => daySpans({ ...schedule, enabled: true }, ordinary, day)),
+    () => WEEKDAYS.map((day) => daySpans({ ...schedule, enabled: true }, ordinary, day)),
     [schedule, ordinary],
   );
   const moment = new Date(now);
@@ -86,7 +86,7 @@ export function LimitScheduleWeek({ schedule, ordinary, now, onPickRule }: Limit
 
   const handleKey = (event: KeyboardEvent) => {
     const { day, hour } = active;
-    const last = WEEKDAY_NAMES.length - 1;
+    const last = WEEKDAYS.length - 1;
     const targets: Record<string, Cell> = {
       ArrowLeft: { day, hour: Math.max(0, hour - 1) },
       ArrowRight: { day, hour: Math.min(HOURS_PER_DAY - 1, hour + 1) },
@@ -145,7 +145,7 @@ export function LimitScheduleWeek({ schedule, ordinary, now, onPickRule }: Limit
         {week.map((spans, day) => (
           <div key={day} role="row" className={`limit-week-day ${day === today ? "is-today" : ""}`}>
             <span role="rowheader" className="limit-week-day-name">
-              {WEEKDAY_NAMES[day]}
+              {weekdayName(day)}
             </span>
             {HOURS.map((hour) => {
               const cell = { day, hour };

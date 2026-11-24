@@ -131,16 +131,20 @@ function LostSession({ sessionId, reason }: { sessionId: string; reason?: string
       {automatic.active && (
         <p className="pane-empty-detail">
           {automatic.secondsLeft > 0
-            ? `Reconnecting in ${automatic.secondsLeft} s`
-            : "Reconnecting..."}
-          {automatic.failures > 0 && ` (attempt ${automatic.failures + 1})`}
+            ? t("workspace.reconnectingInS", { secondsLeft: automatic.secondsLeft })
+            : t("workspace.reconnecting")}
+          {automatic.failures > 0 && t("workspace.attempt", { value: automatic.failures + 1 })}
         </p>
       )}
       {shownError && <p className="form-error">{shownError}</p>}
       <div className="pane-overlay-actions">
         <button type="button" className="button button-primary" onClick={reconnect} disabled={busy}>
           <RotateCw size={14} className={busy ? "spin" : ""} />
-          {busy ? "Reconnecting..." : automatic.active ? "Reconnect now" : "Reconnect"}
+          {busy
+            ? t("workspace.reconnecting")
+            : automatic.active
+              ? t("workspace.reconnectNow")
+              : t("workspace.reconnect")}
         </button>
         {automatic.active && (
           <button type="button" className="button" onClick={automatic.stop}>

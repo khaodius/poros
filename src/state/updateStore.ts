@@ -1,6 +1,5 @@
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { create } from "zustand";
-import { pluralize } from "../lib/format";
 import { toAppError, updates } from "../lib/ipc";
 import type { ExternalEdit, UpdateProgress } from "../lib/types";
 import { useUnsavedStore } from "./editorRegistry";

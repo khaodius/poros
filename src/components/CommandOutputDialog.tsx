@@ -29,8 +29,15 @@ export function CommandOutputDialog() {
     <Dialog title={run.title} onClose={dismiss} width={720}>
       <div className="command-output-dialog">
         <p className="command-output-where">
-          {single ? <code>{single}</code> : `${run.commands.length} commands`} in{" "}
-          <code>{run.directory || "the login folder"}</code>
+          {t.rich(single ? "automation.commandIn" : "automation.commandsIn", {
+            command: <code>{single}</code>,
+            count: run.commands.length,
+            folder: run.directory ? (
+              <code>{run.directory}</code>
+            ) : (
+              <code>{t("automation.theLoginFolder")}</code>
+            ),
+          })}
         </p>
         <pre
           ref={outputRef}
@@ -43,7 +50,10 @@ export function CommandOutputDialog() {
           }}
         >
           {truncated && (
-            <span className="command-output-note">{t("automation.earlierOutputWasDropped")}</span>
+            <span className="command-output-note">
+              {t("automation.earlierOutputWasDropped")}
+              {"\n"}
+            </span>
           )}
           {output.map((part) => (
             <span key={part.id} className={`command-output-${part.stream}`}>

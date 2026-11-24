@@ -121,7 +121,7 @@ export function QuickConnectBar() {
       />
       <button type="submit" className="button button-primary" disabled={!host.trim() || connecting}>
         <Plug size={14} />
-        {connecting ? "Connecting..." : "Connect"}
+        {connecting ? t("connect.connecting") : t("common.connect")}
       </button>
     </form>
   );

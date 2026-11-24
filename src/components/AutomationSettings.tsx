@@ -198,7 +198,7 @@ function CommandList({ commands, onChange }: CommandListProps) {
           className="command-text"
           aria-label={t("automation.newCommand")}
           value={command}
-          placeholder={t("automation.duSh")}
+          placeholder="du -sh {paths}"
           spellCheck={false}
           onChange={(event) => setCommand(event.target.value)}
         />

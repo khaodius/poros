@@ -88,7 +88,7 @@ export function VaultUnlockCard({
           />
           <button type="submit" className="button button-primary" disabled={busy || !password}>
             {busy ? <LoaderCircle size={14} className="spin" /> : <LockOpen size={14} />}
-            {busy ? "Unlocking..." : "Unlock"}
+            {busy ? t("vault.unlocking") : t("vault.unlock")}
           </button>
         </div>
         {error && <p className="form-error">{error}</p>}

@@ -39,7 +39,7 @@ export function RunCommandDialog({ sessionId, target, onClose }: RunCommandDialo
       <form className="form" onSubmit={submit}>
         <label className="field">
           <span>
-            {t("automation.commandToRunIn")} <code>{target.folder}</code>
+            {t.rich("automation.commandToRunIn", { folder: <code>{target.folder}</code> })}
           </span>
           <input
             data-autofocus
@@ -47,7 +47,7 @@ export function RunCommandDialog({ sessionId, target, onClose }: RunCommandDialo
             value={command}
             spellCheck={false}
             autoCapitalize="off"
-            placeholder={t("automation.duSh")}
+            placeholder="du -sh {paths}"
             onChange={(event) => setCommand(event.target.value)}
           />
         </label>

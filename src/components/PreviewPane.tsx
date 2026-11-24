@@ -25,7 +25,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useRestedLoad, type Rested } from "../hooks/useRestedLoad";
-import { formatDate, formatPermissions, formatSize, pluralize } from "../lib/format";
+import { formatDate, formatPermissions, formatSize } from "../lib/format";
 import type { FileView } from "../lib/previewLoad";
 import {
   HEX_BYTES,
@@ -365,7 +365,11 @@ function Failure({
       return (
         <Notice
           icon={Ban}
-          title={t("preview.noPermissionToReadThis", { what })}
+          title={
+            what === "file"
+              ? t("preview.noPermissionToReadFile")
+              : t("preview.noPermissionToReadFolder")
+          }
           detail={t("preview.theAccountSignedInHere")}
         />
       );
@@ -373,7 +377,9 @@ function Failure({
       return (
         <Notice
           icon={FileX}
-          title={t("preview.thisIsNoLongerThere", { what })}
+          title={
+            what === "file" ? t("preview.fileNoLongerThere") : t("preview.folderNoLongerThere")
+          }
           detail={t("preview.itWasDeletedMovedOr")}
           action={onRefresh && { label: t("common.refresh"), onSelect: onRefresh }}
         />
@@ -589,7 +595,7 @@ function FileBody({
         />
       );
     case "failed":
-      return <Failure {...state} what={t("preview.file")} onRetry={onShow} onRefresh={onRefresh} />;
+      return <Failure {...state} what="file" onRetry={onShow} onRefresh={onRefresh} />;
   }
   const view = state.result;
   switch (view.view) {
@@ -643,7 +649,9 @@ function FileBody({
         <div className="preview-body preview-scroll">
           <div className="preview-binary">
             <FileIcon entry={entry} size={NOTICE_ICON_SIZE} />
-            <p className="preview-notice-title">{view.description ?? "Not text or a picture"}</p>
+            <p className="preview-notice-title">
+              {view.description ?? t("preview.notTextOrAPicture")}
+            </p>
             <p className="preview-notice-detail">
               {t("preview.theFirst", {
                 t: t("preview.bytes", { count: Math.min(HEX_BYTES, view.head.length) }),
@@ -713,7 +721,7 @@ function FolderPreview({
       />
     );
   } else if (state.status === "failed") {
-    body = <Failure {...state} what={t("preview.folder")} onRetry={show} />;
+    body = <Failure {...state} what="folder" onRetry={show} />;
   } else if (isVault) {
     body = (
       <Notice

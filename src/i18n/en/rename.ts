@@ -76,11 +76,9 @@ export const rename = {
   nowNamed: "Now named {temporary}: {message}",
 
   // state/bulkRename
-  ofItems: { one: "{count} of {count} item", other: "{count} of {count} items" },
-  renamingCancelledRenamed: "Renaming cancelled. {count} renamed.",
-  renamedItemsIn: {
-    one: "Renamed {count} item in {folder}",
-    other: "Renamed {count} items in {folder}",
+  renamingCancelledRenamed: {
+    one: "Renaming cancelled. {renamed} of {count} item renamed.",
+    other: "Renaming cancelled. {renamed} of {count} items renamed.",
   },
   // components/BulkRenameDialog
   text: "Text",
@@ -107,4 +105,12 @@ export const rename = {
   dateModified: "Date modified",
   timeModified: "Time modified",
   nameOfTheFolder: "Name of the folder",
+  // components/BulkRenameDialog
+  checkingTheFolder: "Checking the folder...",
+
+  // state/bulkRename
+  renamingItemsIn: {
+    one: "Renaming {count} item in {folder}",
+    other: "Renaming {count} items in {folder}",
+  },
 } as const satisfies MessageArea;

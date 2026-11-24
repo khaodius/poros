@@ -69,8 +69,98 @@ export const schedule = {
   selectTheFilesToSchedule: "Select the files to schedule.",
 
   // lib/schedule
-  items: { one: "{verb} {count} item", other: "{verb} {count} items" },
   overwriteIfTheSourceIs: "Overwrite if the source is newer",
   overwriteIfSizeOrDate: "Overwrite if size or date differ",
   keepBoth: "Keep both",
+  // components/SchedulerDialog
+  turnedOff: "Turned off",
+  chooseAConnection: "Choose a connection",
+  noSavedConnections: "No saved connections",
+  noSavedSftpConnections: "No saved SFTP connections",
+  aDeletedConnection: "A deleted connection",
+  usesSynchronizingAndRunningCommands:
+    "{name} uses {label}; synchronizing and running commands need an SFTP connection.",
+  thisTasksSavedConnectionWas: "This task's saved connection was deleted. Choose another.",
+  deleteForGood: "Delete for good",
+  starting2: "Starting...",
+  runNow: "Run now",
+  saving: "Saving...",
+  thisConnectionsPasswordIsNotSaved:
+    "This connection's password is not saved in the system keychain, so the task cannot log in.",
+  thePasswordOfIsNot:
+    "The password of {names} is not saved in the system keychain, so the task cannot log in.",
+  thePasswordsOfAreNot:
+    "The passwords of {names} are not saved in the system keychain, so the task cannot log in.",
+  saveItInTheConnections: "Save it in the connection's settings.",
+  saveThemInTheConnections: "Save them in the connections' settings.",
+
+  // components/TransferTaskFields
+  aFullPathOnThe: "A full path on the server; end a folder with /",
+  aRunNowGoesInto: "A run now goes into {folder}.",
+  addFiles: "Add files",
+  addFolders: "Add folders",
+  addTheFilesAndFolders:
+    "Add the files and folders the task uploads. A folder goes with everything in it.",
+  addTheServerPathsThe:
+    "Add the server paths the task copies, such as /var/www/site. A folder goes with everything in it.",
+  betweenServers: "Between servers",
+  chooseTheFolderToDownload: "Choose the folder to download into",
+  copiesFilesAndFoldersFrom: "Copies files and folders from this computer to the server.",
+  copiesFilesAndFoldersFromOne: "Copies files and folders from one saved connection to another.",
+  copiesFilesAndFoldersFromThe: "Copies files and folders from the server to this computer.",
+  copyFrom: "Copy from",
+  filesAndFoldersOnThe: "Files and folders on the server",
+  filesAndFoldersOnThis: "Files and folders on this computer",
+  inAFolderOfIts: "In a folder of its own (optional)",
+  intoTheFolderOnThe: "Into the folder on the server",
+  intoTheFolderOnThis: "Into the folder on this computer",
+  itemsToCopy: "Items to copy",
+  remove: "Remove {path}",
+  removeFromTheTask: "Remove from the task",
+  serverPathToAdd: "Server path to add",
+  theFolderToDownloadInto: "The folder to download into",
+  whenAFileIsAlready: "When a file is already there",
+
+  // lib/schedule: when a task runs
+  everyDay: "Every day",
+  weekdays: "Weekdays",
+  weekends: "Weekends",
+  onceAt: "Once, {date}",
+  everyMinutes: { one: "Every minute", other: "Every {count} minutes" },
+  everyHours: { one: "Every hour", other: "Every {count} hours" },
+  everyDays: { one: "Every day", other: "Every {count} days" },
+  daysAt: "{days} at {time}",
+  unitMinutes: "minutes",
+  unitHours: "hours",
+  unitDays: "days",
+
+  // lib/scheduleDraft: why files cannot be scheduled, in brackets after the menu entry
+  blockedNoServer: "no server",
+  blockedInVault: "not in a vault",
+  blockedUnsaved: "save the connection first",
+  blockedNoTab: "no tab",
+
+  // lib/schedule: the name offered for a task that has none
+  nameRun: "Run {program}",
+  nameUploadOne: "Upload {name}",
+  nameDownloadOne: "Download {name}",
+  nameCopyOne: "Copy {name}",
+  nameUploadItems: { one: "Upload {count} item", other: "Upload {count} items" },
+  nameDownloadItems: { one: "Download {count} item", other: "Download {count} items" },
+  nameCopyItems: { one: "Copy {count} item", other: "Copy {count} items" },
+  nameSync: "Sync {name}",
+
+  // lib/schedule: problems with a folder pattern
+  patternTooLong: {
+    one: "The folder pattern is longer than {count} character",
+    other: "The folder pattern is longer than {count} characters",
+  },
+  patternLoneBrace:
+    "The folder pattern has a brace without its partner; write placeholders as {example}",
+  patternUnknown: "The folder pattern has {found}, which is not a placeholder; use {known}",
+  patternBadName: 'The folder pattern names "{name}", which cannot be a folder name',
+  noneTheTimeHasPassed: "None, the time has passed",
+
+  // components/TransferTaskFields
+  eachRunCanGetAFolder: "Each run can get a folder named from its time: {placeholders}.",
 } as const satisfies MessageArea;

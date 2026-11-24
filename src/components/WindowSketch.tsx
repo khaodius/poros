@@ -31,7 +31,7 @@ export function WindowSketch({ content, className, style }: WindowSketchProps) {
     <div className={`window-sketch ${className ?? ""}`} style={style}>
       <div className="window-sketch-titlebar">
         <PorosLogo size={20} />
-        <span>{t("workspace.poros")}</span>
+        <span>Poros</span>
         {content.drop ? (
           <DropHint side={content.drop} className="window-sketch-hint" iconSize={13} />
         ) : (

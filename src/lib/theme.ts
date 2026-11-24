@@ -2,7 +2,7 @@
 // CSS custom property of the same name (`accent` sets `--accent`) over the base palette in
 // `styles/tokens.css`. Built-in themes use the same format.
 
-import { t, type MessageKey } from "../i18n";
+import { t, type PlainMessageKey } from "../i18n";
 
 export type ThemeBase = "dark" | "light" | "system";
 
@@ -17,16 +17,16 @@ export interface Theme {
 
 export interface ColorToken {
   key: string;
-  label: MessageKey;
-  group: MessageKey;
+  label: PlainMessageKey;
+  group: PlainMessageKey;
   /** Usually see-through, so the picker keeps the current transparency. */
   translucent: boolean;
 }
 
 const token = (
   key: string,
-  label: MessageKey,
-  group: MessageKey,
+  label: PlainMessageKey,
+  group: PlainMessageKey,
   translucent = false,
 ): ColorToken => ({
   key,
@@ -74,7 +74,12 @@ export const COLOR_TOKENS: ColorToken[] = [
   token("icon-text", "appearance.colorIconText", "appearance.colorGroupFileIcons"),
   token("icon-file", "appearance.colorIconFile", "appearance.colorGroupFileIcons"),
   token("row-selected", "appearance.colorRowSelected", "appearance.colorGroupLists", true),
-  token("row-selected-inactive", "appearance.colorRowSelectedInactive", "appearance.colorGroupLists", true),
+  token(
+    "row-selected-inactive",
+    "appearance.colorRowSelectedInactive",
+    "appearance.colorGroupLists",
+    true,
+  ),
   token("row-hover", "appearance.colorRowHover", "appearance.colorGroupLists", true),
   token("row-alternate", "appearance.colorRowAlternate", "appearance.colorGroupLists", true),
   token("scrollbar", "appearance.colorScrollbar", "appearance.colorGroupLists"),
@@ -88,12 +93,25 @@ export const COLOR_TOKENS: ColorToken[] = [
   token("diff-added", "appearance.colorDiffAdded", "appearance.colorGroupCompare", true),
   token("diff-added-word", "appearance.colorDiffAddedWord", "appearance.colorGroupCompare", true),
   token("diff-removed", "appearance.colorDiffRemoved", "appearance.colorGroupCompare", true),
-  token("diff-removed-word", "appearance.colorDiffRemovedWord", "appearance.colorGroupCompare", true),
+  token(
+    "diff-removed-word",
+    "appearance.colorDiffRemovedWord",
+    "appearance.colorGroupCompare",
+    true,
+  ),
   token("compare-newer", "appearance.colorCompareNewer", "appearance.colorGroupFolderCompare"),
   token("compare-older", "appearance.colorCompareOlder", "appearance.colorGroupFolderCompare"),
   token("compare-only", "appearance.colorCompareOnly", "appearance.colorGroupFolderCompare"),
-  token("compare-different", "appearance.colorCompareDifferent", "appearance.colorGroupFolderCompare"),
-  token("compare-identical", "appearance.colorCompareIdentical", "appearance.colorGroupFolderCompare"),
+  token(
+    "compare-different",
+    "appearance.colorCompareDifferent",
+    "appearance.colorGroupFolderCompare",
+  ),
+  token(
+    "compare-identical",
+    "appearance.colorCompareIdentical",
+    "appearance.colorGroupFolderCompare",
+  ),
   token("backdrop", "appearance.colorBackdrop", "appearance.colorGroupWindow", true),
 ];
 
@@ -307,7 +325,7 @@ const BUILTIN_DEFINITIONS: Theme[] = [
   },
 ];
 
-const BUILTIN_NAMES: Record<string, MessageKey> = {
+const BUILTIN_NAMES: Record<string, PlainMessageKey> = {
   System: "appearance.themeSystem",
   Dark: "appearance.themeDark",
   Light: "appearance.themeLight",

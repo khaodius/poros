@@ -58,7 +58,7 @@ export function ConfirmDialog({
           onClick={confirm}
           disabled={busy || disabled || waiting !== undefined}
         >
-          {busy ? "Working..." : (waiting ?? confirmLabel)}
+          {busy ? t("common.working") : (waiting ?? confirmLabel)}
         </button>
       </div>
     </Dialog>

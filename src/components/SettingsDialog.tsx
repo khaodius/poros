@@ -909,7 +909,7 @@ function UpdateSettingsPage({ settings }: { settings: Settings }) {
             disabled={checking}
             onClick={() => void checkForUpdates("manual")}
           >
-            {checking ? "Checking..." : "Check for updates"}
+            {checking ? t("settings.checking") : t("settings.checkForUpdates")}
           </button>
         )}
       </SettingRow>
@@ -1003,7 +1003,7 @@ function OtherVersionSetting() {
           disabled={list.status === "listing"}
           onClick={() => void listVersions()}
         >
-          {list.status === "listing" ? "Listing..." : "Show versions"}
+          {list.status === "listing" ? t("settings.listing") : t("settings.showVersions")}
         </button>
       )}
     </SettingRow>

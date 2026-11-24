@@ -54,7 +54,7 @@ export function DeleteDialog({
       {entries.length > 0 ? (
         summary(entries)
       ) : (
-        <p>{checking ? "Checking the folder..." : "These items are no longer in the folder."}</p>
+        <p>{checking ? t("dialogs.checkingTheFolder") : t("dialogs.theseItemsAreNoLonger")}</p>
       )}
     </ConfirmDialog>
   );

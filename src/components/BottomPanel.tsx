@@ -120,7 +120,9 @@ export function BottomPanel() {
                 onClick={() => void transfers.setPaused(!queuePaused)}
               >
                 {queuePaused ? <Play size={13} /> : <Pause size={13} />}
-                <span className="narrow-hidden">{queuePaused ? "Start queue" : "Pause queue"}</span>
+                <span className="narrow-hidden">
+                  {queuePaused ? t("workspace.startQueue") : t("workspace.pauseQueue")}
+                </span>
               </button>
               <ScheduleOverrideButton />
               <span className="toolbar-divider" />

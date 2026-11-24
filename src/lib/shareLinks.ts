@@ -1,7 +1,6 @@
 // Share links: what a pane's menu offers, the choices a service allows, and the sentence that
 // says what a link lets people do.
 
-import { pluralize } from "./format";
 import type {
   FileEntry,
   LinkKind,

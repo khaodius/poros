@@ -391,11 +391,11 @@ export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
           <TriangleAlert size={14} />
           <span>
             {conflict.removed
-              ? `${tab.name} was deleted ${where} after you opened it.`
-              : `${tab.name} changed ${where} since you opened it.`}
+              ? t("editor.wasDeletedAfterYouOpened", { name: tab.name, where })
+              : t("editor.changedSinceYouOpenedIt", { name: tab.name, where })}
           </span>
           <button type="button" className="button" onClick={() => void save(true)}>
-            {conflict.removed ? "Save it again" : "Overwrite"}
+            {conflict.removed ? t("editor.saveItAgain") : t("common.overwrite")}
           </button>
           {!conflict.removed && (
             <button
@@ -457,7 +457,13 @@ export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
 
       <footer className="pane-footer editor-footer">
         <span className={unsaved ? "editor-state is-unsaved" : "editor-state"}>
-          {!ready ? "" : saving ? "Saving..." : unsaved ? "Unsaved changes" : "Saved"}
+          {!ready
+            ? ""
+            : saving
+              ? t("editor.saving")
+              : unsaved
+                ? t("editor.unsavedChanges")
+                : t("editor.saved")}
         </span>
         {ready && (
           <div className="editor-status">

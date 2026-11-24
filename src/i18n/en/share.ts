@@ -47,4 +47,15 @@ export const share = {
   n1Hour: "1 hour",
   n1Day: "1 day",
   n7Days: "7 days",
+  // components/ShareDialog
+  link: "Link",
+  links2: "{count} links",
+  keepsOneLinkPerItem:
+    "{service} keeps one link per item, so this changes the link above for everyone who has it.",
+  keepsOneLinkPerItemSo:
+    "{service} keeps one link per item, so an item that has one gets it changed for everyone who has it.",
+  changing: "Changing...",
+  creating: "Creating...",
+  copied: "Copied",
+  stopping: "Stopping...",
 } as const satisfies MessageArea;

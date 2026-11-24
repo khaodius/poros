@@ -72,7 +72,9 @@ export function ConflictDialog() {
           </thead>
           <tbody>
             <tr>
-              <th>{job.direction === "upload" ? "Local file" : "Server file"}</th>
+              <th>
+                {job.direction === "upload" ? t("dialogs.localFile") : t("dialogs.serverFile")}
+              </th>
               <td>{formatSize(info.sourceSize)}</td>
               <td>{formatDate(info.sourceModified, dateFormat)}</td>
             </tr>
@@ -91,7 +93,7 @@ export function ConflictDialog() {
           />
           {others > 0
             ? `Do the same for the ${others} other ${others === 1 ? "conflict" : "conflicts"} and any that follow`
-            : "Do the same for any further conflicts in these transfers"}
+            : t("dialogs.doTheSameForAny")}
         </label>
       </div>
       <div className="dialog-actions">

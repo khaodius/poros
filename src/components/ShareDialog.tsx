@@ -279,7 +279,9 @@ export function ShareDialog({
           {singleItem && singleItem.links.length > 0 && (
             <section className="share-section" aria-label={t("share.links")}>
               <h3 className="share-section-title">
-                {singleItem.links.length === 1 ? "Link" : `${singleItem.links.length} links`}
+                {singleItem.links.length === 1
+                  ? t("share.link")
+                  : t("share.links2", { count: singleItem.links.length })}
               </h3>
               <ul className="share-links">
                 {singleItem.links.map((link) => (
@@ -305,7 +307,9 @@ export function ShareDialog({
             aria-label={single && changesLink ? t("share.changeLink") : t("share.newLink")}
           >
             {singleItem && singleItem.links.length > 0 && (
-              <h3 className="share-section-title">{changesLink ? "Change link" : "New link"}</h3>
+              <h3 className="share-section-title">
+                {changesLink ? t("share.changeLink") : t("share.newLink")}
+              </h3>
             )}
             {sharing.kinds.length > 1 && (
               <div className="field">
@@ -416,8 +420,8 @@ export function ShareDialog({
             {changesLink && (
               <p className="field-hint">
                 {single
-                  ? `${service} keeps one link per item, so this changes the link above for everyone who has it.`
-                  : `${service} keeps one link per item, so an item that has one gets it changed for everyone who has it.`}
+                  ? t("share.keepsOneLinkPerItem", { service })
+                  : t("share.keepsOneLinkPerItemSo", { service })}
               </p>
             )}
           </section>
@@ -474,7 +478,11 @@ export function ShareDialog({
               className="button button-primary"
               disabled={busy || options === null}
             >
-              {busy ? (single && changesLink ? "Changing..." : "Creating...") : createLabel}
+              {busy
+                ? single && changesLink
+                  ? t("share.changing")
+                  : t("share.creating")
+                : createLabel}
             </button>
           </div>
         </div>
@@ -527,6 +535,7 @@ function CopyButton({
   compact,
   onError,
 }: CopyButtonProps) {
+  const t = useT();
   const [copied, setCopied] = useState(false);
   useEffect(() => {
     if (!copied) return;
@@ -566,7 +575,7 @@ function CopyButton({
       onClick={() => void copy()}
     >
       {icon}
-      {copied ? "Copied" : label}
+      {copied ? t("share.copied") : label}
     </button>
   );
 }
@@ -669,7 +678,7 @@ function LinkRow({ link, statement, fresh, onRemove, onError }: LinkRowProps) {
             disabled={removing}
             onClick={() => void stop()}
           >
-            {removing ? "Stopping..." : "Stop sharing"}
+            {removing ? t("share.stopping") : t("share.stopSharing")}
           </button>
         </div>
       )}

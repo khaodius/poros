@@ -173,8 +173,12 @@ export function defaultPort(protocol: Protocol): number {
 
 /** What the username and password fields hold for services that sign in with keys. */
 export function keyLabels(protocol: Protocol): { id: string; secret: string } | null {
-  if (protocol === "s3") return { id: "Access key ID", secret: "Secret access key" };
-  if (protocol === "backblazeB2") return { id: "Application key ID", secret: "Application key" };
+  if (protocol === "s3") {
+    return { id: t("connect.accessKeyId"), secret: t("connect.secretAccessKey") };
+  }
+  if (protocol === "backblazeB2") {
+    return { id: t("connect.applicationKeyId"), secret: t("connect.applicationKey") };
+  }
   return null;
 }
 

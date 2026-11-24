@@ -1,5 +1,5 @@
 import { ArrowDown, ArrowUp, CircleArrowUp } from "lucide-react";
-import { formatDuration, formatSize, formatSpeed, formatVersion, pluralize } from "../lib/format";
+import { formatDuration, formatSize, formatSpeed, formatVersion } from "../lib/format";
 import { findGroup } from "../lib/layout";
 import { secondsRemaining, showsPaused } from "../lib/transfers";
 import { useLayoutStore } from "../state/layoutStore";
@@ -128,7 +128,7 @@ export function StatusBar() {
         </span>
         <UpdateStatus />
         <span className="status-item status-version">
-          {t("workspace.poros2", { value: APP_VERSION })}
+          {t("workspace.appVersion", { version: APP_VERSION })}
         </span>
       </span>
     </footer>

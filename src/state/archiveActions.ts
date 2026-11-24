@@ -3,7 +3,6 @@
 // while it unpacks, and the panes showing its folder reload with what came out selected.
 
 import { archiveFormatOf, CUSTOM_EXTRACTOR, extractorOf } from "../lib/archives";
-import { pluralize } from "../lib/format";
 import { fileOperations, toAppError } from "../lib/ipc";
 import { baseName } from "../lib/path";
 import type { ExtractInto, FileEntry } from "../lib/types";

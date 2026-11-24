@@ -44,7 +44,6 @@ import {
 } from "../lib/bulkRename";
 import { entriesStillListed } from "../lib/deletion";
 import type { FileOrigin } from "../lib/fileOrigin";
-import { pluralize } from "../lib/format";
 import { isDirLike } from "../lib/sort";
 import type { DirListing, FileEntry } from "../lib/types";
 import { knownTraits, nameTargetOf, runBulkRename, useBulkRenameStore } from "../state/bulkRename";
@@ -463,7 +462,7 @@ export function BulkRenameDialog({
                 </select>
               </label>
             </div>
-            <p className="field-hint">{t("rename.theDateAndTimeAre")}</p>
+            <p className="field-hint">{t("rename.theDateAndTimeAre", { ext: "{ext}" })}</p>
           </RuleSection>
 
           <RuleSection step={3} title={t("rename.counter")}>
@@ -503,7 +502,7 @@ export function BulkRenameDialog({
               </label>
             </div>
             {templateActive ? (
-              <p className="field-hint">{t("rename.theTemplatePlacesTheCounter")}</p>
+              <p className="field-hint">{t("rename.theTemplatePlacesTheCounter", { n: "{n}" })}</p>
             ) : (
               <div className="form-row">
                 <label className="field grow">
@@ -703,10 +702,10 @@ export function BulkRenameDialog({
             </button>
             <button type="submit" className="button button-primary" disabled={!canRename(preview)}>
               {stale === "refreshing"
-                ? "Checking the folder..."
+                ? t("rename.checkingTheFolder")
                 : canRename(preview)
                   ? t("rename.renameItems", { count: preview.ready })
-                  : "Rename"}
+                  : t("common.rename")}
             </button>
           </div>
         </div>

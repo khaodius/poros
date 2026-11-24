@@ -19,7 +19,7 @@ import {
   Info,
   Trash2,
 } from "lucide-react";
-import { formatDate, formatSize, pluralize } from "../lib/format";
+import { formatDate, formatSize } from "../lib/format";
 import type { DateFormat } from "../lib/settings";
 import {
   ACTION_LABELS,
@@ -184,7 +184,7 @@ export function SyncPlanList({
       {plan.items.length === 0 ? (
         <div className="sync-list sync-empty">
           <p className="sync-empty-title">
-            {hasWork ? "No files to copy." : "Everything is in sync."}
+            {hasWork ? t("sync.noFilesToCopy") : t("sync.everythingIsInSync")}
           </p>
           {counts && <p>{counts}.</p>}
         </div>
@@ -272,7 +272,7 @@ export function SyncPlanList({
         </button>
         <span className="sync-planned">{plan.items.length > 0 ? describePlanned(totals) : ""}</span>
         <button type="button" className="button" onClick={onCancel}>
-          {hasWork ? "Cancel" : "Close"}
+          {hasWork ? t("common.cancel") : t("common.close")}
         </button>
         {hasWork && (
           <button
@@ -281,7 +281,7 @@ export function SyncPlanList({
             disabled={(plan.items.length > 0 && nothingChosen) || running}
             onClick={onRun}
           >
-            {running ? "Starting..." : runLabel}
+            {running ? t("sync.starting") : runLabel}
           </button>
         )}
       </div>
@@ -376,7 +376,7 @@ const PlanRow = memo(function PlanRow({
         ) : (
           <>
             {Icon ? <Icon size={13} /> : <CircleAlert size={13} />}
-            {conflict ? "Settle by hand" : ACTION_LABELS[item.action]}
+            {conflict ? t("sync.settleByHand") : ACTION_LABELS[item.action]}
           </>
         )}
       </span>

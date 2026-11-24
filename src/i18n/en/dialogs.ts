@@ -61,4 +61,24 @@ export const dialogs = {
   read: "Read",
   write: "Write",
   execute: "Execute",
+  // components/ConflictDialog
+  localFile: "Local file",
+  serverFile: "Server file",
+  doTheSameForAny: "Do the same for any further conflicts in these transfers",
+
+  // components/DeleteDialog
+  theseItemsAreNoLonger: "These items are no longer in the folder.",
+
+  // components/PropertiesDialog
+  folders2: "Folders",
+  files2: "Files",
+  oneItemCouldNotBe: "One item could not be changed:",
+  itemsCouldNotBeChanged: "{count} items could not be changed:",
+  applying: "Applying...",
+
+  // lib/deletion: how a delete on a server goes
+  deletedCount: "{count} deleted",
+  countingToDelete: "Counting what to delete...",
+  deletedFoundSoFar: "{count} deleted, {found} found so far",
+  deletedOfTotal: "{count} of {total} deleted",
 } as const satisfies MessageArea;

@@ -1,7 +1,7 @@
 // Pure helpers for the scheduled tasks dialog; tasks are kept and run by
 // src-tauri/src/automation. Weekdays count from Monday as 0, as in the backend.
 
-import { formatDate, pluralize } from "./format";
+import { formatDate } from "./format";
 import { sanitizeSyncOptions } from "./rsyncOptions";
 import type { SyncSettings } from "./settings";
 import type {
@@ -14,12 +14,21 @@ import type {
   TaskView,
   Trigger,
 } from "./types";
-import { t } from "../i18n";
+import { dateTimeFormat, t, type MessageKey, type PlainMessageKey } from "../i18n";
 
 export type TransferTaskAction = Extract<TaskAction, { type: "transfer" }>;
 
-export const WEEKDAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-const EVERY_DAY = [0, 1, 2, 3, 4, 5, 6];
+/** Monday to Sunday as `{weekday}` writes them in folder names, the same in every language. */
+const PATTERN_WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+/** Monday is 0. */
+export const WEEKDAYS = [0, 1, 2, 3, 4, 5, 6];
+const EVERY_DAY = WEEKDAYS;
+
+/** A weekday's short name in the interface's language: `Mon` in English, `Mo` in German. */
+export function weekdayName(day: number): string {
+  // 1 January 2024 was a Monday.
+  return dateTimeFormat({ weekday: "short" }).format(new Date(2024, 0, 1 + day));
+}
 const WORKDAYS = [0, 1, 2, 3, 4];
 const WEEKEND = [5, 6];
 
@@ -29,11 +38,17 @@ const MINUTES_PER_DAY = 24 * MINUTES_PER_HOUR;
 export const MAX_INTERVAL_MINUTES = 28 * MINUTES_PER_DAY;
 
 export type IntervalUnit = "minutes" | "hours" | "days";
-export const INTERVAL_UNITS: { value: IntervalUnit; label: string; minutes: number }[] = [
-  { value: "minutes", label: "minutes", minutes: 1 },
-  { value: "hours", label: "hours", minutes: MINUTES_PER_HOUR },
-  { value: "days", label: "days", minutes: MINUTES_PER_DAY },
+export const INTERVAL_UNITS: { value: IntervalUnit; label: PlainMessageKey; minutes: number }[] = [
+  { value: "minutes", label: "schedule.unitMinutes", minutes: 1 },
+  { value: "hours", label: "schedule.unitHours", minutes: MINUTES_PER_HOUR },
+  { value: "days", label: "schedule.unitDays", minutes: MINUTES_PER_DAY },
 ];
+
+const EVERY_UNIT = {
+  minutes: "schedule.everyMinutes",
+  hours: "schedule.everyHours",
+  days: "schedule.everyDays",
+} as const;
 
 /** The largest unit that divides the interval evenly, for showing it in the editor. */
 export function splitInterval(minutes: number): { amount: number; unit: IntervalUnit } {
@@ -95,26 +110,28 @@ function sameDays(weekdays: number[], expected: number[]): boolean {
 }
 
 export function describeDays(weekdays: number[]): string {
-  if (sameDays(weekdays, EVERY_DAY)) return "Every day";
-  if (sameDays(weekdays, WORKDAYS)) return "Weekdays";
-  if (sameDays(weekdays, WEEKEND)) return "Weekends";
+  if (sameDays(weekdays, EVERY_DAY)) return t("schedule.everyDay");
+  if (sameDays(weekdays, WORKDAYS)) return t("schedule.weekdays");
+  if (sameDays(weekdays, WEEKEND)) return t("schedule.weekends");
   return [...weekdays]
     .sort((first, second) => first - second)
-    .map((day) => WEEKDAY_NAMES[day])
-    .join(", ");
+    .map((day) => weekdayName(day))
+    .join(t("common.listSeparator"));
 }
 
 export function describeTrigger(trigger: Trigger): string {
   switch (trigger.type) {
     case "once":
-      return `Once, ${formatDate(trigger.at)}`;
+      return t("schedule.onceAt", { date: formatDate(trigger.at) });
     case "every": {
       const { amount, unit } = splitInterval(trigger.minutes);
-      const singular = unit.slice(0, -1);
-      return amount === 1 ? `Every ${singular}` : `Every ${pluralize(amount, singular)}`;
+      return t(EVERY_UNIT[unit], { count: amount });
     }
     case "daily":
-      return `${describeDays(trigger.weekdays)} at ${timeInputValue(trigger.minuteOfDay)}`;
+      return t("schedule.daysAt", {
+        days: describeDays(trigger.weekdays),
+        time: timeInputValue(trigger.minuteOfDay),
+      });
   }
 }
 
@@ -124,34 +141,30 @@ export function folderName(path: string): string {
   return parts[parts.length - 1] ?? path;
 }
 
-const TRANSFER_VERBS: Record<Direction, string> = {
-  upload: "Upload",
-  download: "Download",
-  relay: "Copy",
-};
+const TRANSFER_NAMES = {
+  upload: { one: "schedule.nameUploadOne", several: "schedule.nameUploadItems" },
+  download: { one: "schedule.nameDownloadOne", several: "schedule.nameDownloadItems" },
+  relay: { one: "schedule.nameCopyOne", several: "schedule.nameCopyItems" },
+} as const satisfies Record<Direction, { one: MessageKey; several: MessageKey }>;
 
 /** Offered when the task has no name of its own. */
 export function suggestedName(action: TaskAction): string {
   if (action.type === "command") {
     const command = action.command.trim();
-    return command ? `Run ${command.split(/\s+/)[0]}` : "";
+    return command ? t("schedule.nameRun", { program: command.split(/\s+/)[0] }) : "";
   }
   if (action.type === "transfer") {
-    const verb = TRANSFER_VERBS[action.direction];
+    const names = TRANSFER_NAMES[action.direction];
     if (action.items.length === 0) return "";
     return action.items.length === 1
-      ? `${verb} ${folderName(action.items[0].path.trim())}`
-      : t("schedule.items", { verb, count: action.items.length });
+      ? t(names.one, { name: folderName(action.items[0].path.trim()) })
+      : t(names.several, { count: action.items.length });
   }
   const folder = folderName(action.direction === "download" ? action.remotePath : action.localPath);
   if (!folder.trim()) return "";
-  const verb =
-    action.direction === "upload"
-      ? "Upload"
-      : action.direction === "download"
-        ? "Download"
-        : "Sync";
-  return `${verb} ${folder}`;
+  if (action.direction === "upload") return t("schedule.nameUploadOne", { name: folder });
+  if (action.direction === "download") return t("schedule.nameDownloadOne", { name: folder });
+  return t("schedule.nameSync", { name: folder });
 }
 
 export interface SyncTaskSource {
@@ -406,7 +419,7 @@ function placeholderValue(name: string, now: Date): string | null {
     case "minute":
       return pad(now.getMinutes());
     case "weekday":
-      return WEEKDAY_NAMES[weekdayOf(now)];
+      return PATTERN_WEEKDAYS[weekdayOf(now)];
     case "week":
       return pad(isoWeek(now));
     default:
@@ -436,7 +449,7 @@ export function expandFolderPattern(
 ): { folder: string } | { error: string } {
   const trimmed = pattern.trim().replace(/^\/+|\/+$/g, "");
   if ([...trimmed].length > MAX_PATTERN_CHARS) {
-    return { error: `The folder pattern is longer than ${MAX_PATTERN_CHARS} characters` };
+    return { error: t("schedule.patternTooLong", { count: MAX_PATTERN_CHARS }) };
   }
   let expanded = "";
   let rest = trimmed;
@@ -445,17 +458,13 @@ export function expandFolderPattern(
     const after = rest.slice(open + 1);
     const close = after.search(/[{}]/);
     if (rest[open] !== "{" || close < 0 || after[close] !== "}") {
-      return {
-        error: "The folder pattern has a brace without its partner; write placeholders as {date}",
-      };
+      return { error: t("schedule.patternLoneBrace", { example: "{date}" }) };
     }
     const name = after.slice(0, close);
     const value = placeholderValue(name, now);
     if (value === null) {
       const known = PATTERN_PLACEHOLDERS.map((placeholder) => `{${placeholder}}`).join(", ");
-      return {
-        error: `The folder pattern has {${name}}, which is not a placeholder; use ${known}`,
-      };
+      return { error: t("schedule.patternUnknown", { found: `{${name}}`, known }) };
     }
     expanded += value;
     rest = after.slice(close + 1);
@@ -464,7 +473,7 @@ export function expandFolderPattern(
   const bad =
     expanded === "" ? undefined : expanded.split("/").find((part) => !plainFolderName(part));
   if (bad !== undefined) {
-    return { error: `The folder pattern names "${bad}", which cannot be a folder name` };
+    return { error: t("schedule.patternBadName", { name: bad }) };
   }
   return { folder: expanded };
 }

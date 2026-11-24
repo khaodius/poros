@@ -20,7 +20,6 @@ import {
 } from "lucide-react";
 import { isConnectionLost, type SearchView } from "../hooks/useSearch";
 import { formatCount } from "../lib/deletion";
-import { pluralize } from "../lib/format";
 import { baseName } from "../lib/path";
 import {
   DATE_PRESETS,
@@ -548,9 +547,7 @@ function UnreadableDialog({
           </li>
         ))}
       </ul>
-      {unlisted > 0 && (
-        <p className="field-hint">{t("search.andMore", { count: formatCount(unlisted) })}</p>
-      )}
+      {unlisted > 0 && <p className="field-hint">{t("search.andMore", { count: unlisted })}</p>}
       <div className="dialog-actions">
         <button type="button" className="button button-primary" data-autofocus onClick={onClose}>
           {t("common.close")}

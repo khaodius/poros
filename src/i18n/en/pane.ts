@@ -6,7 +6,7 @@ export const pane = {
   files: { one: "{count} file", other: "{count} files" },
   namesAlreadyTaken: "Names already taken",
   isAlreadyIn: "is already in",
-  andMore: "and {value} more",
+  andMore: "and {count} more",
   name2: "name (2)",
 
   // components/FilePane
@@ -79,7 +79,7 @@ export const pane = {
   thisVaultUsesAnOlder:
     "This vault uses an older Cryptomator format. Open it once in Cryptomator 1.6 or later to upgrade it.",
   couldNotRefreshThisFolder:
-    "Could not refresh this folder: {replace}. This listing may be out of date.",
+    "Could not refresh this folder: {reason}. This listing may be out of date.",
   everythingHereIsIdenticalIn: "Everything here is identical in both panes",
   goToHomeFolder: "Go to home folder",
   selected: { one: "{count} selected", other: "{count} selected" },
@@ -96,10 +96,6 @@ export const pane = {
   unlockedVault: "Unlocked vault",
 
   // state/fileOperations
-  itemsTo: {
-    one: "{verb} {count} item to {folder}{skipped}{howItWasDone}",
-    other: "{verb} {count} items to {folder}{skipped}{howItWasDone}",
-  },
   copiesInTheSameFolder: "Copies in the same folder cannot be made inside a vault.",
   copiesInTheSameFolderNeed: "Copies in the same folder need an SFTP connection.",
   aFolderCannotGoInside: "A folder cannot go inside itself.",
@@ -113,4 +109,34 @@ export const pane = {
   // components/FileOperationsHost
   done: "{t} done, {size}",
   keepBoth: "Keep both",
+  // components/FileOperationsHost
+  cancelling: "Cancelling...",
+  unpacking: "Unpacking",
+  ofRenamed: "{count} of {total} renamed",
+  starting: "Starting",
+  failed: ", {count} failed",
+
+  // components/FilePane
+  couldNotRefreshThisFolder2: "Could not refresh this folder",
+  couldNotOpenThisFolder: "Could not open this folder",
+  lockedVault: "Locked vault",
+  hidden: ", {count} hidden",
+  identicalNotShown: ", {count} identical not shown",
+
+  // components/FilePane: the menu entry that makes a scheduled task
+  scheduleUpload: "Schedule upload...",
+  scheduleDownload: "Schedule download...",
+  scheduleUploadUnavailable: "Schedule upload ({reason})",
+  scheduleDownloadUnavailable: "Schedule download ({reason})",
+
+  // components/FilePane: the pane's footer
+  results: { one: "{count} result", other: "{count} results" },
+
+  // components/FilePane: the delete question
+  deleteFromRemoteSide: "Permanently delete {what} from the remote side? This cannot be undone.",
+  deleteFromLocalSide: "Permanently delete {what} from the local side? This cannot be undone.",
+
+  // state/fileOperations
+  itemsCouldNotBeMoved: "{count} items could not be moved. The log lists why.",
+  itemsCouldNotBeCopied: "{count} items could not be copied. The log lists why.",
 } as const satisfies MessageArea;

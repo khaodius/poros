@@ -78,7 +78,10 @@ function NoticeBody({ install, onRetry }: { install: InstallStage; onRetry: () =
           <ProgressBar percent={percent} />
           <span className="update-notice-text">
             {install.total
-              ? `${formatSize(install.received)} of ${formatSize(install.total)}`
+              ? t("updates.of", {
+                  size: formatSize(install.received),
+                  size2: formatSize(install.total),
+                })
               : formatSize(install.received)}
             {percent !== null && <span>{percent}%</span>}
           </span>

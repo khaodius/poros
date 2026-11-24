@@ -7,7 +7,7 @@ import type { Translation } from "./catalog";
 import * as shipped from "./locales";
 import { createTranslate, type Translate } from "./runtime";
 
-export type { MessageKey, Translation } from "./catalog";
+export type { MessageKey, PlainMessageKey, Translation } from "./catalog";
 export type { Translate } from "./runtime";
 
 export const ENGLISH: Translation = shipped.en;
@@ -170,7 +170,7 @@ export function setLanguage(choice: LanguageChoice): void {
 
 /** Applies the language the last run used, so the first frame is already in it. */
 export function applyRememberedLanguage(): void {
-  let remembered: string | null = null;
+  let remembered: string | null;
   try {
     remembered = localStorage.getItem(REMEMBERED_LANGUAGE_KEY);
   } catch {

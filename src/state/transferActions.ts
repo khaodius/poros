@@ -1,6 +1,5 @@
 import { local, remote, toAppError, transfers } from "../lib/ipc";
 import type { Point } from "../lib/fileFlight";
-import { pluralize } from "../lib/format";
 import { baseName } from "../lib/path";
 import { isDirLike } from "../lib/sort";
 import type { Direction, FileEntry, SessionInfo, TransferItem } from "../lib/types";

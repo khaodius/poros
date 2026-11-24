@@ -2,6 +2,7 @@
 // Files headed elsewhere go through the transfer queue instead. Deleting on SFTP servers too.
 
 import { formatCount } from "../lib/deletion";
+import { englishCount } from "../lib/format";
 import type { Point } from "../lib/fileFlight";
 import { localSource, type PathStyle } from "../lib/fileSource";
 import {
@@ -11,7 +12,6 @@ import {
   worksInPlace,
   type FileOrigin,
 } from "../lib/fileOrigin";
-import { pluralize } from "../lib/format";
 import { folderOf } from "../lib/search";
 import { fileOperations, toAppError } from "../lib/ipc";
 import { baseName, breadcrumbs, childPath, isWithin, samePath } from "../lib/path";
@@ -139,13 +139,7 @@ function report(mode: PlaceMode, summary: OperationSummary, folder: string, sess
     const skipped = summary.skipped > 0 ? `, skipped ${summary.skipped}` : "";
     write(
       "info",
-      t("pane.itemsTo", {
-        verb,
-        count: summary.placed.length,
-        folder,
-        skipped,
-        howItWasDone: howItWasDone(summary.methods),
-      }),
+      `${verb} ${englishCount(summary.placed.length, "item")} to ${folder}${skipped}${howItWasDone(summary.methods)}`,
       sessionId,
     );
   }
@@ -160,7 +154,9 @@ function report(mode: PlaceMode, summary: OperationSummary, folder: string, sess
         "error",
         summary.failures.length === 1
           ? `${baseName(first.path)}: ${first.message}`
-          : `${summary.failures.length} items could not be ${mode === "move" ? "moved" : "copied"}. The log lists why.`,
+          : mode === "move"
+            ? t("pane.itemsCouldNotBeMoved", { count: summary.failures.length })
+            : t("pane.itemsCouldNotBeCopied", { count: summary.failures.length }),
       );
   }
 }
@@ -359,7 +355,7 @@ export async function deleteOnServer(request: DeleteOnServer): Promise<void> {
         "error",
         summary.failed === 1
           ? `${baseName(first.path)}: ${first.message}`
-          : t("pane.entriesCouldNotBeDeleted", { count: formatCount(summary.failed) }),
+          : t("pane.entriesCouldNotBeDeleted", { count: summary.failed }),
       );
     }
   } catch (caught) {

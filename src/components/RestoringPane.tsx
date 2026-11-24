@@ -91,7 +91,7 @@ export function RestoringPane({ tab }: { tab: RestoringTab }) {
               onClick={() => void reconnect(key, server)}
             >
               <RotateCw size={14} />
-              {phase === "waiting" ? "Connect" : "Try again"}
+              {phase === "waiting" ? t("common.connect") : t("common.tryAgain")}
             </button>
           )}
           <button type="button" className="button" onClick={() => closeTab(tab.id)}>

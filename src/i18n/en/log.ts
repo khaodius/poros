@@ -19,4 +19,8 @@ export const log = {
   warnings: "Warnings",
   errors: "Errors",
   server: "Server",
+  // components/LogView
+  closedSession: "Closed session {slice}",
+  connectionAndTransferActivityAppears: "Connection and transfer activity appears here.",
+  noLinesMatchTheFilters: "No lines match the filters.",
 } as const satisfies MessageArea;

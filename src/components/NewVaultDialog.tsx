@@ -88,7 +88,7 @@ export function NewVaultDialog({ folder, onCreate, onClose }: NewVaultDialogProp
             {t("common.cancel")}
           </button>
           <button type="submit" className="button button-primary" disabled={busy || !complete}>
-            {busy ? "Creating..." : "Create vault"}
+            {busy ? t("vault.creating") : t("vault.createVault")}
           </button>
         </div>
       </form>

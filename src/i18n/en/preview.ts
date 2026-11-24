@@ -15,9 +15,7 @@ export const preview = {
   preview: "Preview",
   folders: { one: "{count} folder", other: "{count} folders" },
   files: { one: "{count} file", other: "{count} files" },
-  noPermissionToReadThis: "No permission to read this {what}",
   theAccountSignedInHere: "The account signed in here is not allowed to open it.",
-  thisIsNoLongerThere: "This {what} is no longer there",
   itWasDeletedMovedOr: "It was deleted, moved or renamed after it was listed.",
   connectionLost: "Connection lost",
   theVaultIsLocked: "The vault is locked",
@@ -95,4 +93,12 @@ export const preview = {
   // lib/previewText
   utf8WithBom: "UTF-8 with BOM",
   latin1: "Latin-1",
+  // components/PreviewPane
+  notTextOrAPicture: "Not text or a picture",
+
+  // components/PreviewPane: when the preview cannot read
+  noPermissionToReadFile: "No permission to read this file",
+  noPermissionToReadFolder: "No permission to read this folder",
+  fileNoLongerThere: "This file is no longer there",
+  folderNoLongerThere: "This folder is no longer there",
 } as const satisfies MessageArea;

@@ -2,7 +2,7 @@
 // applies it (src-tauri/src/transfer/limit_schedule.rs); both are tested against
 // src-tauri/tests/fixtures/limit-schedule-cases.json so they agree on what is in force.
 
-import { WEEKDAY_NAMES } from "./schedule";
+import { weekdayName } from "./schedule";
 import type {
   Direction,
   JobSnapshot,
@@ -215,7 +215,7 @@ export function describeHours(rule: Pick<LimitRule, "startMinute" | "endMinute">
 
 /** What one stretch of the week view stands for, for its tooltip. */
 export function describeSpan(schedule: LimitSchedule, weekday: number, span: Span): string {
-  const when = `${WEEKDAY_NAMES[weekday]} ${minuteLabel(span.start)} to ${minuteLabel(span.end)}`;
+  const when = `${weekdayName(weekday)} ${minuteLabel(span.start)} to ${minuteLabel(span.end)}`;
   const { rule } = span.inForce;
   const source =
     rule === null ? "No rule, the ordinary limits" : ruleLabel(schedule.rules[rule].name, rule);
@@ -228,7 +228,7 @@ export function clockTime(epochSeconds: number, now: Date): string {
   const time = minuteLabel(moment.getHours() * 60 + moment.getMinutes());
   return moment.toDateString() === now.toDateString()
     ? time
-    : `${WEEKDAY_NAMES[(moment.getDay() + 6) % 7]} ${time}`;
+    : `${weekdayName((moment.getDay() + 6) % 7)} ${time}`;
 }
 
 /** Whether the schedule holds transfers in this direction now. */

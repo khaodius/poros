@@ -119,4 +119,29 @@ export const sync = {
   deleteLocal: "Delete local",
   deleteOnServer: "Delete on server",
   conflict: "Conflict",
+  // components/SyncDialog
+  startingFromTheDefaultsIn:
+    "Starting from the defaults in Settings, with the rsync arguments saved for {siteName}. Changes here apply to this synchronization only.",
+  startingFromTheDefaultsInSettings:
+    "Starting from the defaults in Settings. Changes here apply to this synchronization only.",
+  compareDryRun: "Compare (dry run)",
+  compare: "Compare",
+  listingFoldersLocalAndServer: "Listing folders: {value} local and {value2} server entries",
+
+  // components/SyncPlanList
+  noFilesToCopy: "No files to copy.",
+  everythingIsInSync: "Everything is in sync.",
+  starting: "Starting...",
+  settleByHand: "Settle by hand",
+
+  // lib/sync: what the chosen items will do, as sentences
+  plannedUpload: "Upload {total}",
+  plannedDownload: "Download {total}",
+  conflictsLeft: {
+    one: "{count} conflict left as it is",
+    other: "{count} conflicts left as they are",
+  },
+  plannedSentences: "{parts}.",
+  plannedSeparator: ". ",
+  nothingSelected: "Nothing selected.",
 } as const satisfies MessageArea;

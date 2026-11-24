@@ -28,6 +28,7 @@ import {
 import { serverEntry, useSessionStore } from "../state/sessionStore";
 import { saveSettingsSection, useSettingsStore } from "../state/settingsStore";
 import { useToastStore } from "../state/toastStore";
+import { useT } from "../i18n";
 import { useUiStore } from "../state/uiStore";
 import type { PaneController } from "./usePane";
 
@@ -129,6 +130,7 @@ export function useFolderCompare({
   const lost = useSessionStore((state) =>
     sessionId ? serverEntry(state.sessions, sessionId)?.status === "lost" : false,
   );
+  const t = useT();
   const showToast = useToastStore((state) => state.show);
   const openDialog = useUiStore((state) => state.open);
 
@@ -231,9 +233,9 @@ export function useFolderCompare({
 
   const synchronize: FolderCompareBarModel["synchronize"] =
     local?.location.kind !== "local" || !remote || !remoteSession
-      ? { unavailable: "between this computer and an SFTP server only" }
+      ? { unavailable: t("compare.syncOnlyLocalAndSftp") }
       : !sessionHere
-        ? { unavailable: "from the window with the server's tab" }
+        ? { unavailable: t("compare.syncFromServerWindow") }
         : {
             open: () =>
               openDialog({

@@ -62,8 +62,9 @@ export function CloudSignIn({ protocol, account, onSignedIn, onError }: CloudSig
     return (
       <div className="cloud-account">
         <p className="field-hint">
-          Signing in to {info.label} needs your own {providerName} app registration. Add its client
-          ID{provider === "box" ? " and client secret" : ""} under Settings, Cloud accounts.
+          {provider === "box"
+            ? t("cloud.needsOwnAppWithSecret", { service: info.label, provider: providerName })
+            : t("cloud.needsOwnApp", { service: info.label, provider: providerName })}
         </p>
         <button
           type="button"
@@ -95,7 +96,7 @@ export function CloudSignIn({ protocol, account, onSignedIn, onError }: CloudSig
       <div className="cloud-account">
         <CircleUserRound size={18} className="cloud-account-icon" />
         <span className="cloud-account-text">
-          {t("cloud.signedInAs")} <strong>{account}</strong>
+          {t.rich("cloud.signedInAs", { account: <strong>{account}</strong> })}
         </span>
         <button type="button" className="button" onClick={() => void signIn()}>
           {t("cloud.signInAgain")}

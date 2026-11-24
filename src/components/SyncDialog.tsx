@@ -4,7 +4,6 @@ import { CalendarClock, FolderOpen, LoaderCircle } from "lucide-react";
 import { useLatest } from "../hooks/useLatest";
 import { useOptionCheck } from "../hooks/useOptionCheck";
 import { localSource } from "../lib/fileSource";
-import { pluralize } from "../lib/format";
 import { onSyncProgress, sync, toAppError } from "../lib/ipc";
 import { progressReach } from "../lib/progressBars";
 import { commandPreview, withOption } from "../lib/rsyncOptions";
@@ -443,8 +442,8 @@ function SetupForm({
         <span>{t("sync.rsyncOptions")}</span>
         <small className="field-hint">
           {siteName
-            ? `Starting from the defaults in Settings, with the rsync arguments saved for ${siteName}. Changes here apply to this synchronization only.`
-            : "Starting from the defaults in Settings. Changes here apply to this synchronization only."}
+            ? t("sync.startingFromTheDefaultsIn", { siteName })
+            : t("sync.startingFromTheDefaultsInSettings")}
         </small>
         <RsyncOptionsEditor
           options={options}
@@ -472,7 +471,7 @@ function SetupForm({
           {t("common.cancel")}
         </button>
         <button type="submit" className="button button-primary" disabled={!canCompare}>
-          {options.dryRun ? "Compare (dry run)" : "Compare"}
+          {options.dryRun ? t("sync.compareDryRun") : t("sync.compare")}
         </button>
       </div>
     </form>
@@ -498,7 +497,10 @@ function ComparingView({
               compared: progress.compared,
               count: progress.toCompare,
             })
-          : `Listing folders: ${progress?.localEntries ?? 0} local and ${progress?.remoteEntries ?? 0} server entries`}
+          : t("sync.listingFoldersLocalAndServer", {
+              value: progress?.localEntries ?? 0,
+              value2: progress?.remoteEntries ?? 0,
+            })}
       </p>
       {comparing && (
         <span

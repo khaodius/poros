@@ -4,7 +4,9 @@ import type { MenuItem } from "./ContextMenu";
 import { t } from "../i18n";
 
 export const COMPARE_FOLDERS_SHORTCUT = "Ctrl+Shift+D";
-export const DEEP_COMPARE_LABEL = "Compare contents of subfolders";
+export function deepCompareLabel(): string {
+  return t("compare.compareContentsOfSubfolders");
+}
 
 /** Selects the rows in a state, so the usual transfer, drag and delete actions apply to them. */
 export function selectItems(bar: FolderCompareBarModel): MenuItem[] {
@@ -78,7 +80,7 @@ export function folderCompareMenuItems(
     bar && onEmptySpace
       ? [
           {
-            label: DEEP_COMPARE_LABEL,
+            label: deepCompareLabel(),
             icon: <FolderTree size={14} />,
             disabled: !bar.counts || bar.deep?.status === "running",
             onSelect: bar.startDeep,

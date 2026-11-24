@@ -26,4 +26,13 @@ export const editor = {
   // components/EditorPane
   utf8WithBom: "UTF-8 with BOM",
   latin1: "Latin-1",
+  // components/EditorPane
+  wasDeletedAfterYouOpened: "{name} was deleted {where} after you opened it.",
+  changedSinceYouOpenedIt: "{name} changed {where} since you opened it.",
+  saveItAgain: "Save it again",
+  saving: "Saving...",
+  saved: "Saved",
+
+  // components/UnsavedChangesDialog
+  saveAll: "Save all",
 } as const satisfies MessageArea;
