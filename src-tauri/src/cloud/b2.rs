@@ -1946,6 +1946,7 @@ mod tests {
             reauthorizing: tokio::sync::Mutex::new(()),
             allowed: None,
             key_capabilities: Vec::new(),
+            name_prefix: None,
             minimum_part_size: 0,
             home: "/".into(),
             bucket_ids: Mutex::new(HashMap::new()),

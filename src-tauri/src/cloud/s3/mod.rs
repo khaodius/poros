@@ -2522,7 +2522,7 @@ mod tests {
         .await;
         let files = files(&service.address, 443, Addressing::Automatic);
         files
-            .copy_object("bucket", "source.bin", COPY_LIMIT + 1, "big.bin")
+            .copy_object("bucket", "source.bin", None, COPY_LIMIT + 1, "big.bin")
             .await
             .unwrap();
         assert_eq!(service.count(PART), 6);
