@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { transfers } from "../lib/ipc";
 import { MAX_WORKERS } from "../lib/settings";
-import { jobsIn, VIEW_STATES, type TransferViewKind } from "../lib/transfers";
+import { jobsIn, showsPaused, VIEW_STATES, type TransferViewKind } from "../lib/transfers";
 import { saveSettingsSection, useSettingsStore } from "../state/settingsStore";
 import { useTransferStore } from "../state/transferStore";
 import { ScheduleOverrideButton } from "./LimitScheduleStatus";
@@ -50,7 +50,8 @@ export function BottomPanel() {
   const [selection, setSelection] = useState<Set<number>>(new Set());
   const [followCompleted, setFollowCompleted] = useState(readFollow);
   const counts = useTransferStore((state) => state.snapshot.stats.counts);
-  const queuePaused = useTransferStore((state) => state.snapshot.stats.queuePaused);
+  // A queue that waits for Start while scheduled files go is shown going, so Pause can stop them.
+  const queuePaused = useTransferStore((state) => showsPaused(state.snapshot.stats));
   // Only the rows on show: a job selected in the queue that has finished since is not.
   const selectedIds = useTransferStore(
     useShallow((state) =>

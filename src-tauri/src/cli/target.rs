@@ -86,6 +86,18 @@ fn passphrase_source(options: &GlobalOptions) -> Option<SecretSource> {
     }
 }
 
+/// The password and key passphrase given with the sign-in options or their environment
+/// variables, read once.
+pub fn given_secrets(options: &GlobalOptions) -> AppResult<(Option<String>, Option<String>)> {
+    let password = password_source(options)
+        .map(|source| source.read())
+        .transpose()?;
+    let passphrase = passphrase_source(options)
+        .map(|source| source.read())
+        .transpose()?;
+    Ok((password, passphrase))
+}
+
 /// A saved connection by id, or by name ignoring case.
 pub fn find_saved(store: &ConnectionStore, wanted: &str) -> AppResult<Option<SavedConnection>> {
     let connections = store.list()?;

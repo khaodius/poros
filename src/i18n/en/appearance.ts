@@ -211,11 +211,11 @@ export const appearance = {
   colorBackdrop: "Dialog backdrop",
 
   // lib/theme: problems in a theme file
-  themeUnknownBase: "Unknown base \"{base}\"",
-  themeUnknownColor: "Unknown color \"{key}\"",
-  themeNotAColor: "\"{key}\" is not a color",
-  themeColorsNotAnObject: "\"colors\" must be an object",
-  themeRadiusOutOfRange: "\"radius\" must be a number from 0 to 16",
+  themeUnknownBase: 'Unknown base "{base}"',
+  themeUnknownColor: 'Unknown color "{key}"',
+  themeNotAColor: '"{key}" is not a color',
+  themeColorsNotAnObject: '"colors" must be an object',
+  themeRadiusOutOfRange: '"radius" must be a number from 0 to 16',
 
   // lib/theme: built-in theme names
   themeSystem: "System",

@@ -9,6 +9,7 @@ import {
   missesUpdates,
   replayOnList,
   secondsRemaining,
+  showsPaused,
   VIEW_STATES,
 } from "./transfers";
 import type { JobSnapshot, TransferUpdate } from "./types";
@@ -109,6 +110,31 @@ describe("transfer snapshots", () => {
       false,
     );
     expect(isSettled({ ...EMPTY_STATS, counts: { ...EMPTY_STATS.counts, failed: 3 } })).toBe(true);
+  });
+
+  it("shows a queue that waits for Start as going while scheduled files go", () => {
+    expect(showsPaused(EMPTY_STATS)).toBe(false);
+    const held = { ...EMPTY_STATS, queuePaused: true, heldForStart: true };
+    expect(showsPaused(held)).toBe(true);
+    expect(showsPaused({ ...held, unattendedRunning: true })).toBe(false);
+    // Paused by the user, it stops scheduled files too.
+    expect(showsPaused({ ...held, heldForStart: false, unattendedRunning: true })).toBe(true);
+  });
+
+  it("does not take a direction the speed limit schedule pauses for a paused queue", () => {
+    const quietHour = {
+      ...EMPTY_STATS.limits,
+      upload: { mode: "paused", kib: 0 },
+      rule: { index: 0, name: "Quiet hour" },
+    } as const;
+    const going = { ...EMPTY_STATS, limits: quietHour };
+    expect(showsPaused(going)).toBe(false);
+    expect(showsPaused({ ...going, unattendedRunning: true })).toBe(false);
+    const held = { ...going, queuePaused: true, heldForStart: true };
+    // A scheduled run's download goes while its uploads wait for the window: Pause stops it.
+    expect(showsPaused({ ...held, unattendedRunning: true })).toBe(false);
+    // Only its held uploads are left, so nothing moves until Start or the window ends.
+    expect(showsPaused(held)).toBe(true);
   });
 
   it("estimates the time left", () => {

@@ -15,6 +15,7 @@ import {
   ArrowLeftRight,
   ArrowUp,
   ArrowUpToLine,
+  CalendarClock,
   ClipboardCopy,
   Folder,
   Pause,
@@ -31,11 +32,12 @@ import { scheduleWait } from "../lib/limitSchedule";
 import { progressLabel, type ProgressBarSettings } from "../lib/progressBars";
 import { jobProgress, jobsIn, VIEW_STATES, type TransferViewKind } from "../lib/transfers";
 import type { Direction, JobSnapshot } from "../lib/types";
+import { scheduleJobs } from "../state/scheduleActions";
 import { useSettingsStore } from "../state/settingsStore";
 import { useTransferStore } from "../state/transferStore";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { ProgressBar } from "./ProgressBar";
-import { useT, t } from "../i18n";
+import { t, useT } from "../i18n";
 
 const ROW_HEIGHT = 28;
 
@@ -113,6 +115,7 @@ export function TransferView({
   const bars = useSettingsStore((state) => state.settings.appearance.progressBars);
   const limits = useTransferStore((state) => state.snapshot.stats.limits);
   const queuePaused = useTransferStore((state) => state.snapshot.stats.queuePaused);
+  const heldForStart = useTransferStore((state) => state.snapshot.stats.heldForStart);
   const now = new Date(useMinute());
   const jobsRef = useRef(jobs);
   useLayoutEffect(() => {
@@ -220,6 +223,11 @@ export function TransferView({
         icon: <ClipboardCopy size={14} />,
         onSelect: () => void navigator.clipboard.writeText(paths),
       },
+      {
+        label: selectedJobs.length > 1 ? t("transfers.scheduleThese") : t("transfers.scheduleThis"),
+        icon: <CalendarClock size={14} />,
+        onSelect: () => scheduleJobs(selectedJobs),
+      },
       "separator",
       {
         label: t("common.remove"),
@@ -311,7 +319,7 @@ export function TransferView({
                 key={job.id}
                 job={job}
                 bars={bars}
-                scheduleWaitText={scheduleWait(job, { limits, queuePaused }, now)}
+                scheduleWaitText={scheduleWait(job, { limits, queuePaused, heldForStart }, now)}
                 top={item.start}
                 selected={selection.has(job.id)}
                 onClick={handleRowClick}
@@ -349,7 +357,6 @@ const TransferRow = memo(function TransferRow({
   onClick,
   onContextMenu,
 }: TransferRowProps) {
-  const t = useT();
   const progress = jobProgress(job);
   const DirectionIcon = DIRECTION_ICONS[job.direction];
   const status = statusText(job, scheduleWaitText);
@@ -360,7 +367,7 @@ const TransferRow = memo(function TransferRow({
       data-direction={job.direction}
       role="row"
       aria-selected={selected}
-      title={t("transfers.to", { source: job.source, target: job.target })}
+      title={`${job.source}\nto ${job.target}${job.label ? `\nQueued by the task ${job.label}` : ""}`}
       onClick={(event) => onClick(event, job)}
       onContextMenu={(event) => onContextMenu(event, job)}
     >
@@ -368,6 +375,7 @@ const TransferRow = memo(function TransferRow({
         <DirectionIcon size={13} className={`transfer-direction direction-${job.direction}`} />
         {job.kind === "folder" && <Folder size={14} className="file-icon file-icon-folder" />}
         <span className="transfer-name-text">{job.name}</span>
+        {job.label && <span className="transfer-tag">{job.label}</span>}
         <span className="transfer-target">{job.targetDirectory}</span>
       </span>
       <span className="align-end">{job.kind === "file" ? formatSize(job.size) : ""}</span>

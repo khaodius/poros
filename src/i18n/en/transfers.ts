@@ -36,4 +36,7 @@ export const transfers = {
   sizeOfSize: "{transferred} of {size}",
   done: "Done",
   timeLeft: "{duration} left",
+  // components/TransferView
+  scheduleThese: "Schedule these...",
+  scheduleThis: "Schedule this...",
 } as const satisfies MessageArea;

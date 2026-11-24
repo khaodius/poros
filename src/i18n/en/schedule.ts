@@ -44,4 +44,33 @@ export const schedule = {
   onDays: "On days",
   repeat: "Repeat",
   once: "Once",
+  // components/SchedulerDialog
+  synchronizeFolders: "Synchronize folders",
+  transferFiles: "Transfer files",
+  runACommand: "Run a command",
+  uploadTo: "Upload to",
+  downloadFrom: "Download from",
+  copyTo: "Copy to",
+  tasksRunWhilePorosIsOpen:
+    "Tasks run while Poros is open, or from poros-cli with cron or a timer. Ones you save appear here.",
+
+  // lib/scheduleDraft
+  porosNoLongerKnowsThe:
+    "Poros no longer knows the server of these transfers. Schedule the files from a tab instead.",
+  filesInAnUnlockedVault:
+    "Files in an unlocked vault cannot be scheduled: a task could not unlock the vault.",
+  saveTheConnectionToFirst:
+    "Save the connection to {label} first: a scheduled task signs in with a saved connection.",
+  selectTheTransfersToSchedule: "Select the transfers to schedule.",
+  selectTransfersThatGoThe:
+    "Select transfers that go the same way between the same places to schedule them.",
+  theSelectedTransfersGoTo:
+    "The selected transfers go to different folders. Select ones that go into one folder.",
+  selectTheFilesToSchedule: "Select the files to schedule.",
+
+  // lib/schedule
+  items: { one: "{verb} {count} item", other: "{verb} {count} items" },
+  overwriteIfTheSourceIs: "Overwrite if the source is newer",
+  overwriteIfSizeOrDate: "Overwrite if size or date differ",
+  keepBoth: "Keep both",
 } as const satisfies MessageArea;
