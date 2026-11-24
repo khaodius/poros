@@ -39,7 +39,7 @@ export const limits = {
   clickToChangeTheSchedule: "{scheduleTooltip}\nHaz clic para cambiar el horario.",
   scheduleIgnoredShort: "Horario ignorado",
   scheduleIgnoredShortUntil: "Horario ignorado hasta {time}",
-  untilTime: "hasta {time}",
+  limitsUntilTime: "{limits} hasta {time}",
 
   // components/LimitScheduleWeek
   speedLimitsThroughTheWeek: "Límites de velocidad a lo largo de la semana",

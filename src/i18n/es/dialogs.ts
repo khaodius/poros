@@ -20,11 +20,16 @@ export const dialogs = {
   // components/DeleteDialog
   nothingToDelete: "Nada que eliminar",
   deleteItem: "Eliminar elemento",
-  deleteItems: "Eliminar {count} elementos",
+  deleteItems: {
+    one: "Eliminar {count} elemento",
+    many: "Eliminar {count} de elementos",
+    other: "Eliminar {count} elementos",
+  },
   checkingTheFolder: "Comprobando la carpeta...",
   theseItemsAreNoLonger: "Estos elementos ya no están en la carpeta.",
 
   // components/PropertiesDialog
+  sizeWithContents: "{size} ({contents})",
   items: { one: "{count} elemento", many: "{count} de elementos", other: "{count} elementos" },
   files: { one: "{count} archivo", many: "{count} de archivos", other: "{count} archivos" },
   folders: { one: "{count} carpeta", many: "{count} de carpetas", other: "{count} carpetas" },
@@ -34,7 +39,11 @@ export const dialogs = {
     other: "Contando: {count} archivos, {size}",
   },
   propertiesOf: "Propiedades de {name}",
-  propertiesOfItems: "Propiedades de {count} elementos",
+  propertiesOfItems: {
+    one: "Propiedades de {count} elemento",
+    many: "Propiedades de {count} de elementos",
+    other: "Propiedades de {count} elementos",
+  },
   items2: "Elementos",
   links: { one: "{count} vínculo", many: "{count} de vínculos", other: "{count} vínculos" },
   type: "Tipo",
@@ -46,7 +55,11 @@ export const dialogs = {
   permissions: "Permisos",
   linksHaveNoPermissionsOf:
     "Los vínculos no tienen permisos propios, así que conservan los suyos. Los cambios de propietario y grupo se aplican a los propios vínculos.",
-  andMoreListedInThe: "y {count} más, que aparecen en el registro",
+  andMoreListedInThe: {
+    one: "y {count} más, que aparece en el registro",
+    many: "y {count} más, que aparecen en el registro",
+    other: "y {count} más, que aparecen en el registro",
+  },
   changedItems: {
     one: "Se cambió {count} elemento",
     many: "Se cambiaron {count} de elementos",
@@ -60,7 +73,11 @@ export const dialogs = {
   folders2: "Carpetas",
   files2: "Archivos",
   oneItemCouldNotBe: "No se pudo cambiar un elemento:",
-  itemsCouldNotBeChanged: "No se pudieron cambiar {count} elementos:",
+  itemsCouldNotBeChanged: {
+    one: "No se pudo cambiar {count} elemento:",
+    many: "No se pudieron cambiar {count} de elementos:",
+    other: "No se pudieron cambiar {count} elementos:",
+  },
   applying: "Aplicando...",
   linkToAFolder: "Vínculo a una carpeta",
   linkToAFile: "Vínculo a un archivo",
@@ -77,10 +94,22 @@ export const dialogs = {
   permissionOfClass: "{who}: {permission}",
 
   // lib/deletion
-  deletedCount: "Eliminados: {count}",
+  deletedCount: {
+    one: "{count} eliminado",
+    many: "{count} eliminados",
+    other: "{count} eliminados",
+  },
   countingToDelete: "Contando lo que hay que eliminar...",
-  deletedFoundSoFar: "Eliminados: {count}; encontrados hasta ahora: {found}",
-  deletedOfTotal: "Eliminados: {count} de {total}",
+  deletedFoundSoFar: {
+    one: "{count} eliminado; encontrados hasta ahora: {found}",
+    many: "{count} eliminados; encontrados hasta ahora: {found}",
+    other: "{count} eliminados; encontrados hasta ahora: {found}",
+  },
+  deletedOfTotal: {
+    one: "Eliminado {count} de {total}",
+    many: "Eliminados {count} de {total}",
+    other: "Eliminados {count} de {total}",
+  },
 
   // lib/permissions
   setUserId: "Establecer ID de usuario",

@@ -56,7 +56,6 @@ export const automation = {
   whenTheQueueFinishes: "Cuando termine la cola",
 
   // components/WhenDoneCountdown
-  theTransferQueueHasFinished: "La cola de transferencias ha terminado. {title} en {seconds}.",
   seconds: { one: "{count} segundo", many: "{count} de segundos", other: "{count} segundos" },
 
   // components/commandMenu
@@ -65,6 +64,18 @@ export const automation = {
   editCommands: "Editar comandos...",
 
   // lib/automation
+  queueFinishedClosingPorosIn:
+    "La cola de transferencias ha terminado. Poros se cerrará en {seconds}.",
+  queueFinishedLockingIn:
+    "La cola de transferencias ha terminado. El equipo se bloqueará en {seconds}.",
+  queueFinishedSleepingIn:
+    "La cola de transferencias ha terminado. El equipo entrará en suspensión en {seconds}.",
+  queueFinishedHibernatingIn:
+    "La cola de transferencias ha terminado. El equipo entrará en hibernación en {seconds}.",
+  queueFinishedLoggingOffIn:
+    "La cola de transferencias ha terminado. La sesión se cerrará en {seconds}.",
+  queueFinishedShuttingDownIn:
+    "La cola de transferencias ha terminado. El equipo se apagará en {seconds}.",
   filesTransferredIn: {
     one: "{count} archivo transferido ({size}) en {duration}",
     many: "{count} de archivos transferidos ({size}) en {duration}",
@@ -91,8 +102,8 @@ export const automation = {
   confirmShutDownNow: "Apagar ahora",
   transfersFinishedWithErrors: "Transferencias terminadas con errores",
   transfersFinished: "Transferencias terminadas",
-  failedCount: "{count} con error",
-  skippedCount: "omitidos: {count}",
+  failedCount: { one: "{count} con error", many: "{count} con error", other: "{count} con error" },
+  skippedCount: { one: "{count} omitido", many: "{count} omitidos", other: "{count} omitidos" },
 
   // lib/commands
   eachSelectedItemsFullPath:
@@ -111,8 +122,16 @@ export const automation = {
   // state/commandStore
   stopped: "Detenido",
   nothingToRun: "Nada que ejecutar",
-  allCommandsFinished: "Terminaron los {finished} comandos",
-  ofCommandsFailed: "Fallaron {failed} de {finished} comandos",
+  allCommandsFinished: {
+    one: "Terminó el comando",
+    many: "Terminaron los {count} de comandos",
+    other: "Terminaron los {count} comandos",
+  },
+  ofCommandsFailed: {
+    one: "Falló {count} de {finished} comandos",
+    many: "Fallaron {count} de {finished} comandos",
+    other: "Fallaron {count} de {finished} comandos",
+  },
 
   // state/whenDone
   whenTheQueueFinished: "Al terminar la cola",

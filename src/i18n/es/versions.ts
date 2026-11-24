@@ -42,10 +42,11 @@ export const versions = {
   },
   everythingDeletedUnderAFolder:
     "También desaparece todo lo eliminado dentro de una carpeta. Los archivos que siguen en ella no se tocan.",
-  andMore: "y {count} más",
+  andMore: { one: "y {count} más", many: "y {count} más", other: "y {count} más" },
   removeThisDeleteMarker: "Quitar este marcador de eliminación",
   deleteThisVersionForGood: "Eliminar definitivamente esta versión",
   versionFrom: "Versión del {when}",
+  versionFromUnknownTime: "Versión de fecha desconocida",
   currentVersion: "Versión actual",
   isNoLongerDeleted: "{name} ya no está eliminado.",
   theseItemsAreNoLongerDeleted: "Estos elementos ya no están eliminados.",

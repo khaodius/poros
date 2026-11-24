@@ -10,6 +10,9 @@
 // | Quotation marks        | "..."         | "..."                                           |
 // | "Asks for more" ending | ...           | ...                                             |
 // | List separator         | `, `          | `, `                                            |
+// | Clause separator       | `; `          | `; `                                            |
+// | Sentence separator     | ` `           | ` `                                             |
+// | Label and message      | `: `          | `: `                                            |
 //
 // | Term              | Español                                                         |
 // | ----------------- | --------------------------------------------------------------- |
@@ -40,8 +43,8 @@
 // Rename Cambiar nombre (renombrar inside running text), archive archivo comprimido,
 // endpoint punto de conexión, bucket bucket, system keychain llavero del sistema,
 // placeholder marcador, dry run simulación, log registro. Durations as 5 s, 3 min 20 s, 2 h 5 min.
-// A count without a plural form of its own is written so that it reads for any number
-// ("con error: {count}", "{count} sin cambios").
+// In a plural, the words around the number agree with it ("No se pudo copiar 1 elemento",
+// "1 omitido"), and `many` puts "de" only before a noun ("{count} de archivos", "{count} omitidos").
 
 import { defineTranslation } from "../catalog";
 import { appearance } from "./appearance";

@@ -150,7 +150,8 @@ export const openWith = {
   noFilesAreOpenIn:
     "No hay archivos abiertos en otros programas. Haz clic con el botón derecho en un archivo y elige Abrir con.",
   inAVault: "En una bóveda",
-  uploaded: "subido: {uploadTime}",
+  uploadedAtTime: "subido a las {time}",
+  uploadedOnDate: "subido el {date}",
   of: "{transferred} de {total}",
   decideWhatToUpload: "Decidir qué subir...",
   openInAnEditor: "Abrir en un editor...",

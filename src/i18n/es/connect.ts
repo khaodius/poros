@@ -7,7 +7,7 @@ export const connect = {
   importFromFilezillaWinscpAnd: "Importar de FileZilla, WinSCP y otras aplicaciones",
   importConnections: "Importar conexiones",
   newConnection: "Nueva conexión",
-  connectionsYouSaveAppearHere: "Las conexiones que guardes aparecen aquí.",
+  emptyConnectionList: "Las conexiones que guardes aparecen aquí. {importLink}",
   importThemFromAnotherApp: "Importarlas de otra aplicación",
   protocol: "Protocolo",
   account: "Cuenta",
@@ -95,14 +95,17 @@ export const connect = {
 
   // components/ImportConnectionsDialog
   importFrom: "Importar de {label}",
-  importedFrom: "Importación desde {label} completada: {imported}.",
-  imported: "Importación completada: {imported}.",
-  theseCouldNotBeSaved: "No se pudieron guardar estas: {failures}",
-  importedConnections: {
-    one: "{count} conexión",
-    many: "{count} de conexiones",
-    other: "{count} conexiones",
+  importedFrom: {
+    one: "Se importó {count} conexión desde {label}.",
+    many: "Se importaron {count} de conexiones desde {label}.",
+    other: "Se importaron {count} conexiones desde {label}.",
   },
+  imported: {
+    one: "Se importó {count} conexión.",
+    many: "Se importaron {count} de conexiones.",
+    other: "Se importaron {count} conexiones.",
+  },
+  theseCouldNotBeSaved: "No se pudieron guardar estas: {failures}",
   passwordsLeftOut: {
     one: "El llavero del sistema no está disponible, así que se omitió {count} contraseña; Poros la pedirá al conectar.",
     many: "El llavero del sistema no está disponible, así que se omitieron {count} de contraseñas; Poros las pedirá al conectar.",
@@ -115,8 +118,11 @@ export const connect = {
     "Poros copia los sitios guardados de estas aplicaciones en sus propias conexiones guardadas. En la otra aplicación no cambia nada.",
   chooseFile: "Elegir archivo...",
   alreadySaved: "Ya guardada",
-  leftOutSincePorosCannot:
-    "Omitidos: {count}, ya que Poros no puede conectarse a ellos tal como están",
+  leftOutSincePorosCannot: {
+    one: "{count} conexión omitida, ya que Poros no puede conectarse a ella tal como está",
+    many: "{count} de conexiones omitidas, ya que Poros no puede conectarse a ellas tal como están",
+    other: "{count} conexiones omitidas, ya que Poros no puede conectarse a ellas tal como están",
+  },
   putFolderNamesInFront: "Anteponer los nombres de carpeta a los de conexión",
   reading: "Leyendo...",
   otherFile: "Otro archivo...",
@@ -132,6 +138,8 @@ export const connect = {
   },
   foundFiles: "Encontrado: {files}",
   notFoundInChoose: "No se encontró en {places}. {choose}",
+  throughConnection: "a través de {name}",
+  neededByConnection: "necesaria para {name}",
   placeOrPlace: "{first} o {second}",
   keepThePasswordsInTheKeychain: {
     one: "Guardar la contraseña en el llavero del sistema",

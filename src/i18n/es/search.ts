@@ -43,7 +43,7 @@ export const search = {
   },
   leaveABoxEmptyTo: "Deja un campo vacío para dejar abierto ese extremo.",
   foldersThatCouldNotBe: "Carpetas que no se pudieron leer",
-  andMore: "y {count} más",
+  andMore: { one: "y {count} más", many: "y {count} más", other: "y {count} más" },
   theSearchWentPastIt: {
     one: "La búsqueda pasó por {count} carpeta que no pudo leer. Lo que contiene no está en los resultados.",
     many: "La búsqueda pasó por {count} de carpetas que no pudo leer. Lo que contienen no está en los resultados.",
@@ -52,7 +52,11 @@ export const search = {
   },
   searchIn: "Buscar en {folder}",
   pressEnterToSearch: "Presiona Enter para buscar en {folder} y en las carpetas que contiene",
-  searchingFoundIn: "Buscando: {found} en {folders}",
+  searchingFoundIn: {
+    one: "Buscando: {count} encontrado en {folders}",
+    many: "Buscando: {count} encontrados en {folders}",
+    other: "Buscando: {count} encontrados en {folders}",
+  },
   foundInFoldersSearched: "{found} tras buscar en {folders}",
   searchedByTheServer: "Búsqueda hecha por el servidor",
   stoppedAfterSoFar: "Detenida tras {folders}: {found} hasta ahora",

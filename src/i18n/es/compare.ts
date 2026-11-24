@@ -123,13 +123,41 @@ export const compare = {
     "La comparación está en pausa mientras este panel muestra resultados de búsqueda. Las marcas vuelven al cerrar los resultados",
   pausedPartnerShowsResults:
     "La comparación está en pausa mientras {partner} muestra resultados de búsqueda. Las marcas vuelven al cerrar los resultados",
-  summaryNewerHere: "{count} con fecha más reciente aquí",
-  summaryOlderHere: "{count} con fecha más antigua aquí",
-  summaryOnlyHere: "{count} solo aquí",
-  summaryOnlyThere: "{count} solo en el otro panel",
-  summaryDifferent: "{count} con diferencias",
-  summaryIdentical: "{count} sin diferencias",
-  summaryNotCompared: "{count} sin comparar",
+  summaryNewerHere: {
+    one: "{count} más reciente aquí",
+    many: "{count} más recientes aquí",
+    other: "{count} más recientes aquí",
+  },
+  summaryOlderHere: {
+    one: "{count} más antiguo aquí",
+    many: "{count} más antiguos aquí",
+    other: "{count} más antiguos aquí",
+  },
+  summaryOnlyHere: {
+    one: "{count} solo aquí",
+    many: "{count} solo aquí",
+    other: "{count} solo aquí",
+  },
+  summaryOnlyThere: {
+    one: "{count} solo en el otro panel",
+    many: "{count} solo en el otro panel",
+    other: "{count} solo en el otro panel",
+  },
+  summaryDifferent: {
+    one: "{count} distinto",
+    many: "{count} distintos",
+    other: "{count} distintos",
+  },
+  summaryIdentical: {
+    one: "{count} idéntico",
+    many: "{count} idénticos",
+    other: "{count} idénticos",
+  },
+  summaryNotCompared: {
+    one: "{count} sin comparar",
+    many: "{count} sin comparar",
+    other: "{count} sin comparar",
+  },
 
   // state/folderCompare
   noFolderToCompare: "Este panel no tiene ninguna carpeta que comparar",

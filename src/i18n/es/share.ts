@@ -29,7 +29,7 @@ export const share = {
   hours2: "Horas",
   days2: "Días",
   link: "Enlace",
-  links2: "{count} enlaces",
+  links2: { one: "{count} enlace", many: "{count} de enlaces", other: "{count} enlaces" },
   keepsOneLinkPerItem:
     "{service} mantiene un enlace por elemento, así que esto cambia el enlace de arriba para todos los que lo tienen.",
   keepsOneLinkPerItemSo:
@@ -73,22 +73,54 @@ export const share = {
     "Indica cuánto tiempo debe funcionar el enlace, con un número entero.",
   chooseHowLongTheLinkShouldWork: "Elige cuánto tiempo debe funcionar el enlace.",
   linksHereLastAtMost: "Aquí los enlaces duran como máximo {lifetime}.",
-  deadline: "{day} de {month}, {time}",
-  deadlineWithYear: "{day} de {month} de {year}, {time}",
-  statementDownload: "{who} puede descargar {what} {until}.",
-  statementEdit: "{who} puede abrir y cambiar {what} {until}.",
-  statementView: "{who} puede abrir {what} {until}.",
+  anyoneWithThisLinkCanDownload:
+    "Cualquier persona con este enlace puede descargar {what} {until}.",
+  anyoneWithThisLinkCanEdit:
+    "Cualquier persona con este enlace puede abrir y cambiar {what} {until}.",
+  anyoneWithThisLinkCanView: "Cualquier persona con este enlace puede abrir {what} {until}.",
+  anyoneWithOneOfTheseLinksCanDownload:
+    "Cualquier persona con uno de estos enlaces puede descargar {what} {until}.",
+  anyoneWithOneOfTheseLinksCanEdit:
+    "Cualquier persona con uno de estos enlaces puede abrir y cambiar {what} {until}.",
+  anyoneWithOneOfTheseLinksCanView:
+    "Cualquier persona con uno de estos enlaces puede abrir {what} {until}.",
+  peopleInWithThisLinkCanDownload:
+    "Las personas de {organization} con este enlace pueden descargar {what} {until}.",
+  peopleInWithThisLinkCanEdit:
+    "Las personas de {organization} con este enlace pueden abrir y cambiar {what} {until}.",
+  peopleInWithThisLinkCanView:
+    "Las personas de {organization} con este enlace pueden abrir {what} {until}.",
+  peopleInWithOneOfTheseLinksCanDownload:
+    "Las personas de {organization} con uno de estos enlaces pueden descargar {what} {until}.",
+  peopleInWithOneOfTheseLinksCanEdit:
+    "Las personas de {organization} con uno de estos enlaces pueden abrir y cambiar {what} {until}.",
+  peopleInWithOneOfTheseLinksCanView:
+    "Las personas de {organization} con uno de estos enlaces pueden abrir {what} {until}.",
+  peopleInYourOrganizationWithThisLinkCanDownload:
+    "Las personas de tu organización con este enlace pueden descargar {what} {until}.",
+  peopleInYourOrganizationWithThisLinkCanEdit:
+    "Las personas de tu organización con este enlace pueden abrir y cambiar {what} {until}.",
+  peopleInYourOrganizationWithThisLinkCanView:
+    "Las personas de tu organización con este enlace pueden abrir {what} {until}.",
+  peopleInYourOrganizationWithOneOfTheseLinksCanDownload:
+    "Las personas de tu organización con uno de estos enlaces pueden descargar {what} {until}.",
+  peopleInYourOrganizationWithOneOfTheseLinksCanEdit:
+    "Las personas de tu organización con uno de estos enlaces pueden abrir y cambiar {what} {until}.",
+  peopleInYourOrganizationWithOneOfTheseLinksCanView:
+    "Las personas de tu organización con uno de estos enlaces pueden abrir {what} {until}.",
+  peopleAlreadyInvitedWhoHaveThisLinkCanDownload:
+    "Las personas ya invitadas que tengan este enlace pueden descargar {what} {until}.",
+  peopleAlreadyInvitedWhoHaveThisLinkCanEdit:
+    "Las personas ya invitadas que tengan este enlace pueden abrir y cambiar {what} {until}.",
+  peopleAlreadyInvitedWhoHaveThisLinkCanView:
+    "Las personas ya invitadas que tengan este enlace pueden abrir {what} {until}.",
+  peopleAlreadyInvitedWhoHaveOneOfTheseLinksCanDownload:
+    "Las personas ya invitadas que tengan uno de estos enlaces pueden descargar {what} {until}.",
+  peopleAlreadyInvitedWhoHaveOneOfTheseLinksCanEdit:
+    "Las personas ya invitadas que tengan uno de estos enlaces pueden abrir y cambiar {what} {until}.",
+  peopleAlreadyInvitedWhoHaveOneOfTheseLinksCanView:
+    "Las personas ya invitadas que tengan uno de estos enlaces pueden abrir {what} {until}.",
   statementWithPassword: "{statement} Primero pide la contraseña.",
-  anyoneWithThisLink: "Cualquier persona con este enlace",
-  anyoneWithOneOfTheseLinks: "Cualquier persona con uno de estos enlaces",
-  peopleInWithThisLink: "Cualquier persona de {organization} con este enlace",
-  peopleInWithOneOfTheseLinks: "Cualquier persona de {organization} con uno de estos enlaces",
-  peopleInYourOrganizationWithThisLink: "Cualquier persona de tu organización con este enlace",
-  peopleInYourOrganizationWithOneOfTheseLinks:
-    "Cualquier persona de tu organización con uno de estos enlaces",
-  peopleAlreadyInvitedWhoHaveThisLink: "Cualquier persona ya invitada que tenga este enlace",
-  peopleAlreadyInvitedWhoHaveOneOfTheseLinks:
-    "Cualquier persona ya invitada que tenga uno de estos enlaces",
   theItemItIsFor: "el elemento al que corresponde",
   theFileItIsFor: "el archivo al que corresponde",
   theFolderAndEverythingInIt: "la carpeta y todo su contenido",
