@@ -115,6 +115,55 @@ export interface VaultInfo {
   name: string;
 }
 
+/** What a share link lets its holder do. */
+export type LinkKind = "view" | "edit" | "download";
+
+/** Who a share link works for: whoever holds it, the account's organization, or people the item
+ * is already shared with. */
+export type ShareAudience = "anyone" | "organization" | "invited";
+
+/** Whether share links end by themselves. */
+export type ShareExpiry = "never" | "optional" | "required";
+
+/** What share links a session can make. Mirrors `ShareCapabilities` in src-tauri/src/share.rs. */
+export interface ShareCapabilities {
+  kinds: LinkKind[];
+  audiences: ShareAudience[];
+  expiry: ShareExpiry;
+  /** The longest a link can last, where the service sets a limit. */
+  maxLifetimeSecs?: number;
+  password: boolean;
+  /** Links stay with the item, so they can be listed and removed. */
+  revocable: boolean;
+  folders: boolean;
+  /** The service keeps one link per item, so making a link changes the one it has. */
+  singleLink: boolean;
+  /** The organization the `organization` audience stands for, when its name is known. */
+  organization?: string;
+}
+
+export interface ShareOptions {
+  kind: LinkKind;
+  audience: ShareAudience;
+  lifetimeSecs?: number;
+  password?: string;
+}
+
+/** A share link. Its address is a credential: it is shown and copied, never logged. */
+export interface ShareLink {
+  /** Names the link when removing it; empty for a link that cannot be removed. */
+  id: string;
+  url: string;
+  kind: LinkKind;
+  audience: ShareAudience;
+  /** Seconds since the Unix epoch. */
+  expiresAt?: number;
+  hasPassword: boolean;
+  revocable: boolean;
+  /** What the user should know about the link, in whole sentences. */
+  notes: string[];
+}
+
 export interface SessionInfo {
   id: string;
   label: string;
@@ -127,6 +176,8 @@ export interface SessionInfo {
   protocol: Protocol;
   /** Set for the session of an unlocked vault, whose host, port and username are its server's. */
   vault?: VaultInfo;
+  /** The share links the session can make; absent when the service has none. */
+  sharing?: ShareCapabilities;
   /** Listings give times only to the minute, or to the day, as FTP's `LIST` does. */
   coarseTimes?: boolean;
 }
@@ -909,6 +960,8 @@ export interface MoveCopyRequest {
   sources: string[];
   targetDirectory: string;
   conflict: NameClash;
+  /** The name the one item takes in the target folder, when not its own. */
+  targetName?: string;
 }
 
 export type OperationMethod = "rename" | "copyData" | "command" | "stream" | "local";
