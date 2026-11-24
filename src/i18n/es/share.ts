@@ -52,7 +52,7 @@ export const share = {
 
   // lib/shareLinks
   shareLinkNotInA: "Enlace para compartir (no en una bóveda)",
-  shareLinkCloudStorageOnly: "Enlace para compartir (solo almacenamiento en la nube)",
+  shareLinkCloudStorageOnly: "Enlace para compartir (solo en la nube)",
   shareLinkFilesOnly: "Enlace para compartir (solo archivos)",
   shareLink: "Enlace para compartir...",
   days: { one: "{count} día", many: "{count} de días", other: "{count} días" },
