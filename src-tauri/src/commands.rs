@@ -533,6 +533,11 @@ pub fn transfer_pause_session(transfers: State<'_, TransferManager>, session_id:
 }
 
 #[tauri::command]
+pub fn transfer_ignore_schedule(transfers: State<'_, TransferManager>, ignored: bool) {
+    transfers.ignore_limit_schedule(ignored);
+}
+
+#[tauri::command]
 pub async fn sync_compare(
     sync: State<'_, SyncManager>,
     request: SyncRequest,

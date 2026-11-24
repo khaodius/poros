@@ -47,6 +47,7 @@ import { ArchiveSettingsPage } from "./ArchiveSettings";
 import { AutomationSettingsPage } from "./AutomationSettings";
 import { CloudSettingsPage } from "./CloudSettings";
 import { Dialog } from "./Dialog";
+import { LimitScheduleSettings } from "./LimitScheduleSettings";
 import { SyncSettingsPage } from "./SyncSettings";
 import {
   NumberSetting,
@@ -220,6 +221,8 @@ function TransferSettingsPage({ settings }: { settings: Settings }) {
           onChange={(downloadLimitKib) => set({ downloadLimitKib })}
         />
       </SettingGroup>
+
+      <LimitScheduleSettings transfers={transfers} />
 
       <SettingGroup title="Buffers">
         <NumberSetting

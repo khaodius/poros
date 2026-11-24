@@ -45,10 +45,7 @@ impl HashShell {
     /// Runs one command with no input, and returns what it printed, errors included, and its
     /// exit status.
     async fn run(&mut self, command: &str, limit: usize) -> AppResult<(Vec<u8>, i32)> {
-        let line = format!(
-            "{command} </dev/null 2>&1; printf '\\n%s %s\\n' {} \"$?\"\n",
-            self.marker
-        );
+        let line = command_line(command, &self.marker);
         self.process.write_bytes(line.as_bytes());
         self.process.flush().await?;
         let end = format!("\n{} ", self.marker);
@@ -64,6 +61,13 @@ impl HashShell {
             }
         }
     }
+}
+
+/// The line that runs `command` and then prints `marker` and its exit status. Grouped, so the
+/// redirections reach every stage of a pipeline: on the last stage alone, `head | sha256sum`
+/// would hash nothing.
+fn command_line(command: &str, marker: &str) -> String {
+    format!("{{ {command}; }} </dev/null 2>&1; printf '\\n%s %s\\n' {marker} \"$?\"\n")
 }
 
 /// The output before the end marker and the status after it, once the status line is whole.
@@ -142,5 +146,23 @@ mod tests {
         assert_eq!(status, 1);
         assert!(answer(b"\nMARK 0\nmore", end).is_err());
         assert!(answer(b"\nMARK x\n", end).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn every_stage_of_a_pipeline_reads_what_it_is_given() {
+        let line = command_line("printf abc | wc -c; ls /poros-missing", "MARK");
+        let ran = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&line)
+            .output()
+            .unwrap();
+        let (output, status) = answer(&ran.stdout, b"\nMARK ").unwrap().unwrap();
+        let output = String::from_utf8(output).unwrap();
+        // The count comes from the pipe, not from the empty input the shell gets.
+        assert_eq!(output.split_whitespace().next(), Some("3"), "{output}");
+        // Errors of any stage come back with the output, and the status is the last command's.
+        assert!(output.contains("poros-missing"), "{output}");
+        assert_ne!(status, 0);
     }
 }

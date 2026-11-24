@@ -326,6 +326,7 @@ pub fn run() {
             commands::transfer_resolve,
             commands::transfer_session_jobs,
             commands::transfer_pause_session,
+            commands::transfer_ignore_schedule,
             commands::sync_compare,
             commands::sync_compare_folders,
             commands::sync_check_options,
