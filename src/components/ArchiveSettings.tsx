@@ -19,11 +19,15 @@ import {
   SettingRow,
   TextSetting,
 } from "./settingsFields";
+import { useT } from "../i18n";
 
-const SERVER_PROGRAMS = "7-Zip, unrar, unar, bsdtar, tar, unzip, gzip, bzip2, xz and zstd";
+/** The programs a server is searched for, in that order; the message puts "and" before the last. */
+const SERVER_PROGRAMS = ["7-Zip", "unrar", "unar", "bsdtar", "tar", "unzip", "gzip", "bzip2", "xz"];
+const LAST_SERVER_PROGRAM = "zstd";
 
 /** Settings > Archives: the program that extracts on this computer, and what servers use. */
 export function ArchiveSettingsPage({ settings }: { settings: Settings }) {
+  const t = useT();
   const extractor = settings.interface.extractor;
   const [tools, setTools] = useState<InstalledArchiveTool[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -54,10 +58,10 @@ export function ArchiveSettingsPage({ settings }: { settings: Settings }) {
     picked !== CUSTOM_EXTRACTOR &&
     !tools.some((tool) => tool.path === picked);
   const options = [
-    { value: "", label: "The best one installed for each format" },
+    { value: "", label: t("archives.theBestOneInstalledFor") },
     ...(tools ?? []).map((tool) => ({ value: tool.path, label: `${tool.name}: ${tool.path}` })),
-    ...(missing ? [{ value: picked, label: `${picked} (not found)` }] : []),
-    { value: CUSTOM_EXTRACTOR, label: "Another program..." },
+    ...(missing ? [{ value: picked, label: t("archives.notFound", { picked }) }] : []),
+    { value: CUSTOM_EXTRACTOR, label: t("archives.anotherProgram") },
   ];
 
   const browse = async () => {
@@ -65,28 +69,30 @@ export function ArchiveSettingsPage({ settings }: { settings: Settings }) {
     const chosen = await openFileDialog({
       multiple: false,
       directory: false,
-      filters: windows ? [{ name: "Programs", extensions: ["exe", "cmd", "bat"] }] : undefined,
+      filters: windows
+        ? [{ name: t("archives.programsFileType"), extensions: ["exe", "cmd", "bat"] }]
+        : undefined,
     });
     if (typeof chosen === "string") set({ program: chosen });
   };
 
   return (
     <>
-      <SettingGroup title="On this computer">
+      <SettingGroup title={t("archives.onThisComputer")}>
         <SelectSetting
-          label="Extract with"
-          hint="An installed program extracts every format it opens; the rest go to the best program installed for them."
+          label={t("archives.extractWith")}
+          hint={t("archives.extractWithHint")}
           value={picked}
           options={options}
           onChange={(choice) => set({ choice })}
         />
         {picked === CUSTOM_EXTRACTOR && (
           <>
-            <SettingRow label="Program" hint="The program file to run.">
+            <SettingRow label={t("archives.program")} hint={t("archives.programHint")}>
               <span className="input-with-button">
                 <CommitInput
                   value={extractor.program}
-                  label="Program"
+                  label={t("archives.program")}
                   placeholder={
                     localSource.pathStyle === "windows"
                       ? "C:\\Program Files\\Bandizip\\bz.exe"
@@ -95,13 +101,13 @@ export function ArchiveSettingsPage({ settings }: { settings: Settings }) {
                   onCommit={(program) => set({ program: program.trim() })}
                 />
                 <button type="button" className="button" onClick={() => void browse()}>
-                  <FolderOpen size={14} /> Browse
+                  <FolderOpen size={14} /> {t("common.browse")}
                 </button>
               </span>
             </SettingRow>
             <TextSetting
-              label="Arguments"
-              hint="{archive} is the archive and {folder} the folder it goes into. Quote them, as paths can hold spaces."
+              label={t("archives.arguments")}
+              hint={t("archives.argumentsHint", { archive: "{archive}", folder: "{folder}" })}
               value={extractor.arguments}
               placeholder={CUSTOM_ARGUMENTS_EXAMPLE}
               wide
@@ -109,25 +115,19 @@ export function ArchiveSettingsPage({ settings }: { settings: Settings }) {
             />
           </>
         )}
-        {missing && (
-          <p className="setting-note">
-            The program picked is no longer there, so archives go to the best one installed until
-            you pick another.
-          </p>
-        )}
+        {missing && <p className="setting-note">{t("archives.theProgramPickedIsNo")}</p>}
         <SettingRow
-          label="Installed programs"
-          hint="Found on the PATH and where 7-Zip, WinRAR and PeaZip install themselves."
+          label={t("archives.installedPrograms")}
+          hint={t("archives.installedProgramsHint")}
         >
           <button type="button" className="button" onClick={find} disabled={tools === null}>
-            <RefreshCw size={14} className={tools === null && !error ? "spin" : ""} /> Look again
+            <RefreshCw size={14} className={tools === null && !error ? "spin" : ""} />{" "}
+            {t("archives.lookAgain")}
           </button>
         </SettingRow>
         {error && <p className="setting-note">{error}</p>}
         {tools !== null && tools.length === 0 && (
-          <p className="setting-note">
-            No program that extracts archives was found. Install 7-Zip, or name a program above.
-          </p>
+          <p className="setting-note">{t("archives.noProgramThatExtractsArchives")}</p>
         )}
         {tools !== null && tools.length > 0 && (
           <ul className="archive-tools">
@@ -138,18 +138,21 @@ export function ArchiveSettingsPage({ settings }: { settings: Settings }) {
                   <bdi>{tool.path}</bdi>
                 </span>
                 <span className="archive-tool-formats">
-                  {[...new Set(tool.formats.map((format) => FORMAT_NAMES[format]))].join(", ")}
+                  {[...new Set(tool.formats.map((format) => FORMAT_NAMES[format]))].join(
+                    t("common.listSeparator"),
+                  )}
                 </span>
               </li>
             ))}
           </ul>
         )}
       </SettingGroup>
-      <SettingGroup title="On servers">
+      <SettingGroup title={t("archives.onServers")}>
         <p className="setting-note">
-          Archives on an SFTP server are extracted on the server, with the programs it has. Poros
-          looks for {SERVER_PROGRAMS} the first time, and uses the one that opens each format best.
-          Servers that allow SFTP alone cannot extract; download the archive to extract it here.
+          {t("archives.archivesOnAnSftpServer", {
+            programs: SERVER_PROGRAMS.join(t("common.listSeparator")),
+            lastProgram: LAST_SERVER_PROGRAM,
+          })}
         </p>
       </SettingGroup>
     </>

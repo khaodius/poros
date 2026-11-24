@@ -5,7 +5,7 @@ import {
   formatSize,
   formatSpeed,
   formatVersion,
-  pluralize,
+  englishCount,
 } from "./format";
 
 describe("formatSize", () => {
@@ -53,11 +53,11 @@ describe("formatVersion", () => {
   });
 });
 
-describe("pluralize", () => {
+describe("englishCount", () => {
   it("chooses the form by count", () => {
-    expect(pluralize(1, "item")).toBe("1 item");
-    expect(pluralize(0, "item")).toBe("0 items");
-    expect(pluralize(3, "entry", "entries")).toBe("3 entries");
+    expect(englishCount(1, "item")).toBe("1 item");
+    expect(englishCount(0, "item")).toBe("0 items");
+    expect(englishCount(3, "entry", "entries")).toBe("3 entries");
   });
 });
 

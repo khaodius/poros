@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { useLatest } from "../hooks/useLatest";
 import { MIN_VAULT_PASSWORD_LENGTH } from "../lib/vaults";
 import { Dialog } from "./Dialog";
+import { useT } from "../i18n";
 
 interface NewVaultDialogProps {
   /** The folder on the server the vault's own folder is made in. */
@@ -13,6 +14,7 @@ interface NewVaultDialogProps {
 
 /** Asks for the name and the password of a new Cryptomator vault. */
 export function NewVaultDialog({ folder, onCreate, onClose }: NewVaultDialogProps) {
+  const t = useT();
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [repeated, setRepeated] = useState("");
@@ -40,20 +42,20 @@ export function NewVaultDialog({ folder, onCreate, onClose }: NewVaultDialogProp
   };
 
   return (
-    <Dialog title="New vault" onClose={onClose}>
+    <Dialog title={t("vault.newVault")} onClose={onClose}>
       <form onSubmit={submit} className="form">
         <label className="field">
-          <span>Name</span>
+          <span>{t("common.name")}</span>
           <input
             data-autofocus
             value={name}
             spellCheck={false}
             onChange={(event) => setName(event.target.value)}
           />
-          <small className="field-hint">A new folder in {folder} holds the encrypted files.</small>
+          <small className="field-hint">{t("vault.aNewFolderInHolds", { folder })}</small>
         </label>
         <label className="field">
-          <span>Password</span>
+          <span>{t("vault.password")}</span>
           <input
             type="password"
             className={password !== "" && tooShort ? "has-error" : ""}
@@ -62,11 +64,11 @@ export function NewVaultDialog({ folder, onCreate, onClose }: NewVaultDialogProp
             onChange={(event) => setPassword(event.target.value)}
           />
           <small className={`field-hint ${password !== "" && tooShort ? "is-error" : ""}`}>
-            At least {MIN_VAULT_PASSWORD_LENGTH} characters.
+            {t("vault.atLeastCharacters", { count: MIN_VAULT_PASSWORD_LENGTH })}
           </small>
         </label>
         <label className="field">
-          <span>Repeat password</span>
+          <span>{t("vault.repeatPassword")}</span>
           <input
             type="password"
             className={repeated !== "" && differs ? "has-error" : ""}
@@ -75,20 +77,18 @@ export function NewVaultDialog({ folder, onCreate, onClose }: NewVaultDialogProp
             onChange={(event) => setRepeated(event.target.value)}
           />
           {repeated !== "" && differs && (
-            <small className="field-hint is-error">The passwords do not match.</small>
+            <small className="field-hint is-error">{t("vault.thePasswordsDoNotMatch")}</small>
           )}
         </label>
-        <p className="vault-warning">
-          This password cannot be recovered. Without it, nobody can read the files in the vault.
-        </p>
-        <p className="field-hint">The vault also opens in the Cryptomator apps.</p>
+        <p className="vault-warning">{t("vault.thisPasswordCannotBeRecovered")}</p>
+        <p className="field-hint">{t("vault.theVaultAlsoOpensIn")}</p>
         {error && <p className="form-error">{error}</p>}
         <div className="dialog-actions">
           <button type="button" className="button" onClick={onClose}>
-            Cancel
+            {t("common.cancel")}
           </button>
           <button type="submit" className="button button-primary" disabled={busy || !complete}>
-            {busy ? "Creating..." : "Create vault"}
+            {busy ? t("vault.creating") : t("vault.createVault")}
           </button>
         </div>
       </form>

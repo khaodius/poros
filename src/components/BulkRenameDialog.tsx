@@ -44,49 +44,94 @@ import {
 } from "../lib/bulkRename";
 import { entriesStillListed } from "../lib/deletion";
 import type { FileOrigin } from "../lib/fileOrigin";
-import { pluralize } from "../lib/format";
 import { isDirLike } from "../lib/sort";
 import type { DirListing, FileEntry } from "../lib/types";
 import { knownTraits, nameTargetOf, runBulkRename, useBulkRenameStore } from "../state/bulkRename";
 import { useSettingsStore } from "../state/settingsStore";
 import { Dialog } from "./Dialog";
 import { RenameTable, type RenameTableRow } from "./RenameTable";
+import { t, useT } from "../i18n";
 
-const FIND_MODE_LABELS: Record<FindMode, string> = { text: "Text", regex: "Regex" };
+const FIND_MODE_LABELS: Record<FindMode, string> = {
+  get text() {
+    return t("rename.text");
+  },
+  get regex() {
+    return t("rename.regex");
+  },
+};
 const FIND_SCOPE_LABELS: Record<FindScope, string> = {
-  name: "Name",
-  extension: "Extension",
-  both: "Both",
+  get name() {
+    return t("common.name");
+  },
+  get extension() {
+    return t("rename.extension");
+  },
+  get both() {
+    return t("rename.both");
+  },
 };
 const LETTER_CASE_LABELS: Record<LetterCase, string> = {
-  unchanged: "Unchanged",
-  lower: "lowercase",
-  upper: "UPPERCASE",
-  title: "Title Case",
-  sentence: "Sentence case",
+  get unchanged() {
+    return t("rename.unchanged");
+  },
+  get lower() {
+    return t("rename.lowercase");
+  },
+  get upper() {
+    return t("rename.uppercase");
+  },
+  get title() {
+    return t("rename.titleCase");
+  },
+  get sentence() {
+    return t("rename.sentenceCase");
+  },
 };
 const EXTENSION_LABELS: Record<ExtensionChange, string> = {
-  keep: "Keep",
-  lower: "lowercase",
-  upper: "UPPERCASE",
-  replace: "Replace with",
-  remove: "Remove",
+  get keep() {
+    return t("common.keep");
+  },
+  get lower() {
+    return t("rename.lowercase");
+  },
+  get upper() {
+    return t("rename.uppercase");
+  },
+  get replace() {
+    return t("rename.replaceWith");
+  },
+  get remove() {
+    return t("common.remove");
+  },
 };
 const COUNTER_LIMIT = 999_999_999;
 const NO_ENTRIES: readonly FileEntry[] = [];
 
 type CounterPlace = "off" | CounterRule["placement"];
 const COUNTER_PLACE_LABELS: Record<CounterPlace, string> = {
-  off: "No",
-  prefix: "Before the name",
-  suffix: "After the name",
+  get off() {
+    return t("common.no");
+  },
+  get prefix() {
+    return t("rename.beforeTheName");
+  },
+  get suffix() {
+    return t("rename.afterTheName");
+  },
 };
 
 type PreviewFilter = "all" | "changed" | "problems";
 const FILTER_LABELS: Record<PreviewFilter, string> = {
-  all: "All",
-  changed: "Changed",
-  problems: "Problems",
+  get all() {
+    return t("rename.all");
+  },
+  get changed() {
+    return t("rename.changed");
+  },
+  get problems() {
+    return t("rename.problems");
+  },
 };
 
 interface BulkRenameDialogProps {
@@ -118,6 +163,7 @@ export function BulkRenameDialog({
   onRetry,
   onClose,
 }: BulkRenameDialogProps) {
+  const t = useT();
   const [rules, setRules] = useState(() => useBulkRenameStore.getState().rules);
   const [filter, setFilter] = useState<PreviewFilter>("all");
   const history = useSettingsStore((state) => state.settings.interface.renameHistory);
@@ -167,10 +213,11 @@ export function BulkRenameDialog({
 
   // Typing stays quick with tens of thousands of items: the preview follows a moment behind.
   const previewedRules = useDeferredValue(rules);
-  const preview = useMemo(
-    () => previewRenames(selection, previewedRules, target ?? assumedTarget),
-    [selection, previewedRules, target, assumedTarget],
-  );
+  const preview = useMemo(() => {
+    // The problems it finds are written in the interface's language, so they follow it.
+    void t;
+    return previewRenames(selection, previewedRules, target ?? assumedTarget);
+  }, [selection, previewedRules, target, assumedTarget, t]);
   const changedCount = preview.rows.length - preview.unchanged;
   const filterCounts: Record<PreviewFilter, number> = {
     all: preview.rows.length,
@@ -247,23 +294,27 @@ export function BulkRenameDialog({
   const tableRow = (index: number): RenameTableRow => {
     const row = preview.rows[shownRows ? shownRows[index] : index];
     if (row.status === "problem") {
-      return { ...row, tone: "bad", status: row.message ?? "Cannot be renamed" };
+      return { ...row, tone: "bad", status: row.message ?? t("rename.cannotBeRenamed") };
     }
     return row.status === "unchanged"
-      ? { ...row, tone: "dim", status: "Unchanged" }
-      : { ...row, tone: "plain", status: "Ready" };
+      ? { ...row, tone: "dim", status: t("rename.nameUnchanged") }
+      : { ...row, tone: "plain", status: t("rename.ready") };
   };
 
   const templateActive = templateIsActive(rules.template);
   const counterPlace: CounterPlace = rules.counter.enabled ? rules.counter.placement : "off";
   const problems = problemSummary(preview);
   const summary =
-    entries.length === 0 && gone ? gone : [renamedSummary(preview), gone].filter(Boolean).join(" ");
+    entries.length === 0 && gone
+      ? gone
+      : [renamedSummary(preview), gone].filter(Boolean).join(t("common.sentenceSeparator"));
 
   return (
     <Dialog
       title={
-        entries.length === 0 ? "Nothing to rename" : `Rename ${pluralize(entries.length, "item")}`
+        entries.length === 0
+          ? t("rename.nothingToRename")
+          : t("rename.renameItems", { count: entries.length })
       }
       onClose={onClose}
       width={1120}
@@ -271,11 +322,11 @@ export function BulkRenameDialog({
     >
       <form className="rename-form" onSubmit={submit} onKeyDown={applyOnEnter}>
         <div className="rename-rules">
-          <p className="field-hint">Applied in this order, each to the result of the last.</p>
+          <p className="field-hint">{t("rename.appliedInThisOrderEach")}</p>
 
           <RuleSection
             step={1}
-            title="Find and replace"
+            title={t("rename.findAndReplace")}
             enabled={rules.find.enabled}
             onToggle={(enabled) => changeFind({ enabled })}
           >
@@ -283,16 +334,18 @@ export function BulkRenameDialog({
               <input
                 data-autofocus
                 className={`mono ${preview.findError ? "has-error" : ""}`}
-                aria-label="Find"
+                aria-label={t("rename.find")}
                 aria-invalid={preview.findError !== null}
-                placeholder={rules.find.mode === "regex" ? "Regular expression" : "Find"}
+                placeholder={
+                  rules.find.mode === "regex" ? t("rename.regularExpression") : t("rename.find")
+                }
                 spellCheck={false}
                 value={rules.find.pattern}
                 onChange={(event) => changeFind({ pattern: event.target.value })}
               />
               {history.length > 0 && (
                 <select
-                  aria-label="Recent patterns"
+                  aria-label={t("rename.recentPatterns")}
                   value=""
                   onChange={(event) => {
                     const entry = history[Number(event.target.value)];
@@ -300,7 +353,7 @@ export function BulkRenameDialog({
                   }}
                 >
                   <option value="" disabled>
-                    Recent
+                    {t("rename.recent")}
                   </option>
                   {history.map((entry, index) => (
                     <option key={index} value={index}>
@@ -317,11 +370,11 @@ export function BulkRenameDialog({
             )}
             <input
               className="mono"
-              aria-label="Replace with"
+              aria-label={t("rename.replaceWith")}
               placeholder={
                 rules.find.mode === "regex"
-                  ? "Replace with, $1 or $<name> for groups"
-                  : "Replace with"
+                  ? t("rename.replaceWith1OrName")
+                  : t("rename.replaceWith")
               }
               spellCheck={false}
               value={rules.find.replacement}
@@ -329,7 +382,7 @@ export function BulkRenameDialog({
             />
             <div className="rename-options">
               <Choice
-                label="Pattern is"
+                label={t("rename.patternIs")}
                 options={FIND_MODES}
                 labels={FIND_MODE_LABELS}
                 value={rules.find.mode}
@@ -341,7 +394,7 @@ export function BulkRenameDialog({
                   checked={rules.find.caseSensitive}
                   onChange={(event) => changeFind({ caseSensitive: event.target.checked })}
                 />
-                Match case
+                {t("rename.matchCase")}
               </label>
               <label className="check">
                 <input
@@ -349,13 +402,13 @@ export function BulkRenameDialog({
                   checked={rules.find.allMatches}
                   onChange={(event) => changeFind({ allMatches: event.target.checked })}
                 />
-                Every match
+                {t("rename.everyMatch")}
               </label>
             </div>
             <div className="rename-options">
-              <span className="rename-option-label">Look in</span>
+              <span className="rename-option-label">{t("rename.lookIn")}</span>
               <Choice
-                label="Look in"
+                label={t("rename.lookIn")}
                 options={FIND_SCOPES}
                 labels={FIND_SCOPE_LABELS}
                 value={rules.find.scope}
@@ -366,20 +419,20 @@ export function BulkRenameDialog({
 
           <RuleSection
             step={2}
-            title="Template"
+            title={t("rename.template")}
             enabled={rules.template.enabled}
             onToggle={(enabled) => changeTemplate({ enabled })}
           >
             <input
               ref={templateRef}
               className="mono"
-              aria-label="Template for the new name"
+              aria-label={t("rename.templateForTheNewName")}
               placeholder="{name}-{n}.{ext}"
               spellCheck={false}
               value={rules.template.pattern}
               onChange={(event) => changeTemplate({ pattern: event.target.value })}
             />
-            <div className="rename-tokens" role="group" aria-label="Insert a token">
+            <div className="rename-tokens" role="group" aria-label={t("rename.insertAToken")}>
               {TEMPLATE_TOKENS.map(({ token, meaning }) => (
                 <button
                   key={token}
@@ -394,7 +447,7 @@ export function BulkRenameDialog({
             </div>
             <div className="form-row">
               <label className="field grow">
-                <span>Date as</span>
+                <span>{t("rename.dateAs")}</span>
                 <select
                   value={rules.template.dateStyle}
                   onChange={(event) =>
@@ -407,7 +460,7 @@ export function BulkRenameDialog({
                 </select>
               </label>
               <label className="field grow">
-                <span>Time as</span>
+                <span>{t("rename.timeAs")}</span>
                 <select
                   value={rules.template.timeStyle}
                   onChange={(event) =>
@@ -420,54 +473,51 @@ export function BulkRenameDialog({
                 </select>
               </label>
             </div>
-            <p className="field-hint">
-              The date and time are when the item was last modified. Without {"{ext}"}, items keep
-              their extension.
-            </p>
+            <p className="field-hint">{t("rename.theDateAndTimeAre", { ext: "{ext}" })}</p>
           </RuleSection>
 
-          <RuleSection step={3} title="Counter">
+          <RuleSection step={3} title={t("rename.counter")}>
             <div className="form-row">
               <WholeNumberField
-                label="Start"
+                label={t("common.start")}
                 value={rules.counter.start}
                 min={-COUNTER_LIMIT}
                 max={COUNTER_LIMIT}
                 onChange={(start) => changeCounter({ start })}
               />
               <WholeNumberField
-                label="Step"
+                label={t("rename.step")}
                 value={rules.counter.step}
                 min={-COUNTER_LIMIT}
                 max={COUNTER_LIMIT}
                 onChange={(step) => changeCounter({ step })}
               />
               <WholeNumberField
-                label="Digits"
+                label={t("rename.digits")}
                 value={rules.counter.digits}
                 min={COUNTER_DIGIT_LIMITS.min}
                 max={COUNTER_DIGIT_LIMITS.max}
                 onChange={(digits) => changeCounter({ digits })}
               />
               <label className="field grow">
-                <span>Counts in</span>
+                <span>{t("rename.countsIn")}</span>
                 <select
                   value={rules.counter.order}
                   onChange={(event) =>
                     changeCounter({ order: event.target.value as CounterRule["order"] })
                   }
                 >
-                  <option value="list">List order</option>
-                  <option value="name">Name order</option>
+                  <option value="list">{t("rename.listOrder")}</option>
+                  <option value="name">{t("rename.nameOrder")}</option>
                 </select>
               </label>
             </div>
             {templateActive ? (
-              <p className="field-hint">The template places the counter where {"{n}"} is.</p>
+              <p className="field-hint">{t("rename.theTemplatePlacesTheCounter", { n: "{n}" })}</p>
             ) : (
               <div className="form-row">
                 <label className="field grow">
-                  <span>Add to each name</span>
+                  <span>{t("rename.addToEachName")}</span>
                   <select
                     value={counterPlace}
                     onChange={(event) => {
@@ -485,7 +535,7 @@ export function BulkRenameDialog({
                   </select>
                 </label>
                 <label className="field rename-short-field">
-                  <span>Separator</span>
+                  <span>{t("rename.separator")}</span>
                   <input
                     className="mono"
                     maxLength={8}
@@ -501,10 +551,10 @@ export function BulkRenameDialog({
 
           <RuleSection
             step={4}
-            title="Case"
+            title={t("rename.case")}
             control={
               <select
-                aria-label="Case"
+                aria-label={t("rename.case")}
                 value={rules.letterCase}
                 onChange={(event) =>
                   setRules((current) => ({
@@ -524,10 +574,10 @@ export function BulkRenameDialog({
 
           <RuleSection
             step={5}
-            title="Extension"
+            title={t("rename.extension")}
             control={
               <select
-                aria-label="Extension"
+                aria-label={t("rename.extension")}
                 value={rules.extension.change}
                 onChange={(event) =>
                   changeExtension({ change: event.target.value as ExtensionChange })
@@ -544,8 +594,8 @@ export function BulkRenameDialog({
             {rules.extension.change === "replace" && (
               <input
                 className="mono"
-                aria-label="New extension"
-                placeholder="New extension, such as jpg"
+                aria-label={t("rename.newExtension")}
+                placeholder={t("rename.newExtensionSuchAsJpg")}
                 spellCheck={false}
                 value={rules.extension.replacement}
                 onChange={(event) => changeExtension({ replacement: event.target.value })}
@@ -555,7 +605,7 @@ export function BulkRenameDialog({
 
           <RuleSection
             step={6}
-            title="Trim and tidy"
+            title={t("rename.trimAndTidy")}
             enabled={rules.tidy.enabled}
             onToggle={(enabled) => changeTidy({ enabled })}
           >
@@ -565,7 +615,7 @@ export function BulkRenameDialog({
                 checked={rules.tidy.trim}
                 onChange={(event) => changeTidy({ trim: event.target.checked })}
               />
-              Trim spaces at the ends
+              {t("rename.trimSpacesAtTheEnds")}
             </label>
             <label className="check">
               <input
@@ -573,7 +623,7 @@ export function BulkRenameDialog({
                 checked={rules.tidy.collapseSpaces}
                 onChange={(event) => changeTidy({ collapseSpaces: event.target.checked })}
               />
-              Make repeated spaces one
+              {t("rename.makeRepeatedSpacesOne")}
             </label>
             <div className="rename-options">
               <label className="check">
@@ -582,11 +632,11 @@ export function BulkRenameDialog({
                   checked={rules.tidy.replaceSpaces}
                   onChange={(event) => changeTidy({ replaceSpaces: event.target.checked })}
                 />
-                Replace spaces with
+                {t("rename.replaceSpacesWith")}
               </label>
               <input
                 className="mono rename-short-field"
-                aria-label="Character that replaces spaces"
+                aria-label={t("rename.characterThatReplacesSpaces")}
                 maxLength={8}
                 spellCheck={false}
                 disabled={!rules.tidy.replaceSpaces}
@@ -599,7 +649,7 @@ export function BulkRenameDialog({
 
         <div className="rename-preview">
           <div className="rename-preview-bar">
-            <div className="toggle-group" role="group" aria-label="Rows shown">
+            <div className="toggle-group" role="group" aria-label={t("rename.rowsShown")}>
               {(Object.keys(FILTER_LABELS) as PreviewFilter[]).map((value) => (
                 <button
                   key={value}
@@ -620,10 +670,10 @@ export function BulkRenameDialog({
             </span>
           </div>
           <RenameTable
-            label="Old and new names"
+            label={t("rename.oldAndNewNames")}
             count={shownRows ? shownRows.length : preview.rows.length}
             row={tableRow}
-            empty="No names change yet."
+            empty={t("rename.noNamesChangeYet")}
           />
         </div>
 
@@ -631,9 +681,9 @@ export function BulkRenameDialog({
           {stale === "outdated" && (
             <p className="pane-notice pane-notice-warning" role="status">
               <TriangleAlert size={13} />
-              <span>Could not refresh this folder. This listing may be out of date.</span>
+              <span>{t("rename.couldNotRefreshThisFolder")}</span>
               <button type="button" className="link-button" onClick={onRetry}>
-                Try again
+                {t("common.tryAgain")}
               </button>
             </p>
           )}
@@ -656,17 +706,17 @@ export function BulkRenameDialog({
               disabled={rules === DEFAULT_RULES}
               onClick={() => setRules(DEFAULT_RULES)}
             >
-              Reset rules
+              {t("rename.resetRules")}
             </button>
             <button type="button" className="button" onClick={onClose}>
-              Cancel
+              {t("common.cancel")}
             </button>
             <button type="submit" className="button button-primary" disabled={!canRename(preview)}>
               {stale === "refreshing"
-                ? "Checking the folder..."
+                ? t("rename.checkingTheFolder")
                 : canRename(preview)
-                  ? `Rename ${pluralize(preview.ready, "item")}`
-                  : "Rename"}
+                  ? t("rename.renameItems", { count: preview.ready })
+                  : t("common.rename")}
             </button>
           </div>
         </div>
@@ -677,18 +727,22 @@ export function BulkRenameDialog({
 
 /** How many items get a new name, or that none does yet. */
 function renamedSummary(preview: RenamePreview): string {
-  if (preview.ready === 0) return "No names change yet.";
-  const unchanged = preview.unchanged > 0 ? `, ${preview.unchanged} unchanged` : "";
-  return `${preview.ready} of ${pluralize(preview.rows.length, "item")} will be renamed${unchanged}.`;
+  if (preview.ready === 0) return t("rename.noNamesChangeYet");
+  if (preview.unchanged === 0) {
+    return t("rename.ofItemsWillBeRenamed", { ready: preview.ready, count: preview.rows.length });
+  }
+  return t("rename.ofItemsWillBeRenamedSomeUnchanged", {
+    ready: preview.ready,
+    count: preview.rows.length,
+    unchanged: preview.unchanged,
+  });
 }
 
 /** Says which picked items the folder no longer lists, or null when it lists them all. */
 function goneNote(gone: number, left: number): string | null {
   if (gone === 0) return null;
-  if (left === 0) return "These items are no longer in the folder.";
-  return gone === 1
-    ? "1 selected item is no longer in the folder and is left out."
-    : `${gone} selected items are no longer in the folder and are left out.`;
+  if (left === 0) return t("rename.theseItemsAreNoLongerInTheFolder");
+  return t("rename.selectedItemsLeftOut", { count: gone });
 }
 
 interface RuleSectionProps {

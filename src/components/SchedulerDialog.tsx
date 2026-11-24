@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { Children, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import {
   CalendarClock,
@@ -15,7 +15,8 @@ import { protocolInfo } from "../lib/protocols";
 import {
   INTERVAL_UNITS,
   MAX_INTERVAL_MINUTES,
-  WEEKDAY_NAMES,
+  WEEKDAYS,
+  weekdayName,
   convertTrigger,
   dateTimeInputValue,
   describeTrigger,
@@ -44,27 +45,64 @@ import { Dialog } from "./Dialog";
 import { OptionCheckView, RsyncArgumentsField, RsyncOptionsEditor } from "./RsyncOptionsEditor";
 import { Stepper } from "./Stepper";
 import { TransferTaskFields } from "./TransferTaskFields";
+import { formatList, t, useT } from "../i18n";
 
 type SyncTaskAction = Extract<TaskAction, { type: "sync" }>;
 type CommandTaskAction = Extract<TaskAction, { type: "command" }>;
 
 const TRIGGER_KINDS: { value: Trigger["type"]; label: string }[] = [
-  { value: "daily", label: "On days" },
-  { value: "every", label: "Repeat" },
-  { value: "once", label: "Once" },
+  {
+    value: "daily",
+    get label() {
+      return t("schedule.onDays");
+    },
+  },
+  {
+    value: "every",
+    get label() {
+      return t("schedule.repeat");
+    },
+  },
+  {
+    value: "once",
+    get label() {
+      return t("schedule.once");
+    },
+  },
 ];
 
 const TASK_KINDS: { value: TaskAction["type"]; label: string }[] = [
-  { value: "sync", label: "Synchronize folders" },
-  { value: "transfer", label: "Transfer files" },
-  { value: "command", label: "Run a command" },
+  {
+    value: "sync",
+    get label() {
+      return t("schedule.synchronizeFolders");
+    },
+  },
+  {
+    value: "transfer",
+    get label() {
+      return t("schedule.transferFiles");
+    },
+  },
+  {
+    value: "command",
+    get label() {
+      return t("schedule.runACommand");
+    },
+  },
 ];
 
 /** What the connection is to a transfer task, by its direction. */
 const TRANSFER_CONNECTION_LABELS: Record<TransferTaskAction["direction"], string> = {
-  upload: "Upload to",
-  download: "Download from",
-  relay: "Copy to",
+  get upload() {
+    return t("schedule.uploadTo");
+  },
+  get download() {
+    return t("schedule.downloadFrom");
+  },
+  get relay() {
+    return t("schedule.copyTo");
+  },
 };
 
 /**
@@ -117,6 +155,7 @@ interface SchedulerDialogProps {
 }
 
 export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps) {
+  const t = useT();
   const tasks = useScheduleStore((state) => state.tasks);
   const connections = useSavedConnections((state) => state.connections);
   const [draft, setDraft] = useState<ScheduledTask>(() => initialDraft ?? blankTask());
@@ -280,26 +319,23 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
   };
 
   return (
-    <Dialog title="Scheduled tasks" onClose={onClose} width={880}>
+    <Dialog title={t("schedule.scheduledTasks")} onClose={onClose} width={880}>
       <div className="site-manager task-manager">
         <aside className="site-list">
           <div className="site-list-header">
-            <span>Tasks</span>
+            <span>{t("schedule.tasks")}</span>
             <button
               type="button"
               className="icon-button"
-              title="New task"
-              aria-label="New task"
+              title={t("schedule.newTask")}
+              aria-label={t("schedule.newTask")}
               onClick={() => select(blankTask())}
             >
               <Plus size={15} />
             </button>
           </div>
           {tasks.length === 0 ? (
-            <p className="site-list-empty">
-              Tasks run while Poros is open, or from poros-cli with cron or a timer. Ones you save
-              appear here.
-            </p>
+            <p className="site-list-empty">{t("schedule.tasksRunWhilePorosIsOpen")}</p>
           ) : (
             <ul>
               {tasks.map((task) => (
@@ -314,10 +350,10 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
                       <span className="site-item-name">{task.name}</span>
                       <span className="site-item-detail">
                         {task.running
-                          ? "Running now"
+                          ? t("schedule.runningNow")
                           : task.enabled
                             ? describeTrigger(task.trigger)
-                            : "Turned off"}
+                            : t("schedule.turnedOff")}
                       </span>
                     </span>
                   </button>
@@ -330,11 +366,11 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
         <form className="form site-form task-form" onSubmit={submit}>
           <div className="form-row">
             <label className="field grow">
-              <span>Name</span>
+              <span>{t("common.name")}</span>
               <input
                 data-autofocus
                 value={draft.name}
-                placeholder={suggested || "Shown in the list of tasks"}
+                placeholder={suggested || t("schedule.shownInTheListOf")}
                 spellCheck={false}
                 onChange={(event) => update({ name: event.target.value })}
               />
@@ -345,13 +381,13 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
                 checked={draft.enabled}
                 onChange={(event) => update({ enabled: event.target.checked })}
               />
-              Turned on
+              {t("schedule.turnedOn")}
             </label>
           </div>
 
           <div className="form-row">
             <div className="field">
-              <span>Task</span>
+              <span>{t("schedule.task")}</span>
               <div className="segmented" role="radiogroup">
                 {TASK_KINDS.map((kind) => (
                   <button
@@ -371,7 +407,7 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
               <span>
                 {draft.action.type === "transfer"
                   ? TRANSFER_CONNECTION_LABELS[draft.action.direction]
-                  : "Saved connection"}
+                  : t("schedule.savedConnection")}
               </span>
               <select
                 value={draft.action.connectionId}
@@ -379,14 +415,14 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
               >
                 <option value="">
                   {candidates.length > 0
-                    ? "Choose a connection"
+                    ? t("schedule.chooseAConnection")
                     : draft.action.type === "transfer"
-                      ? "No saved connections"
-                      : "No saved SFTP connections"}
+                      ? t("schedule.noSavedConnections")
+                      : t("schedule.noSavedSftpConnections")}
                 </option>
                 {unusable && (
                   <option value={draft.action.connectionId}>
-                    {connection?.name ?? "A deleted connection"}
+                    {connection?.name ?? t("schedule.aDeletedConnection")}
                   </option>
                 )}
                 {candidates.map((candidate) => (
@@ -400,8 +436,11 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
           {unusable && (
             <p className="warning-text">
               {connection
-                ? `${connection.name} uses ${protocolInfo(connection.protocol).label}; synchronizing and running commands need an SFTP connection.`
-                : "This task's saved connection was deleted. Choose another."}
+                ? t("schedule.usesSynchronizingAndRunningCommands", {
+                    name: connection.name,
+                    label: protocolInfo(connection.protocol).label,
+                  })
+                : t("schedule.thisTasksSavedConnectionWas")}
             </p>
           )}
           {!unusable && <UnsavedPasswords connections={signedInWith} />}
@@ -426,7 +465,7 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
               checked={draft.runMissed}
               onChange={(event) => update({ runMissed: event.target.checked })}
             />
-            If Poros is closed at the time, run when it next starts
+            {t("schedule.ifPorosIsClosedAt")}
           </label>
 
           {saved && <TaskStatus task={saved} />}
@@ -439,11 +478,11 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
                 className={`button ${confirmingDelete ? "button-danger" : ""} push-left`}
                 onClick={() => void deleteTask()}
               >
-                {confirmingDelete ? "Delete for good" : "Delete"}
+                {confirmingDelete ? t("schedule.deleteForGood") : t("common.delete")}
               </button>
             )}
             <button type="button" className="button" onClick={onClose}>
-              Close
+              {t("common.close")}
             </button>
             <button
               type="button"
@@ -451,10 +490,10 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
               disabled={busy !== null || saved?.running}
               onClick={() => void runNow()}
             >
-              {busy === "running" ? "Starting..." : "Run now"}
+              {busy === "running" ? t("schedule.starting2") : t("schedule.runNow")}
             </button>
             <button type="submit" className="button button-primary" disabled={busy !== null}>
-              {busy === "saving" ? "Saving..." : "Save"}
+              {busy === "saving" ? t("schedule.saving") : t("common.save")}
             </button>
           </div>
         </form>
@@ -465,21 +504,23 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
 
 /** Says which connections cannot sign in on their own, because their password is not kept. */
 function UnsavedPasswords({ connections }: { connections: SavedConnection[] }) {
+  const t = useT();
   const unsaved = connections.filter(
     (connection) => connection.authType === "password" && !connection.saveSecret,
   );
   if (unsaved.length === 0) return null;
-  const names = unsaved.map((connection) => connection.name).join(" and ");
+  const names = formatList(unsaved.map((connection) => connection.name));
   return (
     <p className="warning-text">
       {connections.length === 1
-        ? "This connection's password is not saved in the system keychain, so the task cannot log in."
+        ? t("schedule.thisConnectionsPasswordIsNotSaved")
         : unsaved.length === 1
-          ? `The password of ${names} is not saved in the system keychain, so the task cannot log in.`
-          : `The passwords of ${names} are not saved in the system keychain, so the task cannot log in.`}{" "}
+          ? t("schedule.thePasswordOfIsNot", { names })
+          : t("schedule.thePasswordsOfAreNot", { names })}
+      {t("common.sentenceSeparator")}
       {unsaved.length === 1
-        ? "Save it in the connection's settings."
-        : "Save them in the connections' settings."}
+        ? t("schedule.saveItInTheConnections")
+        : t("schedule.saveThemInTheConnections")}
     </p>
   );
 }
@@ -493,27 +534,28 @@ function TaskIcon({ task }: { task: TaskView }) {
 }
 
 function TaskStatus({ task }: { task: TaskView }) {
+  const t = useT();
   const dateFormat = useSettingsStore((state) => state.settings.interface.dateFormat);
   const next = !task.enabled
-    ? "Turned off"
+    ? t("schedule.turnedOff")
     : task.nextRun
       ? formatDate(task.nextRun, dateFormat)
-      : "None, the time has passed";
+      : t("schedule.noneTheTimeHasPassed");
   return (
     <div className="task-status">
       <span>
-        <strong>Next run</strong> {next}
+        <strong>{t("schedule.nextRun")}</strong> {next}
       </span>
       {task.running ? (
         <span>
-          <LoaderCircle size={13} className="spin" /> Running now
+          <LoaderCircle size={13} className="spin" /> {t("schedule.runningNow")}
         </span>
       ) : (
         task.lastRun && (
           <span className={task.lastRun.succeeded ? "" : "task-failed"}>
             {task.lastRun.succeeded ? <CircleCheck size={13} /> : <CircleAlert size={13} />}
-            <strong>Last run</strong> {formatDate(task.lastRun.finished, dateFormat)}:{" "}
-            {task.lastRun.message}
+            <strong>{t("schedule.lastRun")}</strong> {formatDate(task.lastRun.finished, dateFormat)}
+            : {task.lastRun.message}
           </span>
         )
       )}
@@ -529,6 +571,7 @@ interface SyncFieldsProps {
 }
 
 function SyncFields({ action, host, onChange }: SyncFieldsProps) {
+  const t = useT();
   const options = useMemo(() => taskOptions(action), [action]);
   const check = useOptionCheck(options, [action.arguments], action.direction);
   const direction = DIRECTION_OPTIONS.find((option) => option.value === action.direction);
@@ -536,7 +579,7 @@ function SyncFields({ action, host, onChange }: SyncFieldsProps) {
 
   const browse = async () => {
     const selected = await openFileDialog({
-      title: "Choose the local folder",
+      title: t("schedule.chooseTheLocalFolder"),
       directory: true,
       multiple: false,
       defaultPath: action.localPath || undefined,
@@ -548,21 +591,21 @@ function SyncFields({ action, host, onChange }: SyncFieldsProps) {
     <>
       <div className="form-row">
         <div className="field grow">
-          <span>Local folder</span>
+          <span>{t("schedule.localFolder")}</span>
           <div className="input-with-button">
             <input
               value={action.localPath}
-              placeholder="The folder on this computer"
+              placeholder={t("schedule.theFolderOnThisComputer")}
               spellCheck={false}
               onChange={(event) => onChange({ localPath: event.target.value })}
             />
             <button type="button" className="button" onClick={() => void browse()}>
-              <FolderOpen size={14} /> Browse
+              <FolderOpen size={14} /> {t("common.browse")}
             </button>
           </div>
         </div>
         <label className="field grow">
-          <span>Server folder</span>
+          <span>{t("schedule.serverFolder")}</span>
           <input
             value={action.remotePath}
             placeholder="/home/me/site"
@@ -573,7 +616,7 @@ function SyncFields({ action, host, onChange }: SyncFieldsProps) {
       </div>
 
       <div className="field">
-        <span>Direction</span>
+        <span>{t("schedule.direction")}</span>
         <div className="segmented" role="radiogroup">
           {DIRECTION_OPTIONS.map((option) => (
             <button
@@ -595,13 +638,13 @@ function SyncFields({ action, host, onChange }: SyncFieldsProps) {
         </div>
         {direction && (
           <small className="field-hint">
-            {direction.hint} Conflicts are left alone and reported.
+            {t("schedule.conflictsAreLeftAloneAnd", { hint: direction.hint })}
           </small>
         )}
       </div>
 
       <div className="field">
-        <span>rsync options</span>
+        <span>{t("schedule.rsyncOptions")}</span>
         <RsyncOptionsEditor
           options={options}
           direction={action.direction}
@@ -611,7 +654,7 @@ function SyncFields({ action, host, onChange }: SyncFieldsProps) {
       </div>
       <RsyncArgumentsField
         value={action.arguments}
-        hint="Typed as on rsync's command line; they apply over the options above each time the task runs."
+        hint={t("schedule.typedAsOnRsyncsCommand")}
         onChange={(value) => onChange({ arguments: value })}
       />
       <OptionCheckView
@@ -632,10 +675,11 @@ interface CommandFieldsProps {
 }
 
 function CommandFields({ action, onChange }: CommandFieldsProps) {
+  const t = useT();
   return (
     <div className="form-row">
       <label className="field grow">
-        <span>Command</span>
+        <span>{t("schedule.command")}</span>
         <input
           className="mono"
           value={action.command}
@@ -646,10 +690,10 @@ function CommandFields({ action, onChange }: CommandFieldsProps) {
         />
       </label>
       <label className="field grow">
-        <span>In folder (optional)</span>
+        <span>{t("schedule.inFolderOptional")}</span>
         <input
           value={action.directory ?? ""}
-          placeholder="The login folder"
+          placeholder={t("schedule.theLoginFolder")}
           spellCheck={false}
           onChange={(event) => onChange({ directory: event.target.value })}
         />
@@ -663,10 +707,11 @@ interface TriggerFieldsProps {
   onChange: (trigger: Trigger) => void;
 }
 
-function TriggerFields({ trigger, onChange }: TriggerFieldsProps) {
+export function TriggerFields({ trigger, onChange }: TriggerFieldsProps) {
+  const t = useT();
   return (
     <div className="field">
-      <span>When</span>
+      <span>{t("schedule.when")}</span>
       <div className="trigger-row">
         <div className="segmented" role="radiogroup">
           {TRIGGER_KINDS.map((kind) => (
@@ -684,7 +729,7 @@ function TriggerFields({ trigger, onChange }: TriggerFieldsProps) {
         </div>
         {trigger.type === "once" && (
           <DateTimeInput
-            label="Date and time"
+            label={t("schedule.dateAndTime")}
             value={trigger.at}
             onChange={(at) => onChange({ ...trigger, at })}
           />
@@ -725,6 +770,7 @@ function IntervalFields({
   trigger: Extract<Trigger, { type: "every" }>;
   onChange: (trigger: Trigger) => void;
 }) {
+  const t = useT();
   const { amount, unit } = splitInterval(trigger.minutes);
   const perUnit = INTERVAL_UNITS.find((option) => option.value === unit)?.minutes ?? 1;
   const changeInterval = (nextAmount: number, nextUnit: IntervalUnit) =>
@@ -732,35 +778,51 @@ function IntervalFields({
       ...trigger,
       minutes: Math.min(MAX_INTERVAL_MINUTES, intervalMinutes(nextAmount, nextUnit)),
     });
-  return (
-    <>
-      <span className="trigger-label">every</span>
-      <Stepper
-        value={amount}
-        min={1}
-        max={Math.floor(MAX_INTERVAL_MINUTES / perUnit)}
-        label="Repeat every"
-        onChange={(next) => changeInterval(next, unit)}
-      />
-      <select
-        value={unit}
-        aria-label="Unit"
-        onChange={(event) => changeInterval(amount, event.target.value as IntervalUnit)}
-      >
-        {INTERVAL_UNITS.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-      <span className="trigger-label">from</span>
-      <DateTimeInput
-        label="Starting"
-        value={trigger.start}
-        onChange={(start) => onChange({ ...trigger, start })}
-      />
-    </>
+  return labelledFields(
+    t.rich("schedule.everyAmountUnitFromStart", {
+      amount: (
+        <Stepper
+          value={amount}
+          min={1}
+          max={Math.floor(MAX_INTERVAL_MINUTES / perUnit)}
+          label={t("schedule.repeatEvery")}
+          onChange={(next) => changeInterval(next, unit)}
+        />
+      ),
+      unit: (
+        <select
+          value={unit}
+          aria-label={t("schedule.unit")}
+          onChange={(event) => changeInterval(amount, event.target.value as IntervalUnit)}
+        >
+          {INTERVAL_UNITS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {t(option.label, { count: amount })}
+            </option>
+          ))}
+        </select>
+      ),
+      start: (
+        <DateTimeInput
+          label={t("schedule.starting")}
+          value={trigger.start}
+          onChange={(start) => onChange({ ...trigger, start })}
+        />
+      ),
+    }),
   );
+}
+
+/**
+ * The words of a message whose placeholders are fields, each shown as a label between them, so
+ * that a language can put the fields in its own order.
+ */
+function labelledFields(message: ReactNode): ReactNode {
+  return Children.map(message, (part) => {
+    if (typeof part !== "string") return part;
+    const words = part.trim();
+    return words === "" ? null : <span className="trigger-label">{words}</span>;
+  });
 }
 
 function DailyFields({
@@ -770,6 +832,7 @@ function DailyFields({
   trigger: Extract<Trigger, { type: "daily" }>;
   onChange: (trigger: Trigger) => void;
 }) {
+  const t = useT();
   const toggleDay = (day: number) => {
     const chosen = trigger.weekdays.includes(day);
     // At least one day stays chosen.
@@ -781,34 +844,49 @@ function DailyFields({
         : [...trigger.weekdays, day].sort((first, second) => first - second),
     });
   };
+  return labelledFields(
+    t.rich("schedule.atTimeOnDays", {
+      time: (
+        <input
+          type="time"
+          aria-label={t("schedule.timeOfDay")}
+          value={timeInputValue(trigger.minuteOfDay)}
+          onChange={(event) => {
+            const minuteOfDay = minuteOfDayFrom(event.target.value);
+            if (minuteOfDay !== null) onChange({ ...trigger, minuteOfDay });
+          }}
+        />
+      ),
+      days: <WeekdayToggles weekdays={trigger.weekdays} onToggle={toggleDay} />,
+    }),
+  );
+}
+
+function WeekdayToggles({
+  weekdays,
+  onToggle,
+}: {
+  weekdays: number[];
+  onToggle: (day: number) => void;
+}) {
+  const t = useT();
   return (
-    <>
-      <span className="trigger-label">at</span>
-      <input
-        type="time"
-        aria-label="Time of day"
-        value={timeInputValue(trigger.minuteOfDay)}
-        onChange={(event) => {
-          const minuteOfDay = minuteOfDayFrom(event.target.value);
-          if (minuteOfDay !== null) onChange({ ...trigger, minuteOfDay });
-        }}
-      />
-      <div className="toggle-group" role="group" aria-label="Days of the week">
-        {WEEKDAY_NAMES.map((name, day) => {
-          const chosen = trigger.weekdays.includes(day);
-          return (
-            <button
-              key={name}
-              type="button"
-              className={`toggle ${chosen ? "is-on" : ""}`}
-              aria-pressed={chosen}
-              onClick={() => toggleDay(day)}
-            >
-              {name}
-            </button>
-          );
-        })}
-      </div>
-    </>
+    <div className="toggle-group" role="group" aria-label={t("schedule.daysOfTheWeek")}>
+      {WEEKDAYS.map((day) => {
+        const name = weekdayName(day);
+        const chosen = weekdays.includes(day);
+        return (
+          <button
+            key={name}
+            type="button"
+            className={`toggle ${chosen ? "is-on" : ""}`}
+            aria-pressed={chosen}
+            onClick={() => onToggle(day)}
+          >
+            {name}
+          </button>
+        );
+      })}
+    </div>
   );
 }

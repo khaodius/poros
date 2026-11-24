@@ -7,6 +7,7 @@ import { useSessionStore } from "../state/sessionStore";
 import { useToastStore } from "../state/toastStore";
 import { learnVersioning, useVersioningStore, versioningKey } from "../state/versionActions";
 import type { Handover } from "./usePane";
+import { useT } from "../i18n";
 
 export interface PaneVersions {
   /** The pane is on a server that keeps histories of files, outside any vault. */
@@ -24,6 +25,7 @@ export interface PaneVersions {
  * more than it did.
  */
 export function usePaneVersions(source: FileSource, sessionId: string | undefined): PaneVersions {
+  const t = useT();
   const available = useSessionStore((state) => {
     const info = sessionId ? state.sessions[sessionId]?.info : undefined;
     return Boolean(info && !info.vault && hasVersions(info.protocol));
@@ -61,7 +63,9 @@ export function usePaneVersions(source: FileSource, sessionId: string | undefine
               // The folder still shows; only what was deleted from it is missing.
               setShowDeleted(false);
               const { message } = toAppError(caught);
-              useToastStore.getState().show("error", `Deleted files cannot be shown: ${message}`);
+              useToastStore
+                .getState()
+                .show("error", t("versions.deletedFilesCannotBeShown", { message }));
               return source.list(folder);
             }
           },
@@ -69,7 +73,7 @@ export function usePaneVersions(source: FileSource, sessionId: string | undefine
         take: () => undefined,
       };
     },
-    [available, sessionId, source, setShowDeleted],
+    [available, sessionId, source, setShowDeleted, t],
   );
 
   return { available, showDeleted, setShowDeleted, deletedView };

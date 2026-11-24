@@ -785,6 +785,20 @@ export interface SignedIn {
   account: string;
 }
 
+/** A heading and a line of the browser tab the provider sends back to Poros. */
+export interface SignInPageText {
+  heading: string;
+  detail: string;
+}
+
+/** What that tab says, in the interface's language; the backend shows English for what is unfit. */
+export interface SignInPage {
+  lang: string;
+  signedIn: SignInPageText;
+  notCompleted: SignInPageText;
+  expired: SignInPageText;
+}
+
 export interface FontFamily {
   name: string;
   /** Older per-style names of the family, for web views that do not know its main name. */

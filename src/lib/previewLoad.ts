@@ -14,6 +14,7 @@ import { PreviewCancelled } from "./previewScheduler";
 import type { ImageFormat, ImageSize } from "./previewSniff";
 import { decodeText, withoutCutLine } from "./previewText";
 import type { AppError, FileEntry, FileStamp, PreviewRead, TextEncoding } from "./types";
+import { t } from "../i18n";
 
 /** What the pane shows of a file once it has been read. */
 export type FileView =
@@ -69,7 +70,7 @@ export async function loadFileView(
   let stamp: FileStamp | null = null;
   for (let reads = 0; step.step === "read"; reads++) {
     if (reads >= MAX_READS) {
-      const error: AppError = { kind: "io", message: "The file changes as it is read" };
+      const error: AppError = { kind: "io", message: t("preview.theFileChangesAsIt") };
       throw error;
     }
     const reply = await read(step.length, signal);

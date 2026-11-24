@@ -5,8 +5,10 @@ import { parseReleaseNotes, type NoteSpan } from "../lib/releaseNotes";
 import { useUiStore } from "../state/uiStore";
 import { skipUpdate, startUpdate, useUpdateStore } from "../state/updateStore";
 import { Dialog } from "./Dialog";
+import { useT } from "../i18n";
 
 export function UpdateDialog({ onClose }: { onClose: () => void }) {
+  const t = useT();
   const update = useUpdateStore((state) => state.update);
   const closeDialogs = useUiStore((state) => state.close);
   const latestOnClose = useLatest(onClose);
@@ -25,11 +27,13 @@ export function UpdateDialog({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <Dialog title="Update available" onClose={onClose} width={560}>
+    <Dialog title={t("updates.updateAvailable")} onClose={onClose} width={560}>
       <div className="confirm-body">
         <p>
-          Poros <strong>{formatVersion(update.version)}</strong> is available. You have{" "}
-          {formatVersion(update.currentVersion)}.
+          {t.rich("updates.isAvailableYouHave", {
+            version: <strong>{formatVersion(update.version)}</strong>,
+            current: formatVersion(update.currentVersion),
+          })}
         </p>
         {notes.length > 0 && (
           <div className="release-notes selectable">
@@ -61,19 +65,17 @@ export function UpdateDialog({ onClose }: { onClose: () => void }) {
             })}
           </div>
         )}
-        <p className="field-hint">
-          Poros keeps working while the update downloads, and asks before it restarts.
-        </p>
+        <p className="field-hint">{t("updates.porosKeepsWorkingWhileThe")}</p>
       </div>
       <div className="dialog-actions">
         <button type="button" className="button dialog-action-start" onClick={() => void skip()}>
-          Skip this version
+          {t("updates.skipThisVersion")}
         </button>
         <button type="button" className="button" onClick={onClose}>
-          Later
+          {t("updates.later")}
         </button>
         <button type="button" data-autofocus className="button button-primary" onClick={install}>
-          Update
+          {t("updates.update")}
         </button>
       </div>
     </Dialog>

@@ -8,10 +8,12 @@ import { byRecentUse, useSavedConnections } from "../state/savedConnectionsStore
 import { useUiStore } from "../state/uiStore";
 import { ConnectionIcon } from "./ConnectionIcon";
 import { PorosLogo } from "./PorosLogo";
+import { useT } from "../i18n";
 
 const AUTH_ICONS = { password: Lock, publicKey: KeyRound, agent: UserRound, oauth: Globe };
 
 export function WelcomePanel({ tabId }: { tabId: string }) {
+  const t = useT();
   const connections = useSavedConnections((state) => state.connections);
   const replaceTab = useLayoutStore((state) => state.replaceTab);
   const openDialog = useUiStore((state) => state.open);
@@ -31,7 +33,7 @@ export function WelcomePanel({ tabId }: { tabId: string }) {
     <section className="pane welcome">
       <div className="welcome-body">
         <PorosLogo size={44} className="welcome-logo" />
-        <h2 className="welcome-title">New tab</h2>
+        <h2 className="welcome-title">{t("workspace.newTab")}</h2>
         <div className="welcome-actions">
           <button
             type="button"
@@ -39,7 +41,7 @@ export function WelcomePanel({ tabId }: { tabId: string }) {
             onClick={() => openDialog({ kind: "connect", draft: EMPTY_DRAFT, targetTabId: tabId })}
           >
             <Plus size={14} />
-            Connect
+            {t("common.connect")}
           </button>
           <button
             type="button"
@@ -47,27 +49,24 @@ export function WelcomePanel({ tabId }: { tabId: string }) {
             onClick={() => replaceTab(tabId, { id: tabId, kind: "local" })}
           >
             <HardDrive size={14} />
-            Local files
+            {t("workspace.localFiles")}
           </button>
           <button
             type="button"
             className="button"
-            title="Import from FileZilla, WinSCP and other apps"
+            title={t("workspace.importFromFilezillaWinscpAnd")}
             onClick={() => openDialog({ kind: "importConnections" })}
           >
             <Import size={14} />
-            Import
+            {t("workspace.import")}
           </button>
         </div>
 
         <div className="welcome-saved">
-          <h3>Saved connections</h3>
+          <h3>{t("workspace.savedConnections")}</h3>
           {error && <p className="form-error">{error}</p>}
           {connections.length === 0 ? (
-            <p className="welcome-hint">
-              Servers you save from the connect dialog, or from the bookmark button of a server tab,
-              appear here. Sites saved in FileZilla, WinSCP, PuTTY and other apps can be imported.
-            </p>
+            <p className="welcome-hint">{t("workspace.serversYouSaveFromThe")}</p>
           ) : (
             <ul className="saved-list">
               {byRecentUse(connections).map((connection) => {
@@ -91,7 +90,7 @@ export function WelcomePanel({ tabId }: { tabId: string }) {
                         <span className="saved-item-detail">{connectionDetail(connection)}</span>
                       </span>
                       {connecting ? (
-                        <span className="saved-item-status">Connecting...</span>
+                        <span className="saved-item-status">{t("workspace.connecting")}</span>
                       ) : (
                         <AuthIcon size={14} className="saved-item-auth" />
                       )}

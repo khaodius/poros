@@ -3,8 +3,7 @@
 
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { create } from "zustand";
-import { formatCount } from "../lib/deletion";
-import { pluralize } from "../lib/format";
+import { englishCount } from "../lib/format";
 import { toAppError, versions } from "../lib/ipc";
 import { allTabs, editorTab, type EditorTab } from "../lib/layout";
 import { baseName } from "../lib/path";
@@ -24,6 +23,7 @@ import { useLogStore } from "./logStore";
 import { track } from "./operationStore";
 import { lastActivePane } from "./paneRegistry";
 import { useToastStore } from "./toastStore";
+import { t } from "../i18n";
 
 /** A file on a server whose history is shown. */
 export interface VersionedFile {
@@ -137,7 +137,10 @@ export async function downloadVersion(
   const shown = local?.visible ? local.path() : null;
   const picked =
     shown ??
-    (await openFileDialog({ directory: true, title: `Download a version of ${file.name} to` }));
+    (await openFileDialog({
+      directory: true,
+      title: t("versions.downloadAVersionOfTo", { name: file.name }),
+    }));
   if (typeof picked !== "string") return null;
   const name = versionFileName(file.name, version);
   await versions.download({
@@ -196,9 +199,10 @@ export interface DeletedEntries {
   focusPath?: string | null;
 }
 
-const ACTION_WORDS: Record<DeletedAction, { running: string; done: string; failed: string }> = {
-  restore: { running: "Restoring", done: "Restored", failed: "could not be restored" },
-  purge: { running: "Deleting for good", done: "Deleted for good", failed: "could not be deleted" },
+/** The log's words for each action, in English like the rest of the log. */
+const ACTION_WORDS: Record<DeletedAction, { running: string; done: string }> = {
+  restore: { running: "Restoring", done: "Restored" },
+  purge: { running: "Deleting for good", done: "Deleted for good" },
 };
 
 /**
@@ -211,17 +215,30 @@ export async function resolveDeleted(action: DeletedAction, request: DeletedEntr
   const words = ACTION_WORDS[action];
   const write = useLogStore.getState().write;
   const showToast = useToastStore.getState().show;
-  const what = entries.length === 1 ? entries[0].name : pluralize(entries.length, "item");
-  const title = `${words.running} ${what} in ${baseName(folder) || folder}`;
+  const single = entries.length === 1 ? entries[0].name : null;
+  // The log stays in English; the progress line and the toast follow the interface.
+  const what = single ?? englishCount(entries.length, "item");
+  const shownFolder = baseName(folder) || folder;
+  const title = `${words.running} ${what} in ${shownFolder}`;
+  const shownTitle =
+    single === null
+      ? t(action === "restore" ? "versions.restoringItemsIn" : "versions.deletingItemsForGoodIn", {
+          count: entries.length,
+          folder: shownFolder,
+        })
+      : t(action === "restore" ? "versions.restoringNameIn" : "versions.deletingNameForGoodIn", {
+          name: single,
+          folder: shownFolder,
+        });
   try {
     const summary = await track(
-      title,
+      shownTitle,
       (operationId) =>
         versions.deleted({ operationId, sessionId, action, items: deletedItems(entries) }),
       action === "restore" ? "restore" : "delete",
     );
     const inside =
-      summary.files > entries.length ? `, ${pluralize(summary.files, "file")} in all` : "";
+      summary.files > entries.length ? `, ${englishCount(summary.files, "file")} in all` : "";
     write("info", `${words.done} ${what} in ${folder}${inside}`, sessionId);
     for (const failure of summary.failures) {
       write("error", `${failure.path}: ${failure.message}`, sessionId);
@@ -232,7 +249,12 @@ export async function resolveDeleted(action: DeletedAction, request: DeletedEntr
         "error",
         summary.failed === 1
           ? `${baseName(first.path)}: ${first.message}`
-          : `${formatCount(summary.failed)} files ${words.failed}. The log lists why.`,
+          : t(
+              action === "restore"
+                ? "versions.filesCouldNotBeRestored"
+                : "versions.filesCouldNotBeDeleted",
+              { count: summary.failed },
+            ),
       );
     }
   } catch (caught) {

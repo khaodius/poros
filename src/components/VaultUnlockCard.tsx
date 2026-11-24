@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 
 import { LoaderCircle, LockKeyhole, LockOpen } from "lucide-react";
 import { isTextEntryTarget } from "../lib/focus";
 import { toAppError } from "../lib/ipc";
+import { useT } from "../i18n";
 
 interface VaultUnlockCardProps {
   /** The name of the vault's folder. */
@@ -26,6 +27,7 @@ export function VaultUnlockCard({
   onShowEncrypted,
   onKeyDown,
 }: VaultUnlockCardProps) {
+  const t = useT();
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -53,7 +55,7 @@ export function VaultUnlockCard({
       await onUnlock(password);
     } catch (caught) {
       const failure = toAppError(caught);
-      setError(failure.kind === "wrongPassword" ? "Wrong password" : failure.message);
+      setError(failure.kind === "wrongPassword" ? t("vault.wrongPassword") : failure.message);
       inputRef.current?.focus({ preventScroll: true });
       inputRef.current?.select();
     }
@@ -66,9 +68,9 @@ export function VaultUnlockCard({
         <span className="vault-card-icon">
           <LockKeyhole size={22} />
         </span>
-        <p className="pane-empty-title">Encrypted vault</p>
+        <p className="pane-empty-title">{t("vault.encryptedVault")}</p>
         <p className="vault-card-detail">
-          <strong>{name}</strong> is a Cryptomator vault. Enter its password to open it here.
+          {t.rich("vault.isACryptomatorVaultEnter", { name: <strong>{name}</strong> })}
         </p>
         <div className="vault-card-unlock">
           <input
@@ -76,8 +78,8 @@ export function VaultUnlockCard({
             type="password"
             className={`vault-password ${error ? "has-error" : ""}`}
             value={password}
-            placeholder="Password"
-            aria-label="Vault password"
+            placeholder={t("vault.password")}
+            aria-label={t("vault.vaultPassword")}
             autoComplete="off"
             spellCheck={false}
             // Read only rather than disabled while unlocking, so it keeps the keyboard.
@@ -86,12 +88,12 @@ export function VaultUnlockCard({
           />
           <button type="submit" className="button button-primary" disabled={busy || !password}>
             {busy ? <LoaderCircle size={14} className="spin" /> : <LockOpen size={14} />}
-            {busy ? "Unlocking..." : "Unlock"}
+            {busy ? t("vault.unlocking") : t("vault.unlock")}
           </button>
         </div>
         {error && <p className="form-error">{error}</p>}
         <button type="button" className="link-button vault-card-quiet" onClick={onShowEncrypted}>
-          Show encrypted files
+          {t("vault.showEncryptedFiles")}
         </button>
       </form>
     </div>

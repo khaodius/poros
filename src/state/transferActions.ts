@@ -1,6 +1,5 @@
 import { local, remote, toAppError, transfers } from "../lib/ipc";
 import type { Point } from "../lib/fileFlight";
-import { pluralize } from "../lib/format";
 import { baseName } from "../lib/path";
 import { isDirLike } from "../lib/sort";
 import type { Direction, FileEntry, SessionInfo, TransferItem } from "../lib/types";
@@ -10,6 +9,8 @@ import { useLogStore } from "./logStore";
 import { getPane, lastActivePane, type PaneHandle } from "./paneRegistry";
 import { useSessionStore } from "./sessionStore";
 import { useToastStore } from "./toastStore";
+import { englishCount } from "../lib/format";
+import { t } from "../i18n";
 
 /** The entries that can be copied: files and folders, not devices or broken links. */
 export function transferable(entries: FileEntry[]): TransferItem[] {
@@ -33,7 +34,7 @@ async function enqueue(
 ): Promise<boolean> {
   const showToast = useToastStore.getState().show;
   if (items.length === 0) {
-    showToast("info", "Nothing to transfer: only regular files and folders can be copied.");
+    showToast("info", t("transfers.nothingToTransferOnlyRegular"));
     return false;
   }
   const { direction, sessionId, sourceSessionId } = route;
@@ -45,7 +46,7 @@ async function enqueue(
       targetDirectory: folder,
       items,
     });
-    const summary = `Queued ${VERBS[direction]} of ${pluralize(items.length, "item")} to ${where}`;
+    const summary = `Queued ${VERBS[direction]} of ${englishCount(items.length, "item")} to ${where}`;
     useLogStore.getState().write("info", summary, sessionId);
     return true;
   } catch (caught) {
@@ -87,7 +88,7 @@ export async function refusesLockedVault(target: PaneHandle, folder: string): Pr
   // A pane still waiting for the server may show the folder as it was remembered, from before
   // it became a vault, so it is listed below like a folder no pane shows.
   if (target.path() === folder && target.locked !== undefined && !target.loading?.()) {
-    if (target.locked) showToast("info", "Unlock the vault to copy files into it.");
+    if (target.locked) showToast("info", t("transfers.unlockTheVaultToCopy"));
     return target.locked;
   }
   const session = useSessionStore.getState().sessions[target.sessionId] as
@@ -100,11 +101,11 @@ export async function refusesLockedVault(target: PaneHandle, folder: string): Pr
     // The folder the pane shows may be a vault whose card is not up yet: nothing goes in
     // unchecked. Any other folder that cannot be listed is for the copy itself to report.
     if (target.path() !== folder) return false;
-    showToast("error", "Could not check whether this folder is a vault.");
+    showToast("error", t("transfers.couldNotCheckWhetherThis"));
     return true;
   }
   if (vaultSign(entries) === "none") return false;
-  showToast("info", `${baseName(folder)} is a locked vault. Open it to copy files into it.`);
+  showToast("info", t("transfers.isALockedVaultOpen", { baseName: baseName(folder) }));
   return true;
 }
 
@@ -146,7 +147,7 @@ export async function transferBetween(
   if (await refusesLockedVault(writer, targetFolder)) return;
   const route = routeBetween(source, writer);
   if (!route) {
-    useToastStore.getState().show("info", "Drop local files on a server tab to upload them.");
+    useToastStore.getState().show("info", t("transfers.dropLocalFilesOnA"));
     return;
   }
   const items = transferable(entries);
@@ -166,15 +167,26 @@ export async function transferBetween(
     forget();
     return;
   }
-  if (folder === null) sayWhereResultsDropWent(target, "Copying", targetFolder);
+  if (folder === null) sayWhereResultsDropWent(target, "copying", targetFolder);
 }
 
 /**
  * Says where files went that were let go of on the blank space of a pane showing search
  * results: into the folder the search started in, where the results do not show them.
  */
-export function sayWhereResultsDropWent(target: PaneHandle, verb: string, folder: string) {
-  if (target.showsResults?.()) useToastStore.getState().show("info", `${verb} to ${folder}`);
+const WHERE_RESULTS_WENT = {
+  copying: "transfers.copyingTo",
+  moved: "transfers.movedTo",
+  copied: "transfers.copiedTo",
+} as const;
+
+export function sayWhereResultsDropWent(
+  target: PaneHandle,
+  what: keyof typeof WHERE_RESULTS_WENT,
+  folder: string,
+) {
+  if (target.showsResults?.())
+    useToastStore.getState().show("info", t(WHERE_RESULTS_WENT[what], { folder }));
 }
 
 export function transferFromPane(
@@ -200,8 +212,8 @@ export function transferToOtherSide(sourceTabId: string, entries: FileEntry[]): 
       .show(
         "info",
         source.kind === "local"
-          ? "Connect to a server to upload to it."
-          : "Open a local tab to download into.",
+          ? t("transfers.connectToAServerTo")
+          : t("transfers.openALocalTabTo"),
       );
     return;
   }
@@ -217,7 +229,7 @@ export async function uploadDroppedPaths(
   const target = getPane(targetTabId);
   if (!target) return;
   if (target.kind !== "remote") {
-    useToastStore.getState().show("info", "Drop files on a server tab to upload them.");
+    useToastStore.getState().show("info", t("transfers.dropFilesOnAServer"));
     return;
   }
   try {
@@ -225,7 +237,7 @@ export async function uploadDroppedPaths(
     const source: PaneHandle = {
       tabId: "external",
       kind: "local",
-      label: "Local",
+      label: t("transfers.local"),
       path: () => null,
       refresh: () => undefined,
       selected: () => [],

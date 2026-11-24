@@ -8,6 +8,7 @@ import type {
   SessionInfo,
 } from "../lib/types";
 import { useSessionStore } from "./sessionStore";
+import { t } from "../i18n";
 
 export interface HostKeyQuestion {
   hostKey: HostKeyInfo;
@@ -56,8 +57,7 @@ async function withHostKeyPrompts(
     const decision = await useHostKeyPrompt
       .getState()
       .ask(error.hostKey, error.kind === "hostKeyChanged");
-    if (!decision)
-      return { error: { kind: error.kind, message: "The host key was not accepted." } };
+    if (!decision) return { error: { kind: error.kind, message: t("connect.theHostKeyWasNot") } };
     return withHostKeyPrompts(attempt, decision);
   }
 }

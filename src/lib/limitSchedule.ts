@@ -2,7 +2,8 @@
 // applies it (src-tauri/src/transfer/limit_schedule.rs); both are tested against
 // src-tauri/tests/fixtures/limit-schedule-cases.json so they agree on what is in force.
 
-import { WEEKDAY_NAMES } from "./schedule";
+import { formatNumber, t } from "../i18n";
+import { weekdayName } from "./schedule";
 import type {
   Direction,
   JobSnapshot,
@@ -171,27 +172,30 @@ export function moveRule(rules: LimitRule[], index: number, offset: number): Lim
 
 /** The rule's name, or its place in the list when it has none. */
 export function ruleLabel(name: string, index: number): string {
-  return name || `Rule ${index + 1}`;
+  return name || t("limits.ruleNumber", { number: index + 1 });
 }
 
 /** `500 KiB/s`, `unlimited` or `paused`. */
 export function describeLimit(limit: RateLimit): string {
   switch (limit.mode) {
     case "limited":
-      return `${limit.kib} KiB/s`;
+      return t("limits.kibPerSecond", { kib: formatNumber(limit.kib, { useGrouping: false }) });
     case "unlimited":
-      return "unlimited";
+      return t("limits.unlimitedInASentence");
     case "paused":
-      return "paused";
+      return t("limits.pausedInASentence");
   }
 }
 
 /** `uploads 200 KiB/s, downloads paused`, or both at once when they agree. */
 export function describeLimits(limits: Limits): string {
   if (sameLimit(asApplied(limits.upload), asApplied(limits.download))) {
-    return `uploads and downloads ${describeLimit(limits.upload)}`;
+    return t("limits.uploadsAndDownloads", { limit: describeLimit(limits.upload) });
   }
-  return `uploads ${describeLimit(limits.upload)}, downloads ${describeLimit(limits.download)}`;
+  return t("limits.uploadsThenDownloads", {
+    upload: describeLimit(limits.upload),
+    download: describeLimit(limits.download),
+  });
 }
 
 /** `09:00`, and `24:00` for the end of a day. */
@@ -205,21 +209,28 @@ export function minuteLabel(minute: number): string {
 export function describeHours(rule: Pick<LimitRule, "startMinute" | "endMinute">): string {
   const start = minuteLabel(rule.startMinute);
   if (rule.startMinute === rule.endMinute) {
-    return rule.startMinute === 0 ? "All day" : `24 hours from ${start}`;
+    return rule.startMinute === 0 ? t("limits.allDay") : t("limits.twentyFourHoursFrom", { start });
   }
-  const end = rule.endMinute === 0 ? "midnight" : minuteLabel(rule.endMinute);
+  const end = rule.endMinute === 0 ? t("limits.midnight") : minuteLabel(rule.endMinute);
   return rule.endMinute < rule.startMinute && rule.endMinute !== 0
-    ? `${start} to ${end} the next day`
-    : `${start} to ${end}`;
+    ? t("limits.fromToTheNextDay", { start, end })
+    : t("limits.fromTo", { start, end });
 }
 
 /** What one stretch of the week view stands for, for its tooltip. */
 export function describeSpan(schedule: LimitSchedule, weekday: number, span: Span): string {
-  const when = `${WEEKDAY_NAMES[weekday]} ${minuteLabel(span.start)} to ${minuteLabel(span.end)}`;
   const { rule } = span.inForce;
   const source =
-    rule === null ? "No rule, the ordinary limits" : ruleLabel(schedule.rules[rule].name, rule);
-  return `${when}: ${source}, ${describeLimits(span.inForce)}`;
+    rule === null
+      ? t("limits.noRuleTheOrdinaryLimits")
+      : ruleLabel(schedule.rules[rule].name, rule);
+  return t("limits.spanDescription", {
+    weekday: weekdayName(weekday),
+    start: minuteLabel(span.start),
+    end: minuteLabel(span.end),
+    source,
+    limits: describeLimits(span.inForce),
+  });
 }
 
 /** A time as a clock shows it, `18:00`, with the weekday when it is not today. */
@@ -228,7 +239,7 @@ export function clockTime(epochSeconds: number, now: Date): string {
   const time = minuteLabel(moment.getHours() * 60 + moment.getMinutes());
   return moment.toDateString() === now.toDateString()
     ? time
-    : `${WEEKDAY_NAMES[(moment.getDay() + 6) % 7]} ${time}`;
+    : t("limits.weekdayAndTime", { weekday: weekdayName((moment.getDay() + 6) % 7), time });
 }
 
 /** Whether the schedule holds transfers in this direction now. */
@@ -259,8 +270,8 @@ export function scheduleWait(
   if (stopped || job.state !== "queued" || !holds(limits, job.direction)) return null;
   const end = limits.pauseEnds[job.direction];
   return end === null
-    ? "Waiting for the speed limit schedule"
-    : `Waiting for the speed limit schedule until ${clockTime(end, now)}`;
+    ? t("limits.waitingForTheSpeedLimitSchedule")
+    : t("limits.waitingForTheSpeedLimitScheduleUntil", { time: clockTime(end, now) });
 }
 
 /** The schedule set the limits in force, rather than the ordinary limits. */
@@ -289,15 +300,17 @@ export function shownLimits(
 
 /** The status bar's tooltip for the schedule. */
 export function scheduleTooltip(limits: LimitStatus, now: Date): string {
-  const until = limits.until === null ? "" : ` until ${clockTime(limits.until, now)}`;
   const rule = limits.rule ? ruleLabel(limits.rule.name, limits.rule.index) : "";
-  if (limits.ignored) {
-    return (
-      `Speed limit schedule ignored${until}: "${rule}" is set aside and the ordinary limits ` +
-      `apply, ${describeLimits(limits)}.`
-    );
+  const described = describeLimits(limits);
+  if (limits.until === null) {
+    return limits.ignored
+      ? t("limits.scheduleIgnored", { rule, limits: described })
+      : t("limits.scheduleApplies", { rule, limits: described });
   }
-  return `Speed limit schedule: "${rule}" applies${until}, ${describeLimits(limits)}.`;
+  const time = clockTime(limits.until, now);
+  return limits.ignored
+    ? t("limits.scheduleIgnoredUntil", { rule, limits: described, time })
+    : t("limits.scheduleAppliesUntil", { rule, limits: described, time });
 }
 
 type Stored = Record<string, unknown>;

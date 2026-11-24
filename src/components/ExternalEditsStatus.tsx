@@ -26,9 +26,11 @@ import { useSettingsStore } from "../state/settingsStore";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { FileIcon } from "./FileIcon";
 import { ProgressBar } from "./ProgressBar";
+import { useT, type Translate } from "../i18n";
 
 /** The status bar's word on files open in other programs, opening the list of them. */
 export function ExternalEditsStatus() {
+  const t = useT();
   const edits = useExternalEditStore((state) => state.edits);
   const leftovers = useExternalEditStore((state) => state.leftovers);
   const [open, setOpen] = useState(false);
@@ -50,11 +52,11 @@ export function ExternalEditsStatus() {
         className={`status-item edits-status-button ${attention ? "needs-attention" : ""}`}
         aria-expanded={open}
         aria-haspopup="dialog"
-        title="Files open in other programs"
+        title={t("openWith.filesOpenInOtherPrograms")}
         onClick={() => setOpen(!open)}
       >
         <FilePen size={12} className={moving ? "is-moving" : ""} />
-        {summary ?? "Not editing any files"}
+        {summary ?? t("openWith.notEditingAnyFiles")}
       </button>
       {open && <EditsPopover edits={edits} leftovers={leftovers} onClose={close} />}
     </span>
@@ -76,6 +78,7 @@ export interface Confirmation {
 }
 
 function EditsPopover({ edits, leftovers, onClose }: EditsPopoverProps) {
+  const t = useT();
   const popoverRef = useRef<HTMLElement>(null);
   const [confirming, setConfirming] = useState<Confirmation | null>(null);
   const uploadOnSave = useSettingsStore((state) => state.settings.editing.uploadOnSave);
@@ -109,12 +112,16 @@ function EditsPopover({ edits, leftovers, onClose }: EditsPopoverProps) {
       return;
     }
     setConfirming({
-      title: `Stop editing ${edit.name}?`,
-      confirmLabel: "Stop and discard",
+      title: t("openWith.stopEditing", { name: edit.name }),
+      confirmLabel: t("openWith.stopAndDiscard"),
       body: (
         <p>
-          Changes saved in {edit.program || "the program"} have not reached {edit.server}. Stopping
-          deletes the working copy with them.
+          {edit.program
+            ? t("openWith.changesSavedInProgramNotReached", {
+                program: edit.program,
+                server: edit.server,
+              })
+            : t("openWith.changesSavedInTheProgramNotReached", { server: edit.server })}
         </p>
       ),
       action: () => external.stop(edit.id),
@@ -126,15 +133,15 @@ function EditsPopover({ edits, leftovers, onClose }: EditsPopoverProps) {
       ref={popoverRef}
       className="edits-popover"
       role="dialog"
-      aria-label="Files open in other programs"
+      aria-label={t("openWith.filesOpenInOtherPrograms")}
     >
       <header className="edits-popover-header">
-        <h3>Open in other programs</h3>
+        <h3>{t("openWith.openInOtherPrograms")}</h3>
         <button
           type="button"
           className="icon-button"
-          title="Settings for opening files"
-          aria-label="Settings for opening files"
+          title={t("openWith.settingsForOpeningFiles")}
+          aria-label={t("openWith.settingsForOpeningFiles")}
           onClick={() => {
             onClose();
             openProgramSettings();
@@ -142,14 +149,17 @@ function EditsPopover({ edits, leftovers, onClose }: EditsPopoverProps) {
         >
           <Settings2 size={14} />
         </button>
-        <button type="button" className="icon-button" aria-label="Close" onClick={onClose}>
+        <button
+          type="button"
+          className="icon-button"
+          aria-label={t("common.close")}
+          onClick={onClose}
+        >
           <X size={14} />
         </button>
       </header>
       {edits.length === 0 && leftovers.length === 0 ? (
-        <p className="edits-empty">
-          No files are open in other programs. Right-click a file and pick Open with.
-        </p>
+        <p className="edits-empty">{t("openWith.noFilesAreOpenIn")}</p>
       ) : (
         <ul className="edits-list">
           {edits.map((edit) => (
@@ -160,9 +170,7 @@ function EditsPopover({ edits, leftovers, onClose }: EditsPopoverProps) {
       {leftovers.length > 0 && <LeftoverList leftovers={leftovers} onConfirm={setConfirming} />}
       {edits.length > 0 && (
         <p className="edits-footnote">
-          {uploadOnSave
-            ? "Each save is uploaded as soon as the program has written it."
-            : "Saves wait for you to upload them."}
+          {uploadOnSave ? t("openWith.eachSaveIsUploadedAs") : t("openWith.savesWaitForYouTo")}
         </p>
       )}
       {confirming && (
@@ -181,6 +189,7 @@ function EditsPopover({ edits, leftovers, onClose }: EditsPopoverProps) {
 }
 
 function EditRow({ edit, onStop }: { edit: ExternalEdit; onStop: () => void }) {
+  const t = useT();
   const dateFormat = useSettingsStore((state) => state.settings.interface.dateFormat);
   const fraction = transferFraction(edit);
   const canUpload = ["changed", "failed", "waiting"].includes(edit.state) && !edit.blocked;
@@ -210,19 +219,23 @@ function EditRow({ edit, onStop }: { edit: ExternalEdit; onStop: () => void }) {
           <span className="edit-state">{editStateLabel(edit)}</span>
         </div>
         <div className="edit-where" title={`${edit.server}: ${edit.remotePath}`}>
-          {edit.inVault && <ShieldCheck size={11} aria-label="In a vault" />}
+          {edit.inVault && <ShieldCheck size={11} aria-label={t("openWith.inAVault")} />}
           <span>{where}</span>
           {edit.lastUpload !== undefined && (
-            <span className="edit-uploaded">
-              uploaded {formatUploadTime(edit.lastUpload, dateFormat)}
-            </span>
+            <span className="edit-uploaded">{uploadedText(t, edit.lastUpload, dateFormat)}</span>
           )}
         </div>
         {fraction !== null && (
           <div className="edit-progress">
             <ProgressBar
               fraction={fraction}
-              label={edit.detail ?? `${formatSize(edit.transferred)} of ${formatSize(edit.size)}`}
+              label={
+                edit.detail ??
+                t("openWith.of", {
+                  transferred: formatSize(edit.transferred),
+                  total: formatSize(edit.size),
+                })
+              }
               labelKind="bytes"
               labelInside={false}
             />
@@ -233,12 +246,12 @@ function EditRow({ edit, onStop }: { edit: ExternalEdit; onStop: () => void }) {
           <div className="edit-question">
             {edit.state === "conflict" && (
               <button type="button" className="button button-small" onClick={resolve}>
-                Decide what to upload...
+                {t("openWith.decideWhatToUpload")}
               </button>
             )}
             {edit.blocked && (
               <button type="button" className="button button-small" onClick={pickEditor}>
-                Open in an editor...
+                {t("openWith.openInAnEditor")}
               </button>
             )}
           </div>
@@ -248,8 +261,8 @@ function EditRow({ edit, onStop }: { edit: ExternalEdit; onStop: () => void }) {
         <button
           type="button"
           className="icon-button"
-          title="Upload now"
-          aria-label={`Upload ${edit.name} now`}
+          title={t("openWith.uploadNow")}
+          aria-label={t("openWith.uploadNow2", { name: edit.name })}
           disabled={!canUpload}
           onClick={() => editAction(() => external.upload(edit.id))}
         >
@@ -258,8 +271,8 @@ function EditRow({ edit, onStop }: { edit: ExternalEdit; onStop: () => void }) {
         <button
           type="button"
           className="icon-button"
-          title="Open again"
-          aria-label={`Open ${edit.name} again`}
+          title={t("openWith.openAgain")}
+          aria-label={t("openWith.openAgain2", { name: edit.name })}
           disabled={edit.state === "downloading" || edit.blocked}
           onClick={() => editAction(() => external.reopen(edit.id, null))}
         >
@@ -268,8 +281,8 @@ function EditRow({ edit, onStop }: { edit: ExternalEdit; onStop: () => void }) {
         <button
           type="button"
           className="icon-button"
-          title="Show the working copy's folder"
-          aria-label={`Show the folder of ${edit.name}`}
+          title={t("openWith.showTheWorkingCopysFolder")}
+          aria-label={t("openWith.showTheFolderOf", { name: edit.name })}
           disabled={edit.state === "downloading"}
           onClick={() => editAction(() => external.reveal(edit.id))}
         >
@@ -279,9 +292,11 @@ function EditRow({ edit, onStop }: { edit: ExternalEdit; onStop: () => void }) {
           type="button"
           className="icon-button"
           title={
-            edit.state === "downloading" ? "Cancel" : "Stop editing and delete the working copy"
+            edit.state === "downloading"
+              ? t("common.cancel")
+              : t("openWith.stopEditingAndDeleteThe")
           }
-          aria-label={`Stop editing ${edit.name}`}
+          aria-label={t("openWith.stopEditing2", { name: edit.name })}
           onClick={onStop}
         >
           <X size={14} />
@@ -291,11 +306,12 @@ function EditRow({ edit, onStop }: { edit: ExternalEdit; onStop: () => void }) {
   );
 }
 
-/** Today's uploads by the minute, older ones by the date. */
-function formatUploadTime(epochMillis: number, dateFormat: DateFormat): string {
+/** When the last save went up: today's by the minute, older ones by the date. */
+function uploadedText(t: Translate, epochMillis: number, dateFormat: DateFormat): string {
   const today = new Date().toDateString() === new Date(epochMillis).toDateString();
-  const minute = formatTime(epochMillis).slice(0, "hh:mm".length);
-  return today ? `at ${minute}` : formatDate(epochMillis / 1000, dateFormat);
+  return today
+    ? t("openWith.uploadedAtTime", { time: formatTime(epochMillis).slice(0, "hh:mm".length) })
+    : t("openWith.uploadedOnDate", { date: formatDate(epochMillis / 1000, dateFormat) });
 }
 
 interface LeftoverListProps {
@@ -304,6 +320,7 @@ interface LeftoverListProps {
 }
 
 export function LeftoverList({ leftovers, onConfirm }: LeftoverListProps) {
+  const t = useT();
   const sessions = useSessionStore((state) => state.sessions);
   const dateFormat = useSettingsStore((state) => state.settings.interface.dateFormat);
   const connected = Object.values(sessions)
@@ -312,7 +329,7 @@ export function LeftoverList({ leftovers, onConfirm }: LeftoverListProps) {
   const refresh = () => void useExternalEditStore.getState().loadLeftovers();
   return (
     <>
-      <h4 className="edits-section">Saved but not uploaded when Poros last closed</h4>
+      <h4 className="edits-section">{t("openWith.savedButNotUploadedWhen")}</h4>
       <ul className="edits-list">
         {leftovers.map((leftover) => {
           const session = sessionForLeftover(leftover, connected);
@@ -328,24 +345,26 @@ export function LeftoverList({ leftovers, onConfirm }: LeftoverListProps) {
                   <span className="edit-state">{formatSize(leftover.size)}</span>
                 </div>
                 <div className="edit-where" title={`${leftover.server}: ${leftover.remotePath}`}>
-                  {leftover.vaultRoot && <ShieldCheck size={11} aria-label="In a vault" />}
+                  {leftover.vaultRoot && (
+                    <ShieldCheck size={11} aria-label={t("openWith.inAVault")} />
+                  )}
                   <span>{leftover.server}</span>
                   {leftover.modified !== undefined && (
                     <span className="edit-uploaded">
-                      saved {formatDate(leftover.modified / 1000, dateFormat)}
+                      {t("openWith.saved", {
+                        date: formatDate(leftover.modified / 1000, dateFormat),
+                      })}
                     </span>
                   )}
                 </div>
                 {leftover.vaultRoot && (
-                  <p className="edit-detail">
-                    This copy of a vault file is not encrypted on this computer. Upload or discard
-                    it.
-                  </p>
+                  <p className="edit-detail">{t("openWith.thisCopyOfAVault")}</p>
                 )}
                 {!session && (
                   <p className="edit-detail">
-                    Connect to {server}
-                    {leftover.vaultRoot ? " and unlock its vault" : ""} to upload it.
+                    {leftover.vaultRoot
+                      ? t("openWith.connectAndUnlockToUpload", { server })
+                      : t("openWith.connectToUpload", { server })}
                   </p>
                 )}
               </div>
@@ -353,8 +372,12 @@ export function LeftoverList({ leftovers, onConfirm }: LeftoverListProps) {
                 <button
                   type="button"
                   className="icon-button"
-                  title={session ? `Upload to ${session.label}` : `Connect to ${server} first`}
-                  aria-label={`Upload ${leftover.name}`}
+                  title={
+                    session
+                      ? t("openWith.uploadTo", { label: session.label })
+                      : t("openWith.connectToFirst", { server })
+                  }
+                  aria-label={t("openWith.upload2", { name: leftover.name })}
                   disabled={!session}
                   onClick={() =>
                     session &&
@@ -369,16 +392,19 @@ export function LeftoverList({ leftovers, onConfirm }: LeftoverListProps) {
                 <button
                   type="button"
                   className="icon-button"
-                  title="Discard the saved changes"
-                  aria-label={`Discard ${leftover.name}`}
+                  title={t("openWith.discardTheSavedChanges")}
+                  aria-label={t("openWith.discard", { name: leftover.name })}
                   onClick={() =>
                     onConfirm({
-                      title: `Discard ${leftover.name}?`,
-                      confirmLabel: "Discard",
+                      title: t("openWith.discard2", { name: leftover.name }),
+                      confirmLabel: t("common.discard"),
                       body: (
                         <p>
-                          The changes saved to it never reached {leftover.server}. Discarding
-                          {leftover.vaultRoot ? " wipes" : " deletes"} them.
+                          {leftover.vaultRoot
+                            ? t("openWith.neverReachedDiscardingWipes", { server: leftover.server })
+                            : t("openWith.neverReachedDiscardingDeletes", {
+                                server: leftover.server,
+                              })}
                         </p>
                       ),
                       action: async () => {
@@ -393,8 +419,8 @@ export function LeftoverList({ leftovers, onConfirm }: LeftoverListProps) {
                 <button
                   type="button"
                   className="icon-button"
-                  title="Show the working copy's folder"
-                  aria-label={`Show the folder of ${leftover.name}`}
+                  title={t("openWith.showTheWorkingCopysFolder")}
+                  aria-label={t("openWith.showTheFolderOf", { name: leftover.name })}
                   onClick={() => editAction(() => external.revealLeftover(leftover.id))}
                 >
                   <FolderOpen size={14} />

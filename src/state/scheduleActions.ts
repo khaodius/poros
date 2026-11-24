@@ -16,6 +16,7 @@ import { useSessionStore } from "./sessionStore";
 import { useSettingsStore } from "./settingsStore";
 import { useToastStore } from "./toastStore";
 import { useUiStore } from "./uiStore";
+import { t } from "../i18n";
 
 /** What a draft needs to know about a session open in this window. */
 export function sessionFacts(sessionId: string | undefined): SessionFacts | undefined {
@@ -48,7 +49,7 @@ export function scheduleJobs(jobs: JobSnapshot[]): void {
 /** Why the tab's files cannot be scheduled, in a few words for its menu; or null. */
 export function scheduleBlocker(tabId: string): string | null {
   const pane = getPane(tabId);
-  if (!pane) return "no tab";
+  if (!pane) return t("schedule.blockedNoTab");
   return pane.kind === "remote" ? downloadBlocker(sessionFacts(pane.sessionId)) : null;
 }
 

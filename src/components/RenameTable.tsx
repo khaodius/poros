@@ -2,6 +2,7 @@ import { useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowRight } from "lucide-react";
 import { changedRange } from "../lib/bulkRename";
+import { useT } from "../i18n";
 
 const ROW_HEIGHT = 26;
 
@@ -25,6 +26,7 @@ interface RenameTableProps {
 
 /** Old names beside new ones, with what changed marked. Only the rows on screen are drawn. */
 export function RenameTable({ label, count, row, empty }: RenameTableProps) {
+  const t = useT();
   const scrollRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
     count,
@@ -36,10 +38,10 @@ export function RenameTable({ label, count, row, empty }: RenameTableProps) {
   return (
     <div className="rename-table" role="table" aria-label={label} aria-rowcount={count + 1}>
       <div className="rename-table-header" role="row">
-        <span role="columnheader">Name</span>
+        <span role="columnheader">{t("common.name")}</span>
         <span aria-hidden="true" />
-        <span role="columnheader">New name</span>
-        <span role="columnheader">Status</span>
+        <span role="columnheader">{t("rename.newName")}</span>
+        <span role="columnheader">{t("rename.status")}</span>
       </div>
       {/* Focusable so the keyboard can scroll it. */}
       <div ref={scrollRef} className="rename-table-body" role="rowgroup" tabIndex={0}>
@@ -58,6 +60,7 @@ export function RenameTable({ label, count, row, empty }: RenameTableProps) {
 }
 
 function TableRow({ row, index, top }: { row: RenameTableRow; index: number; top: number }) {
+  const t = useT();
   const { name, newName, tone, status } = row;
   const [start, end] = changedRange(name, newName);
   const changed = name !== newName;
@@ -74,7 +77,7 @@ function TableRow({ row, index, top }: { row: RenameTableRow; index: number; top
       <ArrowRight size={12} aria-hidden="true" />
       <span role="cell" title={newName}>
         {newName === "" ? (
-          <em>No name</em>
+          <em>{t("rename.noName")}</em>
         ) : (
           <bdi>
             {newName.slice(0, start)}

@@ -4,6 +4,7 @@ import { local, remote } from "./ipc";
 import { listingScope } from "./listingCache";
 import { remoteParent } from "./path";
 import type { ConnectProfile, DirListing, SessionInfo } from "./types";
+import { t } from "../i18n";
 
 export type PathStyle = "posix" | "windows";
 
@@ -38,7 +39,9 @@ const isWindows = typeof navigator !== "undefined" && /windows/i.test(navigator.
 export const localSource: FileSource = {
   key: "local",
   kind: "local",
-  label: "Local",
+  get label() {
+    return t("workspace.local");
+  },
   pathStyle: isWindows ? "windows" : "posix",
   initialPath: () => local.home(),
   home: () => local.home(),

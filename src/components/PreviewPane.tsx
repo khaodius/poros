@@ -25,7 +25,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useRestedLoad, type Rested } from "../hooks/useRestedLoad";
-import { formatDate, formatPermissions, formatSize, pluralize } from "../lib/format";
+import { formatDate, formatPermissions, formatSize } from "../lib/format";
 import type { FileView } from "../lib/previewLoad";
 import {
   HEX_BYTES,
@@ -58,6 +58,7 @@ import { useSettingsStore } from "../state/settingsStore";
 import { FileIcon } from "./FileIcon";
 import { PreviewImage, type PictureSize } from "./PreviewImage";
 import { PreviewThumbnails } from "./PreviewThumbnails";
+import { formatNumber, t, useT } from "../i18n";
 
 // Loaded on first use, with the editor's highlighting.
 const PreviewText = lazy(() => import("./PreviewText"));
@@ -101,6 +102,7 @@ export function PreviewPane({
   onSwitchPane,
   onLeave,
 }: PreviewPaneProps) {
+  const t = useT();
   const settings = useSettingsStore((state) => state.settings.interface.preview);
   const caps = useMemo(() => capsOf(settings), [settings]);
   const shared = { place, caps, mode: settings.load[place.storage], dateFormat };
@@ -140,11 +142,15 @@ export function PreviewPane({
           <Header icon={<FileIcon entry={subject.entry} />} title={subject.entry.name} />
           <Notice
             icon={FileQuestion}
-            title={subject.entry.linkTarget === "broken" ? "Broken link" : "Not a regular file"}
+            title={
+              subject.entry.linkTarget === "broken"
+                ? t("preview.brokenLink")
+                : t("preview.notARegularFile")
+            }
             detail={
               subject.entry.linkTarget === "broken"
-                ? "The file this link leads to is not there."
-                : "There is nothing in it to preview."
+                ? t("preview.theFileThisLinkLeads")
+                : t("preview.thereIsNothingInIt")
             }
           />
           <Details rows={entryRows(subject.entry, dateFormat)} />
@@ -155,8 +161,8 @@ export function PreviewPane({
       content = (
         <Notice
           icon={Eye}
-          title="Nothing to preview"
-          detail="Move the cursor to a file or folder to see it here."
+          title={t("preview.nothingToPreview")}
+          detail={t("preview.nothingToPreviewDetail")}
         />
       );
   }
@@ -205,7 +211,7 @@ export function PreviewPane({
       className="preview"
       // Reached from the file list with Ctrl+Shift+P, never by itself.
       tabIndex={0}
-      aria-label="Preview"
+      aria-label={t("preview.preview")}
       onKeyDown={handleKeyDown}
       onMouseDown={keepFocus}
     >
@@ -259,10 +265,11 @@ function Notice({ icon: Icon, title, detail, action }: NoticeProps) {
 
 /** Appears only once a load has taken a moment, so quick ones show nothing in between. */
 function Loading() {
+  const t = useT();
   return (
     <div className="preview-loading" role="status">
       <Loader size={16} className="spin" aria-hidden />
-      Loading...
+      {t("common.loading")}
     </div>
   );
 }
@@ -290,48 +297,61 @@ function sizeInText(bytes: number): string {
 }
 
 function dimensionsText({ width, height }: { width: number; height: number }): string {
-  return `${width} × ${height}`;
+  return `${formatNumber(width)} × ${formatNumber(height)}`;
 }
 
 /** Why a picture is not shown: its file's size, or the pixels its header says it has. */
 function tooLargeText(view: Extract<FileView, { view: "tooLarge" }>, caps: Caps): string {
   if (view.dimensions) {
-    const pixels = `${dimensionsText(view.dimensions).replace(/ /g, "\u00a0")}\u00a0pixels`;
+    const dimensions = dimensionsText(view.dimensions).replace(/ /g, "\u00a0");
     return view.canLoad
-      ? `This picture is ${pixels}. Pictures up to ${MAX_SHOWN_PIXELS / 1_000_000}\u00a0megapixels show by themselves.`
-      : `This picture is ${pixels}, more than a preview can show.`;
+      ? t("preview.pictureHasPixelsShowsUpTo", {
+          dimensions,
+          megapixels: MAX_SHOWN_PIXELS / 1_000_000,
+        })
+      : t("preview.pictureHasPixelsMoreThanShown", { dimensions });
   }
   return view.canLoad
-    ? `This picture is ${sizeInText(view.size)}. Pictures up to ${sizeInText(caps.imageBytes)} load by themselves.`
-    : `This picture is ${sizeInText(view.size)}, more than a preview can load.`;
+    ? t("preview.pictureIsSizeLoadsUpTo", {
+        size: sizeInText(view.size),
+        limit: sizeInText(caps.imageBytes),
+      })
+    : t("preview.pictureIsSizeMoreThanLoaded", { size: sizeInText(view.size) });
 }
 
 function sizeText(bytes: number): string {
   const size = formatSize(bytes);
-  return bytes < 1024 ? size : `${size} (${bytes.toLocaleString()} bytes)`;
+  return bytes < 1024 ? size : t("preview.sizeWithBytes", { size, count: bytes });
 }
 
 /** The details the file list has for an entry. `type` stands in for the list's own. */
 function entryRows(entry: FileEntry, dateFormat: DateFormat, type?: string): Row[] {
   const isFolder = entry.kind === "dir" || entry.linkTarget === "dir";
-  const rows: Row[] = [["Type", type ?? typeLabel(entry)]];
-  if (entry.kind === "symlink") rows.push(["Link", isFolder ? "To a folder" : "To a file"]);
-  if (entry.kind === "file") rows.push(["Size", sizeText(entry.size)]);
-  if (entry.modified !== null) rows.push(["Modified", formatDate(entry.modified, dateFormat)]);
-  if (entry.permissions !== null) rows.push(["Permissions", formatPermissions(entry)]);
+  const rows: Row[] = [[t("preview.type"), type ?? typeLabel(entry)]];
+  if (entry.kind === "symlink") {
+    rows.push([t("preview.link"), isFolder ? t("preview.toAFolder") : t("preview.toAFile")]);
+  }
+  if (entry.kind === "file") rows.push([t("common.size"), sizeText(entry.size)]);
+  if (entry.modified !== null) {
+    rows.push([t("preview.modified"), formatDate(entry.modified, dateFormat)]);
+  }
+  if (entry.permissions !== null) rows.push([t("preview.permissions"), formatPermissions(entry)]);
   if (entry.owner !== null || entry.group !== null) {
-    rows.push(["Owner", [entry.owner, entry.group].filter(Boolean).join(":")]);
+    rows.push([t("preview.owner"), [entry.owner, entry.group].filter(Boolean).join(":")]);
   }
   return rows;
 }
 
 function contentsText({ folders, files, bytes }: Summary): string {
-  if (folders + files === 0) return "Nothing";
+  if (folders + files === 0) return t("common.nothing");
   const parts = [
-    folders > 0 ? pluralize(folders, "folder") : "",
-    files > 0 ? pluralize(files, "file") : "",
+    folders > 0 ? t("preview.folders", { count: folders }) : "",
+    files > 0 ? t("preview.files", { count: files }) : "",
   ].filter(Boolean);
-  return bytes > 0 ? `${parts.join(", ")} (${formatSize(bytes)})` : parts.join(", ");
+  const counted = parts.join(t("common.listSeparator"));
+  return bytes > 0
+    ? t("preview.contentsWithSize", { contents: counted, size: formatSize(bytes) })
+    : counted;
 }
 
 /** What to say, and what to offer, when something could not be read. */
@@ -351,33 +371,42 @@ function Failure({
   onRetry: () => void;
   onRefresh?: () => void;
 }) {
-  const retry = { label: "Try again", onSelect: onRetry };
+  const t = useT();
+  const retry = { label: t("common.tryAgain"), onSelect: onRetry };
   switch (problem) {
     case "denied":
       return (
         <Notice
           icon={Ban}
-          title={`No permission to read this ${what}`}
-          detail="The account signed in here is not allowed to open it."
+          title={
+            what === "file"
+              ? t("preview.noPermissionToReadFile")
+              : t("preview.noPermissionToReadFolder")
+          }
+          detail={t("preview.theAccountSignedInHere")}
         />
       );
     case "gone":
       return (
         <Notice
           icon={FileX}
-          title={`This ${what} is no longer there`}
-          detail="It was deleted, moved or renamed after it was listed."
-          action={onRefresh && { label: "Refresh", onSelect: onRefresh }}
+          title={
+            what === "file" ? t("preview.fileNoLongerThere") : t("preview.folderNoLongerThere")
+          }
+          detail={t("preview.itWasDeletedMovedOr")}
+          action={onRefresh && { label: t("common.refresh"), onSelect: onRefresh }}
         />
       );
     case "lost":
-      return <Notice icon={Unplug} title="Connection lost" detail={message} action={retry} />;
+      return (
+        <Notice icon={Unplug} title={t("preview.connectionLost")} detail={message} action={retry} />
+      );
     case "locked":
       return (
         <Notice
           icon={LockKeyhole}
-          title="The vault is locked"
-          detail="Unlock it again to preview its files."
+          title={t("preview.theVaultIsLocked")}
+          detail={t("preview.theVaultIsLockedDetail")}
         />
       );
     case "busy":
@@ -385,11 +414,7 @@ function Failure({
         <Notice
           icon={Hourglass}
           title={message}
-          detail={
-            retrying
-              ? "The preview tries again as soon as the connection is free."
-              : "It stayed busy for a while. Try again in a moment."
-          }
+          detail={retrying ? t("preview.thePreviewTriesAgainAs") : t("preview.itStayedBusyForA")}
           action={retrying ? undefined : retry}
         />
       );
@@ -398,7 +423,7 @@ function Failure({
         <Notice
           icon={Hourglass}
           title={message}
-          detail="The preview waits rather than slow the transfer down."
+          detail={t("preview.thePreviewWaitsRatherThan")}
           action={retry}
         />
       );
@@ -406,7 +431,7 @@ function Failure({
       return (
         <Notice
           icon={CircleSlash}
-          title="Could not load the preview"
+          title={t("preview.couldNotLoadThePreview")}
           detail={message}
           action={retry}
         />
@@ -423,8 +448,12 @@ interface SharedProps {
 
 /** What a file's type row says once its bytes have told what it is. */
 function kindOf(view: FileView | null): string | undefined {
-  if (view?.view === "image") return `${IMAGE_FORMAT_LABELS[view.format]} image`;
-  if (view?.view === "text") return `Text, ${TEXT_ENCODING_LABELS[view.encoding]}`;
+  if (view?.view === "image") {
+    return t("preview.imageOfFormat", { format: IMAGE_FORMAT_LABELS[view.format] });
+  }
+  if (view?.view === "text") {
+    return t("preview.textInEncoding", { encoding: TEXT_ENCODING_LABELS[view.encoding] });
+  }
   if (view?.view === "binary" && view.description) return view.description;
   return undefined;
 }
@@ -438,6 +467,7 @@ function FilePreview({
   onOpenInEditor,
   onRefresh,
 }: SharedProps & Handlers & { entry: FileEntry }) {
+  const t = useT();
   /** The user asked for a picture over the cap. */
   const [anyway, setAnyway] = useState(false);
   const [pictureSize, setPictureSize] = useState<PictureSize | null>(null);
@@ -469,9 +499,9 @@ function FilePreview({
 
   const rows = entryRows(entry, dateFormat, kindOf(view));
   if (view?.view === "image" && pictureSize && pictureSize.width > 0 && broken !== view.bytes) {
-    rows.splice(1, 0, ["Dimensions", dimensionsText(pictureSize)]);
+    rows.splice(1, 0, [t("preview.dimensions"), dimensionsText(pictureSize)]);
   } else if (view?.view === "tooLarge" && view.dimensions) {
-    rows.splice(1, 0, ["Dimensions", dimensionsText(view.dimensions)]);
+    rows.splice(1, 0, [t("preview.dimensions"), dimensionsText(view.dimensions)]);
   }
 
   return (
@@ -481,8 +511,8 @@ function FilePreview({
           <button
             type="button"
             className="icon-button"
-            title="Open in editor (F4)"
-            aria-label="Open in editor"
+            title={t("preview.openInEditorF4")}
+            aria-label={t("preview.openInEditor")}
             onClick={() => onOpenInEditor(entry)}
           >
             <FilePen size={15} />
@@ -491,9 +521,9 @@ function FilePreview({
       </Header>
       {changed && (
         <p className="preview-note">
-          <span>This file changed after it was listed.</span>
+          <span>{t("preview.thisFileChangedAfterIt")}</span>
           <button type="button" className="link-button" onClick={onRefresh}>
-            Refresh
+            {t("common.refresh")}
           </button>
         </p>
       )}
@@ -513,10 +543,13 @@ function FilePreview({
       {view?.view === "text" && view.partial && (
         <p className="preview-note">
           <span>
-            Only the beginning is shown: {sizeInText(caps.textBytes)} of {sizeInText(view.size)}.
+            {t("preview.onlyTheBeginningIsShown", {
+              shown: sizeInText(caps.textBytes),
+              size: sizeInText(view.size),
+            })}
           </span>
           <button type="button" className="link-button" onClick={() => onOpenInEditor(entry)}>
-            Open in editor
+            {t("preview.openInEditor")}
           </button>
         </p>
       )}
@@ -553,6 +586,7 @@ function FileBody({
   onPictureSize,
   onBroken,
 }: FileBodyProps) {
+  const t = useT();
   switch (state.status) {
     case "resting":
       return <div className="preview-body" />;
@@ -563,18 +597,18 @@ function FileBody({
         return (
           <Notice
             icon={FileQuestion}
-            title="Listed as 0 bytes"
-            detail="Some servers list no size for a file they make themselves, so it may not be empty. Reading it shows what is in it."
-            action={{ label: "Show preview", onSelect: onShow }}
+            title={t("preview.listedAs0Bytes")}
+            detail={t("preview.listedAs0BytesDetail")}
+            action={{ label: t("preview.showPreview"), onSelect: onShow }}
           />
         );
       }
       return (
         <Notice
           icon={Eye}
-          title="Preview not loaded"
-          detail="Reading from this storage may be charged for, so the file is read only when asked."
-          action={{ label: "Show preview", onSelect: onShow }}
+          title={t("preview.previewNotLoaded")}
+          detail={t("preview.previewNotLoadedDetail")}
+          action={{ label: t("preview.showPreview"), onSelect: onShow }}
         />
       );
     case "failed":
@@ -586,17 +620,19 @@ function FileBody({
       return (
         <Notice
           icon={FileCheck}
-          title="Empty file"
-          detail={onServer ? "The server says there is nothing in it." : "There is nothing in it."}
+          title={t("preview.emptyFile")}
+          detail={onServer ? t("preview.theServerSaysThereIs") : t("preview.thereIsNothingInIt2")}
         />
       );
     case "tooLarge":
       return (
         <Notice
           icon={Scaling}
-          title="Too large to preview"
+          title={t("preview.tooLargeToPreview")}
           detail={tooLargeText(view, caps)}
-          action={view.canLoad ? { label: "Load anyway", onSelect: onLoadAnyway } : undefined}
+          action={
+            view.canLoad ? { label: t("preview.loadAnyway"), onSelect: onLoadAnyway } : undefined
+          }
         />
       );
     case "image":
@@ -604,8 +640,8 @@ function FileBody({
         return (
           <Notice
             icon={FileX}
-            title="This picture cannot be shown"
-            detail="It may be damaged, or of a kind this system does not decode."
+            title={t("preview.thisPictureCannotBeShown")}
+            detail={t("preview.thisPictureCannotBeShownDetail")}
           />
         );
       }
@@ -630,9 +666,11 @@ function FileBody({
         <div className="preview-body preview-scroll">
           <div className="preview-binary">
             <FileIcon entry={entry} size={NOTICE_ICON_SIZE} />
-            <p className="preview-notice-title">{view.description ?? "Not text or a picture"}</p>
+            <p className="preview-notice-title">
+              {view.description ?? t("preview.notTextOrAPicture")}
+            </p>
             <p className="preview-notice-detail">
-              The first {pluralize(Math.min(HEX_BYTES, view.head.length), "byte")}:
+              {t("preview.theFirstBytes", { count: Math.min(HEX_BYTES, view.head.length) })}
             </p>
           </div>
           <HexView bytes={view.head} />
@@ -664,6 +702,7 @@ function FolderPreview({
   dateFormat,
   box,
 }: SharedProps & { entry: FileEntry; box: number }) {
+  const t = useT();
   const { state, show } = useRestedLoad<DirListing>({
     key: JSON.stringify([place.connection, entry.path, entry.modified]),
     cached: cachedFolder(place, entry),
@@ -680,7 +719,7 @@ function FolderPreview({
   // A server shows a vault's folder as the encrypted files it is kept in.
   const isVault = listing !== null && !place.inVault && vaultSign(listing.entries) !== "none";
   const rows = entryRows(entry, dateFormat);
-  if (summary && !isVault) rows.splice(1, 0, ["Contains", contentsText(summary)]);
+  if (summary && !isVault) rows.splice(1, 0, [t("preview.contains"), contentsText(summary)]);
 
   let body: ReactNode;
   if (state.status === "resting") {
@@ -691,9 +730,9 @@ function FolderPreview({
     body = (
       <Notice
         icon={FolderOpen}
-        title="Folder not listed"
-        detail="Listing on this storage may be charged for, so the folder is listed only when asked."
-        action={{ label: "Show preview", onSelect: show }}
+        title={t("preview.folderNotListed")}
+        detail={t("preview.folderNotListedDetail")}
+        action={{ label: t("preview.showPreview"), onSelect: show }}
       />
     );
   } else if (state.status === "failed") {
@@ -702,8 +741,8 @@ function FolderPreview({
     body = (
       <Notice
         icon={LockKeyhole}
-        title="Cryptomator vault"
-        detail="Open the folder to unlock it and see its files."
+        title={t("preview.cryptomatorVault")}
+        detail={t("preview.cryptomatorVaultDetail")}
       />
     );
   } else if (summary && summary.pictures.length > 0) {
@@ -712,7 +751,11 @@ function FolderPreview({
     body = (
       <Notice
         icon={FolderOpen}
-        title={summary && summary.folders + summary.files > 0 ? "Folder" : "Empty folder"}
+        title={
+          summary && summary.folders + summary.files > 0
+            ? t("common.folder")
+            : t("preview.emptyFolder")
+        }
         detail={summary ? contentsText(summary) : undefined}
       />
     );
@@ -765,21 +808,22 @@ function SelectionPreview({
   mode,
   box,
 }: SharedProps & { entries: FileEntry[]; box: number }) {
+  const t = useT();
   const summary = useMemo(() => summarize(entries, caps), [entries, caps]);
   const selection = useMemo(() => selectionKey(entries), [entries]);
   /** The selection whose thumbnails the user asked for, where they do not load by themselves. */
   const [asked, setAsked] = useState("");
   const waitsForClick = mode === "click" && asked !== selection;
-  const rows: Row[] = [["Selected", contentsText({ ...summary, bytes: 0 })]];
-  if (summary.files > 0) rows.push(["Total size", sizeText(summary.bytes)]);
-  if (summary.folders > 0) rows.push(["Folders", "Not counted in the size"]);
+  const rows: Row[] = [[t("preview.selected"), contentsText({ ...summary, bytes: 0 })]];
+  if (summary.files > 0) rows.push([t("preview.totalSize"), sizeText(summary.bytes)]);
+  if (summary.folders > 0) rows.push([t("preview.foldersRow"), t("preview.notCountedInTheSize")]);
 
   let body: ReactNode;
   if (summary.pictures.length === 0) {
     body = (
       <Notice
         icon={Files}
-        title={pluralize(entries.length, "item")}
+        title={t("preview.items", { count: entries.length })}
         detail={summary.files > 0 ? formatSize(summary.bytes) : undefined}
       />
     );
@@ -787,9 +831,9 @@ function SelectionPreview({
     body = (
       <Notice
         icon={Eye}
-        title="Thumbnails not loaded"
-        detail="Reading from this storage may be charged for, so pictures are read only when asked."
-        action={{ label: "Show preview", onSelect: () => setAsked(selection) }}
+        title={t("preview.thumbnailsNotLoaded")}
+        detail={t("preview.thumbnailsNotLoadedDetail")}
+        action={{ label: t("preview.showPreview"), onSelect: () => setAsked(selection) }}
       />
     );
   } else {
@@ -798,7 +842,10 @@ function SelectionPreview({
 
   return (
     <>
-      <Header icon={<Files size={16} aria-hidden />} title={`${entries.length} items selected`} />
+      <Header
+        icon={<Files size={16} aria-hidden />}
+        title={t("preview.itemsSelected", { count: entries.length })}
+      />
       {body}
       <Details rows={rows} />
     </>

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { FolderOpen, HardDrive, RotateCw } from "lucide-react";
-import { formatSize, pluralize } from "../lib/format";
+import { formatSize } from "../lib/format";
 import { local } from "../lib/ipc";
 import { driveActivity, indicatorSummary, shortPath, uploadText } from "../lib/mounts";
 import { baseName } from "../lib/path";
@@ -13,9 +13,11 @@ import {
   unmountDrive,
 } from "../state/mountActions";
 import { useMountStore, watchMounts } from "../state/mountStore";
+import { useT } from "../i18n";
 
 /** The mounted drives in the status bar, with a popover to open and unmount each. */
 export function DriveStatus() {
+  const t = useT();
   const drives = useMountStore((state) => state.drives);
   const unsent = useMountStore((state) => state.unsent);
   const [open, setOpen] = useState(false);
@@ -63,7 +65,7 @@ export function DriveStatus() {
   const summary =
     drives.length > 0
       ? indicatorSummary(drives)
-      : { text: `${pluralize(unsent.length, "file")} not uploaded`, tone: "failed" as const };
+      : { text: t("drives.filesNotUploaded", { count: unsent.length }), tone: "failed" as const };
 
   return (
     <span className="drive-status">
@@ -73,14 +75,19 @@ export function DriveStatus() {
         className={`status-item drive-indicator is-${summary.tone}`}
         aria-haspopup="dialog"
         aria-expanded={open}
-        title="Drives mounted from Poros"
+        title={t("drives.drivesMountedFromPoros")}
         onClick={() => setOpen((wasOpen) => !wasOpen)}
       >
         <HardDrive size={12} />
         {summary.text}
       </button>
       {open && (
-        <div ref={popoverRef} className="drive-popover" role="dialog" aria-label="Mounted drives">
+        <div
+          ref={popoverRef}
+          className="drive-popover"
+          role="dialog"
+          aria-label={t("drives.mountedDrives")}
+        >
           {drives.length > 0 && (
             <div className="drive-list">
               {drives.map((drive) => (
@@ -96,26 +103,33 @@ export function DriveStatus() {
 }
 
 function DriveCard({ drive, home }: { drive: DriveView; home: string | null }) {
+  const t = useT();
   const failed = drive.uploads.some((upload) => upload.error);
   return (
-    <section className="drive-card" aria-label={`${drive.label} at ${drive.mountPoint}`}>
+    <section
+      className="drive-card"
+      aria-label={t("drives.driveAtMountPoint", {
+        label: drive.label,
+        mountPoint: drive.mountPoint,
+      })}
+    >
       <div className="drive-card-head">
         <HardDrive size={14} className="drive-card-icon" />
         <span className="drive-card-label" title={drive.label}>
           {drive.label}
         </span>
-        {drive.readOnly && <span className="drive-badge">Read-only</span>}
+        {drive.readOnly && <span className="drive-badge">{t("drives.readOnly")}</span>}
       </div>
       <dl className="drive-card-facts">
-        <dt>At</dt>
+        <dt>{t("drives.factAt")}</dt>
         <dd title={drive.mountPoint}>{shortPath(drive.mountPoint, home)}</dd>
-        <dt>Shows</dt>
+        <dt>{t("drives.factShows")}</dt>
         <dd title={drive.remoteRoot}>{drive.remoteRoot}</dd>
-        <dt>Activity</dt>
+        <dt>{t("drives.factActivity")}</dt>
         <dd className="drive-activity">{driveActivity(drive)}</dd>
       </dl>
       {drive.uploads.length > 0 && (
-        <ul className="drive-uploads" aria-label="Uploads">
+        <ul className="drive-uploads" aria-label={t("drives.uploads")}>
           {drive.uploads.map((upload) => (
             <li key={upload.path} className={upload.error ? "is-failed" : ""}>
               <span className="drive-upload-name" title={upload.path}>
@@ -130,7 +144,7 @@ function DriveCard({ drive, home }: { drive: DriveView; home: string | null }) {
       )}
       <div className="drive-card-actions">
         <button type="button" className="button button-small" onClick={() => void openDrive(drive)}>
-          <FolderOpen size={13} /> Open
+          <FolderOpen size={13} /> {t("common.open")}
         </button>
         {failed && (
           <button
@@ -138,25 +152,25 @@ function DriveCard({ drive, home }: { drive: DriveView; home: string | null }) {
             className="button button-small"
             onClick={() => void retryUploads(drive)}
           >
-            <RotateCw size={13} /> Try again
+            <RotateCw size={13} /> {t("common.tryAgain")}
           </button>
         )}
         <span className="drive-card-spacer" />
         <button
           type="button"
           className="button button-small"
-          title="Refused while programs have files open on the drive or uploads are pending"
+          title={t("drives.refusedWhileProgramsHaveFiles")}
           onClick={() => void unmountDrive(drive, false)}
         >
-          Unmount
+          {t("drives.unmount")}
         </button>
         <button
           type="button"
           className="button button-small drive-force"
-          title="Unmounts at once: programs lose the files they have open, and what is not uploaded yet is kept on this computer"
+          title={t("drives.unmountsAtOnceProgramsLose")}
           onClick={() => void unmountDrive(drive, true)}
         >
-          Force unmount
+          {t("drives.forceUnmount")}
         </button>
       </div>
     </section>
@@ -165,11 +179,12 @@ function DriveCard({ drive, home }: { drive: DriveView; home: string | null }) {
 
 /** Files whose drive went before they reached the server, kept on this computer. */
 function KeptFiles({ files }: { files: UnsentFile[] }) {
+  const t = useT();
   /** The file whose discarding waits for a second click. */
   const [confirming, setConfirming] = useState<string | null>(null);
   return (
-    <section className="drive-kept" aria-label="Not uploaded">
-      <h3>Not uploaded, kept on this computer</h3>
+    <section className="drive-kept" aria-label={t("drives.notUploaded")}>
+      <h3>{t("drives.notUploadedKeptOnThis")}</h3>
       <ul>
         {files.map((file) => (
           <li key={file.path}>
@@ -178,8 +193,16 @@ function KeptFiles({ files }: { files: UnsentFile[] }) {
                 {baseName(file.remotePath)}
               </span>
               <small title={file.error ?? file.remotePath}>
-                {file.connection}, {formatSize(file.size)}
-                {file.error ? `: ${file.error}` : ""}
+                {file.error
+                  ? t("drives.keptFileFactsWithError", {
+                      connection: file.connection,
+                      size: formatSize(file.size),
+                      error: file.error,
+                    })
+                  : t("drives.keptFileFacts", {
+                      connection: file.connection,
+                      size: formatSize(file.size),
+                    })}
               </small>
             </span>
             <button
@@ -187,7 +210,7 @@ function KeptFiles({ files }: { files: UnsentFile[] }) {
               className="button button-small"
               onClick={() => void saveUnsentCopy(file)}
             >
-              Save a copy...
+              {t("drives.saveACopy")}
             </button>
             {confirming === file.path ? (
               <button
@@ -197,7 +220,7 @@ function KeptFiles({ files }: { files: UnsentFile[] }) {
                 onBlur={() => setConfirming(null)}
                 autoFocus
               >
-                Discard for good
+                {t("drives.discardForGood")}
               </button>
             ) : (
               <button
@@ -205,7 +228,7 @@ function KeptFiles({ files }: { files: UnsentFile[] }) {
                 className="button button-small"
                 onClick={() => setConfirming(file.path)}
               >
-                Discard
+                {t("common.discard")}
               </button>
             )}
           </li>

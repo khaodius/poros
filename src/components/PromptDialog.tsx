@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useLatest } from "../hooks/useLatest";
 import { Dialog } from "./Dialog";
+import { useT } from "../i18n";
 
 interface PromptDialogProps {
   title: string;
@@ -25,6 +26,7 @@ export function PromptDialog({
   onSubmit,
   onClose,
 }: PromptDialogProps) {
+  const t = useT();
   const [value, setValue] = useState(initialValue);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -70,7 +72,7 @@ export function PromptDialog({
         {error && <p className="form-error">{error}</p>}
         <div className="dialog-actions">
           <button type="button" className="button" onClick={onClose}>
-            Cancel
+            {t("common.cancel")}
           </button>
           <button type="submit" className="button button-primary" disabled={busy || !value.trim()}>
             {confirmLabel}

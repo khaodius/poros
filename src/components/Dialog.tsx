@@ -2,6 +2,7 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { rememberFocus } from "../lib/focus";
 import { dragWindowFromBackdrop } from "../lib/windowDrag";
+import { useT } from "../i18n";
 
 interface DialogProps {
   title: string;
@@ -22,6 +23,7 @@ export function Dialog({
   tone,
   className,
 }: DialogProps) {
+  const t = useT();
   const dialogRef = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
@@ -55,7 +57,12 @@ export function Dialog({
     >
       <header className="dialog-header">
         <h2>{title}</h2>
-        <button type="button" className="icon-button" aria-label="Close" onClick={onClose}>
+        <button
+          type="button"
+          className="icon-button"
+          aria-label={t("common.close")}
+          onClick={onClose}
+        >
           <X size={16} />
         </button>
       </header>

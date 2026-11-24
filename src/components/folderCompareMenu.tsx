@@ -1,22 +1,25 @@
 import { FolderTree, GitCompareArrows, ListChecks } from "lucide-react";
 import type { FolderCompareBarModel, FolderCompareControls } from "../hooks/useFolderCompare";
 import type { MenuItem } from "./ContextMenu";
+import { t } from "../i18n";
 
 export const COMPARE_FOLDERS_SHORTCUT = "Ctrl+Shift+D";
-export const DEEP_COMPARE_LABEL = "Compare contents of subfolders";
+export function deepCompareLabel(): string {
+  return t("compare.compareContentsOfSubfolders");
+}
 
 /** Selects the rows in a state, so the usual transfer, drag and delete actions apply to them. */
 export function selectItems(bar: FolderCompareBarModel): MenuItem[] {
   const counts = bar.counts;
   return [
     {
-      label: "Select newer and only here",
+      label: t("compare.selectNewerAndOnlyHere"),
       icon: <ListChecks size={14} />,
       disabled: !counts || counts.newer + counts.onlyHere === 0,
       onSelect: () => bar.select(["newer", "onlyHere"]),
     },
     {
-      label: "Select different",
+      label: t("compare.selectDifferent"),
       icon: <ListChecks size={14} />,
       disabled: !counts || counts.different === 0,
       onSelect: () => bar.select(["different"]),
@@ -29,28 +32,28 @@ export function optionItems(bar: FolderCompareBarModel): MenuItem[] {
   const { options } = bar;
   return [
     {
-      label: "Hide identical items",
+      label: t("compare.hideIdenticalItems"),
       checked: options.hideIdentical,
       onSelect: () => bar.setOptions({ hideIdentical: !options.hideIdentical }),
     },
     {
-      label: "Compare by size only",
+      label: t("compare.compareBySizeOnly"),
       checked: bar.sizeOnly,
       onSelect: () => bar.setOptions({ sizeRule: bar.sizeOnly ? "sizeAndTime" : "sizeOnly" }),
     },
     {
-      label: "Ignore time zone offsets (whole hours)",
+      label: t("compare.ignoreTimeZoneOffsetsWhole"),
       checked: options.ignoreHourOffsets,
       onSelect: () => bar.setOptions({ ignoreHourOffsets: !options.ignoreHourOffsets }),
     },
     {
-      label: "Include hidden files",
+      label: t("compare.includeHiddenFiles"),
       checked: options.includeHidden,
       onSelect: () => bar.setOptions({ includeHidden: !options.includeHidden }),
     },
     "separator",
     {
-      label: "Browse both panes together",
+      label: t("compare.browseBothPanesTogether"),
       checked: options.browseTogether,
       onSelect: () => bar.setOptions({ browseTogether: !options.browseTogether }),
     },
@@ -67,7 +70,7 @@ export function folderCompareMenuItems(
 ): MenuItem[] {
   const { bar } = compare;
   const toggle: MenuItem = {
-    label: "Compare folders",
+    label: t("compare.compareFolders"),
     icon: <GitCompareArrows size={14} />,
     shortcut: COMPARE_FOLDERS_SHORTCUT,
     checked: compare.comparing,
@@ -77,7 +80,7 @@ export function folderCompareMenuItems(
     bar && onEmptySpace
       ? [
           {
-            label: DEEP_COMPARE_LABEL,
+            label: deepCompareLabel(),
             icon: <FolderTree size={14} />,
             disabled: !bar.counts || bar.deep?.status === "running",
             onSelect: bar.startDeep,

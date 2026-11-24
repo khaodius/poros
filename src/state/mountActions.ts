@@ -1,4 +1,5 @@
 import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
+import { t } from "../i18n";
 import { mounts } from "../lib/ipc";
 import { baseName } from "../lib/path";
 import type { DriveView, MountRequest, UnsentFile } from "../lib/types";
@@ -56,7 +57,7 @@ export async function saveUnsentCopy(file: UnsentFile): Promise<void> {
   if (typeof destination !== "string") return;
   try {
     await mounts.saveUnsent(file.path, destination);
-    useToastStore.getState().show("info", `Saved a copy at ${destination}`);
+    useToastStore.getState().show("info", t("drives.savedACopyAt", { destination }));
   } catch (caught) {
     reportFailure("Could not save the kept file", caught);
   }

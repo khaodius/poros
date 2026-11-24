@@ -20,6 +20,7 @@ import { disconnectUnused, useSessionStore } from "./sessionStore";
 import { useSettingsStore } from "./settingsStore";
 import { useToastStore } from "./toastStore";
 import { useUiStore } from "./uiStore";
+import { t } from "../i18n";
 
 export type ReconnectStatus =
   | { phase: "connecting" }
@@ -78,7 +79,10 @@ async function reopenEditor(tab: RestoringTab, location: DocumentLocation): Prom
   } catch (caught) {
     useToastStore
       .getState()
-      .show("error", `Could not reopen ${tab.name}: ${toAppError(caught).message}`);
+      .show(
+        "error",
+        t("workspace.couldNotReopen", { name: tab.name, message: toAppError(caught).message }),
+      );
     useLayoutStore.getState().closeTab(tab.id);
   } finally {
     openingFiles.delete(tab.id);
@@ -116,7 +120,7 @@ export async function reconnect(key: string, server: SavedServer): Promise<void>
   if (useRestoreStore.getState().servers[key]?.phase === "connecting") return;
   const plan = reconnectPlan(server, useSavedConnections.getState().connections);
   if (!plan) {
-    setStatus(key, { phase: "failed", message: "Poros no longer knows how to reach it." });
+    setStatus(key, { phase: "failed", message: t("workspace.porosNoLongerKnowsHow") });
     return;
   }
   if (!plan.profile) {

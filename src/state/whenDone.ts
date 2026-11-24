@@ -21,6 +21,7 @@ import { useLogStore } from "./logStore";
 import { quitWaits } from "./quitGuard";
 import { saveSettingsSection, useSettingsStore } from "./settingsStore";
 import { useToastStore } from "./toastStore";
+import { t } from "../i18n";
 
 interface Countdown {
   action: CountdownAction;
@@ -32,10 +33,11 @@ export const useCountdownStore = create<{ countdown: Countdown | null }>(() => (
   countdown: null,
 }));
 
-function report(context: string, caught: unknown): void {
-  const message = `${context}: ${toAppError(caught).message}`;
-  useLogStore.getState().write("error", message);
-  useToastStore.getState().show("error", message);
+/** Logs in English, as the log always is, and shows the same in the interface's language. */
+function report(context: string, shown: string, caught: unknown): void {
+  const { message } = toAppError(caught);
+  useLogStore.getState().write("error", `${context}: ${message}`);
+  useToastStore.getState().show("error", t("common.labelWithMessage", { label: shown, message }));
 }
 
 export function cancelCountdown(): void {
@@ -61,7 +63,7 @@ export async function performNow(action: CountdownAction): Promise<void> {
       await system.powerAction(action);
     }
   } catch (caught) {
-    report("When the queue finished", caught);
+    report("When the queue finished", t("automation.whenTheQueueFinished"), caught);
   }
 }
 
@@ -125,7 +127,11 @@ export async function handleQueueFinished(finished: QueueFinished): Promise<void
     try {
       await system.runCommand(automation.whenDoneCommand, queueEnvironment(finished));
     } catch (caught) {
-      report("The command after the queue finished", caught);
+      report(
+        "The command after the queue finished",
+        t("automation.theCommandAfterTheQueue"),
+        caught,
+      );
     }
     return;
   }

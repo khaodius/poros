@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fitInside } from "../lib/previewLayout";
 import { IMAGE_MIME_TYPES, drawingSize, type ImageFormat } from "../lib/previewSniff";
+import { useT } from "../i18n";
 
 export interface PictureSize {
   width: number;
@@ -27,6 +28,7 @@ interface PreviewImageProps {
  * runs no scripts and loads nothing a file points at, so a server's drawing stays inert.
  */
 export function PreviewImage({ bytes, format, onSize, onBroken }: PreviewImageProps) {
+  const t = useT();
   const frameRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const [actualSize, setActualSize] = useState(false);
@@ -72,8 +74,8 @@ export function PreviewImage({ bytes, format, onSize, onBroken }: PreviewImagePr
         // Reached through the preview itself, which Enter passes on to this.
         tabIndex={-1}
         data-preview-primary
-        title={actualSize ? "Fit in the pane" : "Show at actual size"}
-        aria-label={actualSize ? "Fit in the pane" : "Show at actual size"}
+        title={actualSize ? t("preview.fitInThePane") : t("preview.showAtActualSize")}
+        aria-label={actualSize ? t("preview.fitInThePane") : t("preview.showAtActualSize")}
         aria-pressed={actualSize}
         onClick={() => setActualSize((actual) => !actual)}
       >

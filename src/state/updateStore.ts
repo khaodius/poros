@@ -1,6 +1,5 @@
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { create } from "zustand";
-import { pluralize } from "../lib/format";
 import { toAppError, updates } from "../lib/ipc";
 import { drivesInUseWarning } from "../lib/mounts";
 import type { ExternalEdit, UpdateProgress } from "../lib/types";
@@ -11,6 +10,7 @@ import { useMountStore } from "./mountStore";
 import { saveSettingsSection, useSettingsStore } from "./settingsStore";
 import { useTransferStore } from "./transferStore";
 import { useUiStore } from "./uiStore";
+import { t, useT } from "../i18n";
 
 /** Where installing the update stands, once the user chose to install it. */
 export type InstallStage =
@@ -53,6 +53,13 @@ const MISSING_MANIFEST = "Could not fetch a valid release JSON from the remote";
 
 export function describeCheckError(message: string): string {
   return message === MISSING_MANIFEST
+    ? t("updates.theLatestReleaseDoesNotOfferInAppUpdates")
+    : t("updates.couldNotCheckForUpdates", { message });
+}
+
+/** The same in English, for the log. */
+function checkErrorForLog(message: string): string {
+  return message === MISSING_MANIFEST
     ? "The latest release on GitHub does not offer in-app updates yet"
     : `Could not check for updates: ${message}`;
 }
@@ -89,9 +96,9 @@ export async function checkForUpdates(trigger: "start" | "manual"): Promise<void
       ui.open({ kind: "update" });
     }
   } catch (caught) {
-    const checkError = describeCheckError(toAppError(caught).message);
-    useUpdateStore.setState({ checkError });
-    if (trigger === "start") useLogStore.getState().write("warn", checkError);
+    const { message } = toAppError(caught);
+    useUpdateStore.setState({ checkError: describeCheckError(message) });
+    if (trigger === "start") useLogStore.getState().write("warn", checkErrorForLog(message));
   } finally {
     useUpdateStore.setState({ checking: false });
   }
@@ -142,6 +149,7 @@ export async function installVersion(version: string): Promise<void> {
 
 /** What restarting now would interrupt, as sentences for the user. */
 export function useRestartWarnings(): string[] {
+  const t = useT();
   const pendingTransfers = useTransferStore(
     ({ snapshot }) => snapshot.stats.counts.queued + snapshot.stats.counts.running,
   );
@@ -152,14 +160,13 @@ export function useRestartWarnings(): string[] {
   const warnings: string[] = [];
   if (pendingTransfers > 0) {
     warnings.push(
-      `${pluralize(pendingTransfers, "transfer")} in the queue will stop when Poros restarts` +
-        (keepQueue ? " and come back paused." : "."),
+      keepQueue
+        ? t("updates.transfersWillStopAndComeBackPaused", { count: pendingTransfers })
+        : t("updates.transfersWillStop", { count: pendingTransfers }),
     );
   }
   if (unsavedFiles > 0) {
-    warnings.push(
-      `Unsaved changes in ${pluralize(unsavedFiles, "file")} will be lost when Poros restarts.`,
-    );
+    warnings.push(t("updates.unsavedChangesInFilesWill", { count: unsavedFiles }));
   }
   const editsWarning = notUploadedWarning(edits);
   if (editsWarning) warnings.push(editsWarning);
@@ -173,18 +180,11 @@ export function notUploadedWarning(edits: readonly ExternalEdit[]): string | nul
   const held = edits.filter((edit) => edit.state !== "watching" && edit.state !== "downloading");
   if (held.length === 0) return null;
   const inVaults = held.filter((edit) => edit.inVault).length;
-  const one = held.length === 1;
-  const them = one ? "it" : "them";
-  const files = one
-    ? "A file open in another program holds a save"
-    : `${held.length} files open in other programs hold saves`;
-  const after =
-    inVaults === 0
-      ? `Poros offers to upload ${them} after the restart.`
-      : inVaults === held.length
-        ? `Restarting wipes ${them}, as vault files are not kept unencrypted.`
-        : "Those from vaults are wiped; Poros offers to upload the others after the restart.";
-  return `${files} not uploaded yet. ${after}`;
+  const count = held.length;
+  if (inVaults === 0) return t("updates.heldSavesUploadedAfterTheRestart", { count });
+  return inVaults === count
+    ? t("updates.heldSavesWipedByTheRestart", { count })
+    : t("updates.heldSavesPartlyWipedByTheRestart", { count });
 }
 
 export async function restartToUpdate(): Promise<void> {

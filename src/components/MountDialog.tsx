@@ -2,7 +2,15 @@ import { useEffect, useState, type FormEvent } from "react";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { FolderOpen } from "lucide-react";
 import { local, mounts } from "../lib/ipc";
-import { connectionRoot, driveName, mountPointProblem, shortPath } from "../lib/mounts";
+import { useT } from "../i18n";
+import {
+  connectionRoot,
+  DRIVE_LETTER_EXAMPLE,
+  driveName,
+  FOLDER_EXAMPLE,
+  mountPointProblem,
+  shortPath,
+} from "../lib/mounts";
 import type { MountSupport } from "../lib/types";
 import { isLost } from "../lib/vaults";
 import { mountDrive } from "../state/mountActions";
@@ -21,6 +29,7 @@ type RootChoice = "current" | "connection";
 
 /** Asks where to show a server, or an unlocked vault, as a drive on this computer. */
 export function MountDialog({ sessionId, path, onClose }: MountDialogProps) {
+  const t = useT();
   const info = useSessionStore((state) => state.sessions[sessionId]?.info);
   const lost = useSessionStore((state) => isLost(state.sessions, sessionId));
   const [support, setSupport] = useState<MountSupport | null>(
@@ -58,11 +67,11 @@ export function MountDialog({ sessionId, path, onClose }: MountDialogProps) {
 
   if (!info) {
     return (
-      <Dialog title="Mount as drive" onClose={onClose}>
-        <p className="confirm-body">The connection has closed.</p>
+      <Dialog title={t("drives.mountAsDrive")} onClose={onClose}>
+        <p className="confirm-body">{t("drives.theConnectionHasClosed")}</p>
         <div className="dialog-actions">
           <button type="button" className="button button-primary" onClick={onClose}>
-            Close
+            {t("common.close")}
           </button>
         </div>
       </Dialog>
@@ -105,7 +114,7 @@ export function MountDialog({ sessionId, path, onClose }: MountDialogProps) {
 
   if (missing) {
     return (
-      <Dialog title="Mount as drive" onClose={onClose}>
+      <Dialog title={t("drives.mountAsDrive")} onClose={onClose}>
         <div className="confirm-body mount-missing">
           <p>{missing.problem}</p>
           <p>{missing.help}</p>
@@ -119,7 +128,7 @@ export function MountDialog({ sessionId, path, onClose }: MountDialogProps) {
         </div>
         <div className="dialog-actions">
           <button type="button" data-autofocus className="button button-primary" onClick={onClose}>
-            Close
+            {t("common.close")}
           </button>
         </div>
       </Dialog>
@@ -127,18 +136,20 @@ export function MountDialog({ sessionId, path, onClose }: MountDialogProps) {
   }
 
   const showProblem = touched && problem !== null;
-  const rootLabel = info.vault ? "The vault's root" : "The server's root";
+  const rootLabel = info.vault ? t("drives.theVaultsRoot") : t("drives.theServersRoot");
   return (
-    <Dialog title={`Mount ${name} as a drive`} onClose={onClose} width={480}>
+    <Dialog title={t("drives.mountNameAsADrive", { name })} onClose={onClose} width={480}>
       <form onSubmit={submit} className="form">
         <label className="field">
-          <span>{usesDriveLetters ? "Drive letter" : "Folder on this computer"}</span>
+          <span>
+            {usesDriveLetters ? t("drives.driveLetter") : t("drives.folderOnThisComputer")}
+          </span>
           <span className="input-with-button">
             <input
               data-autofocus
               value={mountPoint}
               spellCheck={false}
-              placeholder={usesDriveLetters ? "P:" : "~/Poros/server"}
+              placeholder={usesDriveLetters ? DRIVE_LETTER_EXAMPLE : FOLDER_EXAMPLE}
               className={showProblem ? "has-error" : ""}
               aria-invalid={showProblem}
               onChange={(event) => {
@@ -148,7 +159,7 @@ export function MountDialog({ sessionId, path, onClose }: MountDialogProps) {
             />
             {!usesDriveLetters && (
               <button type="button" className="button" onClick={() => void browse()}>
-                <FolderOpen size={14} /> Browse
+                <FolderOpen size={14} /> {t("common.browse")}
               </button>
             )}
           </span>
@@ -156,15 +167,15 @@ export function MountDialog({ sessionId, path, onClose }: MountDialogProps) {
             {showProblem
               ? problem
               : usesDriveLetters
-                ? "A free letter the drive is shown under."
-                : "An empty folder, made if it is not there and removed again after."}
+                ? t("drives.aFreeLetterTheDrive")
+                : t("drives.anEmptyFolderMadeIf")}
           </small>
         </label>
 
         {current ? (
           <div className="field">
-            <span>Show on the drive</span>
-            <div className="segmented" role="radiogroup" aria-label="Show on the drive">
+            <span>{t("drives.showOnTheDrive")}</span>
+            <div className="segmented" role="radiogroup" aria-label={t("drives.showOnTheDrive")}>
               {(["current", "connection"] as const).map((choice) => (
                 <button
                   key={choice}
@@ -174,7 +185,7 @@ export function MountDialog({ sessionId, path, onClose }: MountDialogProps) {
                   className={rootChoice === choice ? "is-selected" : ""}
                   onClick={() => setRootChoice(choice)}
                 >
-                  {choice === "current" ? "This folder" : rootLabel}
+                  {choice === "current" ? t("drives.thisFolder") : rootLabel}
                 </button>
               ))}
             </div>
@@ -184,9 +195,9 @@ export function MountDialog({ sessionId, path, onClose }: MountDialogProps) {
           </div>
         ) : (
           <div className="field">
-            <span>Show on the drive</span>
+            <span>{t("drives.showOnTheDrive")}</span>
             <small className="field-hint mount-root" title={remoteRoot}>
-              {rootLabel}: {remoteRoot}
+              {t("drives.rootAt", { root: rootLabel, path: remoteRoot })}
             </small>
           </div>
         )}
@@ -198,7 +209,7 @@ export function MountDialog({ sessionId, path, onClose }: MountDialogProps) {
               checked={readOnly}
               onChange={(event) => setReadOnly(event.target.checked)}
             />
-            Read-only: programs can open files but not change them
+            {t("drives.readOnlyProgramsCanOpen")}
           </label>
           <label className="check">
             <input
@@ -206,23 +217,21 @@ export function MountDialog({ sessionId, path, onClose }: MountDialogProps) {
               checked={openWhenMounted}
               onChange={(event) => setOpenWhenMounted(event.target.checked)}
             />
-            Open in file manager when mounted
+            {t("drives.openInFileManagerWhen")}
           </label>
         </div>
 
         <p className="field-hint">
-          What programs save is uploaded when they close the file
-          {info.vault ? ", and held unencrypted on this computer until then" : ""}. The drive is
-          unmounted when the tab closes{info.vault ? ", the vault locks" : ""} or Poros quits.
+          {info.vault ? t("drives.whatProgramsSaveVault") : t("drives.whatProgramsSaveServer")}
         </p>
-        {lost && <p className="form-error">The connection is lost. Reconnect to mount it.</p>}
+        {lost && <p className="form-error">{t("drives.theConnectionIsLostReconnect")}</p>}
         {error && <p className="form-error">{error}</p>}
         <div className="dialog-actions">
           <button type="button" className="button" onClick={onClose}>
-            Cancel
+            {t("common.cancel")}
           </button>
           <button type="submit" className="button button-primary" disabled={!ready}>
-            {busy ? "Mounting..." : "Mount"}
+            {busy ? t("drives.mounting") : t("drives.mount")}
           </button>
         </div>
       </form>

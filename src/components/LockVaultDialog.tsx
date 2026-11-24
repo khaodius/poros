@@ -1,8 +1,8 @@
 import { useLatest } from "../hooks/useLatest";
-import { pluralize } from "../lib/format";
 import { transfers } from "../lib/ipc";
 import { lockVault } from "../state/vaultActions";
 import { Dialog } from "./Dialog";
+import { useT } from "../i18n";
 import { DrivesGoing } from "./DrivesGoing";
 
 interface LockVaultDialogProps {
@@ -24,6 +24,7 @@ export function LockVaultDialog({
   drives,
   onClose,
 }: LockVaultDialogProps) {
+  const t = useT();
   const latestOnClose = useLatest(onClose);
   const lock = async () => {
     if (pendingTransfers > 0) await transfers.pauseSession(sessionId).catch(() => 0);
@@ -32,21 +33,16 @@ export function LockVaultDialog({
   };
 
   return (
-    <Dialog title={`Lock ${name}?`} onClose={onClose}>
+    <Dialog title={t("vault.lock", { name })} onClose={onClose}>
       <div className="confirm-body">
         {pendingTransfers > 0 && (
-          <p>
-            {pluralize(pendingTransfers, "transfer")} for this vault{" "}
-            {pendingTransfers === 1 ? "is" : "are"} still in the queue. Nothing can be copied into
-            or out of a locked vault, so {pendingTransfers === 1 ? "it waits" : "they wait"} paused
-            until you unlock the vault again and resume {pendingTransfers === 1 ? "it" : "them"}.
-          </p>
+          <p>{t("vault.transfersForThisVaultStillQueued", { count: pendingTransfers })}</p>
         )}
-        <DrivesGoing drives={drives} when="the vault locks" />
+        <DrivesGoing drives={drives} when="vaultLocks" />
       </div>
       <div className="dialog-actions">
         <button type="button" className="button" onClick={onClose}>
-          Cancel
+          {t("common.cancel")}
         </button>
         <button
           type="button"
@@ -54,7 +50,7 @@ export function LockVaultDialog({
           className="button button-primary"
           onClick={() => void lock()}
         >
-          {pendingTransfers > 0 ? "Pause transfers and lock" : "Unmount and lock"}
+          {pendingTransfers > 0 ? t("vault.pauseTransfersAndLock") : t("vault.unmountAndLock")}
         </button>
       </div>
     </Dialog>

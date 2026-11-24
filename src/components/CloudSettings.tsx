@@ -2,74 +2,73 @@ import { useCloudProviders } from "../hooks/useCloudProviders";
 import type { Settings } from "../lib/settings";
 import { saveSettingsSection } from "../state/settingsStore";
 import { SettingGroup, TextSetting } from "./settingsFields";
+import { useT } from "../i18n";
 
 export function CloudSettingsPage({ settings }: { settings: Settings }) {
+  const t = useT();
   const cloud = settings.cloud;
   const statuses = useCloudProviders();
   const set = (change: Partial<Settings["cloud"]>) => void saveSettingsSection("cloud", change);
 
   return (
     <>
-      <SettingGroup title="Google Drive">
+      <SettingGroup title={t("cloud.googleDrive")}>
         <p className="setting-note">
           {statuses?.google.builtIn
-            ? "This release signs in with its own Google app. To use yours instead:"
-            : "Poros signs in to Google Drive with a Google app you register:"}
+            ? t("cloud.thisReleaseSignsInWith")
+            : t("cloud.porosSignsInToGoogle")}
         </p>
         <ol className="setting-steps">
-          <li>In Google Cloud Console, create a project and enable the Google Drive API.</li>
-          <li>
-            Set up the OAuth consent screen. While the app is in testing, add your Google account as
-            a test user.
-          </li>
-          <li>Create an OAuth client ID of type Desktop app.</li>
+          <li>{t("cloud.inGoogleCloudConsoleCreate")}</li>
+          <li>{t("cloud.setUpTheOauthConsent")}</li>
+          <li>{t("cloud.createAnOauthClientId")}</li>
         </ol>
         <TextSetting
-          label="Client ID"
+          label={t("cloud.clientId")}
           value={cloud.googleClientId}
-          placeholder="Ends in apps.googleusercontent.com"
+          placeholder={t("cloud.endsInAppsGoogleusercontentCom")}
           wide
           onCommit={(googleClientId) => set({ googleClientId })}
         />
         <TextSetting
-          label="Client secret"
-          hint="Google issues one with every desktop app client."
+          label={t("cloud.clientSecret")}
+          hint={t("cloud.clientSecretHint")}
           value={cloud.googleClientSecret}
           wide
           onCommit={(googleClientSecret) => set({ googleClientSecret })}
         />
       </SettingGroup>
 
-      <SettingGroup title="OneDrive">
+      <SettingGroup title={t("cloud.onedrive")}>
         <p className="setting-note">
           {statuses?.microsoft.builtIn
-            ? "This release signs in with its own Microsoft app. To use yours instead:"
-            : "Poros signs in to OneDrive with a Microsoft app you register:"}
+            ? t("cloud.thisReleaseSignsInWithIts")
+            : t("cloud.porosSignsInToOnedrive")}
         </p>
         <ol className="setting-steps">
+          <li>{t("cloud.inTheMicrosoftEntraAdmin")}</li>
           <li>
-            In the Microsoft Entra admin center, register an app for accounts in any organizational
-            directory and personal Microsoft accounts.
+            {t.rich("cloud.underAuthenticationAddTheMobile", {
+              uri: <code>http://localhost</code>,
+            })}
           </li>
           <li>
-            Under Authentication, add the Mobile and desktop applications platform with the redirect
-            URI <code>http://localhost</code> and allow public client flows.
-          </li>
-          <li>
-            Under API permissions, add the Microsoft Graph delegated permissions{" "}
-            <code>Files.ReadWrite.All</code> and <code>offline_access</code>.
+            {t.rich("cloud.underApiPermissionsAddThe", {
+              files: <code>Files.ReadWrite.All</code>,
+              offline: <code>offline_access</code>,
+            })}
           </li>
         </ol>
         <TextSetting
-          label="Application (client) ID"
+          label={t("cloud.applicationClientId")}
           value={cloud.microsoftClientId}
           placeholder="00000000-0000-0000-0000-000000000000"
           wide
           onCommit={(microsoftClientId) => set({ microsoftClientId })}
         />
         <TextSetting
-          label="Directory (tenant)"
-          hint="Leave empty for any account. Enter a directory ID to limit sign-in to one organization."
+          label={t("cloud.directoryTenant")}
+          hint={t("cloud.directoryTenantHint")}
           value={cloud.microsoftTenant}
           placeholder="common"
           wide
@@ -77,35 +76,29 @@ export function CloudSettingsPage({ settings }: { settings: Settings }) {
         />
       </SettingGroup>
 
-      <SettingGroup title="Box">
+      <SettingGroup title={t("cloud.box")}>
         <p className="setting-note">
           {statuses?.box.builtIn
-            ? "This release signs in with its own Box app. To use yours instead:"
-            : "Poros signs in to Box with a Box app you register:"}
+            ? t("cloud.thisReleaseSignsInWithItsOwn")
+            : t("cloud.porosSignsInToBox")}
         </p>
         <ol className="setting-steps">
+          <li>{t("cloud.inTheBoxDeveloperConsole")}</li>
           <li>
-            In the Box Developer Console, select New App and choose the User app type, which signs
-            in with OAuth 2.0.
+            {t.rich("cloud.onTheConfigurationTabAdd", { uri: <code>http://localhost</code> })}
           </li>
-          <li>
-            On the Configuration tab, add the OAuth 2.0 redirect URI <code>http://localhost</code>.
-          </li>
-          <li>
-            Under Application Scopes, keep Read all files and folders stored in Box, turn on Write
-            all files and folders stored in Box, and save the changes.
-          </li>
-          <li>Copy the client ID and client secret from OAuth 2.0 Credentials on the same tab.</li>
+          <li>{t("cloud.underApplicationScopesKeepRead")}</li>
+          <li>{t("cloud.copyTheClientIdAnd")}</li>
         </ol>
         <TextSetting
-          label="Client ID"
+          label={t("cloud.clientId")}
           value={cloud.boxClientId}
           wide
           onCommit={(boxClientId) => set({ boxClientId })}
         />
         <TextSetting
-          label="Client secret"
-          hint="Box asks for it with every sign-in."
+          label={t("cloud.clientSecret")}
+          hint={t("cloud.clientSecretHint2")}
           value={cloud.boxClientSecret}
           wide
           onCommit={(boxClientSecret) => set({ boxClientSecret })}

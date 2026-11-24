@@ -1,7 +1,6 @@
 // Share links: what a pane's menu offers, the choices a service allows, and the sentence that
 // says what a link lets people do.
 
-import { pluralize } from "./format";
 import type {
   FileEntry,
   LinkKind,
@@ -10,6 +9,7 @@ import type {
   ShareLink,
   ShareOptions,
 } from "./types";
+import { dateTimeFormat, formatList, t, type MessageKey } from "../i18n";
 
 /** How a server pane's menu shows sharing: offered, or shown with why it is not. */
 export interface ShareMenuEntry {
@@ -33,24 +33,30 @@ export function shareMenuEntry(
 ): ShareMenuEntry | null {
   if (entries.length === 0) return null;
   // The server holds a vault's files encrypted, so a link to one would be unreadable.
-  if (inVault) return { label: "Share link (not in a vault)", disabled: true };
-  if (!sharing) return { label: "Share link (cloud storage only)", disabled: true };
+  if (inVault) return { label: t("share.shareLinkNotInA"), disabled: true };
+  if (!sharing) return { label: t("share.shareLinkCloudStorageOnly"), disabled: true };
   if (!sharing.folders && entries.some(isFolderLike)) {
-    return { label: "Share link (files only)", disabled: true };
+    return { label: t("share.shareLinkFilesOnly"), disabled: true };
   }
-  return { label: "Share link...", disabled: false };
+  return { label: t("share.shareLink"), disabled: false };
 }
 
 export const KIND_LABELS: Record<LinkKind, string> = {
-  view: "View",
-  edit: "Edit",
-  download: "Download",
+  get view() {
+    return t("share.view");
+  },
+  get edit() {
+    return t("common.edit");
+  },
+  get download() {
+    return t("common.download");
+  },
 };
 
 export function audienceLabel(audience: ShareAudience, organization?: string): string {
-  if (audience === "anyone") return "Anyone with the link";
-  if (audience === "invited") return "People already invited";
-  return organization ? `People in ${organization}` : "People in your organization";
+  if (audience === "anyone") return t("share.anyoneWithTheLink");
+  if (audience === "invited") return t("share.peopleAlreadyInvited");
+  return organization ? t("share.peopleIn", { organization }) : t("share.peopleInYourOrganization");
 }
 
 export type LifetimeUnit = "minutes" | "hours" | "days";
@@ -65,9 +71,24 @@ export interface LifetimePreset {
 }
 
 const LIFETIME_PRESETS: LifetimePreset[] = [
-  { label: "1 hour", seconds: 3600 },
-  { label: "1 day", seconds: 86_400 },
-  { label: "7 days", seconds: 604_800 },
+  {
+    get label() {
+      return t("share.n1Hour");
+    },
+    seconds: 3600,
+  },
+  {
+    get label() {
+      return t("share.n1Day");
+    },
+    seconds: 86_400,
+  },
+  {
+    get label() {
+      return t("share.n7Days");
+    },
+    seconds: 604_800,
+  },
 ];
 
 /** The preset lifetimes the service takes. */
@@ -78,10 +99,10 @@ export function lifetimePresets(sharing: ShareCapabilities): LifetimePreset[] {
 
 /** "7 days", "90 minutes": the largest unit that leaves no remainder. */
 export function lifetimeText(seconds: number): string {
-  if (seconds % 86_400 === 0) return pluralize(seconds / 86_400, "day");
-  if (seconds % 3600 === 0) return pluralize(seconds / 3600, "hour");
-  if (seconds % 60 === 0) return pluralize(seconds / 60, "minute");
-  return pluralize(seconds, "second");
+  if (seconds % 86_400 === 0) return t("share.days", { count: seconds / 86_400 });
+  if (seconds % 3600 === 0) return t("share.hours", { count: seconds / 3600 });
+  if (seconds % 60 === 0) return t("share.minutes", { count: seconds / 60 });
+  return t("share.seconds", { count: seconds });
 }
 
 /** A preset's seconds, a lifetime typed by hand, or a link without an end. */
@@ -137,12 +158,12 @@ export function takesPassword(draft: ShareDraft, sharing: ShareCapabilities): bo
 /** Why the draft cannot be sent yet, in words for the dialog; `null` when it can. */
 export function draftProblem(draft: ShareDraft, sharing: ShareCapabilities): string | null {
   const lifetime = draftLifetime(draft, sharing);
-  if (lifetime === null) return "Enter how long the link should work, as a whole number.";
+  if (lifetime === null) return t("share.enterHowLongTheLinkShouldWork");
   if (lifetime === undefined) {
-    return sharing.expiry === "required" ? "Choose how long the link should work." : null;
+    return sharing.expiry === "required" ? t("share.chooseHowLongTheLinkShouldWork") : null;
   }
   if (sharing.maxLifetimeSecs !== undefined && lifetime > sharing.maxLifetimeSecs) {
-    return `Links here last at most ${lifetimeText(sharing.maxLifetimeSecs)}.`;
+    return t("share.linksHereLastAtMost", { lifetime: lifetimeText(sharing.maxLifetimeSecs) });
   }
   return null;
 }
@@ -160,33 +181,85 @@ export function draftOptions(draft: ShareDraft, sharing: ShareCapabilities): Sha
   };
 }
 
-const MONTHS = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
-];
+const DEADLINE: Intl.DateTimeFormatOptions = {
+  day: "numeric",
+  month: "long",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+};
+const DEADLINE_WITH_YEAR: Intl.DateTimeFormatOptions = { ...DEADLINE, year: "numeric" };
 
-function twoDigits(value: number): string {
-  return value < 10 ? `0${value}` : String(value);
-}
-
-/** Local time as `14 May, 18:30`, with the year when it is not the current one. */
+/**
+ * Local time as one date, `May 14 at 18:30` in English and `5月14日 18:30` in Chinese, with the
+ * year when it is not the current one. `Intl` writes it whole, as each language orders it.
+ */
 export function formatDeadline(epochSeconds: number, nowMillis: number): string {
   const date = new Date(epochSeconds * 1000);
-  const year =
-    date.getFullYear() === new Date(nowMillis).getFullYear() ? "" : ` ${date.getFullYear()}`;
-  const time = `${twoDigits(date.getHours())}:${twoDigits(date.getMinutes())}`;
-  return `${date.getDate()} ${MONTHS[date.getMonth()]}${year}, ${time}`;
+  const sameYear = date.getFullYear() === new Date(nowMillis).getFullYear();
+  return dateTimeFormat(sameYear ? DEADLINE : DEADLINE_WITH_YEAR).format(date);
 }
+
+/** Who the link lets in, as the statements tell them apart. */
+type StatementAudience = "anyone" | "namedOrganization" | "organization" | "invited";
+
+/**
+ * The statements, whole for each audience, one link or several, and what the link allows, so
+ * that a language can make the verb agree with who it is about.
+ */
+const STATEMENTS = {
+  anyone: {
+    one: {
+      download: "share.anyoneWithThisLinkCanDownload",
+      edit: "share.anyoneWithThisLinkCanEdit",
+      view: "share.anyoneWithThisLinkCanView",
+    },
+    several: {
+      download: "share.anyoneWithOneOfTheseLinksCanDownload",
+      edit: "share.anyoneWithOneOfTheseLinksCanEdit",
+      view: "share.anyoneWithOneOfTheseLinksCanView",
+    },
+  },
+  namedOrganization: {
+    one: {
+      download: "share.peopleInWithThisLinkCanDownload",
+      edit: "share.peopleInWithThisLinkCanEdit",
+      view: "share.peopleInWithThisLinkCanView",
+    },
+    several: {
+      download: "share.peopleInWithOneOfTheseLinksCanDownload",
+      edit: "share.peopleInWithOneOfTheseLinksCanEdit",
+      view: "share.peopleInWithOneOfTheseLinksCanView",
+    },
+  },
+  organization: {
+    one: {
+      download: "share.peopleInYourOrganizationWithThisLinkCanDownload",
+      edit: "share.peopleInYourOrganizationWithThisLinkCanEdit",
+      view: "share.peopleInYourOrganizationWithThisLinkCanView",
+    },
+    several: {
+      download: "share.peopleInYourOrganizationWithOneOfTheseLinksCanDownload",
+      edit: "share.peopleInYourOrganizationWithOneOfTheseLinksCanEdit",
+      view: "share.peopleInYourOrganizationWithOneOfTheseLinksCanView",
+    },
+  },
+  invited: {
+    one: {
+      download: "share.peopleAlreadyInvitedWhoHaveThisLinkCanDownload",
+      edit: "share.peopleAlreadyInvitedWhoHaveThisLinkCanEdit",
+      view: "share.peopleAlreadyInvitedWhoHaveThisLinkCanView",
+    },
+    several: {
+      download: "share.peopleAlreadyInvitedWhoHaveOneOfTheseLinksCanDownload",
+      edit: "share.peopleAlreadyInvitedWhoHaveOneOfTheseLinksCanEdit",
+      view: "share.peopleAlreadyInvitedWhoHaveOneOfTheseLinksCanView",
+    },
+  },
+} as const satisfies Record<
+  StatementAudience,
+  Record<"one" | "several", Record<LinkKind, MessageKey>>
+>;
 
 export interface StatementSubject {
   kind: LinkKind;
@@ -205,45 +278,45 @@ export interface StatementSubject {
   nowMillis: number;
 }
 
-/** In plain words: `Anyone with this link can download the file until 14 May, 18:30.` */
+/** In plain words: `Anyone with this link can download the file until May 14 at 18:30.` */
 export function linkStatement(subject: StatementSubject): string {
   const several = subject.count > 1;
-  const links = several ? "one of these links" : "this link";
-  const who =
-    subject.audience === "anyone"
-      ? `Anyone with ${links}`
-      : subject.audience === "organization"
-        ? `People in ${subject.organization ?? "your organization"} with ${links}`
-        : `People already invited who have ${links}`;
-  const action =
-    subject.kind === "download"
-      ? "can download"
-      : subject.kind === "edit"
-        ? "can open and change"
-        : "can open";
-  const item = subject.folder ? "folder" : "file";
+  const organization = subject.organization ?? "";
+  const audience: StatementAudience =
+    subject.audience === "organization"
+      ? organization
+        ? "namedOrganization"
+        : "organization"
+      : subject.audience;
   const what = several
-    ? `the ${subject.folder ? "item" : "file"} it is for`
+    ? subject.folder
+      ? t("share.theItemItIsFor")
+      : t("share.theFileItIsFor")
     : subject.folder
-      ? "the folder and everything in it"
-      : `the ${item}`;
+      ? t("share.theFolderAndEverythingInIt")
+      : t("share.theFile");
   const until =
     subject.expiresAt !== undefined
-      ? `until ${formatDeadline(subject.expiresAt, subject.nowMillis)}`
+      ? t("share.untilDeadline", {
+          deadline: formatDeadline(subject.expiresAt, subject.nowMillis),
+        })
       : subject.revocable
-        ? "until you stop sharing"
-        : "for as long as it is there";
-  const password = subject.hasPassword ? " It asks for the password first." : "";
-  return `${who} ${action} ${what} ${until}.${password}`;
+        ? t("share.untilYouStopSharing")
+        : t("share.forAsLongAsItIsThere");
+  const key = STATEMENTS[audience][several ? "several" : "one"][subject.kind];
+  const statement = t(key, { organization, what, until });
+  return subject.hasPassword ? t("share.statementWithPassword", { statement }) : statement;
 }
 
 /** `3 files`, `1 folder`, `2 files and 1 folder`. */
 export function selectionSummary(entries: readonly Pick<FileEntry, "kind">[]): string {
   const folders = entries.filter((entry) => entry.kind === "dir").length;
   const files = entries.length - folders;
-  return [files > 0 && pluralize(files, "file"), folders > 0 && pluralize(folders, "folder")]
-    .filter(Boolean)
-    .join(" and ");
+  const parts = [
+    files > 0 && t("share.files", { count: files }),
+    folders > 0 && t("share.folders", { count: folders }),
+  ].filter((part) => part !== false);
+  return formatList(parts);
 }
 
 /** The addresses of links, one per line, for the clipboard. */
@@ -318,8 +391,8 @@ export function batchLinkLabel(
   draft: ShareOptions | null,
   statement: string,
 ): string | null {
-  if (made === null) return `Shared before: ${statement}`;
-  if (!isAsked(link, made)) return `Not what was asked: ${statement}`;
+  if (made === null) return t("share.sharedBefore", { statement });
+  if (!isAsked(link, made)) return t("share.notWhatWasAsked", { statement });
   if (draft === null || !sameOptions(draft, made.options)) return statement;
   return null;
 }

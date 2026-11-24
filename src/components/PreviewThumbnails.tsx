@@ -13,6 +13,7 @@ import {
   type Thumbnail,
 } from "../state/previewReads";
 import { FileIcon } from "./FileIcon";
+import { useT } from "../i18n";
 
 /** A tile asks for its picture once it has been on show this long, not while scrolled past. */
 const TILE_REST_MILLIS = 150;
@@ -37,13 +38,16 @@ interface PreviewThumbnailsProps {
  * dropped from the line.
  */
 export function PreviewThumbnails({ place, entries, total, box, caps }: PreviewThumbnailsProps) {
+  const t = useT();
   return (
     <div className="preview-grid" style={{ "--thumbnail-size": `${box}px` } as CSSProperties}>
       {entries.map((entry) => (
         <ThumbnailTile key={entry.path} place={place} entry={entry} box={box} caps={caps} />
       ))}
       {total > entries.length && (
-        <p className="preview-grid-more">and {total - entries.length} more</p>
+        <p className="preview-grid-more">
+          {t("preview.andMore", { count: total - entries.length })}
+        </p>
       )}
     </div>
   );

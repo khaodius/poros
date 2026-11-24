@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Download, FileDiff, FileText, History, RotateCcw, Trash2 } from "lucide-react";
-import { formatSize, pluralize } from "../lib/format";
+import { formatSize } from "../lib/format";
 import { toAppError, versions } from "../lib/ipc";
 import type { DirListing, FileEntry, ObjectVersion, Versioning } from "../lib/types";
 import {
-  NO_VERSIONS,
   STATUS_LABELS,
   afterDeleting,
   entriesStillDeleted,
@@ -28,6 +27,7 @@ import {
 import { CompareDialog, type CompareOptions, type CompareSide } from "./CompareDialog";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Dialog } from "./Dialog";
+import { t, useT } from "../i18n";
 
 interface VersionsDialogProps {
   file: VersionedFile;
@@ -46,16 +46,41 @@ type HistoryState =
 type Asking = { action: "restore" | "delete"; version: ObjectVersion };
 
 const ACTIONS: { action: Exclude<VersionAction, "delete">; label: string; icon: ReactNode }[] = [
-  { action: "restore", label: "Restore this version", icon: <RotateCcw size={14} /> },
-  { action: "download", label: "Download this version", icon: <Download size={14} /> },
-  { action: "open", label: "Open in the editor", icon: <FileText size={14} /> },
-  { action: "compare", label: "Compare with the current file", icon: <FileDiff size={14} /> },
+  {
+    action: "restore",
+    get label() {
+      return t("versions.restoreThisVersion");
+    },
+    icon: <RotateCcw size={14} />,
+  },
+  {
+    action: "download",
+    get label() {
+      return t("versions.downloadThisVersion");
+    },
+    icon: <Download size={14} />,
+  },
+  {
+    action: "open",
+    get label() {
+      return t("versions.openInTheEditor");
+    },
+    icon: <FileText size={14} />,
+  },
+  {
+    action: "compare",
+    get label() {
+      return t("versions.compareWithTheCurrentFile");
+    },
+    icon: <FileDiff size={14} />,
+  },
 ];
 
 const DIALOG_WIDTH = 820;
 
 /** Every version and delete marker of a file, newest first, and what can be done with each. */
 export function VersionsDialog({ file, nearGroupId, onClose }: VersionsDialogProps) {
+  const t = useT();
   const dateFormat = useSettingsStore((state) => state.settings.interface.dateFormat);
   const [history, setHistory] = useState<HistoryState>({ phase: "loading" });
   const [versioning, setVersioning] = useState<Versioning>();
@@ -117,7 +142,7 @@ export function VersionsDialog({ file, nearGroupId, onClose }: VersionsDialogPro
         if (folder) {
           setNotice({
             tone: "info",
-            text: `Downloading the version from ${when(version)} to ${folder}. The transfer queue shows how it goes.`,
+            text: t("versions.downloadingTheVersionFromTo", { when: when(version), folder }),
           });
         }
       }
@@ -128,7 +153,7 @@ export function VersionsDialog({ file, nearGroupId, onClose }: VersionsDialogPro
 
   return (
     <Dialog
-      title={`Versions of ${name}`}
+      title={t("versions.versionsOf", { name })}
       onClose={onClose}
       width={DIALOG_WIDTH}
       className="versions-dialog"
@@ -137,40 +162,46 @@ export function VersionsDialog({ file, nearGroupId, onClose }: VersionsDialogPro
         {path}
       </p>
       {note && <p className="versions-note">{note}</p>}
-      {history.phase === "loading" && <p className="versions-empty">Loading versions...</p>}
+      {history.phase === "loading" && (
+        <p className="versions-empty">{t("versions.loadingVersions")}</p>
+      )}
       {history.phase === "none" && (
         <p className="versions-empty">
           <History size={16} />
           {history.bucketKeepsNone
-            ? `${NO_VERSIONS}. Turn on versioning for the bucket to keep the files it replaces and deletes.`
-            : "No versions of this file were found."}
+            ? t("versions.turnOnVersioningForThe")
+            : t("versions.noVersionsOfThisFile")}
         </p>
       )}
       {history.phase === "failed" && <p className="form-error">{history.message}</p>}
       {history.phase === "listed" && (
-        <div className="versions-table" role="table" aria-label={`Versions of ${name}`}>
+        <div
+          className="versions-table"
+          role="table"
+          aria-label={t("versions.versionsOf", { name })}
+        >
           <div className="versions-row versions-heading" role="row">
             <span role="columnheader" className="versions-time">
-              Saved
+              {t("versions.saved")}
             </span>
             <span role="columnheader" className="align-end versions-size">
-              Size
+              {t("common.size")}
             </span>
             <span role="columnheader" className="versions-state">
-              Status
+              {t("versions.status")}
             </span>
             {showClass && (
               <span role="columnheader" className="versions-detail">
-                Storage class
+                {t("versions.storageClass")}
               </span>
             )}
             {showTag && (
               <span role="columnheader" className="versions-detail versions-tag">
-                ETag
+                {t("versions.etag")}
               </span>
             )}
             <span role="columnheader" className="versions-actions">
-              Actions
+              {t("versions.actions")}
             </span>
           </div>
           {entries.map((version) => {
@@ -178,8 +209,8 @@ export function VersionsDialog({ file, nearGroupId, onClose }: VersionsDialogPro
             const offered = versionActions(version, entries, name);
             const deleteLabel =
               version.kind === "deleteMarker"
-                ? "Remove this delete marker"
-                : "Delete this version for good";
+                ? t("versions.removeThisDeleteMarker")
+                : t("versions.deleteThisVersionForGood");
             return (
               <div
                 key={version.versionId}
@@ -191,7 +222,7 @@ export function VersionsDialog({ file, nearGroupId, onClose }: VersionsDialogPro
                   .filter(Boolean)
                   .join(" ")}
                 role="row"
-                title={`Version ${version.versionId}`}
+                title={t("versions.version", { versionId: version.versionId })}
               >
                 <span role="cell" className="versions-time">
                   {when(version)}
@@ -253,17 +284,17 @@ export function VersionsDialog({ file, nearGroupId, onClose }: VersionsDialogPro
       )}
       <div className="dialog-actions">
         {history.phase === "listed" && (
-          <span className="versions-count">{pluralize(entries.length, "entry", "entries")}</span>
+          <span className="versions-count">{t("versions.entries", { count: entries.length })}</span>
         )}
         <button type="button" className="button" data-autofocus onClick={onClose}>
-          Close
+          {t("common.close")}
         </button>
       </div>
 
       {asking?.action === "restore" && (
         <ConfirmDialog
-          title="Restore version"
-          confirmLabel="Restore"
+          title={t("versions.restoreVersion")}
+          confirmLabel={t("versions.restore")}
           onClose={() => setAsking(null)}
           onConfirm={async () => {
             await restoreVersion(file, asking.version, dateFormat);
@@ -271,21 +302,31 @@ export function VersionsDialog({ file, nearGroupId, onClose }: VersionsDialogPro
           }}
         >
           <p>
-            Make the version of <strong>{name}</strong> from {when(asking.version)} the current file
-            again?
+            {t.rich("versions.makeTheVersionOf", {
+              name: <strong>{name}</strong>,
+              when: when(asking.version),
+            })}
           </p>
           <p>
             {entries[0]?.kind === "deleteMarker"
-              ? "This brings the deleted file back. The delete stays in the history."
-              : "The current content stays in the history, so it can be restored in turn."}
+              ? t("versions.thisBringsTheDeletedFile")
+              : t("versions.theCurrentContentStaysIn")}
           </p>
         </ConfirmDialog>
       )}
 
       {asking?.action === "delete" && (
         <ConfirmDialog
-          title={asking.version.kind === "deleteMarker" ? "Remove delete marker" : "Delete version"}
-          confirmLabel={asking.version.kind === "deleteMarker" ? "Remove marker" : "Delete version"}
+          title={
+            asking.version.kind === "deleteMarker"
+              ? t("versions.removeDeleteMarker")
+              : t("versions.deleteVersion")
+          }
+          confirmLabel={
+            asking.version.kind === "deleteMarker"
+              ? t("versions.removeMarker")
+              : t("versions.deleteVersion")
+          }
           danger
           onClose={() => setAsking(null)}
           onConfirm={async () => {
@@ -325,13 +366,16 @@ function DeleteVersionSummary({
   history: readonly ObjectVersion[];
   when: string;
 }) {
+  const t = useT();
   const marker = version.kind === "deleteMarker";
   const outcome = afterDeleting(version, history);
   return (
     <>
       <p>
-        {marker ? "Remove the delete marker" : "Delete the version"} of <strong>{name}</strong> from{" "}
-        {when} for good? This cannot be undone.
+        {t.rich(marker ? "versions.removeTheDeleteMarkerOf" : "versions.deleteTheVersionOf", {
+          name: <strong>{name}</strong>,
+          when,
+        })}
       </p>
       {outcome && <p>{outcome}</p>}
     </>
@@ -350,14 +394,19 @@ function VersionComparison({
   when: string;
   onClose: () => void;
 }) {
+  const t = useT();
   const { sessionId, path, name } = file;
+  const timeKnown = version.modified !== null;
   const [left, right] = useMemo((): [CompareSide, CompareSide] => {
     const location = { kind: "remote" as const, sessionId };
+    const where = timeKnown
+      ? t("versions.versionFrom", { when })
+      : t("versions.versionFromUnknownTime");
     return [
-      { location, path, name, where: `Version from ${when}` },
-      { location, path, name, where: "Current version" },
+      { location, path, name, where },
+      { location, path, name, where: t("versions.currentVersion") },
     ];
-  }, [sessionId, path, name, when]);
+  }, [sessionId, path, name, when, timeKnown, t]);
   const compare = useCallback(
     (operationId: string, options: CompareOptions) =>
       versions.compare({
@@ -391,41 +440,43 @@ export function PurgeDeletedDialog({
   onConfirm,
   onClose,
 }: PurgeDeletedDialogProps) {
+  const t = useT();
   const entries = useMemo(() => entriesStillDeleted(chosen, listing), [chosen, listing]);
   const folders = entries.some((entry) => entry.kind === "dir");
   return (
     <ConfirmDialog
-      title="Delete for good"
-      confirmLabel="Delete for good"
+      title={t("versions.deleteForGood")}
+      confirmLabel={t("versions.deleteForGood")}
       danger
       disabled={entries.length === 0}
       onClose={onClose}
       onConfirm={() => onConfirm(entries)}
     >
       {entries.length === 0 ? (
-        <p>{chosen.length === 1 ? `${chosen[0].name} is` : "These items are"} no longer deleted.</p>
+        <p>
+          {chosen.length === 1
+            ? t("versions.isNoLongerDeleted", { name: chosen[0].name })
+            : t("versions.theseItemsAreNoLongerDeleted")}
+        </p>
       ) : (
         <p>
-          Remove{" "}
-          {entries.length === 1 ? (
-            <strong>{entries[0].name}</strong>
-          ) : (
-            pluralize(entries.length, "deleted item")
-          )}{" "}
-          and every version kept of it for good? This cannot be undone.
+          {t.rich("versions.removeWithEveryVersion", {
+            what:
+              entries.length === 1 ? (
+                <strong>{entries[0].name}</strong>
+              ) : (
+                t("versions.deletedItems", { count: entries.length })
+              ),
+          })}
         </p>
       )}
-      {folders && (
-        <p className="warning-text">
-          Everything deleted under a folder goes too. Files still in it are not touched.
-        </p>
-      )}
+      {folders && <p className="warning-text">{t("versions.everythingDeletedUnderAFolder")}</p>}
       {entries.length > 1 && (
         <ul className="delete-preview">
           {entries.slice(0, 5).map((entry) => (
             <li key={entry.path}>{entry.name}</li>
           ))}
-          {entries.length > 5 && <li>and {entries.length - 5} more</li>}
+          {entries.length > 5 && <li>{t("versions.andMore", { count: entries.length - 5 })}</li>}
         </ul>
       )}
     </ConfirmDialog>

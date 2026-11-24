@@ -2,6 +2,7 @@
 // selected items disagree; a mixed bit is left as each item has it.
 
 import type { ModeChange } from "./types";
+import { t } from "../i18n";
 
 export type BitState = "on" | "off" | "mixed";
 
@@ -9,21 +10,75 @@ export type BitState = "on" | "off" | "mixed";
 export type BitStates = Record<number, BitState>;
 
 export const SPECIAL_BITS = [
-  { bit: 0o4000, label: "Set user ID", hint: "Runs as the file's owner" },
-  { bit: 0o2000, label: "Set group ID", hint: "Runs as the group; new files inherit it" },
-  { bit: 0o1000, label: "Sticky", hint: "Only owners may delete or rename entries" },
+  {
+    bit: 0o4000,
+    get label() {
+      return t("dialogs.setUserId");
+    },
+    get hint() {
+      return t("dialogs.runsAsTheFilesOwner");
+    },
+  },
+  {
+    bit: 0o2000,
+    get label() {
+      return t("dialogs.setGroupId");
+    },
+    get hint() {
+      return t("dialogs.runsAsTheGroupNew");
+    },
+  },
+  {
+    bit: 0o1000,
+    get label() {
+      return t("dialogs.sticky");
+    },
+    get hint() {
+      return t("dialogs.onlyOwnersMayDeleteOr");
+    },
+  },
 ] as const;
 
 export const PERMISSION_CLASSES = [
-  { label: "Owner", shift: 6 },
-  { label: "Group", shift: 3 },
-  { label: "Others", shift: 0 },
+  {
+    get label() {
+      return t("dialogs.owner");
+    },
+    shift: 6,
+  },
+  {
+    get label() {
+      return t("dialogs.group");
+    },
+    shift: 3,
+  },
+  {
+    get label() {
+      return t("dialogs.others");
+    },
+    shift: 0,
+  },
 ] as const;
 
 export const PERMISSION_KINDS = [
-  { label: "Read", value: 4 },
-  { label: "Write", value: 2 },
-  { label: "Execute", value: 1 },
+  {
+    get label() {
+      return t("dialogs.read");
+    },
+    value: 4,
+  },
+  {
+    get label() {
+      return t("dialogs.write");
+    },
+    value: 2,
+  },
+  {
+    get label() {
+      return t("dialogs.execute");
+    },
+    value: 1,
+  },
 ] as const;
 
 export const ALL_BITS: number[] = [

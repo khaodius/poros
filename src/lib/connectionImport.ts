@@ -1,47 +1,84 @@
 import type { ImportEntry, ImportSource } from "./types";
+import { t } from "../i18n";
 
 export interface ImportSourceText {
   label: string;
-  /** What to choose when the app's sites are not found on this computer, after "Choose". */
-  files: string;
+  /** What to choose when the app's sites are not found on this computer, as a sentence. */
+  choose: string;
 }
 
 export const IMPORT_SOURCES: Record<ImportSource, ImportSourceText> = {
   fileZilla: {
-    label: "FileZilla",
-    files: "sitemanager.xml, or a file exported from the Site Manager (File > Export).",
+    get label() {
+      return t("connect.filezilla");
+    },
+    get choose() {
+      return t("connect.chooseFileZillaFiles");
+    },
   },
   winScp: {
-    label: "WinSCP",
-    files: "WinSCP.ini, or a file from Tools > Export/Backup Configuration.",
+    get label() {
+      return t("connect.winscp");
+    },
+    get choose() {
+      return t("connect.chooseWinScpFiles");
+    },
   },
   smartFtp: {
-    label: "SmartFTP",
-    files: "the list from Favorites > Tools > Export, or .xml favorites from older versions.",
+    get label() {
+      return t("connect.smartftp");
+    },
+    get choose() {
+      return t("connect.chooseSmartFtpFiles");
+    },
   },
   cyberduck: {
-    label: "Cyberduck and Mountain Duck",
-    files: "their bookmark files (.duck).",
+    get label() {
+      return t("connect.cyberduckAndMountainDuck");
+    },
+    get choose() {
+      return t("connect.chooseCyberduckFiles");
+    },
   },
   putty: {
-    label: "PuTTY and KiTTY",
-    files: "a .reg export of their Sessions registry key, or PuTTY's session files.",
+    get label() {
+      return t("connect.puttyAndKitty");
+    },
+    get choose() {
+      return t("connect.choosePuttyFiles");
+    },
   },
   mobaXterm: {
-    label: "MobaXterm",
-    files: "MobaXterm.ini, or a .mxtsessions file from Sessions > Export.",
+    get label() {
+      return t("connect.mobaxterm");
+    },
+    get choose() {
+      return t("connect.chooseMobaXtermFiles");
+    },
   },
   openSsh: {
-    label: "OpenSSH config",
-    files: "an ssh config file, such as ~/.ssh/config.",
+    get label() {
+      return t("connect.opensshConfig");
+    },
+    get choose() {
+      return t("connect.chooseOpenSshFiles");
+    },
   },
   fileManager: {
-    label: "GNOME Files and KDE Dolphin",
-    files: "gtk-3.0/bookmarks or user-places.xbel.",
+    get label() {
+      return t("connect.gnomeFilesAndKdeDolphin");
+    },
+    get choose() {
+      return t("connect.chooseFileManagerFiles");
+    },
   },
   urlList: {
-    label: "List of addresses",
-    files: "a text file with one sftp:// or ftp:// address per line.",
+    get label() {
+      return t("connect.listOfAddresses");
+    },
+    get choose() {
+      return t("connect.chooseUrlListFiles");
+    },
   },
 };
 

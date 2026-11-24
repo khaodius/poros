@@ -5,6 +5,7 @@ import type { PreviewContent } from "../lib/types";
 import { DropHint } from "./DropMarker";
 import { PorosLogo } from "./PorosLogo";
 import { TAB_ICONS } from "./tabIcons";
+import { useT } from "../i18n";
 
 /** Widths of the placeholder lines, in percent of the pane. */
 const LINES = [58, 44, 72, 38, 64, 50, 80, 34, 60, 46, 70, 40, 54, 66, 42, 76, 36, 62, 48, 68];
@@ -23,6 +24,7 @@ interface WindowSketchProps {
  * the dock, its title bar says what dropping there does instead.
  */
 export function WindowSketch({ content, className, style }: WindowSketchProps) {
+  const t = useT();
   const TabIcon = TAB_ICONS[content.kind];
   const files = content.kind === "local" || content.kind === "remote";
   return (
@@ -35,7 +37,7 @@ export function WindowSketch({ content, className, style }: WindowSketchProps) {
         ) : (
           <span className="window-sketch-hint">
             <SquareArrowOutUpRight size={13} />
-            New window
+            {t("workspace.newWindow")}
           </span>
         )}
       </div>
@@ -63,10 +65,10 @@ export function WindowSketch({ content, className, style }: WindowSketchProps) {
         </div>
         <div className="window-sketch-panel" style={{ flexBasis: `${storedPanelShare() * 100}%` }}>
           <span className="window-sketch-panel-header">
-            <span>Queue</span>
-            <span>Failed</span>
-            <span>Completed</span>
-            <span>Log</span>
+            <span>{t("workspace.queue")}</span>
+            <span>{t("workspace.failed")}</span>
+            <span>{t("workspace.completed")}</span>
+            <span>{t("workspace.log")}</span>
           </span>
         </div>
       </div>

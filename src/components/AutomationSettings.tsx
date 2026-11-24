@@ -2,10 +2,10 @@ import { useState, type FormEvent } from "react";
 import { CalendarClock, Plus, Trash2 } from "lucide-react";
 import { WHEN_DONE_LABELS } from "../lib/automation";
 import {
-  PLACEHOLDER_ADVICE,
   PLACEHOLDERS,
-  UNCERTAIN_COMMAND_WARNING,
+  placeholderAdvice,
   readsUncertainly,
+  uncertainCommandWarning,
 } from "../lib/commands";
 import {
   WHEN_DONE_ACTIONS,
@@ -23,8 +23,10 @@ import {
   SwitchSetting,
   TextSetting,
 } from "./settingsFields";
+import { useT } from "../i18n";
 
 export function AutomationSettingsPage({ settings }: { settings: Settings }) {
+  const t = useT();
   const automation = settings.automation;
   const set = (change: Partial<AutomationSettings>) =>
     void saveSettingsSection("automation", change);
@@ -32,10 +34,10 @@ export function AutomationSettingsPage({ settings }: { settings: Settings }) {
 
   return (
     <>
-      <SettingGroup title="When the transfer queue finishes">
+      <SettingGroup title={t("automation.whenTheTransferQueueFinishes")}>
         <SelectSetting
-          label="Then"
-          hint="Also in the queue's toolbar. Everything but a command counts down for 30 seconds first, so you can stop it."
+          label={t("automation.then")}
+          hint={t("automation.thenHint")}
           value={automation.whenDone}
           options={WHEN_DONE_ACTIONS.map((action) => ({
             value: action,
@@ -44,42 +46,44 @@ export function AutomationSettingsPage({ settings }: { settings: Settings }) {
           onChange={(whenDone) => set({ whenDone })}
         />
         <SwitchSetting
-          label="Only the next time"
-          hint="Goes back to Do nothing once it has happened."
+          label={t("automation.onlyTheNextTime")}
+          hint={t("automation.onlyTheNextTimeHint")}
           checked={automation.whenDoneOnce}
           onChange={(whenDoneOnce) => set({ whenDoneOnce })}
         />
         <TextSetting
-          label="Command"
-          hint="For Run a command; runs on this computer. POROS_FILES_DONE, POROS_FILES_FAILED, POROS_FILES_SKIPPED and POROS_BYTES hold the totals."
+          label={t("automation.command")}
+          hint={t("automation.commandHint", {
+            done: "POROS_FILES_DONE",
+            failed: "POROS_FILES_FAILED",
+            skipped: "POROS_FILES_SKIPPED",
+            bytes: "POROS_BYTES",
+          })}
           value={automation.whenDoneCommand}
-          placeholder="A command or script"
+          placeholder={t("automation.aCommandOrScript")}
           disabled={automation.whenDone !== "runCommand"}
           onCommit={(whenDoneCommand) => set({ whenDoneCommand })}
         />
         <SwitchSetting
-          label="Show a notification"
+          label={t("automation.showANotification")}
           checked={automation.notify}
           onChange={(notify) => set({ notify })}
         />
         <SwitchSetting
-          label="Only when Poros is in the background"
+          label={t("automation.onlyWhenPorosIsIn")}
           checked={automation.notifyOnlyInBackground}
           disabled={!automation.notify}
           onChange={(notifyOnlyInBackground) => set({ notifyOnlyInBackground })}
         />
         <SwitchSetting
-          label="Play a sound"
+          label={t("automation.playASound")}
           checked={automation.sound}
           onChange={(sound) => set({ sound })}
         />
       </SettingGroup>
 
-      <SettingGroup title="Server commands">
-        <p className="setting-note">
-          Listed under Commands when you right-click in a server pane. They run through the server's
-          shell in the folder shown, with these filled in:
-        </p>
+      <SettingGroup title={t("automation.serverCommands")}>
+        <p className="setting-note">{t("automation.listedUnderCommandsWhenYou")}</p>
         <dl className="placeholder-list">
           {PLACEHOLDERS.map(({ placeholder, meaning }) => (
             <div key={placeholder}>
@@ -90,21 +94,21 @@ export function AutomationSettingsPage({ settings }: { settings: Settings }) {
             </div>
           ))}
         </dl>
-        <p className="setting-note">{PLACEHOLDER_ADVICE}</p>
+        <p className="setting-note">{placeholderAdvice()}</p>
         <CommandList commands={automation.commands} onChange={(commands) => set({ commands })} />
       </SettingGroup>
 
-      <SettingGroup title="Scheduled tasks">
+      <SettingGroup title={t("automation.scheduledTasks")}>
         <SettingRow
-          label="Synchronize folders or run commands at set times"
-          hint="Tasks run while Poros is open, in the background, through saved connections."
+          label={t("automation.synchronizeFoldersOrRunCommands")}
+          hint={t("automation.synchronizeFoldersOrRunCommandsHint")}
         >
           <button
             type="button"
             className="button"
             onClick={() => openDialog({ kind: "schedules" })}
           >
-            <CalendarClock size={14} /> Scheduled tasks
+            <CalendarClock size={14} /> {t("automation.scheduledTasks")}
           </button>
         </SettingRow>
       </SettingGroup>
@@ -118,6 +122,7 @@ interface CommandListProps {
 }
 
 function CommandList({ commands, onChange }: CommandListProps) {
+  const t = useT();
   const [name, setName] = useState("");
   const [command, setCommand] = useState("");
 
@@ -151,14 +156,14 @@ function CommandList({ commands, onChange }: CommandListProps) {
         <div key={saved.id} className="command-row">
           <CommitInput
             className="command-name"
-            label="Name"
+            label={t("common.name")}
             value={saved.name}
-            placeholder="Name"
+            placeholder={t("common.name")}
             onCommit={(value) => update(saved.id, { name: value })}
           />
           <CommitInput
             className="command-text"
-            label="Command"
+            label={t("automation.command")}
             value={saved.command}
             onCommit={(value) => update(saved.id, { command: value })}
           />
@@ -166,25 +171,25 @@ function CommandList({ commands, onChange }: CommandListProps) {
             type="button"
             className={`toggle ${saved.showOutput ? "is-on" : ""}`}
             aria-pressed={saved.showOutput}
-            title="Open a window with what the command prints; off runs it quietly"
+            title={t("automation.openAWindowWithWhat")}
             onClick={() => update(saved.id, { showOutput: !saved.showOutput })}
           >
-            Output
+            {t("automation.output")}
           </button>
           <button
             type="button"
             className={`toggle ${saved.refresh ? "is-on" : ""}`}
             aria-pressed={saved.refresh}
-            title="Reload the server's folders when the command finishes"
+            title={t("automation.reloadTheServersFoldersWhen")}
             onClick={() => update(saved.id, { refresh: !saved.refresh })}
           >
-            Refresh
+            {t("common.refresh")}
           </button>
           <button
             type="button"
             className="icon-button"
-            title="Delete command"
-            aria-label="Delete command"
+            title={t("automation.deleteCommand")}
+            aria-label={t("automation.deleteCommand")}
             onClick={() => onChange(commands.filter((existing) => existing.id !== saved.id))}
           >
             <Trash2 size={14} />
@@ -195,32 +200,35 @@ function CommandList({ commands, onChange }: CommandListProps) {
         .filter((saved) => readsUncertainly(saved.command))
         .map((saved) => (
           <p key={`uncertain-${saved.id}`} className="setting-note warning-text">
-            {saved.name.trim() || saved.command}: {UNCERTAIN_COMMAND_WARNING}
+            {t("common.labelWithMessage", {
+              label: saved.name.trim() || saved.command,
+              message: uncertainCommandWarning(),
+            })}
           </p>
         ))}
       <form className="command-row command-row-new" onSubmit={add}>
         <input
           className="command-name"
-          aria-label="Name of the new command"
+          aria-label={t("automation.nameOfTheNewCommand")}
           value={name}
-          placeholder="Name"
+          placeholder={t("common.name")}
           spellCheck={false}
           onChange={(event) => setName(event.target.value)}
         />
         <input
           className="command-text"
-          aria-label="New command"
+          aria-label={t("automation.newCommand")}
           value={command}
           placeholder="du -sh {paths}"
           spellCheck={false}
           onChange={(event) => setCommand(event.target.value)}
         />
         <button type="submit" className="button" disabled={!command.trim()}>
-          <Plus size={14} /> Add
+          <Plus size={14} /> {t("common.add")}
         </button>
       </form>
       {readsUncertainly(command) && (
-        <p className="setting-note warning-text">{UNCERTAIN_COMMAND_WARNING}</p>
+        <p className="setting-note warning-text">{uncertainCommandWarning()}</p>
       )}
     </div>
   );

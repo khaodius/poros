@@ -15,6 +15,7 @@ import { forgetListing, listingsLeft } from "./listings";
 import { getPane } from "./paneRegistry";
 import { forgetSessionPreviews } from "./previewReads";
 import { useSettingsStore } from "./settingsStore";
+import { t } from "../i18n";
 
 export interface SessionEntry {
   info: SessionInfo;
@@ -127,134 +128,137 @@ function moveTabs(previousId: string, sessionId: string): void {
   }
 }
 
-export const useSessionStore = create<SessionState>((set, get) => ({
-  sessions: {},
+export const useSessionStore = create<SessionState>((set, get) => {
+  return {
+    sessions: {},
 
-  connect: async (profile, approval) => {
-    const info = await remote.connect(withConnectionSettings(profile), approval);
-    set((state) => withSession(state.sessions, info, profile));
-    return info;
-  },
+    connect: async (profile, approval) => {
+      const info = await remote.connect(withConnectionSettings(profile), approval);
+      set((state) => withSession(state.sessions, info, profile));
+      return info;
+    },
 
-  reconnect: async (sessionId, approval) => {
-    const previous = get().sessions[sessionId];
-    // The backend moves the server's unlocked vaults over to the session it opens.
-    const movesVaults = vaultSessions(get().sessions, sessionId).length > 0;
-    const shown = () => Boolean(get().sessions[sessionId]);
-    reconnecting.set(sessionId, false);
-    let info: SessionInfo;
-    let closedMeanwhile: boolean;
-    try {
-      info = await remote.reconnect(sessionId, approval);
-      if (shown()) await remote.disconnect(sessionId).catch(() => undefined);
-    } finally {
-      closedMeanwhile = reconnecting.get(sessionId) ?? false;
-      reconnecting.delete(sessionId);
-    }
-    if (!shown()) {
-      // Its tabs closed, or went to another window, while it reconnected: none would show it.
-      // Gone to another window, the old session goes on there while the vaults moved to the new
-      // one, which is left open so they are not locked under that window.
-      if (closedMeanwhile || !movesVaults) await remote.disconnect(info.id).catch(() => undefined);
-      throw {
-        kind: "sessionNotFound",
-        message: "Its tab was closed meanwhile.",
-      } satisfies AppError;
-    }
-    forgetRemoteSource(sessionId);
-    forgetSessionPreviews(sessionId);
-    replacedBy.set(sessionId, info.id);
-    // What the server showed is remembered for the session that replaces this one, which is on
-    // the same connection; only what was kept for this session alone goes with it.
-    if (previous) listingsLeft([previous], false);
-    // In one step with the sessions, so no tab is left showing a session that is gone.
-    moveTabs(sessionId, info.id);
-    const reattached = vaultSessions(get().sessions, sessionId);
-    set((state) => {
-      const sessions = { ...state.sessions };
-      delete sessions[sessionId];
-      sessions[info.id] = { info, profile: previous?.profile ?? null, status: "connected" };
-      // The backend moved the server's unlocked vaults to the new session, keys and all.
-      for (const vault of reattached) {
-        const moved = { ...vault, vault: { ...vault.vault, parentSessionId: info.id } };
-        sessions[vault.id] = { ...state.sessions[vault.id], info: moved };
+    reconnect: async (sessionId, approval) => {
+      const previous = get().sessions[sessionId];
+      // The backend moves the server's unlocked vaults over to the session it opens.
+      const movesVaults = vaultSessions(get().sessions, sessionId).length > 0;
+      const shown = () => Boolean(get().sessions[sessionId]);
+      reconnecting.set(sessionId, false);
+      let info: SessionInfo;
+      let closedMeanwhile: boolean;
+      try {
+        info = await remote.reconnect(sessionId, approval);
+        if (shown()) await remote.disconnect(sessionId).catch(() => undefined);
+      } finally {
+        closedMeanwhile = reconnecting.get(sessionId) ?? false;
+        reconnecting.delete(sessionId);
       }
-      return { sessions };
-    });
-    // Their sessions stay, so their panes would not reload on their own.
-    for (const tab of tabsShowing(reattached.map((vault) => vault.id))) {
-      getPane(tab.id)?.refresh();
-    }
-    return info;
-  },
+      if (!shown()) {
+        // Its tabs closed, or went to another window, while it reconnected: none would show it.
+        // Gone to another window, the old session goes on there while the vaults moved to the new
+        // one, which is left open so they are not locked under that window.
+        if (closedMeanwhile || !movesVaults)
+          await remote.disconnect(info.id).catch(() => undefined);
+        throw {
+          kind: "sessionNotFound",
+          message: t("connect.itsTabWasClosedMeanwhile"),
+        } satisfies AppError;
+      }
+      forgetRemoteSource(sessionId);
+      forgetSessionPreviews(sessionId);
+      replacedBy.set(sessionId, info.id);
+      // What the server showed is remembered for the session that replaces this one, which is on
+      // the same connection; only what was kept for this session alone goes with it.
+      if (previous) listingsLeft([previous], false);
+      // In one step with the sessions, so no tab is left showing a session that is gone.
+      moveTabs(sessionId, info.id);
+      const reattached = vaultSessions(get().sessions, sessionId);
+      set((state) => {
+        const sessions = { ...state.sessions };
+        delete sessions[sessionId];
+        sessions[info.id] = { info, profile: previous?.profile ?? null, status: "connected" };
+        // The backend moved the server's unlocked vaults to the new session, keys and all.
+        for (const vault of reattached) {
+          const moved = { ...vault, vault: { ...vault.vault, parentSessionId: info.id } };
+          sessions[vault.id] = { ...state.sessions[vault.id], info: moved };
+        }
+        return { sessions };
+      });
+      // Their sessions stay, so their panes would not reload on their own.
+      for (const tab of tabsShowing(reattached.map((vault) => vault.id))) {
+        getPane(tab.id)?.refresh();
+      }
+      return info;
+    },
 
-  adopt: async (sessionId, profile) => {
-    const info = await remote.adopt(sessionId);
-    set((state) => withSession(state.sessions, info, profile));
-    return info;
-  },
+    adopt: async (sessionId, profile) => {
+      const info = await remote.adopt(sessionId);
+      set((state) => withSession(state.sessions, info, profile));
+      return info;
+    },
 
-  unlockVault: async (sessionId, path, password) => {
-    const info = await vaults.unlock(sessionId, path, password);
-    set((state) => withSession(state.sessions, info, null));
-    return info;
-  },
+    unlockVault: async (sessionId, path, password) => {
+      const info = await vaults.unlock(sessionId, path, password);
+      set((state) => withSession(state.sessions, info, null));
+      return info;
+    },
 
-  createVault: async (sessionId, parent, name, password) => {
-    const info = await vaults.create(sessionId, parent, name, password);
-    set((state) => withSession(state.sessions, info, null));
-    // The vault's folder is new in `parent`.
-    forgetListing(sessionId, parent);
-    return info;
-  },
+    createVault: async (sessionId, parent, name, password) => {
+      const info = await vaults.create(sessionId, parent, name, password);
+      set((state) => withSession(state.sessions, info, null));
+      // The vault's folder is new in `parent`.
+      forgetListing(sessionId, parent);
+      return info;
+    },
 
-  disconnect: async (sessionId) => {
-    if (reconnecting.has(sessionId)) reconnecting.set(sessionId, true);
-    const closing = leavingWith(get().sessions, sessionId);
-    get().release(sessionId);
-    // Closed for good, so the listings remembered for them have no session left to show them.
-    listingsLeft(closing, true);
-    await remote.disconnect(sessionId).catch(() => undefined);
-  },
+    disconnect: async (sessionId) => {
+      if (reconnecting.has(sessionId)) reconnecting.set(sessionId, true);
+      const closing = leavingWith(get().sessions, sessionId);
+      get().release(sessionId);
+      // Closed for good, so the listings remembered for them have no session left to show them.
+      listingsLeft(closing, true);
+      await remote.disconnect(sessionId).catch(() => undefined);
+    },
 
-  release: (sessionId) => {
-    const leaving = leavingWith(get().sessions, sessionId);
-    const leavingIds = new Set([sessionId, ...leaving.map((entry) => entry.info.id)]);
-    for (const id of leavingIds) {
-      forgetRemoteSource(id);
-      forgetSessionPreviews(id);
-    }
-    set((state) => {
-      const sessions = { ...state.sessions };
-      for (const id of leavingIds) delete sessions[id];
-      return { sessions };
-    });
-    listingsLeft(leaving, false);
-  },
+    release: (sessionId) => {
+      const leaving = leavingWith(get().sessions, sessionId);
+      const leavingIds = new Set([sessionId, ...leaving.map((entry) => entry.info.id)]);
+      for (const id of leavingIds) {
+        forgetRemoteSource(id);
+        forgetSessionPreviews(id);
+      }
+      set((state) => {
+        const sessions = { ...state.sessions };
+        for (const id of leavingIds) delete sessions[id];
+        return { sessions };
+      });
+      listingsLeft(leaving, false);
+    },
 
-  linkSaved: (sessionId, savedConnectionId) =>
-    set((state) => {
-      const entry = state.sessions[sessionId];
-      if (!entry) return state;
-      const info = { ...entry.info, savedConnectionId };
-      return { sessions: { ...state.sessions, [sessionId]: { ...entry, info } } };
-    }),
+    linkSaved: (sessionId, savedConnectionId) =>
+      set((state) => {
+        const entry = state.sessions[sessionId];
+        if (!entry) return state;
+        const info = { ...entry.info, savedConnectionId };
+        return { sessions: { ...state.sessions, [sessionId]: { ...entry, info } } };
+      }),
 
-  markLost: (sessionId, reason) => {
-    // What was read is read again over the next session.
-    forgetSessionPreviews(sessionId);
-    set((state) => {
-      const entry = state.sessions[sessionId];
-      if (!entry) return state;
-      return {
-        sessions: {
-          ...state.sessions,
-          [sessionId]: { ...entry, status: "lost", lostReason: reason },
-        },
-      };
-    });
-  },
-}));
+    markLost: (sessionId, reason) => {
+      // What was read is read again over the next session.
+      forgetSessionPreviews(sessionId);
+      set((state) => {
+        const entry = state.sessions[sessionId];
+        if (!entry) return state;
+        return {
+          sessions: {
+            ...state.sessions,
+            [sessionId]: { ...entry, status: "lost", lostReason: reason },
+          },
+        };
+      });
+    },
+  };
+});
 
 /**
  * The entry of the server a session's files are on: its own, or for an unlocked vault that of

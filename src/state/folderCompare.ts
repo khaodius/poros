@@ -33,6 +33,7 @@ import type {
   SessionInfo,
   SyncProgress,
 } from "../lib/types";
+import { t } from "../i18n";
 
 /** A pane by the window it is in and its tab there, with the name its header shows. */
 export interface PaneRef {
@@ -619,11 +620,11 @@ export function createFolderCompare(env: CompareEnvironment) {
    */
   async function turnOn(tabId: string): Promise<string | null> {
     const own = env.panes().find((pane) => pane.tabId === tabId);
-    if (!own) return "This pane has no folder to compare";
+    if (!own) return t("compare.noFolderToCompare");
     const elsewhere = await seekElsewhere();
     if (store.getState().pairOf[tabId]) return null;
     const partner = [...candidates(tabId), ...elsewhere].reduce<Candidate | null>(better, null);
-    if (!partner) return "Open a second folder pane to compare this one with";
+    if (!partner) return t("compare.openASecondPane");
     const pair: ComparePair = {
       id: env.newId(),
       left: { window: env.window, tabId, label: own.label },
@@ -684,7 +685,7 @@ export function createFolderCompare(env: CompareEnvironment) {
   function startFollow(pair: ComparePair, pane: PaneRef, move: BrowseMove) {
     // Going elsewhere would close the results, so the pane stays with them.
     if (store.getState().snapshots[paneKey(pane)]?.showingResults) {
-      followFailed(pair, pane, move, `${pane.label} shows search results`);
+      followFailed(pair, pane, move, t("compare.paneShowsResults", { pane: pane.label }));
       return;
     }
     const sides = sidesOf(pair.id);
@@ -693,8 +694,8 @@ export function createFolderCompare(env: CompareEnvironment) {
     if (!going) {
       const note =
         move.kind === "enter"
-          ? `No folder named ${move.name} in ${pane.label}`
-          : `${pane.label} has no folder above this one`;
+          ? t("compare.noFolderNamed", { name: move.name, pane: pane.label })
+          : t("compare.noFolderAbove", { pane: pane.label });
       followFailed(pair, pane, move, note);
       return;
     }
@@ -702,7 +703,14 @@ export function createFolderCompare(env: CompareEnvironment) {
     void going.done.then((listed) => {
       if (listed || following.get(pane.tabId) !== going.path) return;
       const current = store.getState().pairs[pair.id];
-      if (current) followFailed(current, pane, move, `${pane.label} could not open ${going.path}`);
+      if (current) {
+        followFailed(
+          current,
+          pane,
+          move,
+          t("compare.paneCouldNotOpen", { pane: pane.label, path: going.path }),
+        );
+      }
     });
   }
 

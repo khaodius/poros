@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Check, Copy, ExternalLink, Files } from "lucide-react";
+import { useLatest } from "../hooks/useLatest";
 import type { PathStyle } from "../lib/fileSource";
 import { clipboard, share, toAppError } from "../lib/ipc";
 import { relativeFolder } from "../lib/search";
@@ -32,6 +33,7 @@ import {
 import type { FileEntry, ShareCapabilities, ShareLink } from "../lib/types";
 import { Dialog } from "./Dialog";
 import { FileIcon } from "./FileIcon";
+import { useT, t } from "../i18n";
 
 interface ShareDialogProps {
   sessionId: string;
@@ -66,9 +68,15 @@ const COPIED_FEEDBACK_MS = 1500;
 const CLOCK_TICK_MS = 15_000;
 
 const UNIT_LABELS: Record<LifetimeUnit, string> = {
-  minutes: "Minutes",
-  hours: "Hours",
-  days: "Days",
+  get minutes() {
+    return t("share.minutes2");
+  },
+  get hours() {
+    return t("share.hours2");
+  },
+  get days() {
+    return t("share.days2");
+  },
 };
 
 /** Tells a link made for one item from the same link of another, as Drive names them alike. */
@@ -104,6 +112,7 @@ export function ShareDialog({
   service,
   onClose,
 }: ShareDialogProps) {
+  const t = useT();
   const [draft, setDraft] = useState<ShareDraft>(() => initialDraft(sharing));
   const [items, setItems] = useState<ItemLinks[]>(() =>
     entries.map((entry) => ({ entry, links: [], loading: true, error: null })),
@@ -130,6 +139,8 @@ export function ShareDialog({
     setItems((current) => replaceAt(current, index, change));
 
   // The links made earlier, on the services that keep them, so they can be copied or removed.
+  // A change of language does not read them again; a failure is said in the language of then.
+  const latestT = useLatest(t);
   useEffect(() => {
     let current = true;
     void forEachLimited(entries, PARALLEL_REQUESTS, async (entry, index) => {
@@ -144,7 +155,9 @@ export function ShareDialog({
           })),
         );
       } catch (caught) {
-        const message = `Could not read the links it has: ${toAppError(caught).message}`;
+        const message = latestT.current("share.couldNotReadTheLinksItHas", {
+          message: toAppError(caught).message,
+        });
         if (!current) return;
         setItems((items) =>
           replaceAt(items, index, (item) => ({ ...item, loading: false, error: message })),
@@ -154,7 +167,7 @@ export function ShareDialog({
     return () => {
       current = false;
     };
-  }, [sessionId, entries]);
+  }, [sessionId, entries, latestT]);
 
   const change = (patch: Partial<ShareDraft>) => setDraft((current) => ({ ...current, ...patch }));
   const options = draftOptions(draft, sharing);
@@ -241,13 +254,17 @@ export function ShareDialog({
   const changesLink = sharing.singleLink && items.some((item) => item.links.length > 0);
   const createLabel = single
     ? changesLink
-      ? "Change link"
-      : "Create link"
-    : `Create ${entries.length} links`;
+      ? t("share.changeLink")
+      : t("share.createLink")
+    : t("share.createLinks", { count: entries.length });
 
   return (
     <Dialog
-      title={single ? `Share ${single.name}` : `Share ${selectionSummary(entries)}`}
+      title={
+        single
+          ? t("share.share", { name: single.name })
+          : t("share.share2", { selectionSummary: selectionSummary(entries) })
+      }
       onClose={onClose}
       width={560}
       className="share-dialog"
@@ -260,16 +277,16 @@ export function ShareDialog({
               <strong title={single?.name}>
                 {single ? single.name : selectionSummary(entries)}
               </strong>
-              <span title={folder}>
-                On {service} in {folder}
-              </span>
+              <span title={folder}>{t("share.onIn", { service, folder })}</span>
             </div>
           </div>
 
           {singleItem && singleItem.links.length > 0 && (
-            <section className="share-section" aria-label="Links">
+            <section className="share-section" aria-label={t("share.links")}>
               <h3 className="share-section-title">
-                {singleItem.links.length === 1 ? "Link" : `${singleItem.links.length} links`}
+                {singleItem.links.length === 1
+                  ? t("share.link")
+                  : t("share.links2", { count: singleItem.links.length })}
               </h3>
               <ul className="share-links">
                 {singleItem.links.map((link) => (
@@ -286,21 +303,23 @@ export function ShareDialog({
             </section>
           )}
           {singleItem?.loading && sharing.revocable && (
-            <p className="field-hint">Looking for links it already has...</p>
+            <p className="field-hint">{t("share.lookingForLinksItAlready")}</p>
           )}
           {singleItem?.error && <p className="field-hint is-error">{singleItem.error}</p>}
 
           <section
             className="share-section share-options"
-            aria-label={single && changesLink ? "Change link" : "New link"}
+            aria-label={single && changesLink ? t("share.changeLink") : t("share.newLink")}
           >
             {singleItem && singleItem.links.length > 0 && (
-              <h3 className="share-section-title">{changesLink ? "Change link" : "New link"}</h3>
+              <h3 className="share-section-title">
+                {changesLink ? t("share.changeLink") : t("share.newLink")}
+              </h3>
             )}
             {sharing.kinds.length > 1 && (
               <div className="field">
-                <span>Lets people</span>
-                <div className="segmented" role="radiogroup" aria-label="Lets people">
+                <span>{t("share.letsPeople")}</span>
+                <div className="segmented" role="radiogroup" aria-label={t("share.letsPeople")}>
                   {sharing.kinds.map((kind) => (
                     <button
                       key={kind}
@@ -318,7 +337,7 @@ export function ShareDialog({
             )}
             {sharing.audiences.length > 1 && (
               <label className="field">
-                <span>Who can open it</span>
+                <span>{t("share.whoCanOpenIt")}</span>
                 <select
                   value={draft.audience}
                   onChange={(event) =>
@@ -335,13 +354,13 @@ export function ShareDialog({
             )}
             {sharing.expiry !== "never" && (
               <div className="field">
-                <span>Works for</span>
+                <span>{t("share.worksFor")}</span>
                 <div className="share-lifetime">
-                  <div className="segmented" role="radiogroup" aria-label="Works for">
+                  <div className="segmented" role="radiogroup" aria-label={t("share.worksFor")}>
                     {sharing.expiry === "optional" && (
                       <LifetimeButton
                         value="never"
-                        label="No end"
+                        label={t("share.noEnd")}
                         draft={draft}
                         onChoose={(choice) => change({ lifetime: choice })}
                       />
@@ -357,7 +376,7 @@ export function ShareDialog({
                     ))}
                     <LifetimeButton
                       value="custom"
-                      label="Custom"
+                      label={t("share.custom")}
                       draft={draft}
                       onChoose={(choice) => change({ lifetime: choice })}
                     />
@@ -365,14 +384,14 @@ export function ShareDialog({
                   {draft.lifetime === "custom" && (
                     <div className="share-custom-lifetime">
                       <input
-                        aria-label="How many"
+                        aria-label={t("share.howMany")}
                         inputMode="numeric"
                         className={problem ? "has-error" : ""}
                         value={draft.customAmount}
                         onChange={(event) => change({ customAmount: event.target.value })}
                       />
                       <select
-                        aria-label="Unit"
+                        aria-label={t("share.unit")}
                         value={draft.customUnit}
                         onChange={(event) =>
                           change({ customUnit: event.target.value as LifetimeUnit })
@@ -392,12 +411,12 @@ export function ShareDialog({
             )}
             {withPassword && (
               <label className="field">
-                <span>Password (optional)</span>
+                <span>{t("share.passwordOptional")}</span>
                 <input
                   type="password"
                   value={draft.password}
                   autoComplete="new-password"
-                  placeholder="Anyone with the link can open it"
+                  placeholder={t("share.anyoneWithTheLinkCan")}
                   onChange={(event) => change({ password: event.target.value })}
                 />
               </label>
@@ -406,14 +425,14 @@ export function ShareDialog({
             {changesLink && (
               <p className="field-hint">
                 {single
-                  ? `${service} keeps one link per item, so this changes the link above for everyone who has it.`
-                  : `${service} keeps one link per item, so an item that has one gets it changed for everyone who has it.`}
+                  ? t("share.keepsOneLinkPerItem", { service })
+                  : t("share.keepsOneLinkPerItemSo", { service })}
               </p>
             )}
           </section>
 
           {!single && (
-            <ul className="share-batch" aria-label="Links">
+            <ul className="share-batch" aria-label={t("share.links")}>
               {items.map((item, index) => {
                 const link = item.links[0];
                 const isNew = link !== undefined && isFresh(item, link);
@@ -450,13 +469,13 @@ export function ShareDialog({
               <CopyButton
                 className="share-copy-all push-left"
                 text={linksText(made)}
-                label={made.length === 1 ? "Copy new link" : "Copy new links"}
+                label={made.length === 1 ? t("share.copyNewLink") : t("share.copyNewLinks")}
                 disabled={made.length === 0}
                 onError={setError}
               />
             )}
             <button type="button" className="button" onClick={onClose}>
-              Close
+              {t("common.close")}
             </button>
             <button
               type="submit"
@@ -464,7 +483,11 @@ export function ShareDialog({
               className="button button-primary"
               disabled={busy || options === null}
             >
-              {busy ? (single && changesLink ? "Changing..." : "Creating...") : createLabel}
+              {busy
+                ? single && changesLink
+                  ? t("share.changing")
+                  : t("share.creating")
+                : createLabel}
             </button>
           </div>
         </div>
@@ -509,14 +532,8 @@ interface CopyButtonProps {
 }
 
 /** Copies through the app's own clipboard command, and says so for a moment. */
-function CopyButton({
-  text,
-  label = "Copy",
-  className = "",
-  disabled,
-  compact,
-  onError,
-}: CopyButtonProps) {
+function CopyButton({ text, label, className = "", disabled, compact, onError }: CopyButtonProps) {
+  const t = useT();
   const [copied, setCopied] = useState(false);
   useEffect(() => {
     if (!copied) return;
@@ -534,7 +551,7 @@ function CopyButton({
   };
   const icon = copied ? <Check size={14} /> : <Copy size={14} />;
   if (compact) {
-    const title = copied ? "Copied" : "Copy link";
+    const title = copied ? t("share.copied") : t("share.copyLink");
     return (
       <button
         type="button"
@@ -556,17 +573,18 @@ function CopyButton({
       onClick={() => void copy()}
     >
       {icon}
-      {copied ? "Copied" : label}
+      {copied ? t("share.copied") : (label ?? t("common.copy"))}
     </button>
   );
 }
 
 function LinkAddress({ url }: { url: string }) {
+  const t = useT();
   return (
     <input
       readOnly
       className="share-address"
-      aria-label="Link address"
+      aria-label={t("share.linkAddress")}
       spellCheck={false}
       value={url}
       onFocus={(event) => event.currentTarget.select()}
@@ -589,6 +607,7 @@ interface LinkRowProps {
 
 /** A link of the one item shared: its address, what it allows, and how to stop it. */
 function LinkRow({ link, statement, fresh, onRemove, onError }: LinkRowProps) {
+  const t = useT();
   const [confirming, setConfirming] = useState(false);
   const [removing, setRemoving] = useState(false);
 
@@ -619,8 +638,8 @@ function LinkRow({ link, statement, fresh, onRemove, onError }: LinkRowProps) {
         <button
           type="button"
           className="icon-button"
-          title="Open in browser"
-          aria-label="Open in browser"
+          title={t("share.openInBrowser")}
+          aria-label={t("share.openInBrowser")}
           onClick={() => void open()}
         >
           <ExternalLink size={15} />
@@ -630,7 +649,7 @@ function LinkRow({ link, statement, fresh, onRemove, onError }: LinkRowProps) {
         <p className="share-link-statement">{statement}</p>
         {link.revocable && !confirming && (
           <button type="button" className="button button-small" onClick={() => setConfirming(true)}>
-            Stop sharing
+            {t("share.stopSharing")}
           </button>
         )}
       </div>
@@ -640,8 +659,8 @@ function LinkRow({ link, statement, fresh, onRemove, onError }: LinkRowProps) {
         </p>
       ))}
       {confirming && (
-        <div className="share-stop" role="group" aria-label="Stop sharing">
-          <span>People who have this link can no longer open it.</span>
+        <div className="share-stop" role="group" aria-label={t("share.stopSharing")}>
+          <span>{t("share.peopleWhoHaveThisLink")}</span>
           <button
             type="button"
             className="button button-small"
@@ -649,7 +668,7 @@ function LinkRow({ link, statement, fresh, onRemove, onError }: LinkRowProps) {
             disabled={removing}
             onClick={() => setConfirming(false)}
           >
-            Keep sharing
+            {t("share.keepSharing")}
           </button>
           <button
             type="button"
@@ -657,7 +676,7 @@ function LinkRow({ link, statement, fresh, onRemove, onError }: LinkRowProps) {
             disabled={removing}
             onClick={() => void stop()}
           >
-            {removing ? "Stopping..." : "Stop sharing"}
+            {removing ? t("share.stopping") : t("share.stopSharing")}
           </button>
         </div>
       )}
@@ -682,8 +701,13 @@ interface BatchRowProps {
  * what that link does when it is not what the statement above says, and the service's notes.
  */
 function BatchRow({ item, busy, fresh, label, place, onError }: BatchRowProps) {
+  const t = useT();
   const link = item.links[0];
-  const status = item.loading ? "Checking..." : busy ? "Making the link..." : "No link yet";
+  const status = item.loading
+    ? t("share.checking")
+    : busy
+      ? t("share.makingTheLink")
+      : t("share.noLinkYet");
   return (
     <li className={`share-batch-row ${fresh ? "is-new" : ""}`}>
       <span className="share-batch-name" title={item.entry.path}>

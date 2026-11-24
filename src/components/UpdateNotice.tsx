@@ -11,9 +11,11 @@ import {
   useUpdateStore,
   type InstallStage,
 } from "../state/updateStore";
+import { t, useT } from "../i18n";
 
 /** Shows how installing an update goes, in the window's bottom-right corner, then offers to restart. */
 export function UpdateNotice() {
+  const t = useT();
   const target = useUpdateStore((state) => state.target);
   const install = useUpdateStore((state) => state.install);
   const open = useUpdateStore((state) => state.noticeOpen);
@@ -38,8 +40,8 @@ export function UpdateNotice() {
           <button
             type="button"
             className="icon-button"
-            aria-label={failed ? "Dismiss" : "Hide"}
-            title={failed ? undefined : "Hide; the status bar shows it again"}
+            aria-label={failed ? t("common.dismiss") : t("common.hide")}
+            title={failed ? undefined : t("updates.hideTheStatusBarShows")}
             onClick={hideUpdateNotice}
           >
             <X size={14} />
@@ -54,19 +56,20 @@ export function UpdateNotice() {
 function title(install: InstallStage, version: string): string {
   switch (install.stage) {
     case "downloading":
-      return `Downloading Poros ${version}`;
+      return t("updates.downloadingPoros", { version });
     case "installing":
-      return `Installing Poros ${version}`;
+      return t("updates.installingPoros", { version });
     case "ready":
-      return `Poros ${version} is ready`;
+      return t("updates.porosIsReady", { version });
     case "restarting":
-      return "Restarting Poros";
+      return t("updates.restartingPoros");
     case "failed":
-      return `Could not install Poros ${version}`;
+      return t("updates.couldNotInstallPoros", { version });
   }
 }
 
 function NoticeBody({ install, onRetry }: { install: InstallStage; onRetry: () => void }) {
+  const t = useT();
   switch (install.stage) {
     case "downloading": {
       const percent = percentDownloaded(install.received, install.total);
@@ -75,7 +78,10 @@ function NoticeBody({ install, onRetry }: { install: InstallStage; onRetry: () =
           <ProgressBar percent={percent} />
           <span className="update-notice-text">
             {install.total
-              ? `${formatSize(install.received)} of ${formatSize(install.total)}`
+              ? t("updates.of", {
+                  received: formatSize(install.received),
+                  total: formatSize(install.total),
+                })
               : formatSize(install.received)}
             {percent !== null && <span>{percent}%</span>}
           </span>
@@ -97,10 +103,10 @@ function NoticeBody({ install, onRetry }: { install: InstallStage; onRetry: () =
           <p className="update-notice-message selectable">{install.message}</p>
           <div className="update-notice-actions">
             <button type="button" className="button" onClick={hideUpdateNotice}>
-              Dismiss
+              {t("common.dismiss")}
             </button>
             <button type="button" className="button button-primary" onClick={onRetry}>
-              Try again
+              {t("common.tryAgain")}
             </button>
           </div>
         </>
@@ -109,12 +115,11 @@ function NoticeBody({ install, onRetry }: { install: InstallStage; onRetry: () =
 }
 
 function ReadyBody() {
+  const t = useT();
   const warnings = useRestartWarnings();
   return (
     <>
-      <p className="update-notice-message">
-        Restart Poros to switch to it now, or it takes effect the next time you open Poros.
-      </p>
+      <p className="update-notice-message">{t("updates.restartPorosToSwitchTo")}</p>
       {warnings.map((warning) => (
         <p key={warning} className="update-notice-message warning-text">
           {warning}
@@ -122,14 +127,14 @@ function ReadyBody() {
       ))}
       <div className="update-notice-actions">
         <button type="button" className="button" onClick={hideUpdateNotice}>
-          Later
+          {t("updates.later")}
         </button>
         <button
           type="button"
           className="button button-primary"
           onClick={() => void restartToUpdate()}
         >
-          Restart now
+          {t("updates.restartNow")}
         </button>
       </div>
     </>

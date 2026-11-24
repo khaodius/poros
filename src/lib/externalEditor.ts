@@ -9,6 +9,8 @@ import type {
   OpenWith,
   SessionInfo,
 } from "./types";
+import { t } from "../i18n";
+import { formatPercent } from "./format";
 
 /** Stands for the file in a program's arguments. Mirrored in command_line.rs. */
 export const FILE_PLACEHOLDER = "{file}";
@@ -74,17 +76,31 @@ export function programLabel(program: Pick<ExternalProgram, "name" | "command">)
 }
 
 export const EDIT_STATE_LABELS: Record<ExternalEditState, string> = {
-  downloading: "Downloading",
-  watching: "Watching for saves",
-  changed: "Saved, not uploaded",
-  waiting: "Waiting to upload",
-  conflict: "Changed on the server",
-  uploading: "Uploading",
-  failed: "Upload failed",
+  get downloading() {
+    return t("openWith.downloading");
+  },
+  get watching() {
+    return t("openWith.watchingForSaves");
+  },
+  get changed() {
+    return t("openWith.savedNotUploaded");
+  },
+  get waiting() {
+    return t("openWith.waitingToUpload");
+  },
+  get conflict() {
+    return t("openWith.changedOnTheServer2");
+  },
+  get uploading() {
+    return t("openWith.uploading");
+  },
+  get failed() {
+    return t("openWith.uploadFailed");
+  },
 };
 
 export function editStateLabel(edit: Pick<ExternalEdit, "state" | "blocked">): string {
-  if (edit.blocked) return "Not opened: it is a program";
+  if (edit.blocked) return t("openWith.notOpenedItIsAProgram");
   return EDIT_STATE_LABELS[edit.state];
 }
 
@@ -118,19 +134,27 @@ export function editsSummary(
   const downloading = edits.find((edit) => edit.state === "downloading");
   if (downloading) {
     const fraction = transferFraction(downloading) ?? 0;
-    return `Opening ${downloading.name}, ${Math.floor(fraction * 100)}%`;
+    return t("openWith.openingNamePercent", {
+      name: downloading.name,
+      percent: formatPercent(Math.floor(fraction * 100)),
+    });
   }
   const uploading = edits.find((edit) => edit.state === "uploading");
-  if (uploading) return `Uploading ${uploading.name}`;
+  if (uploading) return t("openWith.uploadingName", { name: uploading.name });
   const attention = edits.filter(needsAttention);
   if (attention.length === 1) {
-    return `${attention[0].name}: ${editStateLabel(attention[0]).toLowerCase()}`;
+    const [edit] = attention;
+    const { name } = edit;
+    if (edit.blocked) return t("openWith.nameNotOpenedItIsAProgram", { name });
+    return edit.state === "conflict"
+      ? t("openWith.nameChangedOnTheServer", { name })
+      : t("openWith.nameUploadFailed", { name });
   }
-  if (attention.length > 1) return `${attention.length} edited files need attention`;
-  if (edits.length === 1) return `Editing ${edits[0].name}`;
-  if (edits.length > 1) return `Editing ${edits.length} files`;
-  if (leftovers.length === 1) return "1 file not uploaded";
-  if (leftovers.length > 1) return `${leftovers.length} files not uploaded`;
+  if (attention.length > 1)
+    return t("openWith.editedFilesNeedAttention", { count: attention.length });
+  if (edits.length === 1) return t("openWith.editingName", { name: edits[0].name });
+  if (edits.length > 1) return t("openWith.editingFiles", { count: edits.length });
+  if (leftovers.length > 0) return t("openWith.filesNotUploaded", { count: leftovers.length });
   return null;
 }
 

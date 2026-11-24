@@ -5,10 +5,21 @@ import { clockTime, scheduleTooltip, shownLimits } from "../lib/limitSchedule";
 import type { LimitStatus } from "../lib/types";
 import { openScheduleSettings } from "../state/scheduleSettingsReveal";
 import { useTransferStore } from "../state/transferStore";
+import { t, useT } from "../i18n";
 
 const DIRECTIONS = {
-  upload: { Icon: ArrowUp, label: "Upload" },
-  download: { Icon: ArrowDown, label: "Download" },
+  upload: {
+    Icon: ArrowUp,
+    get label() {
+      return t("common.upload");
+    },
+  },
+  download: {
+    Icon: ArrowDown,
+    get label() {
+      return t("common.download");
+    },
+  },
 };
 
 function useLimitStatus(): LimitStatus {
@@ -17,8 +28,8 @@ function useLimitStatus(): LimitStatus {
 
 function overrideText(limits: LimitStatus): { label: string; title: string } {
   return limits.ignored
-    ? { label: "Follow schedule", title: "Follow the speed limit schedule again" }
-    : { label: "Ignore schedule", title: "Ignore the speed limit schedule until its next change" };
+    ? { label: t("limits.followSchedule"), title: t("limits.followTheSpeedLimitSchedule") }
+    : { label: t("limits.ignoreSchedule"), title: t("limits.ignoreTheSpeedLimitSchedule") };
 }
 
 /**
@@ -26,36 +37,39 @@ function overrideText(limits: LimitStatus): { label: string; title: string } {
  * the limits it sets and until when, then a button that sets it aside or takes it up again.
  */
 export function LimitScheduleStatus() {
+  const t = useT();
   const limits = useLimitStatus();
   const now = new Date(useMinute());
   if (limits.rule === null) return null;
-  const until = limits.until === null ? "" : ` until ${clockTime(limits.until, now)}`;
+  const until = limits.until === null ? null : clockTime(limits.until, now);
   const override = overrideText(limits);
   const OverrideIcon = limits.ignored ? CalendarClock : CalendarOff;
+  const shown = shownLimits(limits).map(({ direction, mode, text }) => {
+    const { Icon, label } = DIRECTIONS[direction];
+    return (
+      <span key={direction} className={`status-schedule-limit is-${mode}`}>
+        <Icon size={12} aria-label={label} />
+        {text}
+      </span>
+    );
+  });
   return (
     <span className={`status-item status-schedule ${limits.ignored ? "is-ignored" : ""}`}>
       <button
         type="button"
         className="status-schedule-limits"
-        title={`${scheduleTooltip(limits, now)}\nClick to change the schedule.`}
+        title={t("limits.clickToChangeTheSchedule", {
+          scheduleTooltip: scheduleTooltip(limits, now),
+        })}
         onClick={openScheduleSettings}
       >
-        {limits.ignored ? (
-          `Schedule ignored${until}`
-        ) : (
-          <>
-            {shownLimits(limits).map(({ direction, mode, text }) => {
-              const { Icon, label } = DIRECTIONS[direction];
-              return (
-                <span key={direction} className={`status-schedule-limit is-${mode}`}>
-                  <Icon size={12} aria-label={label} />
-                  {text}
-                </span>
-              );
-            })}
-            {until}
-          </>
-        )}
+        {limits.ignored
+          ? until === null
+            ? t("limits.scheduleIgnoredShort")
+            : t("limits.scheduleIgnoredShortUntil", { time: until })
+          : until === null
+            ? shown
+            : t.rich("limits.limitsUntilTime", { limits: shown, time: until })}
       </button>
       <button
         type="button"

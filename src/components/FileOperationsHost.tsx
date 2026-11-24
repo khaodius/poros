@@ -1,7 +1,7 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { LoaderCircle } from "lucide-react";
 import { deleteFraction, deleteProgressText, formatCount } from "../lib/deletion";
-import { formatSize, pluralize } from "../lib/format";
+import { formatSize } from "../lib/format";
 import { fileOperations, onFileOperation } from "../lib/ipc";
 import { baseName } from "../lib/path";
 import { progressReach } from "../lib/progressBars";
@@ -15,6 +15,7 @@ import {
 } from "../state/operationStore";
 import { Dialog } from "./Dialog";
 import { RenameReportDialog } from "./RenameReportDialog";
+import { useT, t } from "../i18n";
 
 /** The moves and copies running in this window, and the question when names are taken. */
 export function FileOperationsHost() {
@@ -37,6 +38,7 @@ export function FileOperationsHost() {
 }
 
 function OperationTray() {
+  const t = useT();
   const running = useOperationStore((state) => state.running);
   const [cancelling, setCancelling] = useState<ReadonlySet<string>>(new Set());
   const shown = running.filter((operation) => operation.shown);
@@ -66,7 +68,7 @@ function OperationTray() {
               <RenameDetail operation={operation} />
             ) : (
               <span className="operation-detail">
-                {pluralize(operation.files, "file")} done, {formatSize(operation.bytes)}
+                {t("pane.filesDone", { count: operation.files, size: formatSize(operation.bytes) })}
               </span>
             )}
           </div>
@@ -76,7 +78,7 @@ function OperationTray() {
             disabled={cancelling.has(operation.id)}
             onClick={() => cancel(operation.id)}
           >
-            {cancelling.has(operation.id) ? "Cancelling..." : "Cancel"}
+            {cancelling.has(operation.id) ? t("pane.cancelling") : t("common.cancel")}
           </button>
         </div>
       ))}
@@ -86,9 +88,10 @@ function OperationTray() {
 
 /** Which program unpacks the archive, under a bar that moves until it is done. */
 function ExtractDetail({ operation }: { operation: RunningOperation }) {
+  const t = useT();
   return (
     <>
-      <span className="operation-detail">{operation.current ?? "Unpacking"}</span>
+      <span className="operation-detail">{operation.current ?? t("pane.unpacking")}</span>
       <span className="progress-track is-indeterminate" role="progressbar">
         <span className="progress-fill" />
       </span>
@@ -98,12 +101,15 @@ function ExtractDetail({ operation }: { operation: RunningOperation }) {
 
 /** How many items have their new name, and the one being renamed. */
 function RenameDetail({ operation }: { operation: RunningOperation }) {
+  const t = useT();
   const { files, total, current } = operation;
   const fraction = total ? Math.min(1, files / total) : null;
   return (
     <>
       <span className="operation-detail">
-        {total ? `${formatCount(files)} of ${formatCount(total)} renamed` : "Starting"}
+        {total
+          ? t("pane.ofRenamed", { count: files, total: formatCount(total) })
+          : t("pane.starting")}
       </span>
       <span
         className={`progress-track ${fraction === null ? "is-indeterminate" : ""}`}
@@ -128,15 +134,23 @@ function RenameDetail({ operation }: { operation: RunningOperation }) {
 
 /** How many entries are gone or back, where the operation is, and the latest that failed. */
 function DeleteDetail({ operation }: { operation: RunningOperation }) {
+  const t = useT();
   const fraction = deleteFraction(operation);
   const { current, failed, lastFailure } = operation;
   return (
     <>
       <span className="operation-detail">
-        {operation.kind === "restore"
-          ? restoreProgressText(operation)
-          : deleteProgressText(operation)}
-        {failed ? `, ${formatCount(failed)} failed` : ""}
+        {failed
+          ? t("pane.progressWithFailures", {
+              progress:
+                operation.kind === "restore"
+                  ? restoreProgressText(operation)
+                  : deleteProgressText(operation),
+              count: failed,
+            })
+          : operation.kind === "restore"
+            ? restoreProgressText(operation)
+            : deleteProgressText(operation)}
       </span>
       <span
         className={`progress-track ${fraction === null ? "is-indeterminate" : ""}`}
@@ -163,47 +177,75 @@ function DeleteDetail({ operation }: { operation: RunningOperation }) {
 }
 
 const CHOICES: { choice: NameClash; label: string }[] = [
-  { choice: "skip", label: "Skip" },
-  { choice: "keepBoth", label: "Keep both" },
-  { choice: "replace", label: "Replace" },
+  {
+    choice: "skip",
+    get label() {
+      return t("common.skip");
+    },
+  },
+  {
+    choice: "keepBoth",
+    get label() {
+      return t("pane.keepBoth");
+    },
+  },
+  {
+    choice: "replace",
+    get label() {
+      return t("common.replace");
+    },
+  },
 ];
 const PREVIEW_NAMES = 5;
 
 function NameClashDialog({ question }: { question: NameClashQuestion }) {
+  const t = useT();
   const { names, total, folder, mode, answer } = question;
   const preview = names.slice(0, PREVIEW_NAMES);
   return (
-    <Dialog title="Names already taken" onClose={() => answer(null)} width={480}>
+    <Dialog title={t("pane.namesAlreadyTaken")} onClose={() => answer(null)} width={480}>
       <div className="confirm-body">
         {names.length === 1 ? (
           <p>
-            <strong>{names[0]}</strong> is already in <strong>{folder}</strong>.
+            {t.rich("pane.isAlreadyIn", {
+              name: <strong>{names[0]}</strong>,
+              folder: <strong>{folder}</strong>,
+            })}
           </p>
         ) : (
           <>
             <p>
-              {names.length === total
-                ? `All ${total} items`
-                : `${names.length} of the ${total} items`}{" "}
-              {mode === "move" ? "being moved" : "being copied"} have names already in{" "}
-              <strong>{folder}</strong>.
+              {t.rich(
+                names.length === total
+                  ? mode === "move"
+                    ? "pane.allItemsBeingMovedHaveNamesIn"
+                    : "pane.allItemsBeingCopiedHaveNamesIn"
+                  : mode === "move"
+                    ? "pane.someItemsBeingMovedHaveNamesIn"
+                    : "pane.someItemsBeingCopiedHaveNamesIn",
+                { count: names.length, total, folder: <strong>{folder}</strong> },
+              )}
             </p>
             <ul className="delete-preview">
               {preview.map((name) => (
                 <li key={name}>{name}</li>
               ))}
-              {names.length > preview.length && <li>and {names.length - preview.length} more</li>}
+              {names.length > preview.length && (
+                <li>{t("pane.andMore", { count: names.length - preview.length })}</li>
+              )}
             </ul>
           </>
         )}
         <p>
-          Replace overwrites files and merges folders. Keep both gives the new{" "}
-          {names.length === 1 ? "item a name" : "items names"} like <em>name (2)</em>.
+          {t.rich("pane.replaceOrKeepBoth", {
+            count: names.length,
+            example: <em>{t("pane.name2")}</em>,
+          })}
         </p>
       </div>
       <div className="dialog-actions">
         <button type="button" className="button push-left" onClick={() => answer(null)}>
-          Cancel
+          {t("common.cancel")}
         </button>
         {CHOICES.map(({ choice, label }) => (
           <button

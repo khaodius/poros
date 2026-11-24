@@ -2,7 +2,7 @@
 // src-tauri/src/sync.
 
 import type { PathStyle } from "./fileSource";
-import { formatSize, pluralize } from "./format";
+import { formatSize } from "./format";
 import type {
   SyncAction,
   SyncChoice,
@@ -12,6 +12,7 @@ import type {
   SyncItem,
   SyncRunSummary,
 } from "./types";
+import { t } from "../i18n";
 
 /** What each item will do: its planned action, a side picked for a conflict, or nothing. */
 export type Choices = ReadonlyMap<number, SyncAction | null>;
@@ -89,78 +90,125 @@ export function chosenTotals(items: SyncItem[], choices: Choices): ChosenTotals 
 
 /** `12 files, 3.4 MB`, or the folders when only empty folders are left. */
 export function describeTotal(total: ActionTotal): string {
-  if (total.files === 0) return pluralize(total.items, "folder");
-  return `${pluralize(total.files, "file")}, ${formatSize(total.bytes)}`;
+  if (total.files === 0) return t("sync.folders", { count: total.items });
+  return t("sync.files2", { count: total.files, size: formatSize(total.bytes) });
 }
 
 /** What the chosen items will do, for the line beside the Synchronize button. */
 export function describePlanned(totals: ChosenTotals): string {
   const parts: string[] = [];
-  if (totals.upload.items > 0) parts.push(`Upload ${describeTotal(totals.upload)}`);
-  if (totals.download.items > 0) parts.push(`Download ${describeTotal(totals.download)}`);
-  if (totals.delete.items > 0) parts.push(`Delete ${pluralize(totals.delete.items, "item")}`);
-  if (totals.undecided > 0) {
-    parts.push(
-      `${pluralize(totals.undecided, "conflict")} left as ${totals.undecided === 1 ? "it is" : "they are"}`,
-    );
+  if (totals.upload.items > 0) {
+    parts.push(t("sync.plannedUpload", { total: describeTotal(totals.upload) }));
   }
-  return parts.length > 0 ? `${parts.join(". ")}.` : "Nothing selected.";
+  if (totals.download.items > 0) {
+    parts.push(t("sync.plannedDownload", { total: describeTotal(totals.download) }));
+  }
+  if (totals.delete.items > 0) parts.push(t("sync.deleteItems", { count: totals.delete.items }));
+  if (totals.undecided > 0) parts.push(t("sync.conflictsLeft", { count: totals.undecided }));
+  return parts.length > 0
+    ? t("sync.plannedSentences", { parts: parts.join(t("sync.plannedSeparator")) })
+    : t("sync.nothingSelected");
 }
 
 export const DIRECTION_OPTIONS: { value: SyncDirection; label: string; hint: string }[] = [
   {
     value: "upload",
-    label: "Local to server",
-    hint: "Makes the server folder match the local one.",
+    get label() {
+      return t("sync.localToServer");
+    },
+    get hint() {
+      return t("sync.makesTheServerFolderMatch");
+    },
   },
   {
     value: "download",
-    label: "Server to local",
-    hint: "Makes the local folder match the server one.",
+    get label() {
+      return t("sync.serverToLocal");
+    },
+    get hint() {
+      return t("sync.makesTheLocalFolderMatch");
+    },
   },
   {
     value: "both",
-    label: "Both ways",
-    hint: "Copies new files each way; where both sides have a file, the newer one wins.",
+    get label() {
+      return t("sync.bothWays");
+    },
+    get hint() {
+      return t("sync.copiesNewFilesEachWay");
+    },
   },
 ];
 
 export const ACTION_LABELS: Record<SyncAction, string> = {
-  upload: "Upload",
-  download: "Download",
-  deleteLocal: "Delete local",
-  deleteRemote: "Delete on server",
-  conflict: "Conflict",
+  get upload() {
+    return t("common.upload");
+  },
+  get download() {
+    return t("common.download");
+  },
+  get deleteLocal() {
+    return t("sync.deleteLocal");
+  },
+  get deleteRemote() {
+    return t("sync.deleteOnServer");
+  },
+  get conflict() {
+    return t("sync.conflict");
+  },
 };
 
 export function describeReason(item: SyncItem): string {
   switch (item.reason) {
     case "new":
-      return item.action === "upload" ? "Only in the local folder" : "Only on the server";
+      return item.action === "upload" ? t("sync.onlyInTheLocalFolder") : t("sync.onlyOnTheServer");
     case "changed":
-      return "Size or time differs";
+      return t("sync.sizeOrTimeDiffers");
     case "contentDiffers":
-      return "Contents differ";
+      return t("sync.contentsDiffer");
     case "always":
-      return "Copied without comparing";
+      return t("sync.copiedWithoutComparing");
     case "newer":
-      return item.action === "upload" ? "Newer in the local folder" : "Newer on the server";
+      return item.action === "upload"
+        ? t("sync.newerInTheLocalFolder")
+        : t("sync.newerOnTheServer");
     case "extraneous":
-      return item.action === "deleteRemote" ? "Not in the local folder" : "Not on the server";
-    case "typeDiffers": {
-      const here = kindOf(item.local);
-      return `${here.charAt(0).toUpperCase()}${here.slice(1)} here, ${kindOf(item.remote)} on the server`;
-    }
+      return item.action === "deleteRemote"
+        ? t("sync.notInTheLocalFolder")
+        : t("sync.notOnTheServer");
+    case "typeDiffers":
+      return t("sync.typeDiffers", {
+        here: t(KIND_HERE[kindOf(item.local)]),
+        there: t(KIND_THERE[kindOf(item.remote)]),
+      });
     case "bothChanged":
-      return "Differs, with the same time on both sides";
+      return t("sync.differsWithTheSameTimeOnBothSides");
     case "append":
-      return "Shorter on the target; only the rest is sent";
+      return t("sync.shorterOnTheTarget");
     case "attributes":
-      return "Same contents; only the time or permissions are set";
+      return t("sync.sameContentsOnlyTheTimeOrPermissions");
   }
 }
 
-function kindOf(facts: SyncFacts | undefined): string {
+type ItemKind = "nothing" | "folder" | "link" | "file";
+
+/** What is on this side, to start a sentence. */
+const KIND_HERE = {
+  nothing: "sync.nothingHere",
+  folder: "sync.folderHere",
+  link: "sync.linkHere",
+  file: "sync.fileHere",
+} as const satisfies Record<ItemKind, string>;
+
+/** What is on the other side, inside a sentence. */
+const KIND_THERE = {
+  nothing: "sync.nothingThere",
+  folder: "sync.folderThere",
+  link: "sync.linkThere",
+  file: "sync.fileThere",
+} as const satisfies Record<ItemKind, string>;
+
+function kindOf(facts: SyncFacts | undefined): ItemKind {
   if (!facts) return "nothing";
   if (facts.isDir) return "folder";
   return facts.isLink ? "link" : "file";
@@ -169,55 +217,64 @@ function kindOf(facts: SyncFacts | undefined): string {
 /** What was left alone, for the line under the list. */
 export function describeCounts(counts: SyncCounts, direction: SyncDirection): string {
   const parts: string[] = [];
-  if (counts.unchanged > 0) parts.push(`${counts.unchanged} unchanged`);
-  if (counts.kept > 0) parts.push(`${counts.kept} kept as they are`);
+  if (counts.unchanged > 0) parts.push(t("sync.countUnchanged", { count: counts.unchanged }));
+  if (counts.kept > 0) parts.push(t("sync.countKeptAsTheyAre", { count: counts.kept }));
   if (counts.extraOnTarget > 0) {
-    const where = direction === "download" ? "only in the local folder" : "only on the server";
-    parts.push(`${counts.extraOnTarget} ${where}, not deleted`);
+    parts.push(
+      direction === "download"
+        ? t("sync.countOnlyInTheLocalFolderNotDeleted", { count: counts.extraOnTarget })
+        : t("sync.countOnlyOnTheServerNotDeleted", { count: counts.extraOnTarget }),
+    );
   }
-  if (counts.protected > 0) parts.push(`${counts.protected} protected from deletion`);
+  if (counts.protected > 0) {
+    parts.push(t("sync.countProtectedFromDeletion", { count: counts.protected }));
+  }
   if (counts.heldBack > 0) {
-    parts.push(`${pluralize(counts.heldBack, "deletion")} held back by the limit`);
+    parts.push(t("sync.deletionsHeldBackByThe", { count: counts.heldBack }));
   }
-  if (counts.notCreated > 0) parts.push(`${counts.notCreated} new, not created`);
-  if (counts.sizeLimited > 0) parts.push(`${counts.sizeLimited} outside the size limits`);
-  if (counts.pruned > 0) parts.push(`${pluralize(counts.pruned, "empty folder")} left out`);
-  if (counts.excluded > 0) parts.push(`${counts.excluded} excluded`);
-  if (counts.passedOver > 0) parts.push(`${counts.passedOver} passed over`);
-  return parts.join(", ");
+  if (counts.notCreated > 0) parts.push(t("sync.countNewNotCreated", { count: counts.notCreated }));
+  if (counts.sizeLimited > 0) {
+    parts.push(t("sync.countOutsideTheSizeLimits", { count: counts.sizeLimited }));
+  }
+  if (counts.pruned > 0) parts.push(t("sync.emptyFoldersLeftOut", { count: counts.pruned }));
+  if (counts.excluded > 0) parts.push(t("sync.countExcluded", { count: counts.excluded }));
+  if (counts.passedOver > 0) parts.push(t("sync.countPassedOver", { count: counts.passedOver }));
+  return parts.join(t("common.listSeparator"));
 }
 
 export function describeRun(summary: SyncRunSummary): string {
   if (summary.dryRun) {
     const parts = [
-      `would copy ${pluralize(summary.queuedFiles, "file")} (${formatSize(summary.queuedBytes)})`,
+      t("sync.wouldCopyFiles", {
+        count: summary.queuedFiles,
+        size: formatSize(summary.queuedBytes),
+      }),
     ];
-    if (summary.deleted > 0) parts.push(`delete ${pluralize(summary.deleted, "item")}`);
+    if (summary.deleted > 0) parts.push(t("sync.deleteItems2", { count: summary.deleted }));
     if (summary.createdFolders > 0) {
-      parts.push(`create ${pluralize(summary.createdFolders, "folder")}`);
+      parts.push(t("sync.createFolders", { count: summary.createdFolders }));
     }
-    return `Dry run: ${parts.join(", ")}. Nothing was changed; the log has the details.`;
+    return t("sync.dryRunSummary", { parts: parts.join(t("common.listSeparator")) });
   }
   const parts = [
-    `Queued ${pluralize(summary.queuedFiles, "file")} (${formatSize(summary.queuedBytes)})`,
+    t("sync.queuedFiles", { count: summary.queuedFiles, size: formatSize(summary.queuedBytes) }),
   ];
-  if (summary.deleted > 0) parts.push(`deleted ${pluralize(summary.deleted, "item")}`);
+  if (summary.deleted > 0) parts.push(t("sync.deletedItems", { count: summary.deleted }));
   if (summary.deletingLater > 0) {
-    parts.push(`${pluralize(summary.deletingLater, "item")} to delete once copying is done`);
+    parts.push(t("sync.itemsToDeleteOnceCopying", { count: summary.deletingLater }));
   }
   if (summary.createdFolders > 0) {
-    parts.push(`created ${pluralize(summary.createdFolders, "folder")}`);
+    parts.push(t("sync.createdFolders", { count: summary.createdFolders }));
   }
-  if (summary.createdLinks > 0) parts.push(`created ${pluralize(summary.createdLinks, "link")}`);
-  if (summary.updated > 0) parts.push(`updated ${pluralize(summary.updated, "file")}`);
+  if (summary.createdLinks > 0) parts.push(t("sync.createdLinks", { count: summary.createdLinks }));
+  if (summary.updated > 0) parts.push(t("sync.updatedFiles", { count: summary.updated }));
   if (summary.removedSources > 0) {
-    parts.push(`removed ${pluralize(summary.removedSources, "unchanged source file")}`);
+    parts.push(t("sync.removedUnchangedSourceFiles", { count: summary.removedSources }));
   }
-  let text = parts.join(", ");
-  if (summary.failures.length > 0) {
-    text += `. ${pluralize(summary.failures.length, "change")} failed; the log has the details`;
-  }
-  return `${text}.`;
+  const done = parts.join(t("common.listSeparator"));
+  return summary.failures.length > 0
+    ? t("sync.runSummaryWithFailures", { done, count: summary.failures.length })
+    : t("sync.runSummary", { done });
 }
 
 /** Whether `path` is `root` or inside it. */

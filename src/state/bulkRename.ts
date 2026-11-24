@@ -16,7 +16,7 @@ import {
   type RenameRules,
 } from "../lib/bulkRename";
 import { toLocation, type FileOrigin } from "../lib/fileOrigin";
-import { pluralize } from "../lib/format";
+import { englishCount } from "../lib/format";
 import { fileOperations, local, toAppError } from "../lib/ipc";
 import { baseName, childPath } from "../lib/path";
 import type { RenameSummary } from "../lib/types";
@@ -25,6 +25,7 @@ import { useLogStore } from "./logStore";
 import { track } from "./operationStore";
 import { saveSettingsSection, useSettingsStore } from "./settingsStore";
 import { useToastStore } from "./toastStore";
+import { t } from "../i18n";
 
 /** A bulk rename that stopped before it was done, for the user to read. */
 export interface RenameReport {
@@ -140,12 +141,13 @@ export async function runBulkRename(request: BulkRename): Promise<void> {
   const write = useLogStore.getState().write;
   const showToast = useToastStore.getState().show;
   remember(rules);
-  const title = `Renaming ${pluralize(renames.length, "item")} in ${baseName(folder) || folder}`;
+  const shownFolder = baseName(folder) || folder;
+  const title = `Renaming ${englishCount(renames.length, "item")} in ${shownFolder}`;
   let renamedPaths: string[] = [];
   try {
     const groups = planRenames(renames, held, target, temporaryNames());
     const summary = await track(
-      title,
+      t("rename.renamingItemsIn", { count: renames.length, folder: shownFolder }),
       (operationId) =>
         fileOperations.rename({
           operationId,
@@ -156,7 +158,7 @@ export async function runBulkRename(request: BulkRename): Promise<void> {
       "rename",
     );
     renamedPaths = summary.renamed.map((item) => item.path);
-    const count = `${summary.renamed.length} of ${pluralize(renames.length, "item")}`;
+    const count = `${summary.renamed.length} of ${englishCount(renames.length, "item")}`;
     if (summary.failure || summary.stranded) {
       const { failure, stranded } = summary;
       write("error", `Renaming stopped in ${folder} with ${count} renamed`, sessionId);
@@ -175,9 +177,19 @@ export async function runBulkRename(request: BulkRename): Promise<void> {
       });
     } else if (summary.cancelled) {
       write("info", `Cancelled: ${title}, with ${count} renamed`, sessionId);
-      showToast("info", `Renaming cancelled. ${count} renamed.`);
+      showToast(
+        "info",
+        t("rename.renamingCancelledRenamed", {
+          renamed: summary.renamed.length,
+          count: renames.length,
+        }),
+      );
     } else {
-      write("info", `Renamed ${pluralize(summary.renamed.length, "item")} in ${folder}`, sessionId);
+      write(
+        "info",
+        `Renamed ${englishCount(summary.renamed.length, "item")} in ${folder}`,
+        sessionId,
+      );
     }
   } catch (caught) {
     const error = toAppError(caught);

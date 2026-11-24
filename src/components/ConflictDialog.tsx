@@ -7,15 +7,37 @@ import type { ExistsAction } from "../lib/types";
 import { useSettingsStore } from "../state/settingsStore";
 import { useTransferStore } from "../state/transferStore";
 import { Dialog } from "./Dialog";
+import { useT, t } from "../i18n";
 
 const ACTIONS: { action: ExistsAction; label: string }[] = [
-  { action: "overwrite", label: "Overwrite" },
-  { action: "overwriteIfNewer", label: "Overwrite if newer" },
-  { action: "resume", label: "Resume" },
-  { action: "rename", label: "Keep both" },
+  {
+    action: "overwrite",
+    get label() {
+      return t("common.overwrite");
+    },
+  },
+  {
+    action: "overwriteIfNewer",
+    get label() {
+      return t("dialogs.overwriteIfNewer");
+    },
+  },
+  {
+    action: "resume",
+    get label() {
+      return t("common.resume");
+    },
+  },
+  {
+    action: "rename",
+    get label() {
+      return t("dialogs.keepBoth");
+    },
+  },
 ];
 
 export function ConflictDialog() {
+  const t = useT();
   const snapshot = useTransferStore((state) => state.snapshot);
   const conflicts = useMemo(() => jobsIn(snapshot, ["conflict"]), [snapshot]);
   // One window asks.
@@ -34,27 +56,32 @@ export function ConflictDialog() {
   };
 
   return (
-    <Dialog title="File already exists" onClose={() => answer("skip")} width={520}>
+    <Dialog title={t("dialogs.fileAlreadyExists")} onClose={() => answer("skip")} width={520}>
       <div className="confirm-body">
         <p>
-          <strong>{job.name}</strong> already exists in {job.targetDirectory}.
+          {t.rich("dialogs.alreadyExistsIn", {
+            name: <strong>{job.name}</strong>,
+            folder: job.targetDirectory,
+          })}
         </p>
         <table className="conflict-table">
           <thead>
             <tr>
               <th />
-              <th>Size</th>
-              <th>Modified</th>
+              <th>{t("common.size")}</th>
+              <th>{t("dialogs.modified")}</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <th>{job.direction === "upload" ? "Local file" : "Server file"}</th>
+              <th>
+                {job.direction === "upload" ? t("dialogs.localFile") : t("dialogs.serverFile")}
+              </th>
               <td>{formatSize(info.sourceSize)}</td>
               <td>{formatDate(info.sourceModified, dateFormat)}</td>
             </tr>
             <tr>
-              <th>Existing file</th>
+              <th>{t("dialogs.existingFile")}</th>
               <td>{formatSize(info.targetSize)}</td>
               <td>{formatDate(info.targetModified, dateFormat)}</td>
             </tr>
@@ -67,13 +94,13 @@ export function ConflictDialog() {
             onChange={(event) => setApplyToAll(event.target.checked)}
           />
           {others > 0
-            ? `Do the same for the ${others} other ${others === 1 ? "conflict" : "conflicts"} and any that follow`
-            : "Do the same for any further conflicts in these transfers"}
+            ? t("dialogs.doTheSameForOthers", { count: others })
+            : t("dialogs.doTheSameForAny")}
         </label>
       </div>
       <div className="dialog-actions">
         <button type="button" className="button" onClick={() => answer("skip")}>
-          Skip
+          {t("common.skip")}
         </button>
         {ACTIONS.map(({ action, label }) => (
           <button

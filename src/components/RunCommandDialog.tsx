@@ -1,15 +1,16 @@
 import { useState, type FormEvent } from "react";
 import {
-  PLACEHOLDER_ADVICE,
   PLACEHOLDERS,
-  UNCERTAIN_COMMAND_WARNING,
   needsSelection,
+  placeholderAdvice,
   prepareCommands,
   readsUncertainly,
+  uncertainCommandWarning,
   type CommandTarget,
 } from "../lib/commands";
 import { useCommandStore } from "../state/commandStore";
 import { Dialog } from "./Dialog";
+import { useT } from "../i18n";
 
 interface RunCommandDialogProps {
   sessionId: string;
@@ -21,6 +22,7 @@ interface RunCommandDialogProps {
 let lastCommand = "";
 
 export function RunCommandDialog({ sessionId, target, onClose }: RunCommandDialogProps) {
+  const t = useT();
   const [command, setCommand] = useState(lastCommand);
   const [refresh, setRefresh] = useState(true);
   const trimmed = command.trim();
@@ -33,7 +35,7 @@ export function RunCommandDialog({ sessionId, target, onClose }: RunCommandDialo
     lastCommand = trimmed;
     onClose();
     useCommandStore.getState().show({
-      title: "Run a command",
+      title: t("automation.runACommand"),
       sessionId,
       directory: target.folder,
       commands: prepareCommands(trimmed, target),
@@ -42,11 +44,11 @@ export function RunCommandDialog({ sessionId, target, onClose }: RunCommandDialo
   };
 
   return (
-    <Dialog title="Run a command on the server" onClose={onClose} width={560}>
+    <Dialog title={t("automation.runACommandOnThe")} onClose={onClose} width={560}>
       <form className="form" onSubmit={submit}>
         <label className="field">
           <span>
-            Command to run in <code>{target.folder}</code>
+            {t.rich("automation.commandToRunIn", { folder: <code>{target.folder}</code> })}
           </span>
           <input
             data-autofocus
@@ -68,29 +70,27 @@ export function RunCommandDialog({ sessionId, target, onClose }: RunCommandDialo
             </div>
           ))}
         </dl>
-        <p className="field-hint">{PLACEHOLDER_ADVICE}</p>
-        {uncertain && <p className="field-hint warning-text">{UNCERTAIN_COMMAND_WARNING}</p>}
+        <p className="field-hint">{placeholderAdvice()}</p>
+        {uncertain && <p className="field-hint warning-text">{uncertainCommandWarning()}</p>}
         <label className="check">
           <input
             type="checkbox"
             checked={refresh}
             onChange={(event) => setRefresh(event.target.checked)}
           />
-          Refresh the server's folders when it finishes
+          {t("automation.refreshTheServersFoldersWhen")}
         </label>
-        {missingSelection && (
-          <p className="form-error">Select files or folders to fill in the placeholders.</p>
-        )}
+        {missingSelection && <p className="form-error">{t("automation.selectFilesOrFoldersTo")}</p>}
         <div className="dialog-actions">
           <button type="button" className="button" onClick={onClose}>
-            Cancel
+            {t("common.cancel")}
           </button>
           <button
             type="submit"
             className="button button-primary"
             disabled={!trimmed || missingSelection}
           >
-            Run
+            {t("automation.run")}
           </button>
         </div>
       </form>

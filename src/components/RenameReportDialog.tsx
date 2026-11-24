@@ -1,22 +1,36 @@
 import { useMemo, useState } from "react";
 import type { OutcomeRow, OutcomeStatus } from "../lib/bulkRename";
-import { pluralize } from "../lib/format";
 import type { RenameReport } from "../state/bulkRename";
 import { Dialog } from "./Dialog";
 import { RenameTable, type RenameTableRow } from "./RenameTable";
+import { useT, t } from "../i18n";
 
 type OutcomeFilter = "all" | "renamed" | "notRenamed";
 const FILTER_LABELS: Record<OutcomeFilter, string> = {
-  all: "All",
-  renamed: "Renamed",
-  notRenamed: "Not renamed",
+  get all() {
+    return t("rename.all");
+  },
+  get renamed() {
+    return t("rename.renamed");
+  },
+  get notRenamed() {
+    return t("rename.notRenamed");
+  },
 };
 
 const STATUS_LABELS: Record<OutcomeStatus, string> = {
-  renamed: "Renamed",
-  failed: "Failed",
-  stranded: "Left under another name",
-  left: "Not renamed",
+  get renamed() {
+    return t("rename.renamed");
+  },
+  get failed() {
+    return t("rename.failed");
+  },
+  get stranded() {
+    return t("rename.leftUnderAnotherName");
+  },
+  get left() {
+    return t("rename.notRenamed");
+  },
 };
 
 function tableRow(outcome: OutcomeRow): RenameTableRow {
@@ -36,6 +50,7 @@ interface RenameReportDialogProps {
 
 /** A bulk rename that stopped part way: which items have their new name, and which do not. */
 export function RenameReportDialog({ report, onClose }: RenameReportDialogProps) {
+  const t = useT();
   const { outcomes, summary, folder } = report;
   const { failure, stranded } = summary;
   const [filter, setFilter] = useState<OutcomeFilter>("all");
@@ -54,30 +69,45 @@ export function RenameReportDialog({ report, onClose }: RenameReportDialogProps)
   );
 
   return (
-    <Dialog title="Renaming stopped" onClose={onClose} width={760} className="rename-report-dialog">
+    <Dialog
+      title={t("rename.renamingStopped")}
+      onClose={onClose}
+      width={760}
+      className="rename-report-dialog"
+    >
       <div className="rename-report">
         <div className="confirm-body selectable">
           <p>
-            {renamedCount} of {pluralize(outcomes.length, "item")} in <strong>{folder}</strong>{" "}
-            {renamedCount === 1 ? "has its" : "have their"} new name.
+            {t.rich("rename.renamedOfItemsIn", {
+              count: renamedCount,
+              total: t("rename.items", { count: outcomes.length }),
+              folder: <strong>{folder}</strong>,
+            })}
+            {t("common.sentenceSeparator")}
             {stranded
-              ? " The others keep their old names, but for the one below."
-              : " The others keep their old names."}
+              ? t("rename.theOthersKeepTheirOldNamesButOne")
+              : t("rename.theOthersKeepTheirOldNames")}
           </p>
           {failure && (
             <p className="form-error">
-              <strong>{failure.from}</strong> could not be renamed to <strong>{failure.to}</strong>:{" "}
-              {failure.message}
+              {t.rich("rename.couldNotBeRenamedTo", {
+                from: <strong>{failure.from}</strong>,
+                to: <strong>{failure.to}</strong>,
+                message: failure.message,
+              })}
             </p>
           )}
           {stranded && (
             <p className="form-error">
-              <strong>{stranded.from}</strong> is now named <strong>{stranded.temporary}</strong>,
-              because it could not be given its name back: {stranded.message}. Rename it by hand.
+              {t.rich("rename.isNowNamedBecause", {
+                from: <strong>{stranded.from}</strong>,
+                temporary: <strong>{stranded.temporary}</strong>,
+                message: stranded.message,
+              })}
             </p>
           )}
         </div>
-        <div className="toggle-group" role="group" aria-label="Rows shown">
+        <div className="toggle-group" role="group" aria-label={t("rename.rowsShown")}>
           {(Object.keys(FILTER_LABELS) as OutcomeFilter[]).map((value) => (
             <button
               key={value}
@@ -91,14 +121,14 @@ export function RenameReportDialog({ report, onClose }: RenameReportDialogProps)
           ))}
         </div>
         <RenameTable
-          label="What became of each rename"
+          label={t("rename.whatBecameOfEachRename")}
           count={shown.length}
           row={(index) => tableRow(shown[index])}
-          empty="No items."
+          empty={t("rename.noItems")}
         />
         <div className="dialog-actions">
           <button type="button" className="button button-primary" data-autofocus onClick={onClose}>
-            Close
+            {t("common.close")}
           </button>
         </div>
       </div>

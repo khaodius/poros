@@ -3,6 +3,7 @@ import { ClipboardPaste, Copy, Eraser, RotateCw, SquareTerminal, TextSelect } fr
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
+import { useLatest } from "../hooks/useLatest";
 import { clipboard, terminal as terminals, toAppError } from "../lib/ipc";
 import type { TerminalTab } from "../lib/layout";
 import { clipboardText } from "../lib/osc52";
@@ -12,6 +13,7 @@ import { useSettingsStore } from "../state/settingsStore";
 import { closeTerminalTab, openShell } from "../state/terminalActions";
 import { useToastStore } from "../state/toastStore";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
+import { useT } from "../i18n";
 
 interface TerminalPaneProps {
   tab: TerminalTab;
@@ -52,6 +54,9 @@ function fitShown(host: HTMLElement, fit: FitAddon): void {
 
 /** A shell on the server, in a terminal that follows the theme and the monospace font. */
 export default function TerminalPane({ tab, visible, active }: TerminalPaneProps) {
+  const t = useT();
+  // The terminal lives across language changes, so its clipboard toast reads the latest one.
+  const latestT = useLatest(t);
   const hostRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -134,7 +139,7 @@ export default function TerminalPane({ tab, visible, active }: TerminalPaneProps
       try {
         xterm.paste(await navigator.clipboard.readText());
       } catch {
-        showToast("info", "Could not read the clipboard. Paste with Shift+Insert instead.");
+        showToast("info", latestT.current("terminal.couldNotReadTheClipboard"));
       }
     };
     pasteRef.current = pasteFromClipboard;
@@ -204,7 +209,7 @@ export default function TerminalPane({ tab, visible, active }: TerminalPaneProps
       xtermRef.current = null;
       fitRef.current = null;
     };
-  }, [attempt, showToast]);
+  }, [attempt, latestT, showToast]);
 
   useEffect(() => {
     fontSizeRef.current = fontSize;
@@ -242,27 +247,27 @@ export default function TerminalPane({ tab, visible, active }: TerminalPaneProps
     const xterm = xtermRef.current;
     const items: MenuItem[] = [
       {
-        label: "Copy",
+        label: t("common.copy"),
         icon: <Copy size={14} />,
         shortcut: "Ctrl+Shift+C",
         disabled: !xterm?.hasSelection(),
         onSelect: () => copyRef.current(),
       },
       {
-        label: "Paste",
+        label: t("common.paste"),
         icon: <ClipboardPaste size={14} />,
         shortcut: "Ctrl+Shift+V",
         disabled: phase !== "running",
         onSelect: () => void pasteRef.current(),
       },
       {
-        label: "Select all",
+        label: t("terminal.selectAll"),
         icon: <TextSelect size={14} />,
         onSelect: () => xterm?.selectAll(),
       },
       "separator",
       {
-        label: "Clear",
+        label: t("common.clear"),
         icon: <Eraser size={14} />,
         onSelect: () => xterm?.clear(),
       },
@@ -278,7 +283,11 @@ export default function TerminalPane({ tab, visible, active }: TerminalPaneProps
           <span title={tab.label}>{tab.label}</span>
         </div>
         <span className="terminal-state">
-          {phase === "connecting" ? "Connecting..." : phase === "running" ? "Connected" : ""}
+          {phase === "connecting"
+            ? t("terminal.connecting")
+            : phase === "running"
+              ? t("terminal.connected")
+              : ""}
         </span>
       </header>
       <div className="terminal-body" onContextMenu={showMenu}>
@@ -286,18 +295,18 @@ export default function TerminalPane({ tab, visible, active }: TerminalPaneProps
         {phase === "failed" && (
           <div className="pane-overlay">
             <SquareTerminal size={36} className="pane-empty-icon" />
-            <p className="pane-empty-title">Could not open a terminal</p>
+            <p className="pane-empty-title">{t("terminal.couldNotOpenATerminal")}</p>
             <p className="pane-empty-detail selectable">{message}</p>
             <div className="dialog-actions">
               <button type="button" className="button" onClick={() => closeTerminalTab(tab.id)}>
-                Close tab
+                {t("terminal.closeTab")}
               </button>
               <button
                 type="button"
                 className="button button-primary"
                 onClick={() => setAttempt((count) => count + 1)}
               >
-                Try again
+                {t("common.tryAgain")}
               </button>
             </div>
           </div>
@@ -307,7 +316,7 @@ export default function TerminalPane({ tab, visible, active }: TerminalPaneProps
         <div className="terminal-ended" role="status">
           <span>{message}</span>
           <button type="button" className="button" onClick={() => closeTerminalTab(tab.id)}>
-            Close tab
+            {t("terminal.closeTab")}
           </button>
           <button
             type="button"
@@ -316,7 +325,7 @@ export default function TerminalPane({ tab, visible, active }: TerminalPaneProps
             onClick={() => void restart()}
           >
             <RotateCw size={13} className={restarting ? "spin" : ""} />
-            Restart
+            {t("terminal.restart")}
           </button>
         </div>
       )}

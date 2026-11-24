@@ -2,6 +2,7 @@
 // Files headed elsewhere go through the transfer queue instead. Deleting on SFTP servers too.
 
 import { formatCount } from "../lib/deletion";
+import { englishCount } from "../lib/format";
 import type { Point } from "../lib/fileFlight";
 import { localSource, type PathStyle } from "../lib/fileSource";
 import {
@@ -11,7 +12,6 @@ import {
   worksInPlace,
   type FileOrigin,
 } from "../lib/fileOrigin";
-import { pluralize } from "../lib/format";
 import { folderOf } from "../lib/search";
 import { fileOperations, toAppError } from "../lib/ipc";
 import { baseName, breadcrumbs, childPath, isWithin, samePath } from "../lib/path";
@@ -34,6 +34,7 @@ import { getPane, listPanes, type PaneHandle } from "./paneRegistry";
 import { useSessionStore } from "./sessionStore";
 import { useToastStore } from "./toastStore";
 import { paneWritingTo, refusesLockedVault, transferBetween } from "./transferActions";
+import { t } from "../i18n";
 
 export function paneOrigin(pane: Pick<PaneHandle, "kind" | "sessionId">): FileOrigin {
   const info = pane.sessionId
@@ -131,6 +132,18 @@ function howItWasDone(methods: OperationMethod[]): string {
   return notes.length > 0 ? ` (${notes.join(", ")})` : "";
 }
 
+/** The progress line of a move or copy, in the interface's language. */
+function placingTitle(mode: PlaceMode, name: string | null, count: number, folder: string): string {
+  if (name === null) {
+    return mode === "move"
+      ? t("pane.movingItemsTo", { count, folder })
+      : t("pane.copyingItemsTo", { count, folder });
+  }
+  return mode === "move"
+    ? t("pane.movingNameTo", { name, folder })
+    : t("pane.copyingNameTo", { name, folder });
+}
+
 function report(mode: PlaceMode, summary: OperationSummary, folder: string, sessionId?: string) {
   const write = useLogStore.getState().write;
   const verb = mode === "move" ? "Moved" : "Copied";
@@ -138,7 +151,7 @@ function report(mode: PlaceMode, summary: OperationSummary, folder: string, sess
     const skipped = summary.skipped > 0 ? `, skipped ${summary.skipped}` : "";
     write(
       "info",
-      `${verb} ${pluralize(summary.placed.length, "item")} to ${folder}${skipped}${howItWasDone(summary.methods)}`,
+      `${verb} ${englishCount(summary.placed.length, "item")} to ${folder}${skipped}${howItWasDone(summary.methods)}`,
       sessionId,
     );
   }
@@ -153,7 +166,9 @@ function report(mode: PlaceMode, summary: OperationSummary, folder: string, sess
         "error",
         summary.failures.length === 1
           ? `${baseName(first.path)}: ${first.message}`
-          : `${summary.failures.length} items could not be ${mode === "move" ? "moved" : "copied"}. The log lists why.`,
+          : mode === "move"
+            ? t("pane.itemsCouldNotBeMoved", { count: summary.failures.length })
+            : t("pane.itemsCouldNotBeCopied", { count: summary.failures.length }),
       );
   }
 }
@@ -193,8 +208,8 @@ export async function placeEntries(request: PlaceRequest): Promise<boolean> {
       showToast(
         "info",
         isInsideVault(origin)
-          ? "Copies in the same folder cannot be made inside a vault."
-          : "Copies in the same folder need an SFTP connection.",
+          ? t("pane.copiesInTheSameFolder")
+          : t("pane.copiesInTheSameFolderNeed"),
       );
       return false;
     }
@@ -202,14 +217,14 @@ export async function placeEntries(request: PlaceRequest): Promise<boolean> {
       sharesFolders(origin, targetOrigin) &&
       entries.some((entry) => entry.kind === "dir" && isWithin(targetFolder, entry.path, style))
     ) {
-      showToast("info", "A folder cannot go inside itself.");
+      showToast("info", t("pane.aFolderCannotGoInside"));
       return false;
     }
     const source: PaneHandle = {
       tabId: sourceTabId ?? "clipboard",
       kind: origin.kind,
       sessionId: origin.sessionId,
-      label: origin.server?.host ?? "Local",
+      label: origin.server?.host ?? t("pane.local"),
       path: () => sourceFolder,
       refresh: () => undefined,
       selected: () => entries,
@@ -217,7 +232,7 @@ export async function placeEntries(request: PlaceRequest): Promise<boolean> {
       activatedAt: 0,
     };
     if (mode === "move") {
-      showToast("info", "Cut files are copied there; the originals stay.");
+      showToast("info", t("pane.cutFilesAreCopiedThere"));
     }
     await transferBetween(source, entries, target, targetFolder, landing);
     return true;
@@ -249,8 +264,10 @@ export async function placeEntries(request: PlaceRequest): Promise<boolean> {
     return false;
   }
 
-  const what = entries.length === 1 ? entries[0].name : pluralize(entries.length, "item");
-  const title = `${mode === "move" ? "Moving" : "Copying"} ${what} to ${baseName(targetFolder)}`;
+  const single = entries.length === 1 ? entries[0].name : null;
+  // The log stays in English; the progress line follows the interface.
+  const title = `${mode === "move" ? "Moving" : "Copying"} ${single ?? englishCount(entries.length, "item")} to ${baseName(targetFolder)}`;
+  const shownTitle = placingTitle(mode, single, entries.length, baseName(targetFolder));
   const side = { kind: origin.kind, sessionId: origin.sessionId };
   // Moved files' rows go away, so where they were is measured before they leave.
   const points = measureRows(sourceTabId, side, entries);
@@ -258,7 +275,7 @@ export async function placeEntries(request: PlaceRequest): Promise<boolean> {
   // What a name clash has written over is not what it was, whether or not the rest went through.
   const written = entries.map((entry) => childPath(targetFolder, entry.name, style));
   try {
-    const summary = await track(title, (operationId) =>
+    const summary = await track(shownTitle, (operationId) =>
       fileOperations.moveOrCopy({
         operationId,
         location,
@@ -319,11 +336,16 @@ export async function deleteOnServer(request: DeleteOnServer): Promise<void> {
   if (!sessionId || entries.length === 0) return;
   const write = useLogStore.getState().write;
   const showToast = useToastStore.getState().show;
-  const what = entries.length === 1 ? entries[0].name : pluralize(entries.length, "item");
-  const title = `Deleting ${what} from ${baseName(folder) || folder}`;
+  const single = entries.length === 1 ? entries[0].name : null;
+  const from = baseName(folder) || folder;
+  const title = `Deleting ${single ?? englishCount(entries.length, "item")} from ${from}`;
+  const shownTitle =
+    single === null
+      ? t("pane.deletingItemsFrom", { count: entries.length, folder: from })
+      : t("pane.deletingNameFrom", { name: single, folder: from });
   try {
     const summary = await track(
-      title,
+      shownTitle,
       (operationId) =>
         fileOperations.delete({
           operationId,
@@ -336,7 +358,7 @@ export async function deleteOnServer(request: DeleteOnServer): Promise<void> {
       summary.deleted > entries.length ? `, ${formatCount(summary.deleted)} entries` : "";
     write(
       "info",
-      `Deleted ${what} in ${folder}${inside}${howItWasDone(summary.methods)}`,
+      `Deleted ${single ?? englishCount(entries.length, "item")} in ${folder}${inside}${howItWasDone(summary.methods)}`,
       sessionId,
     );
     for (const failure of summary.failures) {
@@ -352,7 +374,7 @@ export async function deleteOnServer(request: DeleteOnServer): Promise<void> {
         "error",
         summary.failed === 1
           ? `${baseName(first.path)}: ${first.message}`
-          : `${formatCount(summary.failed)} entries could not be deleted. The log lists why.`,
+          : t("pane.entriesCouldNotBeDeleted", { count: summary.failed }),
       );
     }
   } catch (caught) {
@@ -408,7 +430,7 @@ export function dropAction(
     // Over the dragged folder itself, the drag was a click that slipped.
     if (entries.some((entry) => samePath(folder, entry.path, style))) return null;
     if (entries.some((entry) => entry.kind === "dir" && isWithin(folder, entry.path, style))) {
-      return { kind: "blocked", reason: "A folder cannot go inside itself" };
+      return { kind: "blocked", reason: t("pane.aFolderCannotGoInsideItself") };
     }
   }
   // Between two servers, or on one reached other than over SFTP, the transfer queue copies.
@@ -417,13 +439,13 @@ export function dropAction(
       return {
         kind: "blocked",
         reason: isInsideVault(origin)
-          ? "Files cannot be moved inside a vault"
-          : "Moving on this server needs SFTP",
+          ? t("pane.filesCannotBeMovedInside")
+          : t("pane.movingOnThisServerNeeds"),
       };
     }
     if (sameFiles && entries.every(inFolder)) return null;
     if (sameFiles && entries.some(inFolder)) {
-      return { kind: "blocked", reason: "Some of these are in that folder already" };
+      return { kind: "blocked", reason: t("pane.someOfTheseAreIn") };
     }
     return { kind: "transfer", direction: "relay", folder };
   }

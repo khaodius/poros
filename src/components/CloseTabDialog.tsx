@@ -1,8 +1,8 @@
 import { useLatest } from "../hooks/useLatest";
-import { pluralize } from "../lib/format";
 import { transfers } from "../lib/ipc";
 import { closeRemoteTab, familyOf } from "../state/tabActions";
 import { Dialog } from "./Dialog";
+import { useT } from "../i18n";
 import { DrivesGoing } from "./DrivesGoing";
 
 interface CloseTabDialogProps {
@@ -26,6 +26,7 @@ export function CloseTabDialog({
   drives,
   onClose,
 }: CloseTabDialogProps) {
+  const t = useT();
   const latestOnClose = useLatest(onClose);
   const close = async (pauseTransfers: boolean) => {
     const [serverId, ...vaultIds] = familyOf(sessionId);
@@ -37,31 +38,22 @@ export function CloseTabDialog({
   };
 
   return (
-    <Dialog title={`Close ${label}?`} onClose={onClose}>
+    <Dialog title={t("workspace.close", { label })} onClose={onClose}>
       <div className="confirm-body">
         {pendingTransfers > 0 && (
-          <p>
-            {pluralize(pendingTransfers, "transfer")} for this server{" "}
-            {pendingTransfers === 1 ? "is" : "are"} still in the queue. They can keep running on
-            their own connections after the tab closes, or wait paused until you resume them.
-          </p>
+          <p>{t("workspace.transfersForThisServerStillQueued", { count: pendingTransfers })}</p>
         )}
-        {vaultTransfers > 0 && (
-          <p>
-            Transfers into or out of an unlocked vault are paused either way: closing the tab locks
-            the vault. Resume them once the vault is unlocked again.
-          </p>
-        )}
-        <DrivesGoing drives={drives} when="the tab closes" />
+        {vaultTransfers > 0 && <p>{t("workspace.transfersIntoOrOutOf")}</p>}
+        <DrivesGoing drives={drives} when="tabCloses" />
       </div>
       <div className="dialog-actions">
         <button type="button" className="button" onClick={onClose}>
-          Cancel
+          {t("common.cancel")}
         </button>
         {pendingTransfers > 0 ? (
           <>
             <button type="button" className="button" onClick={() => void close(true)}>
-              Pause transfers and close
+              {t("workspace.pauseTransfersAndClose")}
             </button>
             <button
               type="button"
@@ -69,7 +61,7 @@ export function CloseTabDialog({
               className="button button-primary"
               onClick={() => void close(false)}
             >
-              Keep transferring
+              {t("workspace.keepTransferring")}
             </button>
           </>
         ) : (
@@ -79,7 +71,7 @@ export function CloseTabDialog({
             className="button button-primary"
             onClick={() => void close(false)}
           >
-            Unmount and close
+            {t("workspace.unmountAndClose")}
           </button>
         )}
       </div>

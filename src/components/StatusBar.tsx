@@ -1,5 +1,11 @@
 import { ArrowDown, ArrowUp, CircleArrowUp } from "lucide-react";
-import { formatDuration, formatSize, formatSpeed, formatVersion, pluralize } from "../lib/format";
+import {
+  formatDuration,
+  formatPercent,
+  formatSize,
+  formatSpeed,
+  formatVersion,
+} from "../lib/format";
 import { findGroup } from "../lib/layout";
 import { secondsRemaining, showsPaused } from "../lib/transfers";
 import { useLayoutStore } from "../state/layoutStore";
@@ -16,10 +22,12 @@ import {
 } from "../state/updateStore";
 import { DriveStatus } from "./DriveStatus";
 import { LimitScheduleStatus } from "./LimitScheduleStatus";
+import { t, useT } from "../i18n";
 
 const APP_VERSION = formatVersion(__APP_VERSION__);
 
 function useActiveSessionText(): { text: string; tone: "connected" | "lost" | "disconnected" } {
+  const t = useT();
   const activeSessionId = useLayoutStore((state) => {
     const group = findGroup(state.root, state.activeGroupId);
     const tab = group?.tabs.find((candidate) => candidate.id === group.activeTabId);
@@ -33,11 +41,12 @@ function useActiveSessionText(): { text: string; tone: "connected" | "lost" | "d
     (state) => Object.values(state.sessions).filter((session) => !session.info.vault).length,
   );
   if (entry?.status === "lost") {
-    return { text: `Connection to ${entry.info.label} lost`, tone: "lost" };
+    return { text: t("workspace.connectionToLost", { label: entry.info.label }), tone: "lost" };
   }
-  if (entry) return { text: `Connected to ${entry.info.label}`, tone: "connected" };
-  if (count > 0) return { text: `${pluralize(count, "server")} connected`, tone: "connected" };
-  return { text: "Not connected", tone: "disconnected" };
+  if (entry)
+    return { text: t("workspace.connectedTo", { label: entry.info.label }), tone: "connected" };
+  if (count > 0) return { text: t("workspace.serversConnected", { count }), tone: "connected" };
+  return { text: t("workspace.notConnected"), tone: "disconnected" };
 }
 
 /** The newer version found by the last check, unless the user skipped it. */
@@ -49,6 +58,7 @@ function useOfferedUpdate(): string | null {
 
 /** The update the last check found, or how an install goes; opens the dialog or the notice. */
 function UpdateStatus() {
+  const t = useT();
   const offeredUpdate = useOfferedUpdate();
   const version = useUpdateStore((state) => state.target?.version ?? null);
   const install = useUpdateStore((state) => state.install);
@@ -69,7 +79,7 @@ function UpdateStatus() {
       onClick={() => openDialog({ kind: "update" })}
     >
       <CircleArrowUp size={12} />
-      Update to {formatVersion(offeredUpdate)}
+      {t("workspace.updateTo", { version: formatVersion(offeredUpdate) })}
     </button>
   );
 }
@@ -78,20 +88,41 @@ function describeInstall(install: InstallStage, version: string): string {
   switch (install.stage) {
     case "downloading": {
       const percent = percentDownloaded(install.received, install.total);
-      return `Downloading ${version}${percent === null ? "" : `, ${percent}%`}`;
+      return percent === null
+        ? t("updates.downloadingVersion", { version })
+        : t("updates.downloadingVersionPercent", { version, percent: formatPercent(percent) });
     }
     case "installing":
-      return `Installing ${version}`;
+      return t("updates.installingVersion", { version });
     case "ready":
-      return `Restart to use ${version}`;
+      return t("updates.restartToUse", { version });
     case "restarting":
-      return "Restarting";
+      return t("updates.restarting");
     case "failed":
-      return `Could not install ${version}`;
+      return t("updates.couldNotInstallVersion", { version });
   }
 }
 
+/** `3 transfers left, 1.2 GB, about 4m 10s`, with `(paused)` after it while the queue waits. */
+function queueStatus(
+  pending: number,
+  remainingBytes: number,
+  remainingSeconds: number | null,
+  paused: boolean,
+): string {
+  const facts = [
+    t("workspace.transfersLeft", { count: pending }),
+    remainingBytes > 0 ? formatSize(remainingBytes) : null,
+    remainingSeconds !== null
+      ? t("workspace.aboutDuration", { duration: formatDuration(remainingSeconds) })
+      : null,
+  ].filter((fact) => fact !== null);
+  const status = facts.join(t("common.listSeparator"));
+  return paused ? t("workspace.queueStatusPaused", { status }) : status;
+}
+
 export function StatusBar() {
+  const t = useT();
   const session = useActiveSessionText();
   const stats = useTransferStore((state) => state.snapshot.stats);
   const pending = stats.counts.queued + stats.counts.running;
@@ -108,23 +139,22 @@ export function StatusBar() {
         <ExternalEditsStatus />
         {pending > 0 && (
           <span className="status-item status-queue">
-            {pluralize(pending, "transfer")} left
-            {stats.remainingBytes > 0 && `, ${formatSize(stats.remainingBytes)}`}
-            {remaining !== null && `, about ${formatDuration(remaining)}`}
-            {showsPaused(stats) && " (paused)"}
+            {queueStatus(pending, stats.remainingBytes, remaining, showsPaused(stats))}
           </span>
         )}
         <LimitScheduleStatus />
-        <span className="status-item status-speed" title="Upload speed">
+        <span className="status-item status-speed" title={t("workspace.uploadSpeed")}>
           <ArrowUp size={12} className={stats.uploadSpeed > 0 ? "is-moving" : ""} />
           {formatSpeed(stats.uploadSpeed)}
         </span>
-        <span className="status-item status-speed" title="Download speed">
+        <span className="status-item status-speed" title={t("workspace.downloadSpeed")}>
           <ArrowDown size={12} className={stats.downloadSpeed > 0 ? "is-moving" : ""} />
           {formatSpeed(stats.downloadSpeed)}
         </span>
         <UpdateStatus />
-        <span className="status-item status-version">Poros {APP_VERSION}</span>
+        <span className="status-item status-version">
+          {t("workspace.appVersion", { version: APP_VERSION })}
+        </span>
       </span>
     </footer>
   );

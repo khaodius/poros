@@ -82,6 +82,7 @@ import {
   savedLayout,
   startSavingWorkspace,
 } from "./state/workspace";
+import { useT } from "./i18n";
 
 let starting: Promise<void> | null = null;
 
@@ -452,6 +453,7 @@ function useFontSizeShortcuts() {
 }
 
 export function App() {
+  const t = useT();
   const [ready, setReady] = useState(false);
   const openDialog = useUiStore((state) => state.open);
 
@@ -501,8 +503,8 @@ export function App() {
           <button
             type="button"
             className="icon-button topbar-button"
-            title="Connect to server"
-            aria-label="Connect to server"
+            title={t("workspace.connectToServer")}
+            aria-label={t("workspace.connectToServer")}
             onClick={() => openDialog({ kind: "connect", draft: EMPTY_DRAFT })}
           >
             <Plus size={17} />
@@ -510,8 +512,8 @@ export function App() {
           <button
             type="button"
             className="icon-button topbar-button"
-            title="Synchronize folders"
-            aria-label="Synchronize folders"
+            title={t("workspace.synchronizeFolders")}
+            aria-label={t("workspace.synchronizeFolders")}
             onClick={() => openDialog({ kind: "sync" })}
           >
             <FolderSync size={15} />
@@ -519,8 +521,8 @@ export function App() {
           <button
             type="button"
             className="icon-button topbar-button"
-            title="Scheduled tasks"
-            aria-label="Scheduled tasks"
+            title={t("workspace.scheduledTasks")}
+            aria-label={t("workspace.scheduledTasks")}
             onClick={() => openDialog({ kind: "schedules" })}
           >
             <CalendarClock size={15} />
@@ -528,8 +530,8 @@ export function App() {
           <button
             type="button"
             className="icon-button topbar-button"
-            title="Settings (Ctrl+,)"
-            aria-label="Settings"
+            title={t("workspace.settingsCtrl")}
+            aria-label={t("common.settings")}
             onClick={() => openDialog({ kind: "settings", section: "transfers" })}
           >
             <SlidersHorizontal size={15} />

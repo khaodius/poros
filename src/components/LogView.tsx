@@ -17,15 +17,36 @@ import { useLogStore, type LogLine } from "../state/logStore";
 import { useSessionStore } from "../state/sessionStore";
 import { saveSettingsSection, useSettingsStore } from "../state/settingsStore";
 import { useToastStore } from "../state/toastStore";
+import { useT, t } from "../i18n";
 
 const STICK_TO_BOTTOM_THRESHOLD = 24;
 const ALL_SESSIONS = "";
 
 const LEVELS: { level: LogLevel; label: string }[] = [
-  { level: "info", label: "Info" },
-  { level: "warn", label: "Warnings" },
-  { level: "error", label: "Errors" },
-  { level: "server", label: "Server" },
+  {
+    level: "info",
+    get label() {
+      return t("log.info");
+    },
+  },
+  {
+    level: "warn",
+    get label() {
+      return t("log.warnings");
+    },
+  },
+  {
+    level: "error",
+    get label() {
+      return t("log.errors");
+    },
+  },
+  {
+    level: "server",
+    get label() {
+      return t("log.server");
+    },
+  },
 ];
 
 function plainText(line: LogLine): string {
@@ -33,6 +54,7 @@ function plainText(line: LogLine): string {
 }
 
 export function LogView() {
+  const t = useT();
   const lines = useLogStore((state) => state.lines);
   const clear = useLogStore((state) => state.clear);
   const options = useSettingsStore((state) => state.settings.log);
@@ -73,9 +95,9 @@ export function LogView() {
 
   const saveVisible = async () => {
     const path = await saveFileDialog({
-      title: "Save log",
+      title: t("log.saveLog"),
       defaultPath: "poros.log",
-      filters: [{ name: "Log files", extensions: ["log", "txt"] }],
+      filters: [{ name: t("log.logFiles"), extensions: ["log", "txt"] }],
     });
     if (!path) return;
     try {
@@ -88,7 +110,7 @@ export function LogView() {
   return (
     <div className="log-view">
       <div className="log-toolbar">
-        <div className="toggle-group" role="group" aria-label="Levels">
+        <div className="toggle-group" role="group" aria-label={t("log.levels")}>
           {LEVELS.map(({ level, label }) => (
             <button
               key={level}
@@ -104,13 +126,13 @@ export function LogView() {
         <select
           className="log-session"
           value={sessionFilter}
-          aria-label="Session"
+          aria-label={t("log.session")}
           onChange={(event) => setSessionFilter(event.target.value)}
         >
-          <option value={ALL_SESSIONS}>All sessions</option>
+          <option value={ALL_SESSIONS}>{t("log.allSessions")}</option>
           {loggedSessions.map((id) => (
             <option key={id} value={id}>
-              {sessions[id]?.info.label ?? `Closed session ${id.slice(0, 8)}`}
+              {sessions[id]?.info.label ?? t("log.closedSession", { id: id.slice(0, 8) })}
             </option>
           ))}
         </select>
@@ -118,7 +140,7 @@ export function LogView() {
           <Search size={13} />
           <input
             value={query}
-            placeholder="Search log"
+            placeholder={t("log.searchLog")}
             spellCheck={false}
             onChange={(event) => setQuery(event.target.value)}
           />
@@ -126,7 +148,7 @@ export function LogView() {
             <button
               type="button"
               className="icon-button"
-              aria-label="Clear search"
+              aria-label={t("log.clearSearch")}
               onClick={() => setQuery("")}
             >
               <X size={12} />
@@ -135,28 +157,28 @@ export function LogView() {
         </label>
         <span className="toolbar-spacer" />
         <IconToggle
-          label="Show times"
+          label={t("log.showTimes")}
           on={options.timestamps}
           onToggle={() => void saveSettingsSection("log", { timestamps: !options.timestamps })}
         >
           <Clock size={14} />
         </IconToggle>
         <IconToggle
-          label="Wrap long lines"
+          label={t("log.wrapLongLines")}
           on={options.wrapLines}
           onToggle={() => void saveSettingsSection("log", { wrapLines: !options.wrapLines })}
         >
           <WrapText size={14} />
         </IconToggle>
-        <IconToggle label="Follow new lines" on={follow} onToggle={() => setFollow(!follow)}>
+        <IconToggle label={t("log.followNewLines")} on={follow} onToggle={() => setFollow(!follow)}>
           <ArrowDownToLine size={14} />
         </IconToggle>
         <span className="toolbar-divider" />
         <button
           type="button"
           className="icon-button"
-          title="Copy shown lines"
-          aria-label="Copy shown lines"
+          title={t("log.copyShownLines")}
+          aria-label={t("log.copyShownLines")}
           disabled={visible.length === 0}
           onClick={copyVisible}
         >
@@ -165,8 +187,8 @@ export function LogView() {
         <button
           type="button"
           className="icon-button"
-          title="Save shown lines to a file"
-          aria-label="Save shown lines to a file"
+          title={t("log.saveShownLinesToA")}
+          aria-label={t("log.saveShownLinesToA")}
           disabled={visible.length === 0}
           onClick={() => void saveVisible()}
         >
@@ -175,8 +197,8 @@ export function LogView() {
         <button
           type="button"
           className="icon-button"
-          title="Clear log"
-          aria-label="Clear log"
+          title={t("log.clearLog")}
+          aria-label={t("log.clearLog")}
           disabled={lines.length === 0}
           onClick={clear}
         >
@@ -197,8 +219,8 @@ export function LogView() {
         {visible.length === 0 && (
           <p className="log-empty">
             {lines.length === 0
-              ? "Connection and transfer activity appears here."
-              : "No lines match the filters."}
+              ? t("log.connectionAndTransferActivityAppears")
+              : t("log.noLinesMatchTheFilters")}
           </p>
         )}
         {visible.map((line) => (

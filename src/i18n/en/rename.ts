@@ -1,0 +1,173 @@
+import type { MessageArea } from "../catalog";
+
+export const rename = {
+  // components/BulkRenameDialog
+  nothingToRename: "Nothing to rename",
+  renameItems: { one: "Rename {count} item", other: "Rename {count} items" },
+  appliedInThisOrderEach: "Applied in this order, each to the result of the last.",
+  findAndReplace: "Find and replace",
+  find: "Find",
+  regularExpression: "Regular expression",
+  recentPatterns: "Recent patterns",
+  recent: "Recent",
+  replaceWith: "Replace with",
+  replaceWith1OrName: "Replace with, $1 or $<name> for groups",
+  patternIs: "Pattern is",
+  matchCase: "Match case",
+  everyMatch: "Every match",
+  lookIn: "Look in",
+  template: "Template",
+  templateForTheNewName: "Template for the new name",
+  insertAToken: "Insert a token",
+  dateAs: "Date as",
+  timeAs: "Time as",
+  theDateAndTimeAre:
+    "The date and time are when the item was last modified. Without {ext}, items keep their extension.",
+  counter: "Counter",
+  step: "Step",
+  digits: "Digits",
+  countsIn: "Counts in",
+  listOrder: "List order",
+  nameOrder: "Name order",
+  theTemplatePlacesTheCounter: "The template places the counter where {n} is.",
+  addToEachName: "Add to each name",
+  separator: "Separator",
+  case: "Case",
+  extension: "Extension",
+  newExtension: "New extension",
+  newExtensionSuchAsJpg: "New extension, such as jpg",
+  trimAndTidy: "Trim and tidy",
+  trimSpacesAtTheEnds: "Trim spaces at the ends",
+  makeRepeatedSpacesOne: "Make repeated spaces one",
+  replaceSpacesWith: "Replace spaces with",
+  characterThatReplacesSpaces: "Character that replaces spaces",
+  rowsShown: "Rows shown",
+  oldAndNewNames: "Old and new names",
+  noNamesChangeYet: "No names change yet.",
+  couldNotRefreshThisFolder: "Could not refresh this folder. This listing may be out of date.",
+  resetRules: "Reset rules",
+  ofItemsWillBeRenamed: {
+    one: "{ready} of {count} item will be renamed.",
+    other: "{ready} of {count} items will be renamed.",
+  },
+  ofItemsWillBeRenamedSomeUnchanged: {
+    one: "{ready} of {count} item will be renamed, {unchanged} unchanged.",
+    other: "{ready} of {count} items will be renamed, {unchanged} unchanged.",
+  },
+  text: "Text",
+  regex: "Regex",
+  both: "Both",
+  unchanged: "Unchanged",
+  cannotBeRenamed: "Cannot be renamed",
+  nameUnchanged: "Unchanged",
+  ready: "Ready",
+  lowercase: "lowercase",
+  uppercase: "UPPERCASE",
+  titleCase: "Title Case",
+  sentenceCase: "Sentence case",
+  beforeTheName: "Before the name",
+  afterTheName: "After the name",
+  all: "All",
+  changed: "Changed",
+  problems: "Problems",
+  checkingTheFolder: "Checking the folder...",
+  theseItemsAreNoLongerInTheFolder: "These items are no longer in the folder.",
+  selectedItemsLeftOut: {
+    one: "{count} selected item is no longer in the folder and is left out.",
+    other: "{count} selected items are no longer in the folder and are left out.",
+  },
+
+  // components/RenameReportDialog
+  renamingStopped: "Renaming stopped",
+  renamedOfItemsIn: {
+    one: "{count} of {total} in {folder} has its new name.",
+    other: "{count} of {total} in {folder} have their new name.",
+  },
+  theOthersKeepTheirOldNamesButOne: "The others keep their old names, but for the one below.",
+  theOthersKeepTheirOldNames: "The others keep their old names.",
+  items: { one: "{count} item", other: "{count} items" },
+  couldNotBeRenamedTo: "{from} could not be renamed to {to}: {message}",
+  isNowNamedBecause:
+    "{from} is now named {temporary}, because it could not be given its name back: {message}. Rename it by hand.",
+  whatBecameOfEachRename: "What became of each rename",
+  noItems: "No items.",
+  renamed: "Renamed",
+  notRenamed: "Not renamed",
+  failed: "Failed",
+  leftUnderAnotherName: "Left under another name",
+
+  // components/RenameTable
+  newName: "New name",
+  status: "Status",
+  noName: "No name",
+
+  // lib/bulkRename
+  theNameIsEmpty: "The name is empty",
+  theNameIsTooLongInBytes: {
+    one: "The name is too long: {length} of {count} byte",
+    other: "The name is too long: {length} of {count} bytes",
+  },
+  theNameIsTooLongInCharacters: {
+    one: "The name is too long: {length} of {count} character",
+    other: "The name is too long: {length} of {count} characters",
+  },
+  nowNamed: "Now named {temporary}: {message}",
+  nameWithoutTheExtension: "Name without the extension",
+  dateModified: "Date modified",
+  timeModified: "Time modified",
+  nameOfTheFolder: "Name of the folder",
+  isNotAName: '"{name}" is not a name',
+  namesCannotContainControlCharacters: "Names cannot contain control characters",
+  namesCannotContain: "Names cannot contain {character}",
+  namesCannotEndWithASpaceOrADot: "Names cannot end with a space or a dot",
+  isAReservedNameOnWindows: "{name} is a reserved name on Windows",
+  keepsThisName: "{name} keeps this name",
+  keepsANameDifferingInCase: "{name} keeps a name, which differs only in case",
+  keepsANameDifferingInAccents:
+    "{name} keeps a name, which differs only in how its accents are stored",
+  getsTheSameName: "{name} gets the same name",
+  getsANameDifferingInCase: "{name} gets a name, which differs only in case",
+  getsANameDifferingInAccents:
+    "{name} gets a name, which differs only in how its accents are stored",
+  anotherSelectedItemHasTheSameName:
+    "Another selected item has the same name; rename these one at a time",
+  isSelectedTooAndCountsAsTheSameName:
+    "{name} is selected too and counts as the same name here; rename these one at a time",
+  noModifiedTimeFor: "The item has no modified time for {date} or {time}",
+  anItemThatIsNotSelectedHasThisName: "An item that is not selected has this name",
+  notSelectedAndHasANameDifferingInCase:
+    "{name} is not selected and has a name, which differs only in case",
+  notSelectedAndHasANameDifferingInAccents:
+    "{name} is not selected and has a name, which differs only in how its accents are stored",
+  problemSharedName: {
+    one: "{count} item has the same name as another selected item",
+    other: "{count} items have the same name as another selected item",
+  },
+  problemEmpty: { one: "{count} name is empty", other: "{count} names are empty" },
+  problemInvalid: {
+    one: "{count} name cannot be used here",
+    other: "{count} names cannot be used here",
+  },
+  problemTooLong: { one: "{count} name is too long", other: "{count} names are too long" },
+  problemUndated: {
+    one: "{count} item has no modified time",
+    other: "{count} items have no modified time",
+  },
+  problemDuplicate: {
+    one: "{count} item would share a name",
+    other: "{count} items would share a name",
+  },
+  problemTaken: { one: "{count} name is already taken", other: "{count} names are already taken" },
+  theRegularExpressionIsNotValid: "The regular expression is not valid: {error}",
+  problemsSentence: "{problems}.",
+
+  // state/bulkRename
+  renamingCancelledRenamed: {
+    one: "Renaming cancelled. {renamed} of {count} item renamed.",
+    other: "Renaming cancelled. {renamed} of {count} items renamed.",
+  },
+  renamingItemsIn: {
+    one: "Renaming {count} item in {folder}",
+    other: "Renaming {count} items in {folder}",
+  },
+} as const satisfies MessageArea;

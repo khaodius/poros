@@ -4,6 +4,7 @@ import { findTab } from "../lib/layout";
 import { closeEditorTab, closeWindowNow, saveAndClose } from "../state/editorActions";
 import { useLayoutStore } from "../state/layoutStore";
 import { Dialog } from "./Dialog";
+import { useT } from "../i18n";
 
 interface UnsavedChangesDialogProps {
   tabIds: string[];
@@ -13,6 +14,7 @@ interface UnsavedChangesDialogProps {
 }
 
 export function UnsavedChangesDialog({ tabIds, closeWindow, onClose }: UnsavedChangesDialogProps) {
+  const t = useT();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Dismissed while the files save, the question leaves the window open.
@@ -51,7 +53,7 @@ export function UnsavedChangesDialog({ tabIds, closeWindow, onClose }: UnsavedCh
     setError(null);
     const saved = await saveAndClose(tabIds);
     setBusy(false);
-    if (!saved) setError("Some files could not be saved. Their tabs say why.");
+    if (!saved) setError(t("editor.someFilesCouldNotBe"));
     // Tabs that joined meanwhile are still to be asked about, and the question stays for them.
     else if (latest.current.tabIds.every((tabId) => tabIds.includes(tabId))) finish();
   };
@@ -62,7 +64,9 @@ export function UnsavedChangesDialog({ tabIds, closeWindow, onClose }: UnsavedCh
   };
 
   const title =
-    names.length === 1 ? `Save changes to ${names[0]}?` : `Save changes to ${names.length} files?`;
+    names.length === 1
+      ? t("editor.saveChangesTo", { name: names[0] })
+      : t("editor.saveChangesToFiles", { count: names.length });
   return (
     <Dialog title={title} onClose={onClose}>
       <div className="confirm-body">
@@ -73,15 +77,15 @@ export function UnsavedChangesDialog({ tabIds, closeWindow, onClose }: UnsavedCh
             ))}
           </ul>
         )}
-        <p>Changes you don't save are lost.</p>
+        <p>{t("editor.changesYouDontSaveAre")}</p>
       </div>
       {error && <p className="form-error">{error}</p>}
       <div className="dialog-actions">
         <button type="button" className="button" onClick={onClose} disabled={busy}>
-          Cancel
+          {t("common.cancel")}
         </button>
         <button type="button" className="button button-danger" onClick={discard} disabled={busy}>
-          Don't save
+          {t("editor.dontSave")}
         </button>
         <button
           type="button"
@@ -90,7 +94,7 @@ export function UnsavedChangesDialog({ tabIds, closeWindow, onClose }: UnsavedCh
           onClick={() => void save()}
           disabled={busy}
         >
-          {busy ? "Saving..." : names.length === 1 ? "Save" : "Save all"}
+          {busy ? t("editor.saving") : names.length === 1 ? t("common.save") : t("editor.saveAll")}
         </button>
       </div>
     </Dialog>

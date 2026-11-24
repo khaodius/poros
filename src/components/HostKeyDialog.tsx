@@ -2,8 +2,10 @@ import { ShieldAlert, ShieldQuestion } from "lucide-react";
 import { approvalOf } from "../lib/hostKey";
 import { useHostKeyPrompt } from "../state/connectFlow";
 import { Dialog } from "./Dialog";
+import { useT } from "../i18n";
 
 export function HostKeyDialog() {
+  const t = useT();
   const question = useHostKeyPrompt((state) => state.question);
   if (!question) return null;
   const { hostKey, changed, answer } = question;
@@ -17,11 +19,12 @@ export function HostKeyDialog() {
     : `${hostKey.host}:${hostKey.port}`;
   const title = certificate
     ? changed
-      ? "Certificate changed"
-      : "Untrusted certificate"
+      ? t("connect.certificateChanged")
+      : t("connect.untrustedCertificate")
     : changed
-      ? "Host key changed"
-      : "Unknown host";
+      ? t("connect.hostKeyChanged")
+      : t("connect.unknownHost");
+  const shownTarget = <strong>{target}</strong>;
 
   return (
     <Dialog
@@ -37,40 +40,30 @@ export function HostKeyDialog() {
         <div>
           {certificate ? (
             <p>
-              {changed
-                ? "The certificate presented by "
-                : "This computer does not trust the certificate presented by "}
-              <strong>{target}</strong>
-              {changed ? " does not match the one you trusted before. " : ". "}
-              {problem} Compare the fingerprint with the one your server administrator gave you
-              before continuing.
+              {t.rich(
+                changed ? "connect.theCertificatePresentedBy" : "connect.thisComputerDoesNotTrust",
+                { target: shownTarget, problem },
+              )}
             </p>
           ) : changed ? (
-            <p>
-              The key presented by <strong>{target}</strong> does not match the one on record. The
-              server may have been reinstalled, or someone may be intercepting the connection.
-              Continue only if you know why the key changed.
-            </p>
+            <p>{t.rich("connect.theKeyPresentedBy", { target: shownTarget })}</p>
           ) : (
-            <p>
-              <strong>{target}</strong> has not been seen before. Compare the fingerprint with the
-              one your server administrator gave you before continuing.
-            </p>
+            <p>{t.rich("connect.hasNotBeenSeenBefore", { target: shownTarget })}</p>
           )}
           <dl className="host-key-details">
-            <dt>{certificate ? "Type" : "Key type"}</dt>
+            <dt>{certificate ? t("connect.type") : t("connect.keyType")}</dt>
             <dd>{hostKey.algorithm}</dd>
-            <dt>Fingerprint</dt>
+            <dt>{t("connect.fingerprint")}</dt>
             <dd className="mono selectable">{hostKey.fingerprint}</dd>
           </dl>
         </div>
       </div>
       <div className="dialog-actions">
         <button type="button" className="button" onClick={() => answer(null)}>
-          Cancel
+          {t("common.cancel")}
         </button>
         <button type="button" className="button" onClick={() => answer(approvalOf(hostKey, false))}>
-          Connect once
+          {t("connect.connectOnce")}
         </button>
         <button
           type="button"
@@ -79,8 +72,10 @@ export function HostKeyDialog() {
           onClick={() => answer(approvalOf(hostKey, true))}
         >
           {changed
-            ? `Replace ${certificate ? "certificate" : "key"} and connect`
-            : "Trust and connect"}
+            ? certificate
+              ? t("connect.replaceCertificateAndConnect")
+              : t("connect.replaceKeyAndConnect")
+            : t("connect.trustAndConnect")}
         </button>
       </div>
     </Dialog>

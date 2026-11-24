@@ -2,6 +2,8 @@
 // CSS custom property of the same name (`accent` sets `--accent`) over the base palette in
 // `styles/tokens.css`. Built-in themes use the same format.
 
+import { t, type PlainMessageKey } from "../i18n";
+
 export type ThemeBase = "dark" | "light" | "system";
 
 export interface Theme {
@@ -15,13 +17,18 @@ export interface Theme {
 
 export interface ColorToken {
   key: string;
-  label: string;
-  group: string;
+  label: PlainMessageKey;
+  group: PlainMessageKey;
   /** Usually see-through, so the picker keeps the current transparency. */
   translucent: boolean;
 }
 
-const token = (key: string, label: string, group: string, translucent = false): ColorToken => ({
+const token = (
+  key: string,
+  label: PlainMessageKey,
+  group: PlainMessageKey,
+  translucent = false,
+): ColorToken => ({
   key,
   label,
   group,
@@ -29,65 +36,83 @@ const token = (key: string, label: string, group: string, translucent = false): 
 });
 
 export const COLOR_TOKENS: ColorToken[] = [
-  token("accent", "Accent", "Accent"),
-  token("accent-hover", "Accent hover", "Accent"),
-  token("accent-soft", "Accent tint", "Accent", true),
-  token("accent-softer", "Faint accent tint", "Accent", true),
-  token("text-on-accent", "Text on accent", "Accent"),
-  token("surface-base", "Window background", "Surfaces"),
-  token("surface-raised", "Panels", "Surfaces"),
-  token("surface-sunken", "Inputs and lists", "Surfaces"),
-  token("surface-overlay", "Menus and dialogs", "Surfaces"),
-  token("surface-hover", "Hover", "Surfaces"),
-  token("surface-pressed", "Pressed", "Surfaces"),
-  token("titlebar", "Top bar", "Window"),
-  token("statusbar", "Status bar", "Window"),
-  token("list-header", "Column headers", "Window"),
-  token("pane-border-active", "Active pane border", "Window"),
-  token("tab-indicator", "Tab indicator", "Window"),
-  token("border", "Borders", "Borders"),
-  token("border-strong", "Strong borders", "Borders"),
-  token("border-focus", "Focus ring", "Borders"),
-  token("text", "Text", "Text"),
-  token("text-muted", "Secondary text", "Text"),
-  token("text-faint", "Faint text", "Text"),
-  token("danger", "Danger", "Status"),
-  token("danger-hover", "Danger hover", "Status"),
-  token("danger-soft", "Danger tint", "Status", true),
-  token("warning", "Warning", "Status"),
-  token("success", "Success", "Status"),
-  token("icon-folder", "Folders", "File icons"),
-  token("icon-image", "Images", "File icons"),
-  token("icon-video", "Video", "File icons"),
-  token("icon-audio", "Audio", "File icons"),
-  token("icon-archive", "Archives", "File icons"),
-  token("icon-data", "Data", "File icons"),
-  token("icon-key", "Keys", "File icons"),
-  token("icon-code", "Code", "File icons"),
-  token("icon-text", "Documents", "File icons"),
-  token("icon-file", "Other files", "File icons"),
-  token("row-selected", "Selected row", "Lists", true),
-  token("row-selected-inactive", "Selected row, inactive pane", "Lists", true),
-  token("row-hover", "Row hover", "Lists", true),
-  token("row-alternate", "Striped rows", "Lists", true),
-  token("scrollbar", "Scrollbars", "Lists"),
-  token("scrollbar-hover", "Scrollbar hover", "Lists"),
-  token("progress", "Progress bars", "Transfers"),
-  token("upload", "Uploads", "Transfers"),
-  token("download", "Downloads", "Transfers"),
-  token("limit-unlimited", "Schedule: unlimited", "Transfers"),
-  token("limit-limited", "Schedule: limited", "Transfers"),
-  token("limit-paused", "Schedule: paused", "Transfers"),
-  token("diff-added", "Added lines", "Compare", true),
-  token("diff-added-word", "Added words", "Compare", true),
-  token("diff-removed", "Removed lines", "Compare", true),
-  token("diff-removed-word", "Removed words", "Compare", true),
-  token("compare-newer", "Newer here", "Folder compare"),
-  token("compare-older", "Older here", "Folder compare"),
-  token("compare-only", "Only here", "Folder compare"),
-  token("compare-different", "Different", "Folder compare"),
-  token("compare-identical", "Identical", "Folder compare"),
-  token("backdrop", "Dialog backdrop", "Window", true),
+  token("accent", "appearance.colorAccent", "appearance.colorGroupAccent"),
+  token("accent-hover", "appearance.colorAccentHover", "appearance.colorGroupAccent"),
+  token("accent-soft", "appearance.colorAccentSoft", "appearance.colorGroupAccent", true),
+  token("accent-softer", "appearance.colorAccentSofter", "appearance.colorGroupAccent", true),
+  token("text-on-accent", "appearance.colorTextOnAccent", "appearance.colorGroupAccent"),
+  token("surface-base", "appearance.colorSurfaceBase", "appearance.colorGroupSurfaces"),
+  token("surface-raised", "appearance.colorSurfaceRaised", "appearance.colorGroupSurfaces"),
+  token("surface-sunken", "appearance.colorSurfaceSunken", "appearance.colorGroupSurfaces"),
+  token("surface-overlay", "appearance.colorSurfaceOverlay", "appearance.colorGroupSurfaces"),
+  token("surface-hover", "appearance.colorSurfaceHover", "appearance.colorGroupSurfaces"),
+  token("surface-pressed", "appearance.colorSurfacePressed", "appearance.colorGroupSurfaces"),
+  token("titlebar", "appearance.colorTitlebar", "appearance.colorGroupWindow"),
+  token("statusbar", "appearance.colorStatusbar", "appearance.colorGroupWindow"),
+  token("list-header", "appearance.colorListHeader", "appearance.colorGroupWindow"),
+  token("pane-border-active", "appearance.colorPaneBorderActive", "appearance.colorGroupWindow"),
+  token("tab-indicator", "appearance.colorTabIndicator", "appearance.colorGroupWindow"),
+  token("border", "appearance.colorBorder", "appearance.colorGroupBorders"),
+  token("border-strong", "appearance.colorBorderStrong", "appearance.colorGroupBorders"),
+  token("border-focus", "appearance.colorBorderFocus", "appearance.colorGroupBorders"),
+  token("text", "appearance.colorText", "appearance.colorGroupText"),
+  token("text-muted", "appearance.colorTextMuted", "appearance.colorGroupText"),
+  token("text-faint", "appearance.colorTextFaint", "appearance.colorGroupText"),
+  token("danger", "appearance.colorDanger", "appearance.colorGroupStatus"),
+  token("danger-hover", "appearance.colorDangerHover", "appearance.colorGroupStatus"),
+  token("danger-soft", "appearance.colorDangerSoft", "appearance.colorGroupStatus", true),
+  token("warning", "appearance.colorWarning", "appearance.colorGroupStatus"),
+  token("success", "appearance.colorSuccess", "appearance.colorGroupStatus"),
+  token("icon-folder", "appearance.colorIconFolder", "appearance.colorGroupFileIcons"),
+  token("icon-image", "appearance.colorIconImage", "appearance.colorGroupFileIcons"),
+  token("icon-video", "appearance.colorIconVideo", "appearance.colorGroupFileIcons"),
+  token("icon-audio", "appearance.colorIconAudio", "appearance.colorGroupFileIcons"),
+  token("icon-archive", "appearance.colorIconArchive", "appearance.colorGroupFileIcons"),
+  token("icon-data", "appearance.colorIconData", "appearance.colorGroupFileIcons"),
+  token("icon-key", "appearance.colorIconKey", "appearance.colorGroupFileIcons"),
+  token("icon-code", "appearance.colorIconCode", "appearance.colorGroupFileIcons"),
+  token("icon-text", "appearance.colorIconText", "appearance.colorGroupFileIcons"),
+  token("icon-file", "appearance.colorIconFile", "appearance.colorGroupFileIcons"),
+  token("row-selected", "appearance.colorRowSelected", "appearance.colorGroupLists", true),
+  token(
+    "row-selected-inactive",
+    "appearance.colorRowSelectedInactive",
+    "appearance.colorGroupLists",
+    true,
+  ),
+  token("row-hover", "appearance.colorRowHover", "appearance.colorGroupLists", true),
+  token("row-alternate", "appearance.colorRowAlternate", "appearance.colorGroupLists", true),
+  token("scrollbar", "appearance.colorScrollbar", "appearance.colorGroupLists"),
+  token("scrollbar-hover", "appearance.colorScrollbarHover", "appearance.colorGroupLists"),
+  token("progress", "appearance.colorProgress", "appearance.colorGroupTransfers"),
+  token("upload", "appearance.colorUpload", "appearance.colorGroupTransfers"),
+  token("download", "appearance.colorDownload", "appearance.colorGroupTransfers"),
+  token("limit-unlimited", "appearance.colorLimitUnlimited", "appearance.colorGroupTransfers"),
+  token("limit-limited", "appearance.colorLimitLimited", "appearance.colorGroupTransfers"),
+  token("limit-paused", "appearance.colorLimitPaused", "appearance.colorGroupTransfers"),
+  token("diff-added", "appearance.colorDiffAdded", "appearance.colorGroupCompare", true),
+  token("diff-added-word", "appearance.colorDiffAddedWord", "appearance.colorGroupCompare", true),
+  token("diff-removed", "appearance.colorDiffRemoved", "appearance.colorGroupCompare", true),
+  token(
+    "diff-removed-word",
+    "appearance.colorDiffRemovedWord",
+    "appearance.colorGroupCompare",
+    true,
+  ),
+  token("compare-newer", "appearance.colorCompareNewer", "appearance.colorGroupFolderCompare"),
+  token("compare-older", "appearance.colorCompareOlder", "appearance.colorGroupFolderCompare"),
+  token("compare-only", "appearance.colorCompareOnly", "appearance.colorGroupFolderCompare"),
+  token(
+    "compare-different",
+    "appearance.colorCompareDifferent",
+    "appearance.colorGroupFolderCompare",
+  ),
+  token(
+    "compare-identical",
+    "appearance.colorCompareIdentical",
+    "appearance.colorGroupFolderCompare",
+  ),
+  token("backdrop", "appearance.colorBackdrop", "appearance.colorGroupWindow", true),
 ];
 
 export const COLOR_GROUPS = [...new Set(COLOR_TOKENS.map((entry) => entry.group))];
@@ -300,6 +325,25 @@ const BUILTIN_DEFINITIONS: Theme[] = [
   },
 ];
 
+const BUILTIN_NAMES: Record<string, PlainMessageKey> = {
+  System: "appearance.themeSystem",
+  Dark: "appearance.themeDark",
+  Light: "appearance.themeLight",
+  Dusk: "appearance.themeDusk",
+  Midnight: "appearance.themeMidnight",
+  Forest: "appearance.themeForest",
+  Ember: "appearance.themeEmber",
+  Paper: "appearance.themePaper",
+  Graphite: "appearance.themeGraphite",
+  "High contrast": "appearance.themeHighContrast",
+};
+
+/** The name a theme is shown by: a built-in one's in the interface's language. */
+export function themeName(entry: ThemeEntry): string {
+  const key = entry.builtin ? BUILTIN_NAMES[entry.theme.name] : undefined;
+  return key ? t(key) : entry.theme.name;
+}
+
 export const BUILTIN_THEMES: ThemeEntry[] = BUILTIN_DEFINITIONS.map((theme) => ({
   id: BUILTIN_PREFIX + theme.name.toLowerCase().replace(/\s+/g, "-"),
   theme,
@@ -327,18 +371,18 @@ export function parseTheme(
   const base: ThemeBase =
     source.base === "light" || source.base === "system" ? source.base : "dark";
   if (source.base !== undefined && source.base !== base)
-    problems.push(`Unknown base "${String(source.base)}"`);
+    problems.push(t("appearance.themeUnknownBase", { base: String(source.base) }));
 
   const colors: Record<string, string> = {};
   const rawColors = source.colors;
   if (rawColors && typeof rawColors === "object" && !Array.isArray(rawColors)) {
     for (const [key, value] of Object.entries(rawColors)) {
-      if (!TOKEN_KEYS.has(key)) problems.push(`Unknown color "${key}"`);
-      else if (!isColor(value)) problems.push(`"${key}" is not a color`);
+      if (!TOKEN_KEYS.has(key)) problems.push(t("appearance.themeUnknownColor", { key }));
+      else if (!isColor(value)) problems.push(t("appearance.themeNotAColor", { key }));
       else colors[key] = value.trim();
     }
   } else if (rawColors !== undefined) {
-    problems.push(`"colors" must be an object`);
+    problems.push(t("appearance.themeColorsNotAnObject"));
   }
 
   const theme: Theme = { name, base, colors };
@@ -352,7 +396,7 @@ export function parseTheme(
   if (typeof source.radius === "number" && source.radius >= 0 && source.radius <= 16) {
     theme.radius = source.radius;
   } else if (source.radius !== undefined) {
-    problems.push(`"radius" must be a number from 0 to 16`);
+    problems.push(t("appearance.themeRadiusOutOfRange"));
   }
   return { theme, problems };
 }

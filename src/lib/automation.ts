@@ -1,42 +1,118 @@
 // What Poros says and does when the transfer queue finishes.
 
-import { formatDuration, formatSize, pluralize } from "./format";
+import { formatDuration, formatSize } from "./format";
 import type { WhenDoneAction } from "./settings";
 import type { QueueFinished } from "./types";
+import { t, type MessageKey } from "../i18n";
 
 export const WHEN_DONE_LABELS: Record<WhenDoneAction, string> = {
-  nothing: "Do nothing",
-  close: "Close Poros",
-  lock: "Lock the computer",
-  sleep: "Sleep",
-  hibernate: "Hibernate",
-  logOff: "Log off",
-  shutDown: "Shut down",
-  runCommand: "Run a command",
+  get nothing() {
+    return t("automation.doNothing");
+  },
+  get close() {
+    return t("automation.closePoros");
+  },
+  get lock() {
+    return t("automation.lockTheComputer");
+  },
+  get sleep() {
+    return t("automation.sleep");
+  },
+  get hibernate() {
+    return t("automation.hibernate");
+  },
+  get logOff() {
+    return t("automation.logOff");
+  },
+  get shutDown() {
+    return t("automation.shutDown");
+  },
+  get runCommand() {
+    return t("automation.runACommand");
+  },
 };
 
 /** Actions that wait for a countdown, so the user can still stop them. */
 export type CountdownAction = Exclude<WhenDoneAction, "nothing" | "runCommand">;
 
 export const COUNTDOWN_TEXT: Record<CountdownAction, { title: string; confirm: string }> = {
-  close: { title: "Closing Poros", confirm: "Close now" },
-  lock: { title: "Locking the computer", confirm: "Lock now" },
-  sleep: { title: "Putting the computer to sleep", confirm: "Sleep now" },
-  hibernate: { title: "Hibernating the computer", confirm: "Hibernate now" },
-  logOff: { title: "Logging off", confirm: "Log off now" },
-  shutDown: { title: "Shutting down the computer", confirm: "Shut down now" },
+  close: {
+    get title() {
+      return t("automation.closingPoros");
+    },
+    get confirm() {
+      return t("automation.confirmCloseNow");
+    },
+  },
+  lock: {
+    get title() {
+      return t("automation.lockingTheComputer");
+    },
+    get confirm() {
+      return t("automation.confirmLockNow");
+    },
+  },
+  sleep: {
+    get title() {
+      return t("automation.puttingTheComputerToSleep");
+    },
+    get confirm() {
+      return t("automation.confirmSleepNow");
+    },
+  },
+  hibernate: {
+    get title() {
+      return t("automation.hibernatingTheComputer");
+    },
+    get confirm() {
+      return t("automation.confirmHibernateNow");
+    },
+  },
+  logOff: {
+    get title() {
+      return t("automation.loggingOff");
+    },
+    get confirm() {
+      return t("automation.confirmLogOffNow");
+    },
+  },
+  shutDown: {
+    get title() {
+      return t("automation.shuttingDownTheComputer");
+    },
+    get confirm() {
+      return t("automation.confirmShutDownNow");
+    },
+  },
 };
 
 export const COUNTDOWN_SECONDS = 30;
 
+/** What the countdown says, whole for each action; `{seconds}` is the time left. */
+export const COUNTDOWN_MESSAGE = {
+  close: "automation.queueFinishedClosingPorosIn",
+  lock: "automation.queueFinishedLockingIn",
+  sleep: "automation.queueFinishedSleepingIn",
+  hibernate: "automation.queueFinishedHibernatingIn",
+  logOff: "automation.queueFinishedLoggingOffIn",
+  shutDown: "automation.queueFinishedShuttingDownIn",
+} as const satisfies Record<CountdownAction, MessageKey>;
+
 export function describeQueueFinished(finished: QueueFinished): { title: string; body: string } {
-  const title = finished.failed > 0 ? "Transfers finished with errors" : "Transfers finished";
+  const title =
+    finished.failed > 0
+      ? t("automation.transfersFinishedWithErrors")
+      : t("automation.transfersFinished");
   const totals = [
-    `${pluralize(finished.done, "file")} transferred (${formatSize(finished.bytes)}) in ${formatDuration(finished.elapsedMillis / 1000)}`,
+    t("automation.filesTransferredIn", {
+      count: finished.done,
+      size: formatSize(finished.bytes),
+      duration: formatDuration(finished.elapsedMillis / 1000),
+    }),
   ];
-  if (finished.failed > 0) totals.push(`${finished.failed} failed`);
-  if (finished.skipped > 0) totals.push(`${finished.skipped} skipped`);
-  return { title, body: totals.join(", ") };
+  if (finished.failed > 0) totals.push(t("automation.failedCount", { count: finished.failed }));
+  if (finished.skipped > 0) totals.push(t("automation.skippedCount", { count: finished.skipped }));
+  return { title, body: totals.join(t("common.listSeparator")) };
 }
 
 /** Handed to the command run when the queue finishes. */

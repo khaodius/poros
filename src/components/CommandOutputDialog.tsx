@@ -2,9 +2,11 @@ import { useEffect, useRef } from "react";
 import { CircleAlert, CircleCheck, LoaderCircle } from "lucide-react";
 import { useCommandStore } from "../state/commandStore";
 import { Dialog } from "./Dialog";
+import { useT } from "../i18n";
 
 /** Shows what a server command prints while it runs, with a way to stop it. */
 export function CommandOutputDialog() {
+  const t = useT();
   const run = useCommandStore((state) => state.run);
   const output = useCommandStore((state) => state.output);
   const truncated = useCommandStore((state) => state.truncated);
@@ -27,8 +29,15 @@ export function CommandOutputDialog() {
     <Dialog title={run.title} onClose={dismiss} width={720}>
       <div className="command-output-dialog">
         <p className="command-output-where">
-          {single ? <code>{single}</code> : `${run.commands.length} commands`} in{" "}
-          <code>{run.directory || "the login folder"}</code>
+          {t.rich(single ? "automation.commandIn" : "automation.commandsIn", {
+            command: <code>{single}</code>,
+            count: run.commands.length,
+            folder: run.directory ? (
+              <code>{run.directory}</code>
+            ) : (
+              <code>{t("automation.theLoginFolder")}</code>
+            ),
+          })}
         </p>
         <pre
           ref={outputRef}
@@ -41,7 +50,10 @@ export function CommandOutputDialog() {
           }}
         >
           {truncated && (
-            <span className="command-output-note">Earlier output was dropped.{"\n"}</span>
+            <span className="command-output-note">
+              {t("automation.earlierOutputWasDropped")}
+              {"\n"}
+            </span>
           )}
           {output.map((part) => (
             <span key={part.id} className={`command-output-${part.stream}`}>
@@ -49,7 +61,7 @@ export function CommandOutputDialog() {
             </span>
           ))}
           {!running && output.length === 0 && (
-            <span className="command-output-note">The command printed nothing.</span>
+            <span className="command-output-note">{t("automation.theCommandPrintedNothing")}</span>
           )}
         </pre>
         <div className="dialog-actions">
@@ -58,7 +70,7 @@ export function CommandOutputDialog() {
           >
             {running ? (
               <>
-                <LoaderCircle size={14} className="spin" /> Running
+                <LoaderCircle size={14} className="spin" /> {t("automation.running")}
               </>
             ) : summary?.succeeded ? (
               <>
@@ -72,11 +84,11 @@ export function CommandOutputDialog() {
           </span>
           {running ? (
             <button type="button" className="button button-danger" onClick={stop}>
-              Stop
+              {t("common.stop")}
             </button>
           ) : (
             <button type="button" className="button button-primary" onClick={dismiss}>
-              Close
+              {t("common.close")}
             </button>
           )}
         </div>

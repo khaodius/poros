@@ -19,7 +19,7 @@ import {
   Info,
   Trash2,
 } from "lucide-react";
-import { formatDate, formatSize, pluralize } from "../lib/format";
+import { formatDate, formatSize } from "../lib/format";
 import type { DateFormat } from "../lib/settings";
 import {
   ACTION_LABELS,
@@ -35,15 +35,41 @@ import {
 import type { SyncAction, SyncDirection, SyncFacts, SyncItem, SyncPlanView } from "../lib/types";
 import { useSettingsStore } from "../state/settingsStore";
 import { FileIcon } from "./FileIcon";
+import { t, useT, type Translate } from "../i18n";
 
 const ROW_HEIGHT = 28;
 
 const FILTERS: { value: ItemFilter; label: string }[] = [
-  { value: "all", label: "All" },
-  { value: "upload", label: "Upload" },
-  { value: "download", label: "Download" },
-  { value: "delete", label: "Delete" },
-  { value: "conflict", label: "Conflicts" },
+  {
+    value: "all",
+    get label() {
+      return t("sync.all");
+    },
+  },
+  {
+    value: "upload",
+    get label() {
+      return t("common.upload");
+    },
+  },
+  {
+    value: "download",
+    get label() {
+      return t("common.download");
+    },
+  },
+  {
+    value: "delete",
+    get label() {
+      return t("common.delete");
+    },
+  },
+  {
+    value: "conflict",
+    get label() {
+      return t("sync.conflicts");
+    },
+  },
 ];
 
 interface SyncPlanListProps {
@@ -70,6 +96,7 @@ export function SyncPlanList({
   onCancel,
   onRun,
 }: SyncPlanListProps) {
+  const t = useT();
   const dateFormat = useSettingsStore((state) => state.settings.interface.dateFormat);
   const [filter, setFilter] = useState<ItemFilter>("all");
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -113,7 +140,7 @@ export function SyncPlanList({
     direction === "upload" ? ArrowRight : direction === "download" ? ArrowLeft : ArrowLeftRight;
   // Creating the target folder or removing unchanged sources is a change of its own.
   const hasWork = plan.items.length > 0 || plan.createsTarget || plan.removesUnchanged > 0;
-  const runLabel = plan.dryRun ? "Dry run" : "Synchronize";
+  const runLabel = plan.dryRun ? t("sync.dryRun") : t("sync.synchronize");
 
   return (
     <div className="sync-preview">
@@ -129,15 +156,15 @@ export function SyncPlanList({
       {plan.arguments && (
         <code
           className="rsync-command sync-arguments selectable"
-          title="The options as rsync arguments"
+          title={t("sync.theOptionsAsRsyncArguments")}
         >
-          rsync {plan.arguments}
+          {t("sync.rsync", { arguments: plan.arguments })}
         </code>
       )}
       {plan.dryRun && (
         <p className="sync-note sync-dry-run">
           <FlaskConical size={14} />
-          Dry run: running this changes nothing and writes what would happen to the log.
+          {t("sync.dryRunRunningThisChanges")}
         </p>
       )}
       {plan.notes.map((note) => (
@@ -149,13 +176,13 @@ export function SyncPlanList({
       {plan.removesUnchanged > 0 && (
         <p className="sync-note">
           <Info size={14} />
-          {pluralize(plan.removesUnchanged, "unchanged source file")} will be removed as well.
+          {t("sync.unchangedSourceFilesWillBe", { count: plan.removesUnchanged })}
         </p>
       )}
       {plan.items.length === 0 ? (
         <div className="sync-list sync-empty">
           <p className="sync-empty-title">
-            {hasWork ? "No files to copy." : "Everything is in sync."}
+            {hasWork ? t("sync.noFilesToCopy") : t("sync.everythingIsInSync")}
           </p>
           {counts && <p>{counts}.</p>}
         </div>
@@ -185,7 +212,7 @@ export function SyncPlanList({
               <span className="sync-check">
                 <input
                   type="checkbox"
-                  aria-label="Include all"
+                  aria-label={t("sync.includeAll")}
                   checked={toggleable.length > 0 && chosenCount === toggleable.length}
                   ref={(input) => {
                     if (input) {
@@ -196,10 +223,10 @@ export function SyncPlanList({
                   onChange={(event) => chooseAll(event.target.checked)}
                 />
               </span>
-              <span>Action</span>
-              <span>Path</span>
-              <span className="align-end">Size</span>
-              <span>Why</span>
+              <span>{t("sync.action")}</span>
+              <span>{t("common.path")}</span>
+              <span className="align-end">{t("common.size")}</span>
+              <span>{t("sync.why")}</span>
             </div>
             <div ref={scrollRef} className="sync-body" role="grid">
               <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
@@ -225,8 +252,7 @@ export function SyncPlanList({
       {plan.passedOver.length > 0 && (
         <details className="sync-passed-over">
           <summary>
-            {pluralize(plan.counts.passedOver, "entry", "entries")} passed over: broken or looping
-            links, special files and folders that could not be read
+            {t("sync.entriesPassedOverBrokenOr", { count: plan.counts.passedOver })}
           </summary>
           <ul className="delete-preview selectable">
             {plan.passedOver.map((path) => (
@@ -238,11 +264,11 @@ export function SyncPlanList({
       {error && <p className="form-error">{error}</p>}
       <div className="dialog-actions">
         <button type="button" className="button" disabled={running} onClick={onBack}>
-          Back
+          {t("common.back")}
         </button>
         <span className="sync-planned">{plan.items.length > 0 ? describePlanned(totals) : ""}</span>
         <button type="button" className="button" onClick={onCancel}>
-          {hasWork ? "Cancel" : "Close"}
+          {hasWork ? t("common.cancel") : t("common.close")}
         </button>
         {hasWork && (
           <button
@@ -251,7 +277,7 @@ export function SyncPlanList({
             disabled={(plan.items.length > 0 && nothingChosen) || running}
             onClick={onRun}
           >
-            {running ? "Starting..." : runLabel}
+            {running ? t("sync.starting") : runLabel}
           </button>
         )}
       </div>
@@ -259,15 +285,33 @@ export function SyncPlanList({
   );
 }
 
-function sideDetail(label: string, facts: SyncFacts | undefined, dateFormat: DateFormat): string {
-  if (!facts) return `${label}: missing`;
+/** One side of a plan row's tooltip: `Local: 1.5 KB, 2026-03-07 14:05, 0644`. */
+function sideDetail(
+  t: Translate,
+  side: string,
+  facts: SyncFacts | undefined,
+  dateFormat: DateFormat,
+): string {
+  if (!facts) return t("sync.sideMissing", { side });
   const permissions =
     facts.permissions === undefined
-      ? ""
-      : `, ${(facts.permissions & 0o7777).toString(8).padStart(4, "0")}`;
-  if (facts.isDir) return `${label}: folder${permissions}`;
-  const kind = facts.isLink ? "link, " : "";
-  return `${label}: ${kind}${formatSize(facts.size)}, ${formatDate(facts.modified, dateFormat)}${permissions}`;
+      ? null
+      : (facts.permissions & 0o7777).toString(8).padStart(4, "0");
+  if (facts.isDir) {
+    return permissions === null
+      ? t("sync.sideFolder", { side })
+      : t("sync.sideFolderWithPermissions", { side, permissions });
+  }
+  const size = formatSize(facts.size);
+  const modified = formatDate(facts.modified, dateFormat);
+  if (facts.isLink) {
+    return permissions === null
+      ? t("sync.sideLink", { side, size, modified })
+      : t("sync.sideLinkWithPermissions", { side, size, modified, permissions });
+  }
+  return permissions === null
+    ? t("sync.sideFile", { side, size, modified })
+    : t("sync.sideFileWithPermissions", { side, size, modified, permissions });
 }
 
 const ACTION_ICONS: Partial<Record<SyncAction, typeof ArrowUp>> = {
@@ -294,6 +338,7 @@ const PlanRow = memo(function PlanRow({
   dateFormat,
   onChoose,
 }: PlanRowProps) {
+  const t = useT();
   const conflict = item.action === "conflict";
   const settles = possibleActions(item);
   const shownAction = choice ?? item.action;
@@ -308,8 +353,8 @@ const PlanRow = memo(function PlanRow({
     : item.bytes;
   const detail = [
     item.itemized ? `${item.itemized} ${item.path}` : item.path,
-    sideDetail("Local", item.local, dateFormat),
-    sideDetail("Server", item.remote, dateFormat),
+    sideDetail(t, t("sync.localSide"), item.local, dateFormat),
+    sideDetail(t, t("sync.serverSide"), item.remote, dateFormat),
   ].join("\n");
 
   return (
@@ -323,7 +368,7 @@ const PlanRow = memo(function PlanRow({
         {!conflict && (
           <input
             type="checkbox"
-            aria-label={`Include ${item.path}`}
+            aria-label={t("sync.include", { path: item.path })}
             checked={choice !== null}
             disabled={disabled}
             onChange={(event) => onChoose(item.id, event.target.checked ? item.action : null)}
@@ -334,18 +379,18 @@ const PlanRow = memo(function PlanRow({
         {conflict && settles.length > 0 ? (
           <select
             value={choice ?? ""}
-            aria-label={`Settle ${item.path}`}
+            aria-label={t("sync.settle", { path: item.path })}
             disabled={disabled}
             onChange={(event) => onChoose(item.id, (event.target.value || null) as SyncAction)}
           >
-            <option value="">Leave as is</option>
-            <option value="upload">Upload local copy</option>
-            <option value="download">Download server copy</option>
+            <option value="">{t("sync.leaveAsIs")}</option>
+            <option value="upload">{t("sync.uploadLocalCopy")}</option>
+            <option value="download">{t("sync.downloadServerCopy")}</option>
           </select>
         ) : (
           <>
             {Icon ? <Icon size={13} /> : <CircleAlert size={13} />}
-            {conflict ? "Settle by hand" : ACTION_LABELS[item.action]}
+            {conflict ? t("sync.settleByHand") : ACTION_LABELS[item.action]}
           </>
         )}
       </span>
@@ -353,7 +398,7 @@ const PlanRow = memo(function PlanRow({
         <FileIcon entry={{ name, kind: item.isDir ? "dir" : "file" }} />
         <span className="sync-path-text">{item.path}</span>
         {item.isDir && item.files > 0 && (
-          <span className="sync-path-count">{pluralize(item.files, "file")}</span>
+          <span className="sync-path-count">{t("sync.files", { count: item.files })}</span>
         )}
       </span>
       <span className="align-end">{size === undefined ? "" : formatSize(size)}</span>

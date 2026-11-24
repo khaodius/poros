@@ -37,6 +37,7 @@ import {
 } from "../state/tabActions";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { CONNECTION_ICONS, TAB_ICONS, connectionKind } from "./tabIcons";
+import { useT } from "../i18n";
 
 interface TabMenu {
   x: number;
@@ -45,6 +46,7 @@ interface TabMenu {
 }
 
 export function TabBar({ group }: { group: GroupNode }) {
+  const t = useT();
   const addTab = useLayoutStore((state) => state.addTab);
   const systemTitleBar = useSettingsStore((state) => state.settings.interface.systemTitleBar);
   const [menu, setMenu] = useState<TabMenu | null>(null);
@@ -83,7 +85,7 @@ export function TabBar({ group }: { group: GroupNode }) {
       ...(connected?.info.protocol === "sftp"
         ? [
             {
-              label: "Open terminal",
+              label: t("workspace.openTerminal"),
               icon: <SquareTerminal size={14} />,
               onSelect: () => openTerminal(connected.info.id, group.id),
             },
@@ -92,7 +94,7 @@ export function TabBar({ group }: { group: GroupNode }) {
       ...(connected
         ? [
             {
-              label: "Mount as drive...",
+              label: t("workspace.mountAsDrive"),
               icon: <HardDrive size={14} />,
               onSelect: () =>
                 requestMount(
@@ -104,18 +106,18 @@ export function TabBar({ group }: { group: GroupNode }) {
           ]
         : []),
       {
-        label: "Split right",
+        label: t("workspace.splitRight"),
         icon: <Columns2 size={14} />,
         onSelect: () => splitTab(tab.id, "right"),
       },
       {
-        label: "Split down",
+        label: t("workspace.splitDown"),
         icon: <Rows2 size={14} />,
         onSelect: () => splitTab(tab.id, "bottom"),
       },
       "separator",
       {
-        label: "Move to new window",
+        label: t("workspace.moveToNewWindow"),
         icon: <AppWindow size={14} />,
         onSelect: () => void tearOutTab(tab.id),
       },
@@ -123,20 +125,20 @@ export function TabBar({ group }: { group: GroupNode }) {
         ? []
         : [
             {
-              label: "Move to main window",
+              label: t("workspace.moveToMainWindow"),
               icon: <CornerUpLeft size={14} />,
               onSelect: () => void returnTabToMain(tab.id),
             },
           ]),
       "separator",
       {
-        label: "Close other tabs",
+        label: t("workspace.closeOtherTabs"),
         icon: <XSquare size={14} />,
         disabled: others.length === 0,
         onSelect: () => void requestCloseTabs(others.map((other) => other.id)),
       },
       {
-        label: "Close",
+        label: t("common.close"),
         icon: <X size={14} />,
         shortcut: "Ctrl+W",
         onSelect: () => void requestCloseTab(tab.id),
@@ -185,8 +187,8 @@ export function TabBar({ group }: { group: GroupNode }) {
       <button
         type="button"
         className="icon-button tab-add"
-        title="New tab (Ctrl+T)"
-        aria-label="New tab"
+        title={t("workspace.newTabCtrlT")}
+        aria-label={t("workspace.newTab")}
         onClick={() => addTab(welcomeTab(), group.id)}
       >
         <Plus size={15} />
@@ -234,6 +236,7 @@ function TabButton({
   dropAfter,
   onContextMenu,
 }: TabButtonProps) {
+  const t = useT();
   const label = useTabLabel(tab);
   const activateTab = useLayoutStore((state) => state.activateTab);
   const restoring = isRestoring(tab);
@@ -316,17 +319,22 @@ function TabButton({
       <Icon size={14} className={`tab-icon tab-icon-${tab.kind}`} />
       <span className="tab-label">{label}</span>
       {mountedAt.length > 0 && (
-        <span className="tab-drive" title={`Mounted as a drive at ${mountedAt.join(", ")}`}>
-          <HardDrive size={11} aria-label="Mounted as a drive" />
+        <span
+          className="tab-drive"
+          title={t("workspace.mountedAsADriveAt", {
+            paths: mountedAt.join(t("common.listSeparator")),
+          })}
+        >
+          <HardDrive size={11} aria-label={t("workspace.mountedAsADrive")} />
         </span>
       )}
-      {lost && <span className="tab-lost" title="Disconnected" />}
-      {unsaved && <span className="tab-unsaved" title="Unsaved changes" />}
+      {lost && <span className="tab-lost" title={t("workspace.disconnected")} />}
+      {unsaved && <span className="tab-unsaved" title={t("workspace.unsavedChanges")} />}
       <button
         type="button"
         className="tab-close"
-        aria-label={`Close ${label}`}
-        title="Close (Ctrl+W)"
+        aria-label={t("workspace.close2", { label })}
+        title={t("workspace.closeCtrlW")}
         onClick={() => void requestCloseTab(tab.id)}
       >
         <X size={12} />

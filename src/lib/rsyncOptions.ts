@@ -11,6 +11,7 @@ import type {
   SyncDirection,
   SyncOptions,
 } from "./types";
+import { t } from "../i18n";
 
 export const TIME_TOLERANCE_LIMITS = { min: 0, max: 24 * 60 * 60 };
 /** rsync's largest block for protocol 30 and later. */
@@ -199,7 +200,8 @@ export type OptionField =
       key: KeysOf<number>;
       label: string;
       flag: string;
-      unit?: string;
+      /** The unit after the number, which may agree with it. */
+      unit?: (count: number) => string;
       max: number;
       hint?: string;
     }
@@ -208,7 +210,8 @@ export type OptionField =
       key: "blockSize" | "maxDelete";
       label: string;
       flag: string;
-      unit?: string;
+      /** The unit after the number, which may agree with it. */
+      unit?: (count: number) => string;
       max: number;
       hint?: string;
     }
@@ -237,410 +240,708 @@ export interface OptionGroup {
 }
 
 export const COMPARE_CHOICES: { value: CompareMode; label: string }[] = [
-  { value: "sizeAndTime", label: "Size and modification time" },
-  { value: "sizeOnly", label: "Size only (--size-only)" },
-  { value: "checksum", label: "Contents (-c, reads files of equal size)" },
-  { value: "always", label: "Copy every file (-I)" },
+  {
+    value: "sizeAndTime",
+    get label() {
+      return t("rsync.sizeAndModificationTime");
+    },
+  },
+  {
+    value: "sizeOnly",
+    get label() {
+      return t("rsync.sizeOnlySizeOnly");
+    },
+  },
+  {
+    value: "checksum",
+    get label() {
+      return t("rsync.contentsCReadsFilesOf");
+    },
+  },
+  {
+    value: "always",
+    get label() {
+      return t("rsync.copyEveryFileI");
+    },
+  },
 ];
 
 export const OPTION_GROUPS: OptionGroup[] = [
   {
     id: "compare",
-    title: "Which files are copied",
+    get title() {
+      return t("rsync.whichFilesAreCopied");
+    },
     fields: [
       {
         kind: "select",
         key: "compare",
-        label: "Compare files by",
+        get label() {
+          return t("rsync.compareFilesBy");
+        },
         choices: COMPARE_CHOICES,
       },
       {
         kind: "number",
         key: "timeToleranceSecs",
-        label: "Times this close count as equal",
+        get label() {
+          return t("rsync.timesThisCloseCountAs");
+        },
         flag: "--modify-window",
-        unit: "s",
+        unit: (count) => t("rsync.unitSeconds", { count }),
         max: TIME_TOLERANCE_LIMITS.max,
-        hint: "Some file systems, such as FAT, keep times to 2 seconds.",
+        get hint() {
+          return t("rsync.someFileSystemsSuchAs");
+        },
       },
       {
         kind: "switch",
         key: "skipNewerOnTarget",
-        label: "Skip files that are newer on the target",
+        get label() {
+          return t("rsync.skipFilesThatAreNewer");
+        },
         flag: "-u",
       },
       {
         kind: "switch",
         key: "ignoreExisting",
-        label: "Skip files that already exist on the target",
+        get label() {
+          return t("rsync.skipFilesThatAlreadyExist");
+        },
         flag: "--ignore-existing",
       },
       {
         kind: "switch",
         key: "existingOnly",
-        label: "Only update files the target has; create nothing new",
+        get label() {
+          return t("rsync.onlyUpdateFilesTheTarget");
+        },
         flag: "--existing",
       },
-      { kind: "size", key: "minSize", label: "Skip files smaller than", flag: "--min-size" },
+      {
+        kind: "size",
+        key: "minSize",
+        get label() {
+          return t("rsync.skipFilesSmallerThan");
+        },
+        flag: "--min-size",
+      },
       {
         kind: "size",
         key: "maxSize",
-        label: "Skip files larger than",
+        get label() {
+          return t("rsync.skipFilesLargerThan");
+        },
         flag: "--max-size",
-        hint: "Sizes such as 500K, 10M or 2G; a bare number is in bytes.",
+        get hint() {
+          return t("rsync.sizesSuchAs500k10m");
+        },
       },
     ],
   },
   {
     id: "transfer",
-    title: "Transfer behaviour",
+    get title() {
+      return t("rsync.transferBehaviour");
+    },
     fields: [
-      { kind: "switch", key: "recursive", label: "Go into folders", flag: "-r" },
+      {
+        kind: "switch",
+        key: "recursive",
+        get label() {
+          return t("rsync.goIntoFolders");
+        },
+        flag: "-r",
+      },
       {
         kind: "switch",
         key: "dirs",
-        label: "Without going into folders, still create the top ones",
+        get label() {
+          return t("rsync.withoutGoingIntoFoldersStill");
+        },
         flag: "-d",
       },
       {
         kind: "switch",
         key: "mkpath",
-        label: "Create the whole path to the target folder",
+        get label() {
+          return t("rsync.createTheWholePathTo");
+        },
         flag: "--mkpath",
-        hint: "Without it, only the target folder itself is created when it is missing.",
+        get hint() {
+          return t("rsync.withoutItOnlyTheTarget");
+        },
       },
       {
         kind: "switch",
         key: "pruneEmptyDirs",
-        label: "Leave out folders that would end up empty",
+        get label() {
+          return t("rsync.leaveOutFoldersThatWould");
+        },
         flag: "-m",
       },
       {
         kind: "switch",
         key: "wholeFile",
-        label: "Copy whole files, without rsync's delta transfer",
+        get label() {
+          return t("rsync.copyWholeFilesWithoutRsyncs");
+        },
         flag: "-W",
       },
       {
         kind: "switch",
         key: "inplace",
-        label: "Write into the existing file instead of a temporary one",
+        get label() {
+          return t("rsync.writeIntoTheExistingFile");
+        },
         flag: "--inplace",
       },
       {
         kind: "select",
         key: "append",
-        label: "Shorter files on the target",
+        get label() {
+          return t("rsync.shorterFilesOnTheTarget");
+        },
         choices: [
-          { value: "off", label: "Copy them again as usual" },
-          { value: "append", label: "Send only the rest (--append)" },
-          { value: "verify", label: "Send the rest, then check the whole file (--append-verify)" },
+          {
+            value: "off",
+            get label() {
+              return t("rsync.copyThemAgainAsUsual");
+            },
+          },
+          {
+            value: "append",
+            get label() {
+              return t("rsync.sendOnlyTheRestAppend");
+            },
+          },
+          {
+            value: "verify",
+            get label() {
+              return t("rsync.sendTheRestThenCheck");
+            },
+          },
         ],
       },
       {
         kind: "optionalNumber",
         key: "blockSize",
-        label: "Delta block size",
+        get label() {
+          return t("rsync.deltaBlockSize");
+        },
         flag: "-B",
-        unit: "bytes",
+        unit: (count) => t("rsync.unitBytes", { count }),
         max: MAX_BLOCK_SIZE,
-        hint: "Blank picks one from each file's size.",
+        get hint() {
+          return t("rsync.blankPicksOneFromEach");
+        },
       },
       {
         kind: "switch",
         key: "removeSourceFiles",
-        label: "Remove source files once they are on the target",
+        get label() {
+          return t("rsync.removeSourceFilesOnceThey");
+        },
         flag: "--remove-source-files",
-        hint: "Folders stay. Files already the same on both sides are removed too.",
+        get hint() {
+          return t("rsync.foldersStayFilesAlreadyThe");
+        },
       },
-      { kind: "switch", key: "fsync", label: "Flush each file to disk", flag: "--fsync" },
+      {
+        kind: "switch",
+        key: "fsync",
+        get label() {
+          return t("rsync.flushEachFileToDisk");
+        },
+        flag: "--fsync",
+      },
       {
         kind: "text",
         key: "rsyncPath",
-        label: "rsync on the server",
+        get label() {
+          return t("rsync.rsyncOnTheServer");
+        },
         flag: "--rsync-path",
         placeholder: "rsync",
-        hint: "Blank uses the site's setting, then the transfer settings.",
+        get hint() {
+          return t("rsync.blankUsesTheSitesSetting");
+        },
       },
     ],
   },
   {
     id: "delete",
-    title: "Deletion",
+    get title() {
+      return t("rsync.deletion");
+    },
     fields: [
       {
         kind: "switch",
         key: "deleteExtraneous",
-        label: "Delete files the source does not have",
+        get label() {
+          return t("rsync.deleteFilesTheSourceDoes");
+        },
         flag: "--delete",
       },
       {
         kind: "select",
         key: "deleteTiming",
-        label: "When to delete",
+        get label() {
+          return t("rsync.whenToDelete");
+        },
         choices: [
-          { value: "before", label: "Before copying (--delete-before)" },
-          { value: "during", label: "While copying (--delete-during)" },
-          { value: "delay", label: "Found while copying, deleted after (--delete-delay)" },
-          { value: "after", label: "After copying (--delete-after)" },
+          {
+            value: "before",
+            get label() {
+              return t("rsync.beforeCopyingDeleteBefore");
+            },
+          },
+          {
+            value: "during",
+            get label() {
+              return t("rsync.whileCopyingDeleteDuring");
+            },
+          },
+          {
+            value: "delay",
+            get label() {
+              return t("rsync.foundWhileCopyingDeletedAfter");
+            },
+          },
+          {
+            value: "after",
+            get label() {
+              return t("rsync.afterCopyingDeleteAfter");
+            },
+          },
         ],
       },
       {
         kind: "switch",
         key: "deleteExcluded",
-        label: "Delete excluded files from the target too",
+        get label() {
+          return t("rsync.deleteExcludedFilesFromThe");
+        },
         flag: "--delete-excluded",
       },
       {
         kind: "optionalNumber",
         key: "maxDelete",
-        label: "Delete at most",
+        get label() {
+          return t("rsync.deleteAtMost");
+        },
         flag: "--max-delete",
-        unit: "items",
+        unit: (count) => t("rsync.unitItems", { count }),
         max: 1_000_000_000,
-        hint: "Blank is no limit; 0 deletes nothing and reports what would go.",
+        get hint() {
+          return t("rsync.blankIsNoLimit0");
+        },
       },
       {
         kind: "switch",
         key: "force",
-        label: "Replace folders that are not empty with files",
+        get label() {
+          return t("rsync.replaceFoldersThatAreNot");
+        },
         flag: "--force",
       },
       {
         kind: "switch",
         key: "ignoreErrors",
-        label: "Delete even when part of the source could not be read",
+        get label() {
+          return t("rsync.deleteEvenWhenPartOf");
+        },
         flag: "--ignore-errors",
       },
     ],
   },
   {
     id: "filter",
-    title: "Filter rules",
+    get title() {
+      return t("rsync.filterRules");
+    },
     fields: [
       {
         kind: "list",
         key: "excludes",
-        label: "Exclude",
+        get label() {
+          return t("rsync.exclude");
+        },
         flag: "--exclude",
         placeholder: "*.tmp\nnode_modules/\n/build",
-        hint: "One pattern per line, as in rsync: * and ? match within a name, ** across folders, a trailing / matches only folders and a leading / anchors to the top folder.",
+        get hint() {
+          return t("rsync.onePatternPerLineAs");
+        },
       },
       {
         kind: "list",
         key: "includes",
-        label: "Include",
+        get label() {
+          return t("rsync.include");
+        },
         flag: "--include",
         placeholder: "*/\n*.html",
-        hint: "Checked before the Exclude field, so these are kept even when one of its patterns matches. Filter rules and rules typed as rsync arguments are checked first.",
+        get hint() {
+          return t("rsync.checkedBeforeTheExcludeField");
+        },
       },
       {
         kind: "list",
         key: "filterRules",
-        label: "Filter rules",
+        get label() {
+          return t("rsync.filterRules");
+        },
         flag: "--filter",
-        placeholder: "- *.log\nP /uploads/\ndir-merge .rsync-filter",
-        hint: "rsync's filter syntax, one rule per line, checked before includes and excludes.",
+        get placeholder() {
+          return t("rsync.logPUploadsDirMerge");
+        },
+        get hint() {
+          return t("rsync.rsyncsFilterSyntaxOneRule");
+        },
       },
       {
         kind: "list",
         key: "excludeFrom",
-        label: "Exclude patterns from files",
+        get label() {
+          return t("rsync.excludePatternsFromFiles");
+        },
         flag: "--exclude-from",
         placeholder: "excludes.txt",
-        hint: "Files on this computer, one per line; relative paths start at the local folder.",
+        get hint() {
+          return t("rsync.filesOnThisComputerOne");
+        },
       },
       {
         kind: "list",
         key: "includeFrom",
-        label: "Include patterns from files",
+        get label() {
+          return t("rsync.includePatternsFromFiles");
+        },
         flag: "--include-from",
       },
       {
         kind: "text",
         key: "filesFrom",
-        label: "Copy only the files listed in",
+        get label() {
+          return t("rsync.copyOnlyTheFilesListed");
+        },
         flag: "--files-from",
         placeholder: "files.txt",
       },
       {
         kind: "switch",
         key: "from0",
-        label: "Names in those files end with a null character",
+        get label() {
+          return t("rsync.namesInThoseFilesEnd");
+        },
         flag: "-0",
       },
       {
         kind: "select",
         key: "filterFiles",
-        label: "Rules in .rsync-filter files",
+        get label() {
+          return t("rsync.rulesInRsyncFilterFiles");
+        },
         choices: [
-          { value: "off", label: "Ignore them" },
-          { value: "read", label: "Read them in each folder (-F)" },
-          { value: "readAndExclude", label: "Read them and leave them out (-FF)" },
+          {
+            value: "off",
+            get label() {
+              return t("rsync.ignoreThem");
+            },
+          },
+          {
+            value: "read",
+            get label() {
+              return t("rsync.readThemInEachFolder");
+            },
+          },
+          {
+            value: "readAndExclude",
+            get label() {
+              return t("rsync.readThemAndLeaveThem");
+            },
+          },
         ],
       },
       {
         kind: "switch",
         key: "cvsExclude",
-        label: "Leave out files CVS would ignore",
+        get label() {
+          return t("rsync.leaveOutFilesCvsWould");
+        },
         flag: "-C",
       },
     ],
   },
   {
     id: "attributes",
-    title: "Times, permissions and ownership",
+    get title() {
+      return t("rsync.timesPermissionsAndOwnership");
+    },
     fields: [
-      { kind: "switch", key: "times", label: "Keep modification times", flag: "-t" },
+      {
+        kind: "switch",
+        key: "times",
+        get label() {
+          return t("rsync.keepModificationTimes");
+        },
+        flag: "-t",
+      },
       {
         kind: "switch",
         key: "omitDirTimes",
-        label: "Leave the times of folders alone",
+        get label() {
+          return t("rsync.leaveTheTimesOfFolders");
+        },
         flag: "-O",
       },
-      { kind: "switch", key: "perms", label: "Keep permissions", flag: "-p" },
+      {
+        kind: "switch",
+        key: "perms",
+        get label() {
+          return t("rsync.keepPermissions");
+        },
+        flag: "-p",
+      },
       {
         kind: "switch",
         key: "executability",
-        label: "Without permissions, keep whether files can run",
+        get label() {
+          return t("rsync.withoutPermissionsKeepWhetherFiles");
+        },
         flag: "-E",
       },
       {
         kind: "text",
         key: "chmod",
-        label: "Change permissions",
+        get label() {
+          return t("rsync.changePermissions");
+        },
         flag: "--chmod",
         placeholder: "D755,F644",
-        hint: "As rsync takes them: D for folders, F for files, then octal or chmod's u+x form.",
+        get hint() {
+          return t("rsync.asRsyncTakesThemD");
+        },
       },
-      { kind: "switch", key: "owner", label: "Keep the owner", flag: "-o" },
-      { kind: "switch", key: "group", label: "Keep the group", flag: "-g" },
+      {
+        kind: "switch",
+        key: "owner",
+        get label() {
+          return t("rsync.keepTheOwner");
+        },
+        flag: "-o",
+      },
+      {
+        kind: "switch",
+        key: "group",
+        get label() {
+          return t("rsync.keepTheGroup");
+        },
+        flag: "-g",
+      },
       {
         kind: "text",
         key: "chown",
-        label: "Set the owner and group",
+        get label() {
+          return t("rsync.setTheOwnerAndGroup");
+        },
         flag: "--chown",
         placeholder: "www-data:www-data",
       },
       {
         kind: "switch",
         key: "numericIds",
-        label: "Match owners and groups by number, not name",
+        get label() {
+          return t("rsync.matchOwnersAndGroupsBy");
+        },
         flag: "--numeric-ids",
       },
     ],
   },
   {
     id: "links",
-    title: "Symbolic links",
+    get title() {
+      return t("rsync.symbolicLinks");
+    },
     fields: [
       {
         kind: "select",
         key: "links",
-        label: "Links",
+        get label() {
+          return t("rsync.links");
+        },
         choices: [
-          { value: "follow", label: "Copy what they point to (-L)" },
-          { value: "preserve", label: "Copy them as links (-l)" },
-          { value: "skip", label: "Leave them out" },
+          {
+            value: "follow",
+            get label() {
+              return t("rsync.copyWhatTheyPointTo");
+            },
+          },
+          {
+            value: "preserve",
+            get label() {
+              return t("rsync.copyThemAsLinksL");
+            },
+          },
+          {
+            value: "skip",
+            get label() {
+              return t("rsync.leaveThemOut");
+            },
+          },
         ],
       },
       {
         kind: "switch",
         key: "safeLinks",
-        label: "Leave out links that point outside the folder",
+        get label() {
+          return t("rsync.leaveOutLinksThatPoint");
+        },
         flag: "--safe-links",
       },
       {
         kind: "switch",
         key: "copyUnsafeLinks",
-        label: "Copy what links outside the folder point to",
+        get label() {
+          return t("rsync.copyWhatLinksOutsideThe");
+        },
         flag: "--copy-unsafe-links",
       },
       {
         kind: "switch",
         key: "copyDirlinks",
-        label: "Copy links to folders as folders",
+        get label() {
+          return t("rsync.copyLinksToFoldersAs");
+        },
         flag: "-k",
       },
       {
         kind: "switch",
         key: "keepDirlinks",
-        label: "Treat links to folders on the target as folders",
+        get label() {
+          return t("rsync.treatLinksToFoldersOn");
+        },
         flag: "-K",
       },
     ],
   },
   {
     id: "bandwidth",
-    title: "Bandwidth and compression",
+    get title() {
+      return t("rsync.bandwidthAndCompression");
+    },
     fields: [
       {
         kind: "number",
         key: "bwlimitKib",
-        label: "Speed limit",
+        get label() {
+          return t("rsync.speedLimit");
+        },
         flag: "--bwlimit",
-        unit: "KiB/s",
+        unit: () => "KiB/s",
         max: 100 * 1024 * 1024,
-        hint: "0 is unlimited. Shared by every file of the synchronization, which also keeps to the speed limits and schedule in Settings > Transfers.",
+        get hint() {
+          return t("rsync.n0IsUnlimitedSharedBy");
+        },
       },
       {
         kind: "switch",
         key: "compress",
-        label: "Compress data on the way",
+        get label() {
+          return t("rsync.compressDataOnTheWay");
+        },
         flag: "-z",
-        hint: "Over a connection of its own with SSH compression.",
+        get hint() {
+          return t("rsync.overAConnectionOfIts");
+        },
       },
     ],
   },
   {
     id: "backup",
-    title: "Backups",
+    get title() {
+      return t("rsync.backups");
+    },
     fields: [
       {
         kind: "switch",
         key: "backup",
-        label: "Keep files that are replaced or deleted",
+        get label() {
+          return t("rsync.keepFilesThatAreReplaced");
+        },
         flag: "-b",
       },
       {
         kind: "text",
         key: "backupDir",
-        label: "Backup folder",
+        get label() {
+          return t("rsync.backupFolder");
+        },
         flag: "--backup-dir",
-        placeholder: "Beside each file",
-        hint: "On the target's side; a relative path starts at the target folder.",
+        get placeholder() {
+          return t("rsync.besideEachFile");
+        },
+        get hint() {
+          return t("rsync.onTheTargetsSideA");
+        },
       },
       {
         kind: "text",
         key: "backupSuffix",
-        label: "Added to backup names",
+        get label() {
+          return t("rsync.addedToBackupNames");
+        },
         flag: "--suffix",
-        placeholder: "~ without a backup folder",
+        get placeholder() {
+          return t("rsync.withoutABackupFolder");
+        },
       },
     ],
   },
   {
     id: "output",
-    title: "Dry run and reporting",
+    get title() {
+      return t("rsync.dryRunAndReporting");
+    },
     fields: [
       {
         kind: "switch",
         key: "dryRun",
-        label: "Dry run: show what would happen and change nothing",
+        get label() {
+          return t("rsync.dryRunShowWhatWould");
+        },
         flag: "-n",
       },
       {
         kind: "switch",
         key: "itemize",
-        label: "Log each change in rsync's itemized form",
+        get label() {
+          return t("rsync.logEachChangeInRsyncs");
+        },
         flag: "-i",
       },
-      { kind: "switch", key: "verbose", label: "Log each file copied", flag: "-v" },
-      { kind: "switch", key: "stats", label: "Log statistics at the end", flag: "--stats" },
+      {
+        kind: "switch",
+        key: "verbose",
+        get label() {
+          return t("rsync.logEachFileCopied");
+        },
+        flag: "-v",
+      },
+      {
+        kind: "switch",
+        key: "stats",
+        get label() {
+          return t("rsync.logStatisticsAtTheEnd");
+        },
+        flag: "--stats",
+      },
       {
         kind: "text",
         key: "logFile",
-        label: "Also write to the log file",
+        get label() {
+          return t("rsync.alsoWriteToTheLog");
+        },
         flag: "--log-file",
         placeholder: "/home/me/sync.log",
       },

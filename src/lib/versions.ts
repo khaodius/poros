@@ -1,7 +1,7 @@
 // The history versioned S3 buckets and Backblaze B2 keep of each file: what the Versions dialog
 // offers for each entry, and how deleted files join a folder's listing.
 
-import { entriesStillListed, formatCount } from "./deletion";
+import { entriesStillListed } from "./deletion";
 import { formatDate } from "./format";
 import type { DateFormat } from "./settings";
 import type {
@@ -13,12 +13,10 @@ import type {
   Protocol,
   Versioning,
 } from "./types";
+import { dateTimeFormat, t } from "../i18n";
 
 /** Mirrors `editor::MAX_FILE_BYTES`: larger files do not open in the editor. */
 export const EDITOR_MAX_BYTES = 16 * 1024 * 1024;
-
-/** Mirrors `versions::NO_VERSIONS`. */
-export const NO_VERSIONS = "This bucket keeps no versions";
 
 /**
  * Whether a server keeps histories of its files: S3 in buckets with versioning, B2 always. A
@@ -112,9 +110,13 @@ export function restoreProgressText({
   total?: number;
   counting?: boolean;
 }): string {
-  if (!total) return files > 0 ? `${formatCount(files)} restored` : "Finding what to restore...";
-  if (counting) return `${formatCount(files)} restored, ${formatCount(total)} found so far`;
-  return `${formatCount(files)} of ${formatCount(total)} restored`;
+  if (!total) {
+    return files > 0
+      ? t("versions.restoredCount", { count: files })
+      : t("versions.findingWhatToRestore");
+  }
+  if (counting) return t("versions.restoredFoundSoFar", { count: files, total });
+  return t("versions.restoredOfTotal", { count: files, total });
 }
 
 /** How a history entry is marked in the Versions dialog. */
@@ -126,9 +128,15 @@ export function versionStatus(version: ObjectVersion): VersionStatus {
 }
 
 export const STATUS_LABELS: Record<Exclude<VersionStatus, null>, string> = {
-  current: "Current",
-  deleted: "Deleted",
-  marker: "Delete marker",
+  get current() {
+    return t("versions.current");
+  },
+  get deleted() {
+    return t("versions.deleted");
+  },
+  get marker() {
+    return t("versions.deleteMarker");
+  },
 };
 
 /** Endings of files the editor has nothing to show for. */
@@ -188,26 +196,25 @@ export function afterDeleting(
   const index = history.findIndex((entry) => entry.versionId === version.versionId);
   const next = index < 0 ? undefined : history[index + 1];
   if (version.kind === "deleteMarker") {
-    if (!next) return "Nothing of the file is left after it.";
+    if (!next) return t("versions.nothingOfTheFileIsLeft");
     return next.kind === "version"
-      ? "The file comes back as its newest version."
-      : "The file stays deleted: another delete marker is under this one.";
+      ? t("versions.theFileComesBackAsItsNewestVersion")
+      : t("versions.theFileStaysDeleted");
   }
-  if (!next) return "This is the only version: the file will be gone.";
+  if (!next) return t("versions.thisIsTheOnlyVersion");
   return next.kind === "version"
-    ? "The version before it becomes the current file."
-    : "The file will show as deleted: the entry before it is a delete marker.";
+    ? t("versions.theVersionBeforeItBecomesCurrent")
+    : t("versions.theFileWillShowAsDeleted");
 }
-
-const localeWithSeconds = new Intl.DateTimeFormat(undefined, {
-  dateStyle: "medium",
-  timeStyle: "medium",
-});
 
 /** When a version was stored, to the second: versions often come minutes apart or less. */
 export function formatVersionTime(epochSeconds: number | null, dateFormat: DateFormat): string {
-  if (epochSeconds === null) return "Unknown time";
-  if (dateFormat === "locale") return localeWithSeconds.format(new Date(epochSeconds * 1000));
+  if (epochSeconds === null) return t("versions.unknownTime");
+  if (dateFormat === "locale") {
+    return dateTimeFormat({ dateStyle: "medium", timeStyle: "medium" }).format(
+      new Date(epochSeconds * 1000),
+    );
+  }
   return formatDate(epochSeconds, "seconds");
 }
 
@@ -231,9 +238,9 @@ export function shortTag(etag: string): string {
 export function versioningNote(versioning: Versioning | undefined): string | null {
   switch (versioning) {
     case "suspended":
-      return "Versioning is suspended on this bucket: what it kept stays, and new writes replace the version marked null.";
+      return t("versions.versioningIsSuspended");
     case "unknown":
-      return "These keys may not see whether the bucket keeps versions, so some actions may be refused.";
+      return t("versions.theseKeysMayNotSeeVersioning");
     default:
       return null;
   }

@@ -5,6 +5,7 @@
 
 import { formatDuration } from "./format";
 import type { CommandResult } from "./types";
+import { t } from "../i18n";
 
 export interface CommandTarget {
   /** The folder the pane shows, where the command runs. */
@@ -14,26 +15,57 @@ export interface CommandTarget {
 }
 
 export const PLACEHOLDERS: { placeholder: string; meaning: string }[] = [
-  { placeholder: "{path}", meaning: "each selected item's full path, running once per item" },
-  { placeholder: "{name}", meaning: "each selected item's name, running once per item" },
-  { placeholder: "{paths}", meaning: "the full paths of all selected items" },
-  { placeholder: "{names}", meaning: "the names of all selected items" },
-  { placeholder: "{folder}", meaning: "the folder shown" },
+  {
+    placeholder: "{path}",
+    get meaning() {
+      return t("automation.eachSelectedItemsFullPath");
+    },
+  },
+  {
+    placeholder: "{name}",
+    get meaning() {
+      return t("automation.eachSelectedItemsNameRunning");
+    },
+  },
+  {
+    placeholder: "{paths}",
+    get meaning() {
+      return t("automation.theFullPathsOfAll");
+    },
+  },
+  {
+    placeholder: "{names}",
+    get meaning() {
+      return t("automation.theNamesOfAllSelected");
+    },
+  },
+  {
+    placeholder: "{folder}",
+    get meaning() {
+      return t("automation.theFolderShown");
+    },
+  },
 ];
+
+/** Shell code the advice and the warning below name, which reads the same in every language. */
+const ANOTHER_SHELL_EXAMPLES = { bashExample: 'bash -c "..."', sshExample: 'ssh host "..."' };
+const UNCERTAIN_SYNTAX_EXAMPLES = { ansiQuoted: "$'...'", parameter: '"${1}"' };
 
 /**
  * Said under the placeholders: each is one word to the command, but a shell the command starts
  * reads its own command string, names and all.
  */
-export const PLACEHOLDER_ADVICE =
-  'Keep placeholders out of a command string another shell reads, such as bash -c "..." or ssh host "...": that shell would read a name as part of its command.';
+export function placeholderAdvice(): string {
+  return t("automation.keepPlaceholdersOutOfAnotherShell", ANOTHER_SHELL_EXAMPLES);
+}
 
 /**
  * Shown when a command could not be read with certainty, so its placeholders are all quoted the
  * one way that is right outside quotes.
  */
-export const UNCERTAIN_COMMAND_WARNING =
-  "Poros cannot tell for sure how the shell reads this command: it has a here-document, $'...', or a quote or bracket left open. Each placeholder goes in as \"${1}\" and so on, which keeps a name one word only outside quotes.";
+export function uncertainCommandWarning(): string {
+  return t("automation.cannotTellHowTheShellReads", UNCERTAIN_SYNTAX_EXAMPLES);
+}
 
 const PLACEHOLDER_PATTERN = /\{(path|name|paths|names|folder)\}/g;
 const PER_ITEM_PATTERN = /\{(path|name)\}/;
@@ -231,7 +263,10 @@ function reference(parameters: string[], quoting: Quoting): string {
 function describeCommand(command: string, values: string[]): string {
   if (values.length === 0) return command;
   const meanings = values.map((value, index) => `$${index + 1} = ${shellQuote(value)}`);
-  return `${command} with ${meanings.join(", ")}`;
+  return t("automation.commandWithParameters", {
+    command,
+    parameters: meanings.join(t("common.listSeparator")),
+  });
 }
 
 /**
@@ -301,9 +336,13 @@ export function commandSucceeded(result: CommandResult): boolean {
 /** How a command ended, as the backend logs it. */
 export function describeResult(result: CommandResult): string {
   const elapsed = formatDuration(result.elapsedMillis / 1000);
-  if (result.stopped) return `Stopped after ${elapsed}`;
-  if (result.signal !== null) return `Ended by signal ${result.signal} after ${elapsed}`;
-  if (result.exitStatus === null) return `Ended without an exit status after ${elapsed}`;
-  if (result.exitStatus !== 0) return `Exited with status ${result.exitStatus} after ${elapsed}`;
-  return `Finished in ${elapsed}`;
+  if (result.stopped) return t("automation.stoppedAfter", { elapsed });
+  if (result.signal !== null) {
+    return t("automation.endedBySignal", { signal: result.signal, elapsed });
+  }
+  if (result.exitStatus === null) return t("automation.endedWithoutStatus", { elapsed });
+  if (result.exitStatus !== 0) {
+    return t("automation.exitedWithStatus", { status: String(result.exitStatus), elapsed });
+  }
+  return t("automation.finishedIn", { elapsed });
 }

@@ -19,10 +19,11 @@ import {
   verdict,
   type DisplayItem,
 } from "../lib/compare";
-import { formatSize, pluralize } from "../lib/format";
+import { formatSize } from "../lib/format";
 import { fileOperations, toAppError } from "../lib/ipc";
 import type { CompareRow, CompareRowKind, Comparison, FileLocation } from "../lib/types";
 import { Dialog } from "./Dialog";
+import { useT } from "../i18n";
 
 export interface CompareSide {
   location: FileLocation;
@@ -59,6 +60,7 @@ const ESTIMATED_ROW_HEIGHT = 20;
 const DIALOG_WIDTH = 1400;
 
 export function CompareDialog({ left, right, onClose, compare }: CompareDialogProps) {
+  const t = useT();
   const [options, setOptions] = useState<Options>({ ignoreWhitespace: false, ignoreCase: false });
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   const [swapped, setSwapped] = useState(false);
@@ -98,14 +100,19 @@ export function CompareDialog({ left, right, onClose, compare }: CompareDialogPr
     setOptions((current) => ({ ...current, [key]: !current[key] }));
 
   return (
-    <Dialog title="Compare files" onClose={onClose} width={DIALOG_WIDTH} className="compare-dialog">
+    <Dialog
+      title={t("compare.compareFiles")}
+      onClose={onClose}
+      width={DIALOG_WIDTH}
+      className="compare-dialog"
+    >
       <div className="compare-files">
         <FileHeading side={first} size={comparison?.leftSize} />
         <button
           type="button"
           className="icon-button"
-          title="Swap sides"
-          aria-label="Swap sides"
+          title={t("compare.swapSides")}
+          aria-label={t("compare.swapSides")}
           onClick={() => setSwapped((current) => !current)}
         >
           <ArrowLeftRight size={15} />
@@ -124,7 +131,7 @@ export function CompareDialog({ left, right, onClose, compare }: CompareDialogPr
               setExpanded(new Set());
             }}
           />
-          Only changes
+          {t("compare.onlyChanges")}
         </label>
         <label className="check">
           <input
@@ -132,7 +139,7 @@ export function CompareDialog({ left, right, onClose, compare }: CompareDialogPr
             checked={options.ignoreWhitespace}
             onChange={() => toggle("ignoreWhitespace")}
           />
-          Ignore whitespace
+          {t("compare.ignoreWhitespace")}
         </label>
         <label className="check">
           <input
@@ -140,11 +147,11 @@ export function CompareDialog({ left, right, onClose, compare }: CompareDialogPr
             checked={options.ignoreCase}
             onChange={() => toggle("ignoreCase")}
           />
-          Ignore case
+          {t("compare.ignoreCase")}
         </label>
         <span className="compare-verdict" role="status">
           {loading
-            ? "Comparing..."
+            ? t("compare.comparing")
             : comparison && content?.kind === "text" && verdict(comparison, ignoring)}
         </span>
       </div>
@@ -173,13 +180,15 @@ export function CompareDialog({ left, right, onClose, compare }: CompareDialogPr
           <p>{verdict(comparison, ignoring)}</p>
           {!comparison.identical && comparison.leftSize !== comparison.rightSize && (
             <p className="field-hint">
-              {formatSize(comparison.leftSize)} on the left, {formatSize(comparison.rightSize)} on
-              the right.
+              {t("compare.onTheLeftOnThe", {
+                left: formatSize(comparison.leftSize),
+                right: formatSize(comparison.rightSize),
+              })}
             </p>
           )}
         </div>
       )}
-      {!outcome && <div className="compare-binary">Reading both files...</div>}
+      {!outcome && <div className="compare-binary">{t("compare.readingBothFiles")}</div>}
     </Dialog>
   );
 }
@@ -221,6 +230,7 @@ function CompareRows({
   stale,
   onExpand,
 }: CompareRowsProps) {
+  const t = useT();
   const scrollRef = useRef<HTMLDivElement>(null);
   const items = useMemo(
     () => displayItems(rows, changesOnly, expanded),
@@ -264,8 +274,8 @@ function CompareRows({
         <button
           type="button"
           className="icon-button"
-          title="Previous change (Alt+Up)"
-          aria-label="Previous change"
+          title={t("compare.previousChangeAltUp")}
+          aria-label={t("compare.previousChange")}
           disabled={adjacentChange(starts, position, -1) === null}
           onClick={() => step(-1)}
         >
@@ -274,8 +284,8 @@ function CompareRows({
         <button
           type="button"
           className="icon-button"
-          title="Next change (Alt+Down)"
-          aria-label="Next change"
+          title={t("compare.nextChangeAltDown")}
+          aria-label={t("compare.nextChange")}
           disabled={adjacentChange(starts, position, 1) === null}
           onClick={() => step(1)}
         >
@@ -283,10 +293,10 @@ function CompareRows({
         </button>
         <span>
           {starts.length === 0
-            ? "No changes"
+            ? t("compare.noChanges")
             : currentIndex >= 0
-              ? `Change ${currentIndex + 1} of ${starts.length}`
-              : pluralize(starts.length, "change")}
+              ? t("compare.changeOf", { current: currentIndex + 1, count: starts.length })
+              : t("compare.changes", { count: starts.length })}
         </span>
       </div>
       <div className="compare-body">
@@ -311,7 +321,7 @@ function CompareRows({
                     style={style}
                     onClick={() => onExpand(item.start)}
                   >
-                    Show {pluralize(item.end - item.start, "unchanged line")}
+                    {t("compare.showUnchangedLines", { count: item.end - item.start })}
                   </button>
                 );
               }

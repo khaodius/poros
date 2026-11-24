@@ -10,12 +10,15 @@ import {
   useRestoreStore,
 } from "../state/restoreActions";
 import { ConnectionIcon } from "./ConnectionIcon";
+import { t, useT } from "../i18n";
 
 /** What the tab shows once it is back, for a tab that needs its server first. */
 function reopens(tab: RestoringTab): string {
-  if (tab.kind === "editor") return `Reopens ${tab.name} once connected.`;
-  if (tab.kind === "terminal") return "Opens a new shell once connected.";
-  return tab.path ? `Reopens ${tab.path} once connected.` : "Reopens once connected.";
+  if (tab.kind === "editor") return t("workspace.reopensNameOnceConnected", { name: tab.name });
+  if (tab.kind === "terminal") return t("workspace.opensANewShellOnceConnected");
+  return tab.path
+    ? t("workspace.reopensNameOnceConnected", { name: tab.path })
+    : t("workspace.reopensOnceConnected");
 }
 
 /**
@@ -23,6 +26,7 @@ function reopens(tab: RestoringTab): string {
  * or its file is open.
  */
 export function RestoringPane({ tab }: { tab: RestoringTab }) {
+  const t = useT();
   const server = tab.restore.server;
   const key = serverKey(tab);
   const status = useRestoreStore((state) => state.servers[key]);
@@ -40,7 +44,11 @@ export function RestoringPane({ tab }: { tab: RestoringTab }) {
       <section className="pane">
         <div className="pane-empty restoring-pane">
           <FileText size={36} className="pane-empty-icon" />
-          <p className="pane-empty-title">Opening {tab.kind === "editor" ? tab.name : "file"}...</p>
+          <p className="pane-empty-title">
+            {tab.kind === "editor"
+              ? t("workspace.openingName", { name: tab.name })
+              : t("workspace.openingFile")}
+          </p>
         </div>
       </section>
     );
@@ -49,17 +57,17 @@ export function RestoringPane({ tab }: { tab: RestoringTab }) {
   const phase = status?.phase ?? "connecting";
   const title =
     phase === "connecting"
-      ? `Reconnecting to ${server.label}...`
+      ? t("workspace.reconnectingTo", { label: server.label })
       : phase === "signIn"
-        ? `Sign in to ${server.label}`
+        ? t("workspace.signInTo", { label: server.label })
         : phase === "failed"
-          ? `Could not reconnect to ${server.label}`
+          ? t("workspace.couldNotReconnectTo", { label: server.label })
           : server.label;
   const detail =
     status?.phase === "failed" || (status?.phase === "signIn" && status.message)
       ? status.message
       : phase === "signIn"
-        ? "Poros keeps no password for this server."
+        ? t("workspace.porosKeepsNoPasswordForThisServer")
         : null;
   return (
     <section className="pane">
@@ -79,7 +87,7 @@ export function RestoringPane({ tab }: { tab: RestoringTab }) {
               onClick={() => signInToRestore(tab)}
             >
               <KeyRound size={14} />
-              Sign in
+              {t("workspace.signIn")}
             </button>
           )}
           {(phase === "failed" || phase === "waiting") && (
@@ -89,11 +97,11 @@ export function RestoringPane({ tab }: { tab: RestoringTab }) {
               onClick={() => void reconnect(key, server)}
             >
               <RotateCw size={14} />
-              {phase === "waiting" ? "Connect" : "Try again"}
+              {phase === "waiting" ? t("common.connect") : t("common.tryAgain")}
             </button>
           )}
           <button type="button" className="button" onClick={() => closeTab(tab.id)}>
-            Close tab
+            {t("workspace.closeTab")}
           </button>
         </div>
         <p className="pane-empty-detail">{reopens(tab)}</p>

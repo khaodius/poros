@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { Minus, Plus } from "lucide-react";
 import { useHoldRepeat } from "../hooks/useHoldRepeat";
+import { useT } from "../i18n";
 
 interface StepperProps {
   value: number;
@@ -20,6 +21,7 @@ const PAGE_STEP = 10;
  * stay enabled during a hold, because a disabled button would swallow the release.
  */
 export function Stepper({ value, min, max, label, unit, disabled, onChange }: StepperProps) {
+  const t = useT();
   const [typed, setTyped] = useState<string | null>(null);
   const [held, setHeld] = useState<number | null>(null);
   const heldValue = useRef<number | null>(null);
@@ -51,7 +53,7 @@ export function Stepper({ value, min, max, label, unit, disabled, onChange }: St
     <span className={`stepper ${disabled ? "is-disabled" : ""}`} role="group" aria-label={label}>
       <button
         type="button"
-        aria-label={`Decrease ${label.toLowerCase()}`}
+        aria-label={t("settings.decrease", { label })}
         disabled={disabled || (held === null && value <= min)}
         {...decrease}
         onClick={(event) => event.detail === 0 && commit(value - 1)}
@@ -90,7 +92,7 @@ export function Stepper({ value, min, max, label, unit, disabled, onChange }: St
       </span>
       <button
         type="button"
-        aria-label={`Increase ${label.toLowerCase()}`}
+        aria-label={t("settings.increase", { label })}
         disabled={disabled || (held === null && value >= max)}
         {...increase}
         onClick={(event) => event.detail === 0 && commit(value + 1)}

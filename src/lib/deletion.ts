@@ -1,5 +1,6 @@
 // What a delete on a server says while it runs, and what a delete asked for acts on.
 
+import { formatNumber, t } from "../i18n";
 import type { FileEntry } from "./types";
 
 export interface DeleteProgress {
@@ -10,15 +11,16 @@ export interface DeleteProgress {
   failed?: number;
 }
 
-const countFormat = new Intl.NumberFormat("en-US");
-
-export const formatCount = (count: number) => countFormat.format(count);
+/** `1,204` in English, `1.204` in German. */
+export const formatCount = (count: number) => formatNumber(count);
 
 /** `1,204 of 5,000 deleted`, or while entries are still turning up, how many so far. */
 export function deleteProgressText({ files, total, counting }: DeleteProgress): string {
-  if (!total) return files > 0 ? `${formatCount(files)} deleted` : "Counting what to delete...";
-  if (counting) return `${formatCount(files)} deleted, ${formatCount(total)} found so far`;
-  return `${formatCount(files)} of ${formatCount(total)} deleted`;
+  if (!total) {
+    return files > 0 ? t("dialogs.deletedCount", { count: files }) : t("dialogs.countingToDelete");
+  }
+  if (counting) return t("dialogs.deletedFoundSoFar", { count: files, found: formatCount(total) });
+  return t("dialogs.deletedOfTotal", { count: files, total: formatCount(total) });
 }
 
 /** How far along a delete is, from 0 to 1, or null while entries are still turning up. */

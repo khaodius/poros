@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import type { FileEntry } from "./types";
 
 export const SORT_KEYS = [
@@ -22,13 +23,18 @@ export function isDirLike(entry: FileEntry): boolean {
   return entry.kind === "dir" || entry.linkTarget === "dir";
 }
 
-/** What the type column shows: "Folder", the extension in capitals, or "File". */
-export function typeLabel(entry: FileEntry): string {
-  if (isDirLike(entry)) return "Folder";
-  if (entry.linkTarget === "broken") return "Broken link";
+/** A file's extension in capitals, as `PDF`, or null when its name has none. */
+export function extensionLabel(entry: FileEntry): string | null {
   const dot = entry.name.lastIndexOf(".");
   // A leading dot marks a hidden file, not an extension.
-  return dot > 0 && dot < entry.name.length - 1 ? entry.name.slice(dot + 1).toUpperCase() : "File";
+  return dot > 0 && dot < entry.name.length - 1 ? entry.name.slice(dot + 1).toUpperCase() : null;
+}
+
+/** What the type column shows: "Folder", the extension in capitals, or "File". */
+export function typeLabel(entry: FileEntry): string {
+  if (isDirLike(entry)) return t("fileList.folder");
+  if (entry.linkTarget === "broken") return t("fileList.brokenLink");
+  return extensionLabel(entry) ?? t("fileList.file");
 }
 
 /** The path up to the entry's name, which sorts entries by the folder they are in. */

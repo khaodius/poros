@@ -1,3 +1,4 @@
+import { useT } from "../i18n";
 import { askToSave, closeWindowNow, unsavedEditorTabs } from "../state/editorActions";
 import { Dialog } from "./Dialog";
 import { DrivesGoing } from "./DrivesGoing";
@@ -11,6 +12,7 @@ interface QuitDialogProps {
 /** Asks before Poros quits while drives are in use, as closing their tab does. Asked after the
  * question about files saved in other programs, and goes on to files with unsaved changes. */
 export function QuitDialog({ drives, onClose }: QuitDialogProps) {
+  const t = useT();
   const quit = () => {
     onClose();
     // Files with unsaved changes are asked about next; the window closes once they are.
@@ -24,16 +26,16 @@ export function QuitDialog({ drives, onClose }: QuitDialogProps) {
   };
 
   return (
-    <Dialog title="Quit Poros?" onClose={onClose}>
+    <Dialog title={t("drives.quitPoros")} onClose={onClose}>
       <div className="confirm-body">
-        <DrivesGoing drives={drives} when="Poros quits" />
+        <DrivesGoing drives={drives} when="quit" />
       </div>
       <div className="dialog-actions">
         <button type="button" className="button" onClick={onClose}>
-          Cancel
+          {t("common.cancel")}
         </button>
         <button type="button" data-autofocus className="button button-primary" onClick={quit}>
-          Unmount and quit
+          {t("drives.unmountAndQuit")}
         </button>
       </div>
     </Dialog>

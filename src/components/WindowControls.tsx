@@ -1,16 +1,18 @@
 import { Copy, Minus, Square, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { useT } from "../i18n";
 
 /** Minimize, maximize and close, for windows drawn without the system title bar. */
 export function WindowControls({ maximized }: { maximized: boolean }) {
+  const t = useT();
   const appWindow = getCurrentWindow();
   return (
     <div className="window-controls">
       <button
         type="button"
         className="window-control"
-        title="Minimize"
-        aria-label="Minimize"
+        title={t("workspace.minimize")}
+        aria-label={t("workspace.minimize")}
         onClick={() => void appWindow.minimize()}
       >
         <Minus size={16} strokeWidth={1.5} />
@@ -18,8 +20,8 @@ export function WindowControls({ maximized }: { maximized: boolean }) {
       <button
         type="button"
         className="window-control"
-        title={maximized ? "Restore" : "Maximize"}
-        aria-label={maximized ? "Restore" : "Maximize"}
+        title={maximized ? t("workspace.restore") : t("workspace.maximize")}
+        aria-label={maximized ? t("workspace.restore") : t("workspace.maximize")}
         onClick={() => void appWindow.toggleMaximize()}
       >
         {maximized ? (
@@ -31,8 +33,8 @@ export function WindowControls({ maximized }: { maximized: boolean }) {
       <button
         type="button"
         className="window-control window-control-close"
-        title="Close"
-        aria-label="Close"
+        title={t("common.close")}
+        aria-label={t("common.close")}
         onClick={() => void appWindow.close()}
       >
         <X size={17} strokeWidth={1.5} />

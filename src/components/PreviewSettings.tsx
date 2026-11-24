@@ -7,29 +7,58 @@ import {
 import type { Settings } from "../lib/settings";
 import { saveSettingsSection } from "../state/settingsStore";
 import { NumberSetting, SelectSetting, SettingGroup } from "./settingsFields";
+import { useT, t } from "../i18n";
 
 const LOAD_OPTIONS: { value: PreviewLoad; label: string }[] = [
-  { value: "rest", label: "When the cursor rests on a file" },
-  { value: "click", label: "On a click of Show preview" },
+  {
+    value: "rest",
+    get label() {
+      return t("preview.whenTheCursorRestsOn");
+    },
+  },
+  {
+    value: "click",
+    get label() {
+      return t("preview.onAClickOfShow");
+    },
+  },
 ];
 
 const STORAGE_ROWS: { kind: StorageKind; label: string; hint?: string }[] = [
-  { kind: "local", label: "Files on this computer load" },
-  { kind: "server", label: "Files on servers load", hint: "SFTP, FTP and WebDAV." },
+  {
+    kind: "local",
+    get label() {
+      return t("preview.filesOnThisComputerLoad");
+    },
+  },
+  {
+    kind: "server",
+    get label() {
+      return t("preview.filesOnServersLoad");
+    },
+    get hint() {
+      return t("preview.sftpFtpAndWebdav");
+    },
+  },
   {
     kind: "metered",
-    label: "Files on storage that charges for reads load",
-    hint: "S3, Backblaze B2, Google Drive, OneDrive and Box, and vaults kept on them.",
+    get label() {
+      return t("preview.filesOnStorageThatCharges");
+    },
+    get hint() {
+      return t("preview.s3BackblazeB2GoogleDrive");
+    },
   },
 ];
 
 /** Settings > Interface: what the preview pane reads, and when. */
 export function PreviewSettingsGroup({ settings }: { settings: Settings }) {
+  const t = useT();
   const preview = settings.interface.preview;
   const set = (change: Partial<FilePreviewSettings>) =>
     void saveSettingsSection("interface", { preview: { ...preview, ...change } });
   return (
-    <SettingGroup title="Preview">
+    <SettingGroup title={t("preview.preview")}>
       {STORAGE_ROWS.map(({ kind, label, hint }) => (
         <SelectSetting
           key={kind}
@@ -41,8 +70,8 @@ export function PreviewSettingsGroup({ settings }: { settings: Settings }) {
         />
       ))}
       <NumberSetting
-        label="Largest picture loaded"
-        hint="Larger pictures show their details and a Load anyway button."
+        label={t("preview.largestPictureLoaded")}
+        hint={t("preview.largestPictureLoadedHint")}
         value={preview.maxImageMib}
         min={PREVIEW_LIMITS.maxImageMib.min}
         max={PREVIEW_LIMITS.maxImageMib.max}
@@ -50,8 +79,8 @@ export function PreviewSettingsGroup({ settings }: { settings: Settings }) {
         onChange={(maxImageMib) => set({ maxImageMib })}
       />
       <NumberSetting
-        label="Text read from a file"
-        hint="A longer file shows its beginning."
+        label={t("preview.textReadFromAFile")}
+        hint={t("preview.textReadFromAFileHint")}
         value={preview.textKib}
         min={PREVIEW_LIMITS.textKib.min}
         max={PREVIEW_LIMITS.textKib.max}
@@ -59,7 +88,7 @@ export function PreviewSettingsGroup({ settings }: { settings: Settings }) {
         onChange={(textKib) => set({ textKib })}
       />
       <NumberSetting
-        label="Thumbnail size"
+        label={t("preview.thumbnailSize")}
         value={preview.thumbnailSize}
         min={PREVIEW_LIMITS.thumbnailSize.min}
         max={PREVIEW_LIMITS.thumbnailSize.max}

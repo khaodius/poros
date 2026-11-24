@@ -3,6 +3,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { Check, ChevronDown, Search } from "lucide-react";
 import { recommendedFonts, type FontKind, type FontOption } from "../lib/fonts";
 import { fontStack } from "../state/themeStore";
+import { useT, type Translate } from "../i18n";
 
 type Row = { kind: "heading"; label: string } | { kind: "font"; name: string };
 
@@ -22,7 +23,7 @@ interface FontPickerProps {
   onChange: (family: string) => void;
 }
 
-function buildRows(fonts: FontOption[], kind: FontKind, query: string): Row[] {
+function buildRows(fonts: FontOption[], kind: FontKind, query: string, t: Translate): Row[] {
   const needle = query.trim().toLowerCase();
   const matches = (option: FontOption) => option.name.toLowerCase().includes(needle);
   const recommended = recommendedFonts(fonts, kind).filter(matches);
@@ -31,13 +32,13 @@ function buildRows(fonts: FontOption[], kind: FontKind, query: string): Row[] {
   const sections: [string, FontOption[]][] =
     kind === "mono"
       ? [
-          ["Recommended", recommended],
-          ["Fixed width", rest.filter((option) => option.monospaced)],
-          ["Other fonts", rest.filter((option) => !option.monospaced)],
+          [t("appearance.fontsRecommended"), recommended],
+          [t("appearance.fontsFixedWidth"), rest.filter((option) => option.monospaced)],
+          [t("appearance.fontsOther"), rest.filter((option) => !option.monospaced)],
         ]
       : [
-          ["Recommended", recommended],
-          ["All fonts", rest],
+          [t("appearance.fontsRecommended"), recommended],
+          [t("appearance.fontsAll"), rest],
         ];
   return [
     ...(needle ? [] : [{ kind: "font", name: "" } as const]),
@@ -54,6 +55,7 @@ function buildRows(fonts: FontOption[], kind: FontKind, query: string): Row[] {
 
 /** A searchable list of installed fonts, each name drawn in its own face. */
 export function FontPicker({ kind, label, value, fonts, onChange }: FontPickerProps) {
+  const t = useT();
   const buttonRef = useRef<HTMLButtonElement>(null);
   const [anchor, setAnchor] = useState<DOMRect | null>(null);
 
@@ -73,7 +75,7 @@ export function FontPicker({ kind, label, value, fonts, onChange }: FontPickerPr
           )
         }
       >
-        <span>{value || "Default"}</span>
+        <span>{value || t("common.default")}</span>
         <ChevronDown size={14} />
       </button>
       {anchor && (
@@ -124,11 +126,12 @@ function FontList({
   isOwnButton,
   onAnchorMoved,
 }: FontListProps) {
+  const t = useT();
   const popoverRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
-  const rows = useMemo(() => buildRows(fonts ?? [], kind, query), [fonts, kind, query]);
+  const rows = useMemo(() => buildRows(fonts ?? [], kind, query, t), [fonts, kind, query, t]);
   const fontIndexes = useMemo(
     () => rows.flatMap((row, index) => (row.kind === "font" ? [index] : [])),
     [rows],
@@ -228,9 +231,13 @@ function FontList({
         <input
           ref={searchRef}
           value={query}
-          placeholder={fonts ? `Search ${fonts.length} fonts` : "Search fonts"}
+          placeholder={
+            fonts
+              ? t("appearance.searchFonts", { count: fonts.length })
+              : t("appearance.searchFonts2")
+          }
           spellCheck={false}
-          aria-label={`Search ${label.toLowerCase()}`}
+          aria-label={t("appearance.search", { label })}
           aria-controls="font-picker-options"
           onChange={(event) => setQuery(event.target.value)}
         />
@@ -242,9 +249,11 @@ function FontList({
         role="listbox"
         aria-label={label}
       >
-        {fonts === null && <p className="font-picker-note">Reading installed fonts...</p>}
+        {fonts === null && (
+          <p className="font-picker-note">{t("appearance.readingInstalledFonts")}</p>
+        )}
         {fonts !== null && rows.length === 0 && (
-          <p className="font-picker-note">No installed font matches</p>
+          <p className="font-picker-note">{t("appearance.noInstalledFontMatches")}</p>
         )}
         <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
           {virtualizer.getVirtualItems().map((item) => {
@@ -271,7 +280,7 @@ function FontList({
                 onMouseMove={() => item.index !== active && setActiveIndex(item.index)}
                 onClick={() => onPick(row.name)}
               >
-                <span>{row.name || "Default"}</span>
+                <span>{row.name || t("common.default")}</span>
                 {selected && <Check size={14} />}
               </div>
             );

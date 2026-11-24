@@ -1,14 +1,14 @@
 import { ArchiveRestore, ClipboardCopy, History, RefreshCw, Trash2 } from "lucide-react";
-import { pluralize } from "../lib/format";
 import type { Versioning } from "../lib/types";
 import { keepsVersions } from "../lib/versions";
 import type { MenuItem } from "./ContextMenu";
+import { t } from "../i18n";
 
 /** Versions... for a file, or why there are none, as menus say of what is unavailable. */
 export function versionsMenuItem(versioning: Versioning | undefined, open: () => void): MenuItem {
   const keeps = keepsVersions(versioning);
   return {
-    label: keeps ? "Versions..." : "Versions (this bucket keeps none)",
+    label: keeps ? t("versions.versions") : t("versions.versionsThisBucketKeepsNone"),
     icon: <History size={14} />,
     disabled: !keeps,
     onSelect: open,
@@ -22,7 +22,7 @@ export function showDeletedMenuItem(
 ): MenuItem {
   const keeps = keepsVersions(versioning);
   return {
-    label: keeps ? "Show deleted files" : "Show deleted files (this bucket keeps no versions)",
+    label: keeps ? t("versions.showDeletedFiles") : t("versions.showDeletedFilesThisBucket"),
     checked: shown && keeps,
     disabled: !keeps,
     onSelect: toggle,
@@ -47,21 +47,21 @@ export function deletedMenuItems(menu: DeletedMenu): MenuItem[] {
   const several = menu.count > 1;
   return [
     {
-      label: several ? `Restore ${pluralize(menu.count, "item")}` : "Restore",
+      label: several ? t("versions.restoreItems", { count: menu.count }) : t("versions.restore"),
       icon: <ArchiveRestore size={14} />,
       onSelect: menu.restore,
     },
     ...(menu.file && !several
-      ? [{ label: "Versions...", icon: <History size={14} />, onSelect: menu.versions }]
+      ? [{ label: t("versions.versions"), icon: <History size={14} />, onSelect: menu.versions }]
       : []),
     "separator",
     {
-      label: several ? "Copy paths" : "Copy path",
+      label: several ? t("versions.copyPaths") : t("versions.copyPath"),
       icon: <ClipboardCopy size={14} />,
       onSelect: menu.copyPaths,
     },
     {
-      label: "Refresh",
+      label: t("common.refresh"),
       icon: <RefreshCw size={14} />,
       shortcut: "F5",
       onSelect: menu.refresh,
@@ -69,7 +69,9 @@ export function deletedMenuItems(menu: DeletedMenu): MenuItem[] {
     menu.showDeleted,
     "separator",
     {
-      label: several ? `Delete ${pluralize(menu.count, "item")} for good` : "Delete for good",
+      label: several
+        ? t("versions.deleteItemsForGood", { count: menu.count })
+        : t("versions.deleteForGood"),
       icon: <Trash2 size={14} />,
       shortcut: "Del",
       danger: true,

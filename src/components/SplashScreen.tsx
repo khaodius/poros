@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { PorosLogo } from "./PorosLogo";
+import { useT } from "../i18n";
 
 /** Long enough for the dots to light up once, so a fast start does not look like a flicker. */
 const MIN_SHOWN_MILLIS = 650;
@@ -8,6 +9,7 @@ const FADE_MILLIS = 220;
 
 /** Covers the window with the logo while the app loads, then fades out. */
 export function SplashScreen({ ready }: { ready: boolean }) {
+  const t = useT();
   const [shownLongEnough, setShownLongEnough] = useState(false);
   const [gone, setGone] = useState(false);
   const leaving = ready && shownLongEnough;
@@ -28,7 +30,7 @@ export function SplashScreen({ ready }: { ready: boolean }) {
     <div
       className={`splash ${leaving ? "is-leaving" : ""}`}
       role="status"
-      aria-label="Loading Poros"
+      aria-label={t("workspace.loadingPoros")}
       aria-hidden={leaving}
     >
       <PorosLogo size={88} />

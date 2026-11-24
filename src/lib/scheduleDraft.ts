@@ -3,6 +3,7 @@
 
 import { newTask, transferAction } from "./schedule";
 import type { Direction, ExistsAction, JobSnapshot, ScheduledTask, TaskItem } from "./types";
+import { t } from "../i18n";
 
 /** What a draft needs to know about a session. */
 export interface SessionFacts {
@@ -88,18 +89,17 @@ function itemsAndDestination(
 function connectionOf(facts: SessionFacts | undefined): { id: string } | { problem: string } {
   if (!facts) {
     return {
-      problem:
-        "Poros no longer knows the server of these transfers. Schedule the files from a tab instead.",
+      problem: t("schedule.porosNoLongerKnowsThe"),
     };
   }
   if (facts.vault) {
     return {
-      problem: "Files in an unlocked vault cannot be scheduled: a task could not unlock the vault.",
+      problem: t("schedule.filesInAnUnlockedVault"),
     };
   }
   if (!facts.savedConnectionId) {
     return {
-      problem: `Save the connection to ${facts.label} first: a scheduled task signs in with a saved connection.`,
+      problem: t("schedule.saveTheConnectionToFirst", { label: facts.label }),
     };
   }
   return { id: facts.savedConnectionId };
@@ -116,7 +116,7 @@ export function taskFromJobs(
   facts: (sessionId: string) => SessionFacts | undefined,
   exists: ExistsAction,
 ): TaskDraft {
-  if (jobs.length === 0) return { problem: "Select the transfers to schedule." };
+  if (jobs.length === 0) return { problem: t("schedule.selectTheTransfersToSchedule") };
   const [first] = jobs;
   const together = jobs.every(
     (job) =>
@@ -126,7 +126,7 @@ export function taskFromJobs(
   );
   if (!together) {
     return {
-      problem: "Select transfers that go the same way between the same places to schedule them.",
+      problem: t("schedule.selectTransfersThatGoThe"),
     };
   }
   const target = connectionOf(facts(first.sessionId));
@@ -140,8 +140,7 @@ export function taskFromJobs(
   const placed = itemsAndDestination(jobs);
   if (!placed) {
     return {
-      problem:
-        "The selected transfers go to different folders. Select ones that go into one folder.",
+      problem: t("schedule.theSelectedTransfersGoTo"),
     };
   }
   return {
@@ -177,7 +176,7 @@ export function taskFromFiles({
   destination,
   exists,
 }: SelectedFiles): TaskDraft {
-  if (entries.length === 0) return { problem: "Select the files to schedule." };
+  if (entries.length === 0) return { problem: t("schedule.selectTheFilesToSchedule") };
   let connectionId = "";
   let folder = destination ?? "";
   if (direction === "download") {
@@ -203,8 +202,8 @@ export function taskFromFiles({
 
 /** Why a tab's files cannot be scheduled for download, in a few words for a menu; or null. */
 export function downloadBlocker(server: SessionFacts | undefined): string | null {
-  if (!server) return "no server";
-  if (server.vault) return "not in a vault";
-  if (!server.savedConnectionId) return "save the connection first";
+  if (!server) return t("schedule.blockedNoServer");
+  if (server.vault) return t("schedule.blockedInVault");
+  if (!server.savedConnectionId) return t("schedule.blockedUnsaved");
   return null;
 }

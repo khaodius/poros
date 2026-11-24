@@ -3,8 +3,9 @@ import { CircleUserRound, LoaderCircle } from "lucide-react";
 import { useCloudProviders } from "../hooks/useCloudProviders";
 import { cloud, toAppError } from "../lib/ipc";
 import { PROVIDER_NAMES, protocolInfo } from "../lib/protocols";
-import type { Protocol, SignedIn } from "../lib/types";
+import type { Protocol, SignedIn, SignInPage } from "../lib/types";
 import { useUiStore } from "../state/uiStore";
+import { activeLocale, useT, type Translate } from "../i18n";
 
 interface CloudSignInProps {
   protocol: Protocol;
@@ -14,8 +15,22 @@ interface CloudSignInProps {
   onError: (message: string | null) => void;
 }
 
+/** What the browser tab says once the provider sends it back, in the interface's language. */
+function signInPage(t: Translate): SignInPage {
+  return {
+    lang: activeLocale(),
+    signedIn: { heading: t("cloud.browserSignedIn"), detail: t("cloud.browserSignedInDetail") },
+    notCompleted: {
+      heading: t("cloud.browserNotCompleted"),
+      detail: t("cloud.browserNotCompletedDetail"),
+    },
+    expired: { heading: t("cloud.browserExpired"), detail: t("cloud.browserExpiredDetail") },
+  };
+}
+
 /** Signs in to a cloud storage account in the system browser. */
 export function CloudSignIn({ protocol, account, onSignedIn, onError }: CloudSignInProps) {
+  const t = useT();
   const info = protocolInfo(protocol);
   const provider = info.provider ?? "google";
   const providerName = PROVIDER_NAMES[provider];
@@ -38,7 +53,7 @@ export function CloudSignIn({ protocol, account, onSignedIn, onError }: CloudSig
     setWaiting(true);
     onError(null);
     try {
-      const signedIn = await cloud.signIn(requestId, provider);
+      const signedIn = await cloud.signIn(requestId, provider, signInPage(t));
       if (request.current === requestId) onSignedIn(signedIn);
     } catch (caught) {
       const error = toAppError(caught);
@@ -60,15 +75,16 @@ export function CloudSignIn({ protocol, account, onSignedIn, onError }: CloudSig
     return (
       <div className="cloud-account">
         <p className="field-hint">
-          Signing in to {info.label} needs your own {providerName} app registration. Add its client
-          ID{provider === "box" ? " and client secret" : ""} under Settings, Cloud accounts.
+          {provider === "box"
+            ? t("cloud.needsOwnAppWithSecret", { service: info.label, provider: providerName })
+            : t("cloud.needsOwnApp", { service: info.label, provider: providerName })}
         </p>
         <button
           type="button"
           className="button"
           onClick={() => openDialog({ kind: "settings", section: "cloud" })}
         >
-          Open Settings
+          {t("cloud.openSettings")}
         </button>
       </div>
     );
@@ -79,10 +95,10 @@ export function CloudSignIn({ protocol, account, onSignedIn, onError }: CloudSig
       <div className="cloud-account">
         <LoaderCircle size={18} className="cloud-account-icon spin" />
         <span className="cloud-account-text">
-          Finish signing in to {providerName} in your browser.
+          {t("cloud.finishSigningInToIn", { providerName })}
         </span>
         <button type="button" className="button" onClick={cancel}>
-          Cancel
+          {t("common.cancel")}
         </button>
       </div>
     );
@@ -93,10 +109,10 @@ export function CloudSignIn({ protocol, account, onSignedIn, onError }: CloudSig
       <div className="cloud-account">
         <CircleUserRound size={18} className="cloud-account-icon" />
         <span className="cloud-account-text">
-          Signed in as <strong>{account}</strong>
+          {t.rich("cloud.signedInAs", { account: <strong>{account}</strong> })}
         </span>
         <button type="button" className="button" onClick={() => void signIn()}>
-          Sign in again
+          {t("cloud.signInAgain")}
         </button>
       </div>
     );
@@ -104,11 +120,9 @@ export function CloudSignIn({ protocol, account, onSignedIn, onError }: CloudSig
 
   return (
     <div className="cloud-account">
-      <span className="cloud-account-text">
-        Poros opens the {providerName} sign-in page in your browser.
-      </span>
+      <span className="cloud-account-text">{t("cloud.porosOpensTheSignIn", { providerName })}</span>
       <button type="button" className="button button-primary" onClick={() => void signIn()}>
-        Sign in with {providerName}
+        {t("cloud.signInWith", { providerName })}
       </button>
     </div>
   );

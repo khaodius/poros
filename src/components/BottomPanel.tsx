@@ -19,6 +19,7 @@ import { LogView } from "./LogView";
 import { Stepper } from "./Stepper";
 import { TransferView } from "./TransferView";
 import { WhenDoneControl } from "./WhenDoneControl";
+import { useT } from "../i18n";
 
 type PanelTab = TransferViewKind | "log";
 
@@ -44,6 +45,7 @@ function readFollow(): boolean {
 }
 
 export function BottomPanel() {
+  const t = useT();
   const [tab, setTab] = useState<PanelTab>(readTab);
   const [selection, setSelection] = useState<Set<number>>(new Set());
   const [followCompleted, setFollowCompleted] = useState(readFollow);
@@ -83,10 +85,10 @@ export function BottomPanel() {
 
   const queued = counts.queued + counts.running + counts.paused + counts.conflict;
   const labels: Record<PanelTab, ReactNode> = {
-    queue: <TabLabel text="Queue" count={queued} />,
-    failed: <TabLabel text="Failed" count={counts.failed} tone="danger" />,
-    completed: <TabLabel text="Completed" count={counts.done + counts.skipped} />,
-    log: "Log",
+    queue: <TabLabel text={t("workspace.queue")} count={queued} />,
+    failed: <TabLabel text={t("workspace.failed")} count={counts.failed} tone="danger" />,
+    completed: <TabLabel text={t("workspace.completed")} count={counts.done + counts.skipped} />,
+    log: t("workspace.log"),
   };
 
   return (
@@ -114,44 +116,46 @@ export function BottomPanel() {
               <button
                 type="button"
                 className={`button button-small ${queuePaused ? "button-primary" : ""}`}
-                title={queuePaused ? "Start queue" : "Pause queue"}
+                title={queuePaused ? t("workspace.startQueue") : t("workspace.pauseQueue")}
                 onClick={() => void transfers.setPaused(!queuePaused)}
               >
                 {queuePaused ? <Play size={13} /> : <Pause size={13} />}
-                <span className="narrow-hidden">{queuePaused ? "Start queue" : "Pause queue"}</span>
+                <span className="narrow-hidden">
+                  {queuePaused ? t("workspace.startQueue") : t("workspace.pauseQueue")}
+                </span>
               </button>
               <ScheduleOverrideButton />
               <span className="toolbar-divider" />
               <PanelButton
-                label="Pause selected"
+                label={t("workspace.pauseSelected")}
                 disabled={selectedIds.length === 0}
                 onClick={() => void transfers.pause(selectedIds)}
               >
                 <Pause size={14} />
               </PanelButton>
               <PanelButton
-                label="Resume selected"
+                label={t("workspace.resumeSelected")}
                 disabled={selectedIds.length === 0}
                 onClick={() => void transfers.resume(selectedIds)}
               >
                 <Play size={14} />
               </PanelButton>
               <PanelButton
-                label="Move selected to the top"
+                label={t("workspace.moveSelectedToTheTop")}
                 disabled={selectedIds.length === 0}
                 onClick={() => void transfers.move(selectedIds, true)}
               >
                 <ArrowUpToLine size={14} />
               </PanelButton>
               <PanelButton
-                label="Move selected to the bottom"
+                label={t("workspace.moveSelectedToTheBottom")}
                 disabled={selectedIds.length === 0}
                 onClick={() => void transfers.move(selectedIds, false)}
               >
                 <ArrowDownToLine size={14} />
               </PanelButton>
               <PanelButton
-                label="Remove selected"
+                label={t("workspace.removeSelected")}
                 disabled={selectedIds.length === 0}
                 onClick={() => void transfers.remove(selectedIds)}
               >
@@ -174,24 +178,24 @@ export function BottomPanel() {
                 }
               >
                 <RotateCw size={13} />
-                Retry all
+                {t("workspace.retryAll")}
               </button>
               <PanelButton
-                label="Retry selected"
+                label={t("workspace.retrySelected")}
                 disabled={selectedIds.length === 0}
                 onClick={() => void transfers.resume(selectedIds)}
               >
                 <RotateCw size={14} />
               </PanelButton>
               <PanelButton
-                label="Remove selected"
+                label={t("workspace.removeSelected")}
                 disabled={selectedIds.length === 0}
                 onClick={() => void transfers.remove(selectedIds)}
               >
                 <Trash2 size={14} />
               </PanelButton>
               <PanelButton
-                label="Clear failed transfers"
+                label={t("workspace.clearFailedTransfers")}
                 disabled={counts.failed === 0}
                 onClick={() => void transfers.clear([...VIEW_STATES.failed])}
               >
@@ -204,16 +208,16 @@ export function BottomPanel() {
               <button
                 type="button"
                 className={`button button-small ${followCompleted ? "button-primary" : ""}`}
-                title="Keep each transfer in view as it finishes"
+                title={t("workspace.keepEachTransferInView")}
                 aria-pressed={followCompleted}
                 onClick={toggleFollow}
               >
                 <ArrowDownToLine size={13} />
-                <span className="narrow-hidden">Follow</span>
+                <span className="narrow-hidden">{t("workspace.follow")}</span>
               </button>
               <span className="toolbar-divider" />
               <PanelButton
-                label="Clear finished transfers"
+                label={t("workspace.clearFinishedTransfers")}
                 disabled={counts.done + counts.skipped === 0}
                 onClick={() => void transfers.clear([...VIEW_STATES.completed])}
               >
@@ -240,15 +244,16 @@ export function BottomPanel() {
 /** Changes how many transfers run at once; running workers above a lower count finish their
  * current file first. */
 function WorkerControl() {
+  const t = useT();
   const workers = useSettingsStore((state) => state.settings.transfers.workers);
   return (
-    <div className="worker-control" title="Simultaneous transfers">
-      <span className="narrow-hidden">Workers</span>
+    <div className="worker-control" title={t("workspace.simultaneousTransfers")}>
+      <span className="narrow-hidden">{t("workspace.workers")}</span>
       <Stepper
         value={workers}
         min={1}
         max={MAX_WORKERS}
-        label="Workers"
+        label={t("workspace.workers")}
         onChange={(next) => void saveSettingsSection("transfers", { workers: next })}
       />
     </div>

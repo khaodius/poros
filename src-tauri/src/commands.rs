@@ -11,7 +11,9 @@ use crate::automation::remote_command::{CommandRequest, CommandResult, CommandRu
 use crate::automation::scheduler::{ScheduledTask, Scheduler, TaskView};
 use crate::automation::system::{self, PowerAction};
 use crate::clipboard::SystemClipboard;
-use crate::cloud::{self, CloudProvider, OAuthClient, OAuthVault, ProviderStatus, SignedIn};
+use crate::cloud::{
+    self, CloudProvider, OAuthClient, OAuthVault, ProviderStatus, SignInPage, SignedIn,
+};
 use crate::connections::{ConnectionStore, SavedConnection, SecretScope};
 use crate::desktop::{self, DragPreview, PreviewPlacement, WindowCorners};
 use crate::drag_out::{DragOut, DragOutOutcome, DragOutRequest};
@@ -740,17 +742,20 @@ pub fn cloud_providers(settings: State<'_, SettingsStore>) -> Vec<ProviderStatus
 }
 
 /// Opens the provider's sign-in page in the browser and waits for the account to come back.
+/// `page` holds what the tab says then, in the interface's language.
 #[tauri::command]
 pub async fn cloud_sign_in(
     settings: State<'_, SettingsStore>,
     vault: State<'_, OAuthVault>,
     request_id: String,
     provider: CloudProvider,
+    page: Option<SignInPage>,
 ) -> AppResult<SignedIn> {
     let client = OAuthClient::configured(provider, &settings.get().cloud)
         .ok_or_else(|| cloud::missing_client(provider))?;
+    let page = SignInPage::or_english(page);
     let cancel = vault.begin(&request_id);
-    let result = cloud::sign_in(&client, &cancel).await;
+    let result = cloud::sign_in(&client, &page, &cancel).await;
     vault.end(&request_id);
     let authorization = result?;
     Ok(SignedIn {
