@@ -82,7 +82,7 @@ function sameDays(weekdays: number[], expected: number[]): boolean {
   return weekdays.length === expected.length && expected.every((day) => weekdays.includes(day));
 }
 
-function describeDays(weekdays: number[]): string {
+export function describeDays(weekdays: number[]): string {
   if (sameDays(weekdays, EVERY_DAY)) return "Every day";
   if (sameDays(weekdays, WORKDAYS)) return "Weekdays";
   if (sameDays(weekdays, WEEKEND)) return "Weekends";

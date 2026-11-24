@@ -206,4 +206,22 @@ pub(super) mod tests {
         let (output, _) = run_locally("head -c 3 -- /nonexistent-poros-file | sha256sum");
         assert!(output.contains("nonexistent-poros-file"), "{output}");
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn every_stage_of_a_pipeline_reads_what_it_is_given() {
+        let line = command_line("printf abc | wc -c; ls /poros-missing", "MARK");
+        let ran = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&line)
+            .output()
+            .unwrap();
+        let (output, status) = answer(&ran.stdout, b"\nMARK ").unwrap().unwrap();
+        let output = String::from_utf8(output).unwrap();
+        // The count comes from the pipe, not from the empty input the shell gets.
+        assert_eq!(output.split_whitespace().next(), Some("3"), "{output}");
+        // Errors of any stage come back with the output, and the status is the last command's.
+        assert!(output.contains("poros-missing"), "{output}");
+        assert_ne!(status, 0);
+    }
 }

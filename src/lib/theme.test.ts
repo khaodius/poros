@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import tokensCss from "../styles/tokens.css?raw";
 import {
   BUILTIN_THEMES,
   alphaOf,
@@ -121,4 +122,60 @@ describe("built-in themes", () => {
       expect(parseTheme(serializeTheme(theme), theme.name).problems).toEqual([]);
     }
   });
+
+  it("keep each compare color readable on its row's tint, hovered too", () => {
+    const palette = (selector: string) => {
+      const start = tokensCss.indexOf(`${selector} {`);
+      const body = tokensCss.slice(start, tokensCss.indexOf("\n}", start));
+      return Object.fromEntries(
+        [...body.matchAll(/--([\w-]+):\s*([^;]+);/g)].map(([, key, value]) => [key, value.trim()]),
+      );
+    };
+    const dark = palette(":root");
+    const bases = { dark, light: { ...dark, ...palette(':root[data-theme="light"]') } };
+    const rgb = (color: string) => {
+      const channels = rgbChannels(color) ?? rgbChannels(hexAsRgb(toInputColor(color) ?? ""));
+      if (!channels) throw new Error(`not a color: ${color}`);
+      return channels.map((channel) => channel / 255);
+    };
+    const over = (top: number[], alpha: number, below: number[]) =>
+      top.map((channel, index) => channel * alpha + below[index] * (1 - alpha));
+    const luminance = (channels: number[]) => {
+      const [r, g, b] = channels.map((value) =>
+        value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4,
+      );
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const contrast = (one: number[], other: number[]) => {
+      const [high, low] = [luminance(one), luminance(other)].sort((a, b) => b - a);
+      return (high + 0.05) / (low + 0.05);
+    };
+    const states = ["newer", "older", "only", "different", "identical"];
+    const weak: string[] = [];
+    for (const { theme } of BUILTIN_THEMES) {
+      const kinds = theme.base === "system" ? (["dark", "light"] as const) : [theme.base];
+      for (const kind of kinds) {
+        const colors: Record<string, string> = { ...bases[kind], ...theme.colors };
+        const panel = rgb(colors["surface-raised"]);
+        const hover = over(rgb(colors["row-hover"]), alphaOf(colors["row-hover"]), panel);
+        for (const state of states) {
+          const color = rgb(colors[`compare-${state}`]);
+          // As app.css draws a compared row: a 14% tint, and 24% over the hover shade.
+          for (const [row, tint] of [
+            [panel, 0.14],
+            [hover, 0.24],
+          ] as const) {
+            const ratio = contrast(color, over(color, tint, row));
+            if (ratio < 3) weak.push(`${theme.name} (${kind}) ${state}: ${ratio.toFixed(2)}`);
+          }
+        }
+      }
+    }
+    expect(weak).toEqual([]);
+  });
 });
+
+function hexAsRgb(hex: string): string {
+  const value = Number.parseInt(hex.slice(1), 16);
+  return `rgb(${value >> 16}, ${(value >> 8) & 255}, ${value & 255})`;
+}

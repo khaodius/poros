@@ -23,9 +23,11 @@ import {
   Trash2,
   type LucideIcon,
 } from "lucide-react";
+import { useMinute } from "../hooks/useMinute";
 import { useSelectionBox, type RowRange } from "../hooks/useSelectionBox";
 import { formatSize, formatSpeed } from "../lib/format";
 import { transfers } from "../lib/ipc";
+import { scheduleWait } from "../lib/limitSchedule";
 import { progressLabel, type ProgressBarSettings } from "../lib/progressBars";
 import { jobProgress, jobsIn, VIEW_STATES, type TransferViewKind } from "../lib/transfers";
 import type { Direction, JobSnapshot } from "../lib/types";
@@ -48,10 +50,12 @@ const EMPTY_MESSAGES: Record<TransferViewKind, string> = {
   completed: "Finished transfers are listed here.",
 };
 
-function statusText(job: JobSnapshot): string {
+/** `scheduleWaitText` names what the speed limit schedule holds the job for, when it does. */
+function statusText(job: JobSnapshot, scheduleWaitText: string | null): string {
   switch (job.state) {
     case "queued":
       if (job.reconnecting) return "Connection lost, waiting for the server";
+      if (scheduleWaitText) return scheduleWaitText;
       return job.attempts > 0 ? `Waiting to retry (attempt ${job.attempts + 1})` : "Queued";
     case "running":
       if (job.kind === "folder") return "Listing folder";
@@ -99,6 +103,9 @@ export function TransferView({
 }: TransferViewProps) {
   const jobs = useViewJobs(view);
   const bars = useSettingsStore((state) => state.settings.appearance.progressBars);
+  const limits = useTransferStore((state) => state.snapshot.stats.limits);
+  const queuePaused = useTransferStore((state) => state.snapshot.stats.queuePaused);
+  const now = new Date(useMinute());
   const jobsRef = useRef(jobs);
   useLayoutEffect(() => {
     jobsRef.current = jobs;
@@ -295,6 +302,7 @@ export function TransferView({
                 key={job.id}
                 job={job}
                 bars={bars}
+                scheduleWaitText={scheduleWait(job, { limits, queuePaused }, now)}
                 top={item.start}
                 selected={selection.has(job.id)}
                 onClick={handleRowClick}
@@ -316,6 +324,7 @@ export function TransferView({
 interface TransferRowProps {
   job: JobSnapshot;
   bars: ProgressBarSettings;
+  scheduleWaitText: string | null;
   top: number;
   selected: boolean;
   onClick: (event: MouseEvent, job: JobSnapshot) => void;
@@ -325,6 +334,7 @@ interface TransferRowProps {
 const TransferRow = memo(function TransferRow({
   job,
   bars,
+  scheduleWaitText,
   top,
   selected,
   onClick,
@@ -332,7 +342,7 @@ const TransferRow = memo(function TransferRow({
 }: TransferRowProps) {
   const progress = jobProgress(job);
   const DirectionIcon = DIRECTION_ICONS[job.direction];
-  const status = statusText(job);
+  const status = statusText(job, scheduleWaitText);
   return (
     <div
       className={`transfer-row state-${job.state} ${selected ? "is-selected" : ""}`}

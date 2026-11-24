@@ -6126,6 +6126,218 @@ textarea::placeholder {
   gap: 10px;
 }
 
+/* Compare folders: the bar over a compared pane, and the stripe, tint and glyph of the rows
+   compared with the other pane */
+
+.file-row.is-compare-newer,
+.folder-compare-chip.is-newer,
+.folder-compare-glyph.is-newer {
+  --compare-color: var(--compare-newer);
+}
+
+.file-row.is-compare-older,
+.folder-compare-chip.is-older,
+.folder-compare-glyph.is-older {
+  --compare-color: var(--compare-older);
+}
+
+.file-row.is-compare-only,
+.folder-compare-chip.is-only,
+.folder-compare-glyph.is-only {
+  --compare-color: var(--compare-only);
+}
+
+.file-row.is-compare-different,
+.file-row.is-compare-differs-inside,
+.folder-compare-chip.is-different,
+.folder-compare-glyph.is-different,
+.folder-compare-glyph.is-differs-inside {
+  --compare-color: var(--compare-different);
+}
+
+.file-row.is-compare-identical,
+.folder-compare-chip.is-identical,
+.folder-compare-glyph.is-identical {
+  --compare-color: var(--compare-identical);
+}
+
+/* The stripe along the row's start, over the tint. The row's own background stays below both,
+   so stripes, hover and the cursor's outline show as on any row. */
+.file-row.is-compared {
+  --compare-tint: color-mix(in srgb, var(--compare-color) 14%, transparent);
+  background-image:
+    linear-gradient(var(--compare-color), var(--compare-color)),
+    linear-gradient(var(--compare-tint), var(--compare-tint));
+  background-repeat: no-repeat;
+  background-size:
+    3px 100%,
+    100% 100%;
+}
+
+.file-row.is-compared:hover {
+  --compare-tint: color-mix(in srgb, var(--compare-color) 24%, transparent);
+}
+
+/* A selected row keeps the selection's color whole; the stripe and the glyph still tell its
+   state. */
+.file-list .file-row.is-compared.is-selected {
+  background-image: linear-gradient(var(--compare-color), var(--compare-color));
+  background-repeat: no-repeat;
+  background-size: 3px 100%;
+}
+
+/* A folder files are dragged over looks as it does in any list. */
+.file-list .file-row.is-compared.is-drop-folder {
+  background-image: none;
+}
+
+.folder-compare-glyph {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  margin-left: auto;
+  color: var(--compare-color, var(--text-faint));
+}
+
+.folder-compare-bar {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+  border-bottom: 1px solid var(--border);
+}
+
+.folder-compare-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 6px 2px 10px;
+}
+
+.folder-compare-partner {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.folder-compare-partner > svg {
+  flex: none;
+  color: var(--accent);
+}
+
+.folder-compare-with {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.folder-compare-with strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.folder-compare-path {
+  flex: 0 10 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-faint);
+  text-overflow: ellipsis;
+}
+
+.folder-compare-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+  padding: 0 10px 6px;
+  list-style: none;
+}
+
+.folder-compare-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 6px;
+  color: var(--text);
+  font-size: var(--font-size-tiny);
+  white-space: nowrap;
+  background: color-mix(in srgb, var(--compare-color) 14%, transparent);
+  border-radius: var(--radius-small);
+}
+
+.folder-compare-chip > svg {
+  flex: none;
+  color: var(--compare-color);
+}
+
+.folder-compare-count {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.folder-compare-chip.is-empty {
+  color: var(--text-faint);
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.folder-compare-chip.is-empty > svg {
+  color: inherit;
+}
+
+.folder-compare-chip > .folder-compare-concealed {
+  color: var(--text-muted);
+}
+
+.folder-compare-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.folder-compare-actions .icon-button {
+  width: 24px;
+  height: 24px;
+}
+
+.folder-compare-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0 10px 5px;
+}
+
+.folder-compare-status > svg {
+  flex: none;
+  color: var(--accent);
+}
+
+.folder-compare-status.is-failed > svg {
+  color: var(--danger);
+}
+
+.folder-compare-status.is-outdated > svg {
+  color: var(--warning);
+}
+
+.folder-compare-status > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.folder-compare-status .link-button {
+  flex: none;
+}
+
 /*
  * Progress bar looks
  *
@@ -7390,4 +7602,413 @@ textarea::placeholder {
   .rename-preview {
     height: 280px;
   }
+}
+
+/* Speed limit schedule: the rules in Settings > Transfers, their week, and the status bar item */
+
+.limit-rules {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 0 10px;
+  padding: 0;
+  list-style: none;
+}
+
+.limit-rule {
+  display: flex;
+  gap: 8px;
+  padding: 6px 8px 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  transition: border-color var(--transition-fast);
+}
+
+.limit-rule:focus-within {
+  border-color: var(--border-strong);
+}
+
+.limit-rule-order {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: var(--font-size-tiny);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  background: var(--surface-hover);
+  border-radius: 50%;
+}
+
+.limit-rule-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.limit-rule-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.limit-rule-summary {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  min-width: 0;
+  padding: 3px 6px;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: var(--radius-small);
+  cursor: pointer;
+}
+
+.limit-rule-summary:hover {
+  background: var(--surface-hover);
+}
+
+.limit-rule-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  font-weight: 500;
+}
+
+.limit-rule-title > span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.limit-rule-title .is-unnamed {
+  color: var(--text-muted);
+}
+
+.limit-rule-chevron {
+  flex: none;
+  color: var(--text-faint);
+  transition: transform var(--transition-fast);
+}
+
+.limit-rule.is-open .limit-rule-chevron {
+  transform: rotate(90deg);
+}
+
+.limit-rule-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  padding-left: 18px;
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+  font-variant-numeric: tabular-nums;
+}
+
+.limit-rule-facts .is-never {
+  color: var(--warning);
+}
+
+.limit-rule-fact {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.limit-rule-fact svg {
+  flex: none;
+}
+
+.limit-rule-fact.is-unlimited svg {
+  color: var(--limit-unlimited);
+}
+
+.limit-rule-fact.is-limited svg {
+  color: var(--limit-limited);
+}
+
+.limit-rule-fact.is-paused svg {
+  color: var(--limit-paused);
+}
+
+.limit-rule-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 6px 0 4px;
+  padding: 10px 0 0 24px;
+  border-top: 1px dashed var(--border);
+}
+
+.limit-rule-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  min-width: 0;
+}
+
+.limit-rule-name {
+  flex: 1 1 160px;
+  max-width: 320px;
+}
+
+.limit-rule-actions {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  padding-top: 2px;
+}
+
+.limit-rule-hours,
+.limit-rule-limit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+}
+
+.limit-rule-direction {
+  flex: none;
+  color: var(--text-faint);
+}
+
+.limit-rule-limit select {
+  min-width: 104px;
+}
+
+.limit-rule-limit .stepper {
+  height: 28px;
+}
+
+.limit-rule-limit .stepper button {
+  width: 26px;
+}
+
+.limit-rule-add {
+  margin: 2px 0 16px;
+}
+
+.limit-week {
+  margin-bottom: 6px;
+}
+
+.limit-week-hours,
+.limit-week-day {
+  display: grid;
+  grid-template-columns: 34px repeat(24, minmax(0, 1fr));
+  column-gap: 1px;
+  align-items: center;
+}
+
+.limit-week-hours {
+  margin-bottom: 3px;
+  color: var(--text-faint);
+  font-size: var(--font-size-tiny);
+  font-variant-numeric: tabular-nums;
+}
+
+.limit-week-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.limit-week.is-preview .limit-week-grid {
+  opacity: 0.6;
+}
+
+.limit-week-day-name {
+  color: var(--text-faint);
+  font-size: var(--font-size-tiny);
+}
+
+.limit-week-day.is-today .limit-week-day-name {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.limit-week-cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  height: 19px;
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+.limit-week-cell:hover {
+  z-index: 1;
+  box-shadow: 0 0 0 1px var(--text-faint);
+}
+
+.limit-week-cell:focus-visible {
+  z-index: 2;
+  box-shadow: 0 0 0 2px var(--border-focus);
+}
+
+.limit-week-lane {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  background: var(--surface-sunken);
+  border-radius: 1px;
+}
+
+/* Told apart by fill as well as color: pale, striped, solid. */
+.limit-week-segment {
+  flex-basis: 0;
+  min-width: 0;
+}
+
+.limit-week-segment.is-unlimited {
+  background: color-mix(in srgb, var(--limit-unlimited) 38%, transparent);
+}
+
+.limit-week-segment.is-limited {
+  background: repeating-linear-gradient(
+    135deg,
+    var(--limit-limited) 0 2px,
+    color-mix(in srgb, var(--limit-limited) 26%, transparent) 2px 5px
+  );
+}
+
+.limit-week-segment.is-paused {
+  background: var(--limit-paused);
+}
+
+.limit-week-now {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  z-index: 3;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--text);
+  border-radius: 1px;
+  box-shadow: 0 0 0 1px var(--surface-overlay);
+  pointer-events: none;
+}
+
+.limit-week-detail {
+  min-height: 1.5em;
+  margin: 8px 0 4px;
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+  overflow-wrap: anywhere;
+}
+
+.limit-week-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  color: var(--text-faint);
+  font-size: var(--font-size-tiny);
+}
+
+.limit-week-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.limit-week-swatch {
+  flex: none;
+  width: 18px;
+  height: 9px;
+  border-radius: 1px;
+}
+
+.limit-week-swatch-now {
+  flex: none;
+  width: 2px;
+  height: 12px;
+  background: var(--text);
+  border-radius: 1px;
+}
+
+@media (max-width: 760px) {
+  .limit-week-hours .is-minor {
+    visibility: hidden;
+  }
+}
+
+.status-schedule {
+  flex-shrink: 0;
+  gap: 2px;
+}
+
+.status-schedule-limits,
+.status-schedule-override {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.status-schedule-limits {
+  gap: 8px;
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.status-schedule-limits:hover {
+  color: var(--text);
+}
+
+.status-schedule-limit {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.status-schedule-limit svg {
+  flex: none;
+}
+
+.status-schedule-limit.is-unlimited svg {
+  color: var(--limit-unlimited);
+}
+
+.status-schedule-limit.is-limited svg {
+  color: var(--limit-limited);
+}
+
+.status-schedule-limit.is-paused svg {
+  color: var(--limit-paused);
+}
+
+.status-schedule.is-ignored .status-schedule-limits {
+  color: var(--text-faint);
+}
+
+.status-schedule-override {
+  flex: none;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  color: var(--text-faint);
+  border-radius: var(--radius-small);
+}
+
+.status-schedule-override:hover {
+  color: var(--text);
+  background: var(--surface-hover);
 }

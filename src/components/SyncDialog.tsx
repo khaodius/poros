@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { CalendarClock, FolderOpen, LoaderCircle } from "lucide-react";
+import { useLatest } from "../hooks/useLatest";
 import { useOptionCheck } from "../hooks/useOptionCheck";
 import { localSource } from "../lib/fileSource";
 import { pluralize } from "../lib/format";
@@ -26,7 +27,7 @@ import type {
 import { forgetListingsWithin } from "../state/listings";
 import { lastActivePane, listPanes } from "../state/paneRegistry";
 import { useSavedConnections } from "../state/savedConnectionsStore";
-import { useSessionStore, type SessionEntry } from "../state/sessionStore";
+import { currentSessionId, useSessionStore, type SessionEntry } from "../state/sessionStore";
 import { saveSettingsSection, useSettingsStore } from "../state/settingsStore";
 import { useToastStore } from "../state/toastStore";
 import { useUiStore } from "../state/uiStore";
@@ -80,7 +81,9 @@ function startingFolders(given: Omit<SyncDialogProps, "onClose">): Folders {
 }
 
 /** Panes showing either folder, or a folder inside them, reload after a run. */
-function refreshPanes(plan: SyncPlanView, sessionId: string): void {
+function refreshPanes(plan: SyncPlanView, comparedOn: string): void {
+  // The server may have reconnected while the synchronization ran.
+  const sessionId = currentSessionId(comparedOn);
   forgetListingsWithin(sessionId, plan.remoteRoot);
   for (const pane of listPanes()) {
     const path = pane.path();
@@ -113,8 +116,11 @@ export function SyncDialog({ onClose, ...given }: SyncDialogProps) {
   const [error, setError] = useState<string | null>(null);
   /** The comparison or plan the backend holds for this dialog, to let go of on close. */
   const held = useRef<{ requestId?: string; planId?: string }>({});
+  const latestOnClose = useLatest(onClose);
 
-  const session = sessions.find((entry) => entry.info.id === folders.sessionId);
+  // The server chosen, in the session a reconnect may have given it since.
+  const chosenSessionId = currentSessionId(folders.sessionId);
+  const session = sessions.find((entry) => entry.info.id === chosenSessionId);
   const savedConnectionId = session?.info.savedConnectionId;
   const site = savedConnections.find((connection) => connection.id === savedConnectionId);
   const siteArguments = site?.syncArguments ?? "";
@@ -178,7 +184,7 @@ export function SyncDialog({ onClose, ...given }: SyncDialogProps) {
   const compare = async (event?: FormEvent) => {
     event?.preventDefault();
     const requestId = crypto.randomUUID();
-    const sessionId = folders.sessionId;
+    const sessionId = chosenSessionId;
     held.current = { requestId };
     setError(null);
     setProgress(null);
@@ -238,11 +244,11 @@ export function SyncDialog({ onClose, ...given }: SyncDialogProps) {
       useToastStore
         .getState()
         .show(summary.failures.length > 0 ? "error" : "info", describeRun(summary));
-      onClose();
+      latestOnClose.current();
     } catch (caught) {
       held.current = {};
       // Whatever the run changed before it failed or was cancelled is not what was remembered.
-      forgetListingsWithin(sessionId, plan.remoteRoot);
+      forgetListingsWithin(currentSessionId(sessionId), plan.remoteRoot);
       setError(toAppError(caught).message);
       setStage({ step: "preview", plan, sessionId });
     }
@@ -388,7 +394,7 @@ function SetupForm({
         <label className="field sync-server">
           <span>Server</span>
           <select
-            value={folders.sessionId}
+            value={currentSessionId(folders.sessionId)}
             disabled={sessions.length === 0}
             onChange={(event) => onSession(event.target.value)}
           >
