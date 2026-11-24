@@ -1,6 +1,6 @@
 // The shipped languages, one line each. A translation adds its folder and uncomments its own
 // line below, and nothing else here: each line sits between blank lines, so translations
-// made side by side merge without touching each other (see TRANSLATING.md).
+// made side by side merge without touching each other.
 
 // export { default as de } from "./de";
 
