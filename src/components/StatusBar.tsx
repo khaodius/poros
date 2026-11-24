@@ -14,6 +14,7 @@ import {
   type InstallStage,
 } from "../state/updateStore";
 import { DriveStatus } from "./DriveStatus";
+import { LimitScheduleStatus } from "./LimitScheduleStatus";
 
 const APP_VERSION = formatVersion(__APP_VERSION__);
 
@@ -111,6 +112,7 @@ export function StatusBar() {
             {stats.queuePaused && " (paused)"}
           </span>
         )}
+        <LimitScheduleStatus />
         <span className="status-item status-speed" title="Upload speed">
           <ArrowUp size={12} className={stats.uploadSpeed > 0 ? "is-moving" : ""} />
           {formatSpeed(stats.uploadSpeed)}
