@@ -258,23 +258,30 @@ impl Runner {
     /// `keep_completed` keeps finished files in the queue, for progress; a daemon lets them go,
     /// and a run's failures too once it has counted them.
     fn new(context: &Context, keep_completed: bool) -> AppResult<Self> {
-        let given_for = match context.options.connection.as_deref().map(str::trim) {
+        let options = &context.options;
+        let given_for = match options.connection.as_deref().map(str::trim) {
             None | Some("") => None,
             Some(wanted) => Some(
                 target::find_saved(&context.store, wanted)?
                     .ok_or_else(|| {
                         AppError::invalid(format!(
-                            "There is no saved connection {wanted}; with schedule, --connection names the saved connection a password is given for"
+                            "There is no saved connection {wanted}; with schedule, --connection names the saved connection a password or host key is given for"
                         ))
                     })?
                     .id,
             ),
         };
+        // A run can sign in to several servers, and a key is that of one of them.
+        let host_key = options.host_key.as_deref().map(str::trim);
+        if given_for.is_none() && host_key.is_some_and(|pin| !pin.is_empty()) {
+            return Err(AppError::invalid(
+                "With schedule, --host-key needs --connection to name the saved connection whose server shows that key",
+            ));
+        }
         let (password, passphrase) = match given_for {
-            Some(_) => target::given_secrets(&context.options)?,
+            Some(_) => target::given_secrets(options)?,
             None => (None, None),
         };
-        let options = &context.options;
         let settings = TransferSettings {
             auto_start: true,
             keep_queue: false,

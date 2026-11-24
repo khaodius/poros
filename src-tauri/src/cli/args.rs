@@ -68,6 +68,8 @@ Passwords come from the system keychain. Where there is none, as on a server wit
 connections that sign in with a key or the SSH agent work as they are; for one that needs a
 password, name it with --connection and give the password with POROS_PASSWORD, --password-env
 or --password-file (and a key passphrase likewise). Nothing given is sent to another server.
+--host-key likewise needs --connection and holds only that connection's server to the key;
+--trust-new-host accepts the new keys of other servers and jump hosts, never in place of it.
 
 Exit status: 0 when every task run succeeded, otherwise the status of the first task that did
 not succeed: 13 for one already running elsewhere, 10 when some of its files failed, 1 for a

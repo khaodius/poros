@@ -1826,3 +1826,159 @@ fn scheduled_tasks_run_now_when_due_and_never_twice_at_once() {
     assert_eq!(code, 0, "{value}");
     assert_eq!(run.task("Backup")["enabled"], false);
 }
+
+/// `--host-key` on a scheduled run pins the server of the connection named with --connection,
+/// and that one alone. `--trust-new-host` never stands in for the pin, and a key on record does
+/// not outweigh it.
+#[test]
+fn a_scheduled_run_holds_only_the_given_connection_to_its_host_key() {
+    const NOT_ITS_KEY: &str = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    let Some(run) = Run::online("schedule-pin") else {
+        return;
+    };
+    let (code, info) = run.json(&["info"]);
+    assert_eq!(code, 0, "{info}");
+    let fingerprint = info["hostKeyFingerprint"].as_str().unwrap().to_string();
+    let port: u16 = std::env::var("POROS_TEST_SSH_PORT")
+        .unwrap()
+        .parse()
+        .unwrap();
+    let user = std::env::var("POROS_TEST_SSH_USER").unwrap_or_else(|_| "poros".into());
+
+    // A config folder with no key on record, and the same server under two names.
+    let fresh = Run::new(run.connection.clone(), run.password.clone(), String::new());
+    let saved = |id: &str, host: &str| {
+        serde_json::json!({
+            "id": id,
+            "protocol": "sftp",
+            "name": id,
+            "host": host,
+            "port": port,
+            "username": user,
+            "authType": "publicKey",
+            "keyPath": fixture("openssh-ed25519"),
+        })
+    };
+    fresh.write_config(
+        "connections.json",
+        &serde_json::json!([saved("pinned", "127.0.0.1"), saved("other", "localhost")]),
+    );
+    let task = |id: &str, name: &str, connection: &str| {
+        serde_json::json!({
+            "id": id,
+            "name": name,
+            "enabled": true,
+            "trigger": { "type": "every", "minutes": 60, "start": 0 },
+            "action": {
+                "type": "command",
+                "connectionId": connection,
+                "command": "echo signed in",
+            },
+            "runMissed": false,
+            "nextRun": now() + 3600,
+        })
+    };
+    fresh.write_config(
+        "schedules.json",
+        &serde_json::json!([
+            task("quick", "Quick", "pinned"),
+            task("elsewhere", "Elsewhere", "other"),
+        ]),
+    );
+    let signed_in = |report: &Value| {
+        assert_eq!(report["state"], "succeeded", "{report}");
+        assert_eq!(report["message"], "Command finished: signed in");
+    };
+
+    // A key the server does not show is refused, and nothing is remembered.
+    let (code, value) = fresh.schedule_json(&[
+        "--host-key",
+        NOT_ITS_KEY,
+        "--trust-new-host",
+        "--save-host-key",
+        "-c",
+        "pinned",
+        "run",
+        "Quick",
+    ]);
+    assert_eq!(code, 5, "{value}");
+    assert_eq!(value[0]["state"], "failed");
+    let message = value[0]["message"].as_str().unwrap();
+    assert!(
+        message.ends_with("The server showed another key than the one given with --host-key."),
+        "{message}"
+    );
+    assert_eq!(
+        fresh.schedule_json(&["run", "Quick"]).0,
+        5,
+        "nothing was remembered"
+    );
+
+    // A run can sign in to several servers, so a key has to say whose it is.
+    let (code, value) = fresh.schedule_json(&["--host-key", &fingerprint, "run", "Quick"]);
+    assert_eq!(code, 2, "{value}");
+    assert_eq!(value["error"]["kind"], "invalidInput");
+    assert!(value["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("--host-key needs --connection"));
+    // One that names nothing, as an empty POROS_HOST_KEY gives, is none.
+    let output = fresh
+        .schedule(&["--json", "--trust-new-host", "run", "Elsewhere"])
+        .env("POROS_HOST_KEY", " ")
+        .output()
+        .unwrap();
+    assert_eq!(status(&output), 0, "{output:?}");
+
+    // The pin is not offered to the run's other servers; --trust-new-host takes them, and only
+    // them.
+    let (code, value) = fresh.schedule_json(&[
+        "--host-key",
+        &fingerprint,
+        "-c",
+        "pinned",
+        "run",
+        "Quick",
+        "Elsewhere",
+    ]);
+    assert_eq!(code, 5, "{value}");
+    signed_in(&value[0]);
+    assert_eq!(value[1]["exitCode"], 5, "{value}");
+    let (code, value) = fresh.schedule_json(&[
+        "--host-key",
+        NOT_ITS_KEY,
+        "--trust-new-host",
+        "-c",
+        "pinned",
+        "run",
+        "Quick",
+        "Elsewhere",
+    ]);
+    assert_eq!(code, 5, "{value}");
+    assert_eq!(value[0]["exitCode"], 5, "{value}");
+    signed_in(&value[1]);
+
+    // The right key gets in, and is remembered when asked.
+    let (code, value) = fresh.schedule_json(&[
+        "--host-key",
+        &fingerprint,
+        "--save-host-key",
+        "-c",
+        "pinned",
+        "run",
+        "Quick",
+    ]);
+    assert_eq!(code, 0, "{value}");
+    signed_in(&value[0]);
+    assert_eq!(fresh.schedule_json(&["run", "Quick"]).0, 0);
+
+    // On record, but not the key asked for.
+    let (code, value) =
+        fresh.schedule_json(&["--host-key", NOT_ITS_KEY, "-c", "pinned", "run", "Quick"]);
+    assert_eq!(code, 6, "{value}");
+    let message = value[0]["message"].as_str().unwrap();
+    assert!(
+        message.contains(&fingerprint) && message.ends_with("not the one given with --host-key"),
+        "{message}"
+    );
+}
