@@ -125,17 +125,13 @@ impl FileQueue {
     /// Queues one file ahead of everything else, started even while transfers wait for
     /// Start: something is waiting on it.
     pub fn enqueue(&self, route: &TransferRoute, file: FileTransfer) -> JobId {
-        let session_id = route.session_id().to_string();
-        // Targets leave the queue with their last job, and this one may be for a session
-        // that closed since.
-        self.shared
-            .targets
-            .lock()
-            .unwrap()
-            .entry(session_id.clone())
-            .or_insert_with(|| route.target.clone());
+        self.enqueue_for(&route.target, file)
+    }
+
+    fn enqueue_for(&self, target: &Arc<SessionTarget>, file: FileTransfer) -> JobId {
+        let session_id = target.session_id.clone();
         let spec = JobSpec {
-            session_id,
+            session_id: session_id.clone(),
             source_session_id: None,
             direction: file.direction,
             kind: JobKind::File,
@@ -148,7 +144,16 @@ impl FileQueue {
             options: file.options,
         };
         let id = {
+            // The server is kept and the job added under the one lock of the queue: an idle
+            // queue forgets, under that lock, the servers no job needs. Targets leave the queue
+            // with their last job, and this one may be for a session that closed since.
             let mut queue = self.shared.queue.lock().unwrap();
+            self.shared
+                .targets
+                .lock()
+                .unwrap()
+                .entry(session_id)
+                .or_insert_with(|| target.clone());
             let id = queue.add_resolved(spec, file.resolution);
             queue.move_to(&[id], true);
             id
@@ -212,5 +217,103 @@ impl FileQueue {
         };
         ssh::disconnect(&handle).await;
         stat
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use super::*;
+    use crate::events::Events;
+    use crate::protocol::Protocol;
+    use crate::session::SessionManager;
+    use crate::settings::TransferSettings;
+    use crate::ssh::{AuthMethod, Route};
+    use crate::transfer::{Direction, ExistsAction, Login};
+
+    fn target(session_id: &str) -> Arc<SessionTarget> {
+        let login = Login {
+            profile: ConnectProfile {
+                protocol: Protocol::Sftp,
+                host: "files.example".into(),
+                port: 22,
+                username: "ada".into(),
+                auth: AuthMethod::Agent,
+                initial_path: None,
+                timeout_secs: None,
+                keepalive_secs: None,
+                compression: false,
+                receive_buffer_kib: None,
+                send_buffer_kib: None,
+                saved_connection_id: None,
+                ftp_active: false,
+                bypass_proxy: false,
+                jump_connection_id: None,
+                rsync_path: None,
+                s3: Default::default(),
+                route: Route::default(),
+            },
+            host_key_fingerprint: String::new(),
+            browsing_session: session_id.into(),
+            browsing_files: None,
+            vault: None,
+        };
+        Arc::new(SessionTarget::new(session_id.into(), login, false))
+    }
+
+    /// Once the queue is idle, each tick of the progress loop forgets, with the queue locked,
+    /// the servers of sessions no job involves. A file queued meanwhile, for a session that
+    /// closed since and so is known only by its route, still finds its server when it runs.
+    #[test]
+    fn a_file_queued_while_unused_servers_are_forgotten_keeps_its_server() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let sessions = Arc::new(SessionManager::new(
+            temp_dir.path().join("known_hosts"),
+            Events::default(),
+        ));
+        let manager =
+            TransferManager::new(sessions, Events::default(), TransferSettings::default());
+        let files = manager.files();
+        let upload = FileTransfer {
+            direction: Direction::Upload,
+            name: "report.txt".into(),
+            source: temp_dir
+                .path()
+                .join("report.txt")
+                .to_string_lossy()
+                .into_owned(),
+            target: "/srv/report.txt".into(),
+            target_directory: "/srv".into(),
+            size: 5,
+            resolution: ExistsAction::Overwrite,
+            options: None,
+        };
+
+        // A tick holds the idle queue while the file is queued on another thread, which waits
+        // for it to let go. Paused, so the job stays put once it is in. Should the file's
+        // server be kept before the job goes in, the tick forgets it.
+        let mut tick = manager.shared.queue.lock().unwrap();
+        tick.paused = true;
+        let queuing = {
+            let files = files.clone();
+            let target = target("closed");
+            std::thread::spawn(move || files.enqueue_for(&target, upload))
+        };
+        let deadline = Instant::now() + Duration::from_millis(300);
+        while manager.shared.target("closed").is_err() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        manager
+            .shared
+            .targets
+            .lock()
+            .unwrap()
+            .retain(|session_id, _| tick.has_session_jobs(session_id));
+        drop(tick);
+        let id = queuing.join().unwrap();
+
+        assert!(files.job(id).is_some());
+        assert!(manager.shared.target("closed").is_ok());
     }
 }
