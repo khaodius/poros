@@ -16,9 +16,17 @@ import {
   storableProgressBars,
   type ProgressBarSettings,
 } from "./progressBars";
+import { DEFAULT_LIMIT_SCHEDULE, sanitizeLimitSchedule } from "./limitSchedule";
 import { DEFAULT_SYNC_OPTIONS, legacySyncOptions, sanitizeSyncOptions } from "./rsyncOptions";
 import { SORT_KEYS, type SortSpec } from "./sort";
-import type { ExistsAction, LogLevel, PowerAction, SyncDirection, SyncOptions } from "./types";
+import type {
+  ExistsAction,
+  LimitSchedule,
+  LogLevel,
+  PowerAction,
+  SyncDirection,
+  SyncOptions,
+} from "./types";
 
 export const MAX_WORKERS = 16;
 export const MAX_RECONNECT_MINUTES = 24 * 60;
@@ -35,6 +43,8 @@ export interface TransferSettings {
   /** KiB per second; zero means unlimited. */
   uploadLimitKib: number;
   downloadLimitKib: number;
+  /** Other limits, or a pause, at set times of the week. */
+  limitSchedule: LimitSchedule;
   existsAction: ExistsAction;
   preserveTimestamps: boolean;
   preservePermissions: boolean;
@@ -127,6 +137,21 @@ const DOUBLE_CLICK_ACTIONS: DoubleClickAction[] = ["transfer", "edit", "nothing"
 export type DateFormat = "minutes" | "seconds" | "locale";
 export const DATE_FORMATS: DateFormat[] = ["minutes", "seconds", "locale"];
 
+/** `sync` takes the rule from Settings > Sync until the compare bar sets one. */
+export type CompareSizeRule = "sync" | "sizeAndTime" | "sizeOnly";
+const COMPARE_SIZE_RULES: CompareSizeRule[] = ["sync", "sizeAndTime", "sizeOnly"];
+
+/** The options of the bar over two compared panes (Compare folders), as last set. */
+export interface FolderCompareSettings {
+  hideIdentical: boolean;
+  sizeRule: CompareSizeRule;
+  /** Times a whole number of hours apart count as the same, as with a server in another zone. */
+  ignoreHourOffsets: boolean;
+  includeHidden: boolean;
+  /** Entering a folder or going up in one pane does the same in the other. */
+  browseTogether: boolean;
+}
+
 export interface InterfaceSettings {
   doubleClickFile: DoubleClickAction;
   showHiddenFiles: boolean;
@@ -147,6 +172,7 @@ export interface InterfaceSettings {
   columnWidths: ColumnWidths;
   /** The program that extracts archives on this computer. */
   extractor: ExtractorSettings;
+  folderCompare: FolderCompareSettings;
   /** A server folder seen before shows its last listing at once, while it is asked for again. */
   cachedListings: boolean;
   /** Lists the parent folder and the folder under the cursor ahead, while a server is idle. */
@@ -270,6 +296,7 @@ export const DEFAULT_SETTINGS: Settings = {
     requestsInFlight: 64,
     uploadLimitKib: 0,
     downloadLimitKib: 0,
+    limitSchedule: DEFAULT_LIMIT_SCHEDULE,
     existsAction: "ask",
     preserveTimestamps: true,
     preservePermissions: false,
@@ -335,6 +362,13 @@ export const DEFAULT_SETTINGS: Settings = {
     hiddenColumns: [],
     columnWidths: {},
     extractor: { choice: "", program: "", arguments: CUSTOM_ARGUMENTS_EXAMPLE },
+    folderCompare: {
+      hideIdentical: false,
+      sizeRule: "sync",
+      ignoreHourOffsets: false,
+      includeHidden: true,
+      browseTogether: false,
+    },
     cachedListings: true,
     prefetchListings: true,
     prefetchOnCloud: false,
@@ -423,6 +457,7 @@ function clamp(value: number, min: number, max: number): number {
 export function sanitizeSettings(stored: unknown): Settings {
   const source = asSection(stored);
   const transfers = mergeSection(DEFAULT_SETTINGS.transfers, source.transfers);
+  transfers.limitSchedule = sanitizeLimitSchedule(asSection(source.transfers).limitSchedule);
   const settings: Settings = {
     transfers,
     connection: mergeSection(DEFAULT_SETTINGS.connection, source.connection),
@@ -446,6 +481,9 @@ export function sanitizeSettings(stored: unknown): Settings {
   }
   options.hiddenColumns = DETAIL_COLUMNS.filter((column) => options.hiddenColumns.includes(column));
   options.columnWidths = sanitizeColumnWidths(asSection(source.interface).columnWidths);
+  if (!COMPARE_SIZE_RULES.includes(options.folderCompare.sizeRule)) {
+    options.folderCompare.sizeRule = DEFAULT_SETTINGS.interface.folderCompare.sizeRule;
+  }
   options.renameHistory = sanitizeFindHistory(asSection(source.interface).renameHistory);
 
   const appearance = settings.appearance;

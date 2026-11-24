@@ -17,6 +17,14 @@ export const EMPTY_STATS: TransferStats = {
   queuePaused: false,
   heldForStart: false,
   unattendedRunning: false,
+  limits: {
+    upload: { mode: "unlimited", kib: 0 },
+    download: { mode: "unlimited", kib: 0 },
+    rule: null,
+    until: null,
+    ignored: false,
+    pauseEnds: { upload: null, download: null, relay: null },
+  },
 };
 
 export const EMPTY_SNAPSHOT: TransferSnapshot = {
@@ -112,15 +120,18 @@ export function jobProgress(job: JobSnapshot): number {
   return Math.min(1, job.transferred / job.size);
 }
 
-/** Seconds until the queue drains at the current speed, or null when it is not moving. */
 /**
- * Whether the queue is paused as the user sees it. One that only waits for Start while files of
- * scheduled runs go on is not: Pause stops them.
+ * Whether the queue is paused as the user sees it, with Start queue to press. One that only waits
+ * for Start while files of scheduled runs go on is not: Pause stops them. Scheduled files the
+ * speed limit schedule holds back do not go on, and the backend leaves them out of
+ * `unattendedRunning`. A direction the schedule pauses never reads as the queue paused: the status
+ * bar names it on its own, and Pause still stops everything else.
  */
 export function showsPaused(stats: TransferStats): boolean {
   return stats.queuePaused && !(stats.heldForStart && stats.unattendedRunning);
 }
 
+/** Seconds until the queue drains at the current speed, or null when it is not moving. */
 export function secondsRemaining(stats: TransferStats): number | null {
   const speed = stats.uploadSpeed + stats.downloadSpeed;
   if (speed <= 0 || stats.remainingBytes <= 0) return null;

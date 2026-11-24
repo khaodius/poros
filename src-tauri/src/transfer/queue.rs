@@ -405,6 +405,7 @@ impl Job {
             direct: self.direct,
             reconnecting: self.reconnecting,
             label: self.spec.batch.as_ref().map(|batch| batch.label.clone()),
+            unattended: self.spec.runs_unattended(),
         }
     }
 }
@@ -443,6 +444,9 @@ pub struct JobSnapshot {
     /// What queued the job when it was not the user: a scheduled task's name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// A run follows it, so it goes while transfers wait for Start.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub unattended: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
@@ -526,11 +530,63 @@ pub enum ServerChange {
 /// A server whose connections dropped. Its jobs wait instead of using up their retries.
 struct Outage {
     since: Instant,
+    /// How long since then the paused queue or the schedule kept all its waiting jobs from
+    /// starting. Nothing tried the server meanwhile, so that time does not use up the
+    /// reconnect window.
+    untried: Duration,
     /// Its jobs are not started before this.
     until: Instant,
     failures: u32,
     /// Waiting ran out; its jobs fail like any other until something gets through.
     gave_up: bool,
+}
+
+/// The directions the speed limit schedule pauses. Their jobs stay in line, with what they
+/// have moved so far, and start again when the schedule lets them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Held {
+    pub upload: bool,
+    pub download: bool,
+}
+
+impl Held {
+    /// A relay reads from one server and writes to another, so it waits for either.
+    pub fn holds(self, direction: Direction) -> bool {
+        match direction {
+            Direction::Upload => self.upload,
+            Direction::Download => self.download,
+            Direction::Relay => self.upload || self.download,
+        }
+    }
+}
+
+const DIRECTIONS: [Direction; 3] = [Direction::Upload, Direction::Download, Direction::Relay];
+
+/// Since when the paused queue or the schedule keeps each direction from starting, while it
+/// does.
+#[derive(Debug, Clone, Copy, Default)]
+struct BlockedSince {
+    upload: Option<Instant>,
+    download: Option<Instant>,
+    relay: Option<Instant>,
+}
+
+impl BlockedSince {
+    fn get(self, direction: Direction) -> Option<Instant> {
+        match direction {
+            Direction::Upload => self.upload,
+            Direction::Download => self.download,
+            Direction::Relay => self.relay,
+        }
+    }
+
+    fn of(&mut self, direction: Direction) -> &mut Option<Instant> {
+        match direction {
+            Direction::Upload => &mut self.upload,
+            Direction::Download => &mut self.download,
+            Direction::Relay => &mut self.relay,
+        }
+    }
 }
 
 /// A temporary file of a transfer that left the queue unfinished.
@@ -563,6 +619,8 @@ pub struct Queue {
     /// The queue is paused only because transfers wait for Start, not by the user, so jobs
     /// that run unattended still go.
     pub held_for_start: bool,
+    held: Held,
+    blocked_since: BlockedSince,
     pub conflict_override: Option<ExistsAction>,
     pub totals: Totals,
     dirty: HashSet<JobId>,
@@ -725,8 +783,11 @@ impl Queue {
             .iter()
             .find(|(_, id)| {
                 let job = &self.jobs[id];
+                // Jobs that run unattended pass a queue waiting for Start, not the
+                // directions the speed limit schedule holds.
                 (!unattended_only || job.spec.runs_unattended())
                     && job.not_before.is_none_or(|not_before| not_before <= now)
+                    && !self.held.holds(job.spec.direction)
                     && !self.server_unreachable(&job.spec.session_id, now)
                     && job
                         .spec
@@ -990,6 +1051,7 @@ impl Queue {
                     session_id.clone(),
                     Outage {
                         since: now,
+                        untried: Duration::ZERO,
                         until: now + retry_in,
                         failures: 1,
                         gave_up: false,
@@ -1001,7 +1063,10 @@ impl Queue {
             // This attempt began before the outage did.
             Some(outage) if now < outage.until => None,
             Some(outage)
-                if now.saturating_duration_since(outage.since) < settings.reconnect_window() =>
+                if now
+                    .saturating_duration_since(outage.since)
+                    .saturating_sub(outage.untried)
+                    < settings.reconnect_window() =>
             {
                 outage.failures += 1;
                 let retry_in = delay(outage.failures);
@@ -1314,7 +1379,7 @@ impl Queue {
     }
 
     /// Pausing the queue interrupts running transfers; they continue from where they stopped.
-    pub fn set_paused(&mut self, paused: bool) {
+    pub fn set_paused(&mut self, paused: bool, now: Instant) {
         self.paused = paused;
         self.held_for_start = false;
         if paused {
@@ -1322,6 +1387,81 @@ impl Queue {
                 if job.state == JobState::Running && job.stop.is_none() {
                     stop_run(job, StopReason::Requeue);
                 }
+            }
+        }
+        self.note_blocked(now);
+    }
+
+    /// Holds back the directions the speed limit schedule pauses, interrupting their running
+    /// transfers like a paused queue does, and lets the others go. Returns whether that changed.
+    pub fn set_held(&mut self, held: Held, now: Instant) -> bool {
+        if self.held == held {
+            return false;
+        }
+        self.held = held;
+        for job in self.jobs.values_mut() {
+            if job.state == JobState::Running && held.holds(job.spec.direction) {
+                stop_run(job, StopReason::Requeue);
+                self.dirty.insert(job.id);
+            }
+        }
+        self.note_blocked(now);
+        true
+    }
+
+    pub fn held(&self) -> Held {
+        self.held
+    }
+
+    /// Notes which directions the paused queue or the schedule now keeps from starting, and
+    /// since when. A server whose waiting jobs were all kept back, and some of which may start
+    /// again now, does not count the time nothing tried it towards its reconnect window, so the
+    /// window still runs out however often the schedule lets them go.
+    fn note_blocked(&mut self, now: Instant) {
+        let before = self.blocked_since;
+        let mut let_go = false;
+        for direction in DIRECTIONS {
+            // A queue waiting for Start still lets unattended jobs try their servers.
+            let blocked = self.paused_by_user() || self.held.holds(direction);
+            let since = self.blocked_since.of(direction);
+            match (blocked, since.is_some()) {
+                (true, false) => *since = Some(now),
+                (false, true) => {
+                    *since = None;
+                    let_go = true;
+                }
+                _ => {}
+            }
+        }
+        if !let_go {
+            return;
+        }
+        // For each server with waiting jobs: when the last of their directions was kept back,
+        // or nothing if one of them could start meanwhile; and whether one may start now.
+        let mut untried_since: HashMap<&String, Option<Instant>> = HashMap::new();
+        let mut released: HashSet<&String> = HashSet::new();
+        for id in self.pending.values() {
+            let job = &self.jobs[id];
+            let direction = job.spec.direction;
+            let kept_back = before.get(direction);
+            untried_since
+                .entry(&job.spec.session_id)
+                .and_modify(|latest| {
+                    *latest = latest
+                        .zip(kept_back)
+                        .map(|(first, second)| first.max(second));
+                })
+                .or_insert(kept_back);
+            if kept_back.is_some() && self.blocked_since.get(direction).is_none() {
+                released.insert(&job.spec.session_id);
+            }
+        }
+        for (session_id, outage) in &mut self.outages {
+            if outage.gave_up || !released.contains(session_id) {
+                continue;
+            }
+            if let Some(Some(kept_back)) = untried_since.get(session_id) {
+                outage.untried += now.saturating_duration_since(outage.since.max(*kept_back));
             }
         }
     }
@@ -1354,9 +1494,15 @@ impl Queue {
             remaining_bytes: self.remaining_bytes(),
             queue_paused: self.paused,
             held_for_start: self.paused && self.held_for_start,
+            // Ones the speed limit schedule holds back are not going anywhere, so Pause would
+            // stop nothing.
             unattended_running: self.jobs.values().any(|job| {
                 job.spec.runs_unattended()
-                    && matches!(job.state, JobState::Queued | JobState::Running)
+                    && match job.state {
+                        JobState::Running => true,
+                        JobState::Queued => !self.held.holds(job.spec.direction),
+                        _ => false,
+                    }
             }),
             ..TransferStats::default()
         }
@@ -1461,7 +1607,9 @@ impl Queue {
     pub fn has_delayed_jobs(&self) -> bool {
         self.pending.values().any(|id| {
             let job = &self.jobs[id];
-            job.not_before.is_some() || self.outages.contains_key(&job.spec.session_id)
+            // A held job waits for the schedule, which wakes the workers itself when it ends.
+            !self.held.holds(job.spec.direction)
+                && (job.not_before.is_some() || self.outages.contains_key(&job.spec.session_id))
         })
     }
 
@@ -1738,7 +1886,7 @@ mod tests {
 
         // Pausing holds back everything, and Start lets everything go.
         queue.add(scheduled("third run"));
-        queue.set_paused(true);
+        queue.set_paused(true, Instant::now());
         assert!(queue.paused_by_user());
         assert_eq!(claim_name(&mut queue), None);
         let stats = queue.stats();
@@ -1746,10 +1894,60 @@ mod tests {
         // A queue the user paused stays paused when more is queued.
         queue.hold_for_start();
         assert!(queue.paused_by_user());
-        queue.set_paused(false);
+        queue.set_paused(false, Instant::now());
         let mut started: Vec<String> = std::iter::from_fn(|| claim_name(&mut queue)).collect();
         started.sort();
         assert_eq!(started, ["by hand", "restored", "third run"]);
+    }
+
+    #[test]
+    fn scheduled_files_pass_a_queue_waiting_for_start_but_not_the_speed_schedule() {
+        let task = JobBatch::new("Nightly", None);
+        let scheduled = |spec: JobSpec| JobSpec {
+            batch: Some(task.clone()),
+            ..spec
+        };
+        let mut queue = Queue::new();
+        queue.hold_for_start();
+        let by_hand = queue.add(file("by hand", 1));
+        queue.add(scheduled(file("nightly upload", 1)));
+        queue.add(scheduled(download("nightly download", 1)));
+
+        // A window that pauses uploads holds the scheduled upload too; the download goes.
+        queue.set_held(UPLOADS_HELD, Instant::now());
+        assert_eq!(claim_name(&mut queue).as_deref(), Some("nightly download"));
+        assert_eq!(claim_name(&mut queue), None);
+        let stats = queue.stats();
+        assert!(stats.held_for_start && stats.unattended_running);
+        let running: Vec<JobId> = queue
+            .jobs
+            .values()
+            .filter(|job| job.state == JobState::Running)
+            .map(|job| job.id)
+            .collect();
+        for id in running {
+            finish(&mut queue, id, RunOutcome::Completed);
+        }
+        // Only a held upload is left of the run: nothing of it moves, so the queue reads as
+        // waiting for Start, and Start would send only the user's file.
+        let stats = queue.stats();
+        assert!(stats.queue_paused && stats.held_for_start && !stats.unattended_running);
+
+        // When the window ends, the scheduled upload goes, and the user's file still waits.
+        queue.set_held(Held::default(), Instant::now());
+        assert!(queue.stats().unattended_running);
+        assert_eq!(claim_name(&mut queue).as_deref(), Some("nightly upload"));
+        assert_eq!(claim_name(&mut queue), None);
+        assert_eq!(queue.job(by_hand).unwrap().state, JobState::Queued);
+
+        // A window that starts while it runs stops it, as it stops any upload.
+        queue.set_held(UPLOADS_HELD, Instant::now());
+        let upload = queue
+            .jobs
+            .values()
+            .find(|job| job.spec.name == "nightly upload")
+            .unwrap();
+        assert!(upload.stop.is_some());
     }
 
     #[test]
@@ -1763,7 +1961,7 @@ mod tests {
         claim.run.add_progress(10);
         claim.run.complete_piece(piece.start);
 
-        queue.set_paused(true);
+        queue.set_paused(true, Instant::now());
         assert!(claim.run.cancel.is_cancelled());
         finish(&mut queue, id, RunOutcome::Stopped);
         let job = queue.job(id).unwrap();
@@ -1771,7 +1969,7 @@ mod tests {
         assert_eq!(job.resume.as_ref().map(|resume| resume.offset), Some(10));
         assert!(queue.claim(Instant::now()).is_none());
 
-        queue.set_paused(false);
+        queue.set_paused(false, Instant::now());
         let claim = queue.claim(Instant::now()).unwrap();
         assert_eq!(claim.resume.map(|resume| resume.offset), Some(10));
     }
@@ -2241,5 +2439,212 @@ mod tests {
         let claim = restored.claim(Instant::now()).unwrap();
         assert_eq!(claim.spec.name, "running");
         assert_eq!(claim.resume.map(|resume| resume.offset), Some(10));
+    }
+
+    fn download(name: &str, size: u64) -> JobSpec {
+        JobSpec {
+            direction: Direction::Download,
+            source: format!("/remote/{name}"),
+            target: format!("/local/{name}"),
+            target_directory: "/local".into(),
+            ..file(name, size)
+        }
+    }
+
+    const UPLOADS_HELD: Held = Held {
+        upload: true,
+        download: false,
+    };
+
+    #[test]
+    fn a_held_direction_waits_with_its_progress_while_the_other_runs() {
+        let mut queue = Queue::new();
+        let upload = queue.add(file("up", 100));
+        queue.add(download("down", 1));
+        queue.add(JobSpec {
+            direction: Direction::Relay,
+            source_session_id: Some("other".into()),
+            ..file("across", 1)
+        });
+        let claim = queue.claim(Instant::now()).unwrap();
+        claim.run.plan.set(plan("/remote/up", 100)).unwrap();
+        claim.run.start_pieces(Pieces::new(0, 100, 10));
+        let piece = claim.run.claim_piece().unwrap();
+        claim.run.add_progress(10);
+        claim.run.complete_piece(piece.start);
+
+        assert!(queue.set_held(UPLOADS_HELD, Instant::now()));
+        assert!(!queue.set_held(UPLOADS_HELD, Instant::now()));
+        assert!(claim.run.cancel.is_cancelled());
+        finish(&mut queue, upload, RunOutcome::Stopped);
+        let job = queue.job(upload).unwrap();
+        assert_eq!(job.state, JobState::Queued);
+        assert_eq!(job.attempts, 0);
+        assert_eq!(job.resume.as_ref().map(|resume| resume.offset), Some(10));
+
+        // Downloads go on. A relay writes to a server too, so it waits with the uploads.
+        assert_eq!(claim_name(&mut queue).as_deref(), Some("down"));
+        assert_eq!(claim_name(&mut queue), None);
+        // Waiting for the schedule is not having finished.
+        let counts = queue.counts();
+        assert_eq!((counts.queued, counts.running), (2, 1));
+        assert!(!counts.is_idle());
+        assert_eq!(queue.remaining_bytes(), 92);
+
+        assert!(queue.set_held(Held::default(), Instant::now()));
+        let claim = queue.claim(Instant::now()).unwrap();
+        assert_eq!(claim.spec.name, "up");
+        assert_eq!(claim.resume.map(|resume| resume.offset), Some(10));
+        assert_eq!(claim_name(&mut queue).as_deref(), Some("across"));
+    }
+
+    #[test]
+    fn a_hold_leaves_pauses_and_retries_as_they_were() {
+        let mut queue = Queue::new();
+        let paused_by_hand = queue.add(file("by hand", 1));
+        let retried = queue.add(file("retried", 1));
+        queue.add(file("waiting", 1));
+
+        // Paused by the user as the hold begins: it stays paused when the hold ends.
+        let claim = queue.claim(Instant::now()).unwrap();
+        queue.pause(&[paused_by_hand]);
+        queue.set_held(UPLOADS_HELD, Instant::now());
+        assert!(claim.run.cancel.is_cancelled());
+        finish(&mut queue, paused_by_hand, RunOutcome::Stopped);
+        assert_eq!(queue.job(paused_by_hand).unwrap().state, JobState::Paused);
+
+        // A retry that falls due during the hold waits for it, and costs no further attempt.
+        queue.set_held(Held::default(), Instant::now());
+        queue.claim(Instant::now()).unwrap();
+        let refused = AppError::new(ErrorKind::Sftp, "failure");
+        finish(&mut queue, retried, RunOutcome::Failed(refused));
+        assert_eq!(queue.job(retried).unwrap().attempts, 1);
+        queue.set_held(UPLOADS_HELD, Instant::now());
+        let after_the_delay = Instant::now() + Duration::from_secs(3600);
+        assert!(queue.claim(after_the_delay).is_none());
+        assert_eq!(queue.job(retried).unwrap().state, JobState::Queued);
+        assert_eq!(queue.job(retried).unwrap().attempts, 1);
+
+        // A paused queue stays paused when the hold ends, and a held one held when started.
+        queue.set_paused(true, Instant::now());
+        queue.set_held(Held::default(), Instant::now());
+        assert!(queue.claim(after_the_delay).is_none());
+        queue.set_held(UPLOADS_HELD, Instant::now());
+        queue.set_paused(false, Instant::now());
+        assert!(queue.claim(after_the_delay).is_none());
+        queue.set_held(Held::default(), Instant::now());
+        let claim = queue.claim(after_the_delay).unwrap();
+        assert_eq!(claim.spec.name, "retried");
+        assert_eq!(claim_name(&mut queue).as_deref(), Some("waiting"));
+        assert_eq!(claim_name(&mut queue), None);
+
+        // Resumed by hand during a hold, a job joins the ones that wait for it.
+        queue.set_held(UPLOADS_HELD, Instant::now());
+        queue.resume(&[paused_by_hand]);
+        assert_eq!(queue.job(paused_by_hand).unwrap().state, JobState::Queued);
+        assert!(queue.claim(after_the_delay).is_none());
+    }
+
+    #[test]
+    fn a_hold_or_a_paused_queue_does_not_use_up_the_reconnect_window() {
+        let settings = TransferSettings {
+            reconnect_minutes: 1,
+            retry_delay_secs: 5,
+            ..settings()
+        };
+        let seconds = Duration::from_secs;
+        let lost_again = |retry_in| Some(ServerChange::Lost { retry_in });
+        let gave_up = Some(ServerChange::GaveUp { failed: 2 });
+        let mut queue = Queue::new();
+        let first = queue.add(file("a", 1));
+        let second = queue.add(file("b", 1));
+        let start = Instant::now();
+        queue.claim(start).unwrap();
+        drop_connection(&mut queue, first, &settings, start);
+
+        // The schedule holds the uploads for far longer than the reconnect window. Nothing
+        // tried the server meanwhile, so one more dropped connection waits for it again, with
+        // the next delay rather than the first.
+        queue.set_held(UPLOADS_HELD, start);
+        let released = start + seconds(3600);
+        queue.set_held(Held::default(), released);
+        assert_eq!(queue.claim(released).unwrap().id, first);
+        assert_eq!(
+            drop_connection(&mut queue, first, &settings, released),
+            lost_again(seconds(10))
+        );
+        assert_eq!(queue.job(first).unwrap().state, JobState::Queued);
+        assert_eq!(queue.job(second).unwrap().state, JobState::Queued);
+        // A new session to the server since the connection dropped still ends the wait.
+        assert_eq!(
+            queue.waiting_servers(),
+            vec![("session".to_string(), start)]
+        );
+
+        // The same for a queue paused that long.
+        queue.set_paused(true, released);
+        let started = released + seconds(3600);
+        queue.set_paused(false, started);
+        assert_eq!(queue.claim(started).unwrap().id, first);
+        assert_eq!(
+            drop_connection(&mut queue, first, &settings, started),
+            lost_again(seconds(20))
+        );
+        assert_eq!(queue.job(second).unwrap().state, JobState::Queued);
+
+        // Within the window, a server that stays out of reach is still given up on.
+        let late = started + seconds(61);
+        assert_eq!(queue.claim(late).unwrap().id, first);
+        assert_eq!(drop_connection(&mut queue, first, &settings, late), gave_up);
+
+        // Holds within the window only add the time they took, so the window still runs out
+        // however often the schedule lets the jobs go: here 20 seconds of holds make it end
+        // 80 seconds after the connection dropped.
+        let mut queue = Queue::new();
+        let first = queue.add(file("a", 1));
+        queue.add(file("b", 1));
+        queue.claim(start).unwrap();
+        drop_connection(&mut queue, first, &settings, start);
+        for held_at in [10, 30] {
+            queue.set_held(UPLOADS_HELD, start + seconds(held_at));
+            queue.set_held(Held::default(), start + seconds(held_at + 10));
+        }
+        let within = start + seconds(75);
+        assert_eq!(queue.claim(within).unwrap().id, first);
+        assert_eq!(
+            drop_connection(&mut queue, first, &settings, within),
+            lost_again(seconds(10))
+        );
+        let past = start + seconds(85);
+        assert_eq!(queue.claim(past).unwrap().id, first);
+        assert_eq!(drop_connection(&mut queue, first, &settings, past), gave_up);
+
+        // Downloads from the server could go on while its uploads were held, so the hold
+        // takes nothing off the window.
+        let mut queue = Queue::new();
+        let first = queue.add(file("a", 1));
+        queue.add(download("down", 1));
+        queue.claim(start).unwrap();
+        drop_connection(&mut queue, first, &settings, start);
+        queue.set_held(UPLOADS_HELD, start);
+        queue.set_held(Held::default(), start + seconds(50));
+        let past = start + seconds(60);
+        assert_eq!(queue.claim(past).unwrap().id, first);
+        assert_eq!(drop_connection(&mut queue, first, &settings, past), gave_up);
+    }
+
+    #[test]
+    fn a_held_job_waiting_to_retry_does_not_wake_the_workers() {
+        let mut queue = Queue::new();
+        let retried = queue.add(file("retried", 1));
+        queue.claim(Instant::now()).unwrap();
+        let refused = AppError::new(ErrorKind::Sftp, "failure");
+        finish(&mut queue, retried, RunOutcome::Failed(refused));
+        assert!(queue.has_delayed_jobs());
+
+        queue.set_held(UPLOADS_HELD, Instant::now());
+        assert!(!queue.has_delayed_jobs());
+        queue.set_held(Held::default(), Instant::now());
+        assert!(queue.has_delayed_jobs());
     }
 }

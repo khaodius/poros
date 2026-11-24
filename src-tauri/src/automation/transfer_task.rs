@@ -305,6 +305,7 @@ mod tests {
             saved_connection_id: None,
             protocol: Protocol::Sftp,
             vault: None,
+            coarse_times: false,
         }
     }
 

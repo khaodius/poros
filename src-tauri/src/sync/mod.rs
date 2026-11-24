@@ -5,6 +5,7 @@
 
 mod chmod;
 mod filter;
+mod folder_compare;
 mod hash;
 mod options;
 mod owners;
@@ -29,6 +30,7 @@ use crate::session::SessionManager;
 use crate::transfer::{JobBatch, TransferManager};
 pub use chmod::Chmod;
 use filter::Filter;
+pub use folder_compare::{FolderCompareRequest, FolderComparison, FolderRef, FolderSummary};
 pub use options::{
     check as check_options, AppendMode, DeleteTiming, FilterFiles, LinkMode, OptionCheck,
     SyncOptions,

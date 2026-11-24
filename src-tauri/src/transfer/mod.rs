@@ -8,12 +8,14 @@ mod conflict;
 mod copy;
 mod delta;
 mod hash_shell;
+mod limit_schedule;
 mod limiter;
 mod options;
 mod persist;
 mod pieces;
 mod published;
 mod queue;
+mod scheduled_limits;
 mod streamed;
 mod verify;
 mod worker;
@@ -29,11 +31,15 @@ use tokio::sync::Notify;
 
 pub use batch::{BatchTally, JobBatch};
 pub use conflict::ExistsAction;
+pub use limit_schedule::{
+    clock_time, LimitMode, LimitRule, LimitSchedule, Limits, PauseEnds, RateLimit,
+};
 pub use options::{Backup, JobOptions};
 use queue::Totals;
 pub use queue::{
     ChangedDirectory, Direction, JobId, JobKind, JobSnapshot, JobState, QueueCounts, Side,
 };
+pub use scheduled_limits::{ActiveRule, LimitClock, LimitStatus};
 #[cfg(feature = "gui")]
 pub(crate) use worker::is_partial_name;
 pub(crate) use worker::{ensure_remote_folders, keep_local_backup, keep_remote_backup};
@@ -49,6 +55,7 @@ use crate::ssh::ConnectProfile;
 use crate::{local, remote_path};
 use limiter::RateLimiter;
 use queue::{Abandoned, JobSpec, Queue};
+use scheduled_limits::ScheduledLimits;
 
 const TICK: Duration = Duration::from_millis(250);
 /// A change to the queue is saved this long after it happens, gathering the ones that follow.
@@ -109,6 +116,8 @@ pub struct TransferStats {
     /// Files of scheduled runs are going or waiting their turn, which they do even while the
     /// queue waits for Start.
     pub unattended_running: bool,
+    /// The speed limits in force, and the rule of the schedule that set them.
+    pub limits: LimitStatus,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -324,6 +333,8 @@ pub(crate) struct Shared {
     events: Events,
     upload_limiter: RateLimiter,
     download_limiter: RateLimiter,
+    /// What the speed limit schedule makes of the two limits now.
+    scheduled_limits: ScheduledLimits,
     /// Limits shared by the jobs of one synchronization, by its limit group.
     job_limiters: Mutex<HashMap<String, Weak<RateLimiter>>>,
     uploaded: AtomicU64,
@@ -486,6 +497,7 @@ impl TransferWatch {
         let queue = self.shared.queue.lock().unwrap();
         let mut progress = FolderProgress {
             queue_paused: queue.paused,
+            waiting_for_schedule: queue.held().download,
             ..FolderProgress::default()
         };
         for job in queue.jobs().filter(|job| downloads_into(&job.spec, folder)) {
@@ -537,6 +549,8 @@ pub struct FolderProgress {
     pub failures: Vec<String>,
     /// The whole queue is paused, so nothing unfinished moves until it runs again.
     pub queue_paused: bool,
+    /// The speed limit schedule pauses downloads now, so they wait for it to let them go.
+    pub waiting_for_schedule: bool,
 }
 
 pub struct TransferManager {
@@ -555,6 +569,7 @@ impl TransferManager {
             events,
             upload_limiter: RateLimiter::new(),
             download_limiter: RateLimiter::new(),
+            scheduled_limits: ScheduledLimits::new(),
             job_limiters: Mutex::new(HashMap::new()),
             uploaded: AtomicU64::new(0),
             downloaded: AtomicU64::new(0),
@@ -574,14 +589,9 @@ impl TransferManager {
 
     pub fn configure(&self, settings: TransferSettings) {
         let shared = &self.shared;
-        shared
-            .upload_limiter
-            .set_rate(u64::from(settings.upload_limit_kib) * 1024);
-        shared
-            .download_limiter
-            .set_rate(u64::from(settings.download_limit_kib) * 1024);
         let workers = settings.workers as usize;
         *shared.settings.write().unwrap() = settings;
+        scheduled_limits::apply(shared);
         let mut live = shared.live_workers.lock().unwrap();
         for index in 0..workers {
             if live.insert(index) {
@@ -777,12 +787,27 @@ impl TransferManager {
     }
 
     pub fn list(&self) -> TransferList {
+        let limits = self.shared.scheduled_limits.status();
         let queue = self.shared.queue.lock().unwrap();
         TransferList {
             sequence: queue.sequence,
             jobs: queue.snapshots(),
-            stats: queue.stats(),
+            stats: TransferStats {
+                limits,
+                ..queue.stats()
+            },
         }
+    }
+
+    /// Sets the speed limit schedule aside until it next changes what is in force, or takes
+    /// it up again. Never saved: a restart follows the schedule.
+    pub fn ignore_limit_schedule(&self, ignored: bool) {
+        scheduled_limits::set_ignored(&self.shared, ignored);
+    }
+
+    /// Has the speed limit schedule read the time from `clock` instead of the system's.
+    pub fn read_time_from(&self, clock: LimitClock) {
+        scheduled_limits::set_clock(&self.shared, clock);
     }
 
     fn update_queue(&self, change: impl FnOnce(&mut Queue)) {
@@ -826,7 +851,7 @@ impl TransferManager {
     }
 
     pub fn set_paused(&self, paused: bool) {
-        self.update_queue(|queue| queue.set_paused(paused));
+        self.update_queue(|queue| queue.set_paused(paused, Instant::now()));
     }
 
     pub fn pause(&self, ids: &[JobId]) {
@@ -962,6 +987,8 @@ async fn report_progress(shared: Weak<Shared>) {
             }
         };
 
+        scheduled_limits::follow(&shared);
+        let limits = shared.scheduled_limits.status();
         let (update, stats, totals, has_delayed, unreachable) = {
             let mut queue = shared.queue.lock().unwrap();
             queue.sample_progress(now);
@@ -969,6 +996,7 @@ async fn report_progress(shared: Weak<Shared>) {
             let stats = TransferStats {
                 upload_speed: per_second(uploaded - oldest_uploaded),
                 download_speed: per_second(downloaded - oldest_downloaded),
+                limits,
                 ..queue.stats()
             };
             if stats.counts.is_idle() {

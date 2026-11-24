@@ -387,11 +387,21 @@ async fn run_now(file: &Path, context: &Context, arguments: &ScheduleRunArgs) ->
         .collect();
     let mut reports = Vec::new();
     let mut reporter = Reporter::new(context.progress());
+    let mut told_of_schedule = false;
     while !running.is_empty() {
         tokio::select! {
             Some(report) = running.next() => reports.push(report),
             _ = tokio::time::sleep(POLL) => {
-                reporter.update(transfers::snapshot(&runner.transfers.list().jobs));
+                let list = runner.transfers.list();
+                reporter.update(transfers::snapshot(&list.jobs));
+                // A window of the speed limit schedule that pauses the run's files would look
+                // like a run that hangs.
+                if !told_of_schedule {
+                    if let Some(notice) = transfers::scheduled_run_notice(&list, &Local::now()) {
+                        log::warn!("{notice}");
+                        told_of_schedule = true;
+                    }
+                }
             }
             _ = context.interrupt.cancelled() => {
                 reporter.finish();

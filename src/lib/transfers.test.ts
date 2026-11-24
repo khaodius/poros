@@ -121,6 +121,22 @@ describe("transfer snapshots", () => {
     expect(showsPaused({ ...held, heldForStart: false, unattendedRunning: true })).toBe(true);
   });
 
+  it("does not take a direction the speed limit schedule pauses for a paused queue", () => {
+    const quietHour = {
+      ...EMPTY_STATS.limits,
+      upload: { mode: "paused", kib: 0 },
+      rule: { index: 0, name: "Quiet hour" },
+    } as const;
+    const going = { ...EMPTY_STATS, limits: quietHour };
+    expect(showsPaused(going)).toBe(false);
+    expect(showsPaused({ ...going, unattendedRunning: true })).toBe(false);
+    const held = { ...going, queuePaused: true, heldForStart: true };
+    // A scheduled run's download goes while its uploads wait for the window: Pause stops it.
+    expect(showsPaused({ ...held, unattendedRunning: true })).toBe(false);
+    // Only its held uploads are left, so nothing moves until Start or the window ends.
+    expect(showsPaused(held)).toBe(true);
+  });
+
   it("estimates the time left", () => {
     expect(secondsRemaining({ ...EMPTY_STATS, remainingBytes: 1000, uploadSpeed: 300 })).toBe(4);
     expect(secondsRemaining({ ...EMPTY_STATS, remainingBytes: 1000 })).toBeNull();

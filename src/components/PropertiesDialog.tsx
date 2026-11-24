@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useLatest } from "../hooks/useLatest";
 import { formatDate, formatSize, pluralize } from "../lib/format";
 import { fileOperations, toAppError } from "../lib/ipc";
 import { baseName } from "../lib/path";
@@ -127,6 +128,7 @@ export function PropertiesDialog({
   onApplied,
 }: PropertiesDialogProps) {
   const dateFormat = useSettingsStore((state) => state.settings.interface.dateFormat);
+  const latestOnClose = useLatest(onClose);
   const single = entries.length === 1 ? entries[0] : null;
   const folders = entries.filter((entry) => entry.kind === "dir");
   const files = entries.filter((entry) => entry.kind === "file" || entry.kind === "other");
@@ -232,7 +234,7 @@ export function PropertiesDialog({
       }
       changed();
       if (summary.failures.length > 0) setFailures(summary.failures);
-      else onClose();
+      else latestOnClose.current();
     } catch (caught) {
       const failure = toAppError(caught);
       changed();
