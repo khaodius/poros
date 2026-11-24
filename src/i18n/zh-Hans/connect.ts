@@ -7,7 +7,7 @@ export const connect = {
   importFromFilezillaWinscpAnd: "从 FileZilla、WinSCP 和其他应用导入",
   importConnections: "导入连接",
   newConnection: "新建连接",
-  connectionsYouSaveAppearHere: "保存的连接会显示在这里。",
+  emptyConnectionList: "保存的连接会显示在这里。{importLink}",
   importThemFromAnotherApp: "从其他应用导入",
   protocol: "协议",
   account: "账户",
@@ -93,10 +93,9 @@ export const connect = {
 
   // components/ImportConnectionsDialog
   importFrom: "从 {label} 导入",
-  importedFrom: "已从 {label} 导入 {imported}。",
-  imported: "已导入 {imported}。",
+  importedFrom: { other: "已从 {label} 导入 {count} 个连接。" },
+  imported: { other: "已导入 {count} 个连接。" },
   theseCouldNotBeSaved: "以下项目无法保存：{failures}",
-  importedConnections: { other: "{count} 个连接" },
   passwordsLeftOut: {
     other: "系统密钥链不可用，因此未导入 {count} 个密码；连接时 Poros 会要求输入。",
   },
@@ -106,7 +105,7 @@ export const connect = {
     "Poros 会将这些应用中保存的站点复制到自己的已保存连接中。其他应用中的内容不会改变。",
   chooseFile: "选择文件...",
   alreadySaved: "已保存",
-  leftOutSincePorosCannot: "未导入 {count} 个，因为 Poros 无法按原样连接到它们",
+  leftOutSincePorosCannot: { other: "未导入 {count} 个，因为 Poros 无法按原样连接到它们" },
   putFolderNamesInFront: "在连接名称前加上文件夹名称",
   reading: "正在读取...",
   otherFile: "其他文件...",
@@ -118,6 +117,8 @@ export const connect = {
   importCountConnections: { other: "导入 {count} 个连接" },
   foundFiles: "已找到 {files}",
   notFoundInChoose: "在 {places} 中未找到。{choose}",
+  throughConnection: "通过 {name}",
+  neededByConnection: "供 {name} 使用",
   placeOrPlace: "{first} 或 {second}",
   keepThePasswordsInTheKeychain: {
     other: "将 {count} 个密码保存在系统密钥链中",

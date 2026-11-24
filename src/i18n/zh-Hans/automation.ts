@@ -49,7 +49,12 @@ export const automation = {
   whenTheQueueFinishes: "队列完成时",
 
   // components/WhenDoneCountdown
-  theTransferQueueHasFinished: "传输队列已完成。{seconds}后{title}。",
+  queueFinishedClosingPorosIn: "传输队列已完成。{seconds}后关闭 Poros。",
+  queueFinishedLockingIn: "传输队列已完成。{seconds}后锁定计算机。",
+  queueFinishedSleepingIn: "传输队列已完成。{seconds}后使计算机进入睡眠状态。",
+  queueFinishedHibernatingIn: "传输队列已完成。{seconds}后使计算机休眠。",
+  queueFinishedLoggingOffIn: "传输队列已完成。{seconds}后注销。",
+  queueFinishedShuttingDownIn: "传输队列已完成。{seconds}后关闭计算机。",
   seconds: { other: "{count} 秒" },
 
   // components/commandMenu
@@ -82,8 +87,8 @@ export const automation = {
   confirmShutDownNow: "立即关机",
   transfersFinishedWithErrors: "传输已完成，但有错误",
   transfersFinished: "传输已完成",
-  failedCount: "{count} 个失败",
-  skippedCount: "{count} 个已跳过",
+  failedCount: { other: "{count} 个失败" },
+  skippedCount: { other: "{count} 个已跳过" },
 
   // lib/commands
   eachSelectedItemsFullPath: "每个所选项目的完整路径，每个项目运行一次",
@@ -100,8 +105,8 @@ export const automation = {
   // state/commandStore
   stopped: "已停止",
   nothingToRun: "没有要运行的内容",
-  allCommandsFinished: "全部 {finished} 个命令已完成",
-  ofCommandsFailed: "{finished} 个命令中有 {failed} 个失败",
+  allCommandsFinished: { other: "全部 {count} 个命令已完成" },
+  ofCommandsFailed: { other: "{finished} 个命令中有 {count} 个失败" },
 
   // state/whenDone
   whenTheQueueFinished: "队列完成时",

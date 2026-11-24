@@ -10,6 +10,9 @@
 // | Quotation marks        | "..."         | “...”                                               |
 // | "Asks for more" ending | ...           | ... (as Windows menus write it: 移动到...)          |
 // | List separator         | `, `          | `，`                                                |
+// | Clause separator       | `; `          | `；`                                                |
+// | Sentence separator     | ` `           | nothing (。 ends each sentence)                     |
+// | Label and message      | `: `          | `：`                                                |
 //
 // Sentences take full-width punctuation (，。：；？（）“”). Chinese characters have no spaces
 // between them; a half-width space separates Chinese from Latin text, numbers and placeholders

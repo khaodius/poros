@@ -87,7 +87,7 @@ export const drives = {
   uploadFailed: "失败：{error}",
   uploadWaiting: "等待中",
   uploading: "正在上传",
-  uploadingPercent: "正在上传，{percent}%",
+  uploadingPercent: "正在上传，{percent}",
   chooseADriveLetter: "选择一个驱动器号。",
   chooseAFolder: "选择一个文件夹。",
   driveLetterSuchAs: "驱动器号，例如 {example}",

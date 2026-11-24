@@ -2,12 +2,15 @@ import type { TranslatedArea } from "../catalog";
 
 export const rsync = {
   // components/RsyncOptionsEditor
-  changed: "已更改 {changed} 项",
+  changed: { other: "已更改 {count} 项" },
   noLimit: "不限制",
   extraRsyncArguments: "额外的 rsync 参数",
   typedAsOnRsyncsCommandLine: "按 rsync 命令行的写法输入；它们会覆盖上方的选项。",
 
   // lib/rsyncOptions
+  unitSeconds: { other: "秒" },
+  unitBytes: { other: "字节" },
+  unitItems: { other: "项" },
   sizeAndModificationTime: "大小和修改时间",
   sizeOnlySizeOnly: "仅大小 (--size-only)",
   contentsCReadsFilesOf: "内容（-c，读取大小相同的文件）",

@@ -18,11 +18,12 @@ export const dialogs = {
   // components/DeleteDialog
   nothingToDelete: "没有可删除的内容",
   deleteItem: "删除项目",
-  deleteItems: "删除 {count} 个项目",
+  deleteItems: { other: "删除 {count} 个项目" },
   checkingTheFolder: "正在检查文件夹...",
   theseItemsAreNoLonger: "这些项目已不在该文件夹中。",
 
   // components/PropertiesDialog
+  sizeWithContents: "{size}（{contents}）",
   items: { other: "{count} 个项目" },
   files: { other: "{count} 个文件" },
   folders: { other: "{count} 个文件夹" },
@@ -30,7 +31,7 @@ export const dialogs = {
     other: "正在统计：{count} 个文件，{size}",
   },
   propertiesOf: "{name} 的属性",
-  propertiesOfItems: "{count} 个项目的属性",
+  propertiesOfItems: { other: "{count} 个项目的属性" },
   items2: "项目",
   links: { other: "{count} 个链接" },
   type: "类型",
@@ -42,7 +43,7 @@ export const dialogs = {
   permissions: "权限",
   linksHaveNoPermissionsOf:
     "链接没有自己的权限，因此会保留原样。所有者和组的更改会应用于链接本身。",
-  andMoreListedInThe: "以及另外 {count} 项，已列在日志中",
+  andMoreListedInThe: { other: "以及另外 {count} 项，已列在日志中" },
   changedItems: { other: "已更改 {count} 个项目" },
   octal: "八进制",
   mixed: "不一致",
@@ -52,7 +53,7 @@ export const dialogs = {
   folders2: "文件夹",
   files2: "文件",
   oneItemCouldNotBe: "有 1 个项目无法更改：",
-  itemsCouldNotBeChanged: "有 {count} 个项目无法更改：",
+  itemsCouldNotBeChanged: { other: "有 {count} 个项目无法更改：" },
   applying: "正在应用...",
   linkToAFolder: "指向文件夹的链接",
   linkToAFile: "指向文件的链接",
@@ -67,10 +68,10 @@ export const dialogs = {
   permissionOfClass: "{who}{permission}",
 
   // lib/deletion
-  deletedCount: "已删除 {count} 项",
+  deletedCount: { other: "已删除 {count} 项" },
   countingToDelete: "正在统计要删除的内容...",
-  deletedFoundSoFar: "已删除 {count} 项，目前已找到 {found} 项",
-  deletedOfTotal: "已删除 {count} 项，共 {total} 项",
+  deletedFoundSoFar: { other: "已删除 {count} 项，目前已找到 {found} 项" },
+  deletedOfTotal: { other: "已删除 {count} 项，共 {total} 项" },
 
   // lib/permissions
   setUserId: "设置用户 ID",

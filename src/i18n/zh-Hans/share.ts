@@ -29,7 +29,7 @@ export const share = {
   hours2: "小时",
   days2: "天",
   link: "链接",
-  links2: "{count} 个链接",
+  links2: { other: "{count} 个链接" },
   keepsOneLinkPerItem:
     "{service} 为每个项目只保留一个链接，因此这会更改上方的链接，所有拥有该链接的人都会受影响。",
   keepsOneLinkPerItemSo:
@@ -68,20 +68,44 @@ export const share = {
   enterHowLongTheLinkShouldWork: "以整数输入链接的有效时长。",
   chooseHowLongTheLinkShouldWork: "选择链接的有效时长。",
   linksHereLastAtMost: "此处的链接最长有效期为 {lifetime}。",
-  deadline: "{month}{day}日 {time}",
-  deadlineWithYear: "{year}年{month}{day}日 {time}",
-  statementDownload: "{who}{until}都可以下载{what}。",
-  statementEdit: "{who}{until}都可以打开和更改{what}。",
-  statementView: "{who}{until}都可以打开{what}。",
-  statementWithPassword: "{statement}打开前需要先输入密码。",
-  anyoneWithThisLink: "拥有此链接的任何人",
-  anyoneWithOneOfTheseLinks: "拥有其中任一链接的任何人",
-  peopleInWithThisLink: "{organization} 中拥有此链接的人",
-  peopleInWithOneOfTheseLinks: "{organization} 中拥有其中任一链接的人",
-  peopleInYourOrganizationWithThisLink: "您所在组织中拥有此链接的人",
-  peopleInYourOrganizationWithOneOfTheseLinks: "您所在组织中拥有其中任一链接的人",
-  peopleAlreadyInvitedWhoHaveThisLink: "已邀请且拥有此链接的人",
-  peopleAlreadyInvitedWhoHaveOneOfTheseLinks: "已邀请且拥有其中任一链接的人",
+  anyoneWithThisLinkCanDownload: "拥有此链接的任何人{until}都可以下载{what}。",
+  anyoneWithThisLinkCanEdit: "拥有此链接的任何人{until}都可以打开和更改{what}。",
+  anyoneWithThisLinkCanView: "拥有此链接的任何人{until}都可以打开{what}。",
+  anyoneWithOneOfTheseLinksCanDownload: "拥有其中任一链接的任何人{until}都可以下载{what}。",
+  anyoneWithOneOfTheseLinksCanEdit: "拥有其中任一链接的任何人{until}都可以打开和更改{what}。",
+  anyoneWithOneOfTheseLinksCanView: "拥有其中任一链接的任何人{until}都可以打开{what}。",
+  peopleInWithThisLinkCanDownload: "{organization} 中拥有此链接的人{until}都可以下载{what}。",
+  peopleInWithThisLinkCanEdit: "{organization} 中拥有此链接的人{until}都可以打开和更改{what}。",
+  peopleInWithThisLinkCanView: "{organization} 中拥有此链接的人{until}都可以打开{what}。",
+  peopleInWithOneOfTheseLinksCanDownload:
+    "{organization} 中拥有其中任一链接的人{until}都可以下载{what}。",
+  peopleInWithOneOfTheseLinksCanEdit:
+    "{organization} 中拥有其中任一链接的人{until}都可以打开和更改{what}。",
+  peopleInWithOneOfTheseLinksCanView:
+    "{organization} 中拥有其中任一链接的人{until}都可以打开{what}。",
+  peopleInYourOrganizationWithThisLinkCanDownload:
+    "您所在组织中拥有此链接的人{until}都可以下载{what}。",
+  peopleInYourOrganizationWithThisLinkCanEdit:
+    "您所在组织中拥有此链接的人{until}都可以打开和更改{what}。",
+  peopleInYourOrganizationWithThisLinkCanView:
+    "您所在组织中拥有此链接的人{until}都可以打开{what}。",
+  peopleInYourOrganizationWithOneOfTheseLinksCanDownload:
+    "您所在组织中拥有其中任一链接的人{until}都可以下载{what}。",
+  peopleInYourOrganizationWithOneOfTheseLinksCanEdit:
+    "您所在组织中拥有其中任一链接的人{until}都可以打开和更改{what}。",
+  peopleInYourOrganizationWithOneOfTheseLinksCanView:
+    "您所在组织中拥有其中任一链接的人{until}都可以打开{what}。",
+  peopleAlreadyInvitedWhoHaveThisLinkCanDownload: "已邀请且拥有此链接的人{until}都可以下载{what}。",
+  peopleAlreadyInvitedWhoHaveThisLinkCanEdit:
+    "已邀请且拥有此链接的人{until}都可以打开和更改{what}。",
+  peopleAlreadyInvitedWhoHaveThisLinkCanView: "已邀请且拥有此链接的人{until}都可以打开{what}。",
+  peopleAlreadyInvitedWhoHaveOneOfTheseLinksCanDownload:
+    "已邀请且拥有其中任一链接的人{until}都可以下载{what}。",
+  peopleAlreadyInvitedWhoHaveOneOfTheseLinksCanEdit:
+    "已邀请且拥有其中任一链接的人{until}都可以打开和更改{what}。",
+  peopleAlreadyInvitedWhoHaveOneOfTheseLinksCanView:
+    "已邀请且拥有其中任一链接的人{until}都可以打开{what}。",
+  statementWithPassword: "{statement}访问前需要先输入密码。",
   theItemItIsFor: "其对应的项目",
   theFileItIsFor: "其对应的文件",
   theFolderAndEverythingInIt: "该文件夹及其中的所有内容",

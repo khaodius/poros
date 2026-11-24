@@ -50,7 +50,7 @@ export const preview = {
   items: { other: "{count} 个项目" },
   thumbnailsNotLoaded: "未加载缩略图",
   thumbnailsNotLoadedDetail: "从此存储读取可能会产生费用，因此仅在请求时才读取图片。",
-  itemsSelected: "已选择 {count} 个项目",
+  itemsSelected: { other: "已选择 {count} 个项目" },
   notTextOrAPicture: "不是文本或图片",
   noPermissionToReadFile: "无权读取此文件",
   noPermissionToReadFolder: "无权读取此文件夹",
@@ -99,7 +99,7 @@ export const preview = {
   dragToResizeDoubleClick: "拖动以调整大小，双击以重置",
 
   // components/PreviewThumbnails
-  andMore: "以及另外 {count} 项",
+  andMore: { other: "以及另外 {count} 项" },
 
   // lib/previewLoad
   theFileChangesAsIt: "文件在读取过程中发生了更改",

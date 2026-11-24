@@ -38,7 +38,7 @@ export const limits = {
   clickToChangeTheSchedule: "{scheduleTooltip}\n点击以更改计划。",
   scheduleIgnoredShort: "已忽略计划",
   scheduleIgnoredShortUntil: "已忽略计划，直到 {time}",
-  untilTime: "直到 {time}",
+  limitsUntilTime: "{limits} 直到 {time}",
 
   // components/LimitScheduleWeek
   speedLimitsThroughTheWeek: "一周中的速度限制",

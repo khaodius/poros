@@ -36,7 +36,7 @@ export const workspace = {
   keepTransferring: "继续传输",
   transfersForThisServerStillQueued: {
     other:
-      "此服务器仍有 {count} 项传输在队列中。关闭标签页后，它们可以在各自的连接上继续运行，也可以暂停等待，直到您继续它们。",
+      "此服务器仍有 {count} 项传输在队列中。关闭标签页后，传输可以使用单独的连接继续运行，也可以暂停等待，直到您继续。",
   },
   unmountAndClose: "卸载并关闭",
 

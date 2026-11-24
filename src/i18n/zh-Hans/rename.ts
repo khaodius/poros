@@ -58,6 +58,8 @@ export const rename = {
   cannotBeRenamed: "无法重命名",
   nameUnchanged: "未更改",
   ready: "就绪",
+  lowercase: "小写",
+  uppercase: "大写",
   titleCase: "单词首字母大写",
   sentenceCase: "句首字母大写",
   beforeTheName: "名称前",
@@ -95,7 +97,8 @@ export const rename = {
 
   // lib/bulkRename
   theNameIsEmpty: "名称为空",
-  theNameIsTooLong: "名称过长：{length} / {maxLength} {lengthUnit}",
+  theNameIsTooLongInBytes: { other: "名称过长：{length} / {count} 字节" },
+  theNameIsTooLongInCharacters: { other: "名称过长：{length} / {count} 个字符" },
   nowNamed: "现在名为 {temporary}：{message}",
   nameWithoutTheExtension: "不含扩展名的名称",
   dateModified: "修改日期",
