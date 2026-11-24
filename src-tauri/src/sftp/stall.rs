@@ -4,7 +4,9 @@
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::task::{Context, Poll};
+use std::time::Duration;
 
 use russh_sftp::client::error::Error as SftpError;
 use russh_sftp::client::rawsession::Limits;
@@ -34,11 +36,18 @@ macro_rules! unless_stalled {
 pub struct StallGuardedSession {
     session: RawSftpSession,
     activity: Activity,
+    /// How far the connection had moved when a request last timed out; `u64::MAX` before one
+    /// did. A plain number keeps every connection small.
+    stalled_at: AtomicU64,
 }
 
 impl StallGuardedSession {
     pub fn new(session: RawSftpSession, activity: Activity) -> Self {
-        Self { session, activity }
+        Self {
+            session,
+            activity,
+            stalled_at: AtomicU64::new(u64::MAX),
+        }
     }
 
     pub fn set_limits(&mut self, limits: Limits) {
@@ -57,7 +66,41 @@ impl StallGuardedSession {
         tokio::select! {
             biased;
             result = request => result,
-            () = self.activity.stalled(started) => Err(SftpError::Timeout),
+            () = self.activity.stalled(started) => {
+                self.note_stall();
+                Err(SftpError::Timeout)
+            }
+        }
+    }
+
+    fn note_stall(&self) {
+        self.stalled_at
+            .store(self.activity.progress(), Ordering::Relaxed);
+    }
+
+    /// Sends requests the server is rightly slow to answer, such as flushing a large file to a
+    /// slow disk, which fail only once the connection has moved nothing for `limit`. Where a
+    /// request timed out and nothing has moved since, they fail at once.
+    pub async fn patiently<'a, T, F>(
+        &'a self,
+        limit: Duration,
+        requests: impl FnOnce(&'a RawSftpSession) -> F,
+    ) -> Result<T, SftpError>
+    where
+        F: Future<Output = T>,
+    {
+        let stalled_at = self.stalled_at.load(Ordering::Relaxed);
+        if stalled_at != u64::MAX && !self.activity.moved_since(stalled_at) {
+            return Err(SftpError::Timeout);
+        }
+        let started = Instant::now();
+        tokio::select! {
+            biased;
+            replies = requests(&self.session) => Ok(replies),
+            () = self.activity.stalled_for(started, limit) => {
+                self.note_stall();
+                Err(SftpError::Timeout)
+            }
         }
     }
 
@@ -67,13 +110,11 @@ impl StallGuardedSession {
         fn realpath(path: impl Into<String>) -> Name;
         fn stat(path: impl Into<String>) -> Attrs;
         fn lstat(path: impl Into<String>) -> Attrs;
-        fn fstat(handle: impl Into<String>) -> Attrs;
         fn setstat(path: impl Into<String>, attributes: FileAttributes) -> Status;
         fn open(path: impl Into<String>, flags: OpenFlags, attributes: FileAttributes) -> Handle;
         fn close(handle: impl Into<String>) -> Status;
         fn read(handle: impl Into<String>, offset: u64, len: u32) -> Data;
         fn write(handle: impl Into<String>, offset: u64, data: Vec<u8>) -> Status;
-        fn fsync(handle: impl Into<String>) -> Status;
         fn opendir(path: impl Into<String>) -> Handle;
         fn readdir(handle: impl Into<String>) -> Name;
         fn mkdir(path: impl Into<String>, attributes: FileAttributes) -> Status;

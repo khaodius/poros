@@ -63,9 +63,10 @@ impl HashShell {
     }
 }
 
-/// The line that runs `command` and then prints `marker` and its exit status. Grouped, so the
-/// redirections reach every stage of a pipeline: on the last stage alone, `head | sha256sum`
-/// would hash nothing.
+/// The line the shell is given for one command: the command with no input and its errors in its
+/// output, then the end marker and the command's exit status. The command is grouped, since a
+/// redirection after a pipeline belongs to its last command alone, which would then read the
+/// empty input instead of the pipe.
 fn command_line(command: &str, marker: &str) -> String {
     format!("{{ {command}; }} </dev/null 2>&1; printf '\\n%s %s\\n' {marker} \"$?\"\n")
 }
@@ -130,7 +131,7 @@ pub(super) async fn run(
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
 
     #[test]
@@ -146,6 +147,64 @@ mod tests {
         assert_eq!(status, 1);
         assert!(answer(b"\nMARK 0\nmore", end).is_err());
         assert!(answer(b"\nMARK x\n", end).is_err());
+    }
+
+    /// What a local `sh` answers to a command given the way the kept shell is given it.
+    #[cfg(unix)]
+    pub(in crate::transfer) fn run_locally(command: &str) -> (String, i32) {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+
+        let mut shell = Command::new("sh")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut input = shell.stdin.take().unwrap();
+        input
+            .write_all(command_line(command, "MARK").as_bytes())
+            .unwrap();
+        drop(input);
+        let printed = shell.wait_with_output().unwrap().stdout;
+        let (output, status) = answer(&printed, b"\nMARK ").unwrap().unwrap();
+        (String::from_utf8(output).unwrap(), status)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_pipeline_hashes_what_is_piped_into_it_and_not_the_empty_input() {
+        use crate::checksum::{parse_output, Algorithm};
+
+        let folder = tempfile::tempdir().unwrap();
+        let file = folder.path().join("it's a file.bin");
+        std::fs::write(&file, b"abcdef").unwrap();
+        let quoted = crate::rsync::shell_quote(&file.to_string_lossy());
+        let digest_of = |data: &[u8]| {
+            let mut hasher = Algorithm::Sha256.hasher();
+            hasher.update(data);
+            hasher.finish()
+        };
+        let digests = |output: &str| -> Vec<Vec<u8>> {
+            parse_output(output, Algorithm::Sha256)
+                .into_iter()
+                .map(|(_, digest)| digest)
+                .collect()
+        };
+
+        // The first bytes of a file, as a resumed transfer compares them.
+        let (output, status) = run_locally(&format!("head -c 3 -- {quoted} | sha256sum"));
+        assert_eq!(status, 0, "{output}");
+        assert_eq!(digests(&output), [digest_of(b"abc")], "{output}");
+
+        // The whole file named as an operand, as a finished transfer compares it.
+        let (output, status) = run_locally(&format!("sha256sum -- {quoted}"));
+        assert_eq!(status, 0, "{output}");
+        assert_eq!(digests(&output), [digest_of(b"abcdef")], "{output}");
+
+        // The errors of every command of a pipeline are part of the answer, not only the last's.
+        let (output, _) = run_locally("head -c 3 -- /nonexistent-poros-file | sha256sum");
+        assert!(output.contains("nonexistent-poros-file"), "{output}");
     }
 
     #[cfg(unix)]
