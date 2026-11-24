@@ -1010,7 +1010,6 @@ async fn a_save_after_a_failed_upload_is_asked_about_again() {
         .delete(std::slice::from_ref(&path))
         .await
         .unwrap();
-    write_through(&bench.files, &path, b"as it was on the server\n").await;
     std::fs::write(&edit.local_path, "a save nobody has seen yet\n").unwrap();
     bench
         .wait(&opened.id, "the later save held", |edit| {
@@ -1019,9 +1018,19 @@ async fn a_save_after_a_failed_upload_is_asked_about_again() {
         .await;
     tokio::time::sleep(Duration::from_secs(1)).await;
     assert_eq!(bench.edit(&opened.id).unwrap().state, EditState::Changed);
-    assert_eq!(bench.read(&path).await, b"as it was on the server\n");
+    assert!(bench.files.stat(&path).await.unwrap().is_none());
 
+    // Let go, it goes, once the user has said what to do about the file gone from the server.
     bench.external.upload(&opened.id).unwrap();
+    bench
+        .wait(&opened.id, "the question", |edit| {
+            edit.state == EditState::Conflict
+        })
+        .await;
+    bench
+        .external
+        .resolve(&opened.id, Resolution::Overwrite)
+        .unwrap();
     bench.wait_watching(&opened.id, 1).await;
     assert_eq!(bench.read(&path).await, b"a save nobody has seen yet\n");
     bench.finish().await;
