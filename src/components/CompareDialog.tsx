@@ -32,16 +32,20 @@ export interface CompareSide {
   where: string;
 }
 
+export interface CompareOptions {
+  ignoreWhitespace: boolean;
+  ignoreCase: boolean;
+}
+
 interface CompareDialogProps {
   left: CompareSide;
   right: CompareSide;
   onClose: () => void;
+  /** Compares the sides some other way than reading each file, as for an older version. */
+  compare?: (operationId: string, options: CompareOptions) => Promise<Comparison>;
 }
 
-interface Options {
-  ignoreWhitespace: boolean;
-  ignoreCase: boolean;
-}
+type Options = CompareOptions;
 
 /** A comparison and the options it was made with, so a stale one shows as such. */
 interface Outcome {
@@ -54,7 +58,7 @@ const ESTIMATED_ROW_HEIGHT = 20;
 /** The dialog narrows to fit smaller windows. */
 const DIALOG_WIDTH = 1400;
 
-export function CompareDialog({ left, right, onClose }: CompareDialogProps) {
+export function CompareDialog({ left, right, onClose, compare }: CompareDialogProps) {
   const [options, setOptions] = useState<Options>({ ignoreWhitespace: false, ignoreCase: false });
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   const [swapped, setSwapped] = useState(false);
@@ -64,20 +68,22 @@ export function CompareDialog({ left, right, onClose }: CompareDialogProps) {
   useEffect(() => {
     const operationId = crypto.randomUUID();
     let current = true;
-    fileOperations
-      .compare({
-        operationId,
-        left: { location: left.location, path: left.path },
-        right: { location: right.location, path: right.path },
-        ...options,
-      })
+    const comparing = compare
+      ? compare(operationId, options)
+      : fileOperations.compare({
+          operationId,
+          left: { location: left.location, path: left.path },
+          right: { location: right.location, path: right.path },
+          ...options,
+        });
+    comparing
       .then((comparison) => current && setOutcome({ options, comparison }))
       .catch((caught) => current && setOutcome({ options, error: toAppError(caught).message }));
     return () => {
       current = false;
       void fileOperations.cancel(operationId);
     };
-  }, [left, right, options]);
+  }, [left, right, options, compare]);
 
   const loading = outcome?.options !== options;
   const comparison = useMemo(() => {

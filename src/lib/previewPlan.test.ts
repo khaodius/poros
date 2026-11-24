@@ -105,6 +105,20 @@ describe("subjectOf", () => {
     expect(subjectOf(other, [file])).toEqual({ kind: "file", entry: other });
     expect(subjectOf(undefined, [file])).toEqual({ kind: "file", entry: file });
   });
+
+  it("has nothing to read in a row left out, such as a deleted file", () => {
+    const gone = entry("gone.txt", 3);
+    const leftOut = new Set([gone.path]);
+    expect(subjectOf(gone, [], leftOut)).toEqual({ kind: "nothing" });
+    expect(subjectOf(gone, [file], leftOut)).toEqual({ kind: "nothing" });
+    expect(subjectOf(undefined, [gone], leftOut)).toEqual({ kind: "nothing" });
+    expect(subjectOf(file, [file, gone], leftOut)).toEqual({ kind: "file", entry: file });
+    const other = entry("b.txt", 7);
+    expect(subjectOf(gone, [file, other, gone], leftOut)).toEqual({
+      kind: "selection",
+      entries: [file, other],
+    });
+  });
 });
 
 describe("paneStorage", () => {

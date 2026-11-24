@@ -5,6 +5,7 @@
 //! service's answer.
 
 mod signing;
+mod versions;
 mod xml;
 
 use std::collections::HashMap;
@@ -625,7 +626,20 @@ impl S3Fs {
 
     /// The size and time of an object; `None` when there is none.
     async fn head_object(&self, bucket: &str, key: &str) -> AppResult<Option<RemoteStat>> {
-        let request = S3Request::new(Method::HEAD, Some(bucket), key);
+        self.head_version(bucket, key, None).await
+    }
+
+    /// The size and time of one version of an object, or of the current one.
+    async fn head_version(
+        &self,
+        bucket: &str,
+        key: &str,
+        version_id: Option<&str>,
+    ) -> AppResult<Option<RemoteStat>> {
+        let mut request = S3Request::new(Method::HEAD, Some(bucket), key);
+        if let Some(version_id) = version_id {
+            request = request.query("versionId", version_id);
+        }
         let response = self.send(&request).await?;
         match response.status() {
             status if status.is_success() => {
@@ -648,6 +662,10 @@ impl S3Fs {
                 }))
             }
             StatusCode::NOT_FOUND => Ok(None),
+            // What a delete marker answers when it is asked for by its version id.
+            StatusCode::METHOD_NOT_ALLOWED if version_id.is_some() => Err(
+                crate::versions::marker_has_no_content(&format!("/{bucket}/{key}")),
+            ),
             _ => Err(failure(response, &format!("/{bucket}/{key}")).await),
         }
     }
@@ -740,10 +758,12 @@ impl S3Fs {
     }
 
     /// Copies an object within the service, in parts when it is too large for one request.
+    /// With a version id it copies that version of the source instead of the current one.
     async fn copy_object(
         &self,
         bucket: &str,
         source: &str,
+        version_id: Option<&str>,
         size: u64,
         target: &str,
     ) -> AppResult<()> {
@@ -751,6 +771,9 @@ impl S3Fs {
         // A folder marker keeps its trailing slash.
         if source.ends_with('/') {
             copy_source.push('/');
+        }
+        if let Some(version_id) = version_id {
+            copy_source.push_str(&format!("?versionId={}", signing::escape(version_id)));
         }
         let target_path = format!("/{bucket}/{target}");
         if size <= COPY_LIMIT {
@@ -880,8 +903,144 @@ impl S3Fs {
         self.send(&request).await.map(drop)
     }
 
+    /// Opens an object, or one version of it, for reading.
+    async fn read_object(
+        &self,
+        path: &str,
+        version_id: Option<&str>,
+        range: Range<u64>,
+    ) -> AppResult<Box<dyn ReadStream>> {
+        let path = protocol::normalize(&self.resolve(path));
+        let (Some(bucket), key) = split(&path) else {
+            return Err(super::is_a_folder(&path));
+        };
+        if key.is_empty() {
+            return Err(super::is_a_folder(&path));
+        }
+        if range.start >= range.end {
+            if self
+                .head_version(&bucket, &key, version_id)
+                .await?
+                .is_none()
+            {
+                return Err(super::not_found(&path));
+            }
+            return Ok(Box::new(HttpReader::new(None, 0)));
+        }
+        let mut request = S3Request::new(Method::GET, Some(&bucket), &key);
+        if let Some(version_id) = version_id {
+            request = request.query("versionId", version_id);
+        }
+        if range.start > 0 || range.end != u64::MAX {
+            let last = match range.end {
+                u64::MAX => String::new(),
+                end => (end - 1).to_string(),
+            };
+            request = request.header("range", format!("bytes={}-{last}", range.start));
+        }
+        let response = self.send(&request).await?;
+        let length = range.end - range.start;
+        match response.status() {
+            StatusCode::PARTIAL_CONTENT => Ok(Box::new(HttpReader::new(Some(response), length))),
+            StatusCode::OK => Ok(Box::new(HttpReader::skipping(
+                response,
+                range.start,
+                length,
+            ))),
+            StatusCode::RANGE_NOT_SATISFIABLE => Ok(Box::new(HttpReader::new(None, 0))),
+            StatusCode::METHOD_NOT_ALLOWED if version_id.is_some() => {
+                Err(crate::versions::marker_has_no_content(&path))
+            }
+            _ => Err(failure(response, &path).await),
+        }
+    }
+
     fn bucket_and_key(&self, path: &str) -> (Option<String>, String) {
         split(&self.resolve(path))
+    }
+
+    /// Deletes for good. A bucket is emptied first, and with `with_versions` rid of the older
+    /// versions and delete markers too, without which S3 refuses to delete a bucket that kept
+    /// any.
+    pub(crate) async fn delete_paths(
+        &self,
+        paths: &[String],
+        with_versions: bool,
+    ) -> AppResult<()> {
+        let resolved: Vec<String> = paths.iter().map(|path| self.resolve(path)).collect();
+        for path in protocol::outermost(&resolved)? {
+            let (Some(bucket), key) = split(&path) else {
+                return Err(AppError::invalid("Refusing to delete /"));
+            };
+            let prefix = match key.as_str() {
+                "" => String::new(),
+                key => format!("{key}/"),
+            };
+            if !key.is_empty() {
+                self.delete_object(&bucket, &key).await?;
+            }
+            let keys: Vec<String> = self
+                .list_all(&bucket, &prefix)
+                .await?
+                .into_iter()
+                .map(|object| object.key)
+                .collect();
+            self.delete_keys(&bucket, &keys).await?;
+            if key.is_empty() {
+                self.delete_bucket(&bucket, &path, with_versions).await?;
+            }
+            self.folders.forget(&path);
+        }
+        Ok(())
+    }
+
+    async fn delete_bucket(&self, bucket: &str, path: &str, with_versions: bool) -> AppResult<()> {
+        let (refused, code) = match self.delete_empty_bucket(bucket, path).await {
+            Ok(()) => return Ok(()),
+            Err(refusal) => refusal,
+        };
+        // Only a bucket that is not empty, emptied as it was of its files, still holds versions.
+        if !with_versions || code != "BucketNotEmpty" {
+            return Err(refused);
+        }
+        match self.purge_versions(bucket).await {
+            Ok(()) => self
+                .delete_empty_bucket(bucket, path)
+                .await
+                .map_err(|(error, _)| error),
+            // What keeps it is something other than versions, which the service does not list.
+            Err(error) if error.kind == ErrorKind::Unsupported => Err(refused),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Deletes a bucket. A refusal comes with the service's error code, which tells a bucket that
+    /// is not empty from other conflicts.
+    async fn delete_empty_bucket(
+        &self,
+        bucket: &str,
+        path: &str,
+    ) -> Result<(), (AppError, String)> {
+        let request = S3Request::new(Method::DELETE, Some(bucket), "");
+        let response = self
+            .send(&request)
+            .await
+            .map_err(|error| (error, String::new()))?;
+        let status = response.status();
+        let body = match status.is_success() {
+            true => api::body_bytes(response).await,
+            false => api::error_body(response).await,
+        }
+        .map_err(|error| (error, String::new()))?;
+        let error = match status.is_success() {
+            true => match xml::embedded_error(&body) {
+                Some(error) => error,
+                None => return Ok(()),
+            },
+            false => xml::embedded_error(&body).unwrap_or_default(),
+        };
+        let code = error.code.clone();
+        Err((service_error(status, error, path), code))
     }
 
     /// An address that reads the object without credentials, from `signed_at` until
@@ -1312,7 +1471,7 @@ impl RemoteFileSystem for S3Fs {
             return Err(protocol::already_exists(&target));
         }
         if let Some(object) = self.head_object(&bucket, &key).await? {
-            self.copy_object(&bucket, &key, object.size, &target_key)
+            self.copy_object(&bucket, &key, None, object.size, &target_key)
                 .await?;
             self.delete_object(&bucket, &key).await?;
             return Ok(target);
@@ -1324,7 +1483,7 @@ impl RemoteFileSystem for S3Fs {
         }
         for object in &objects {
             let moved = format!("{target_key}/{}", &object.key[prefix.len()..]);
-            self.copy_object(&bucket, &object.key, object.size, &moved)
+            self.copy_object(&bucket, &object.key, None, object.size, &moved)
                 .await?;
         }
         let keys: Vec<String> = objects.into_iter().map(|object| object.key).collect();
@@ -1334,34 +1493,9 @@ impl RemoteFileSystem for S3Fs {
     }
 
     /// Deletes for good: S3 has no recycle bin, though a versioned bucket keeps old versions.
-    /// Deleting a bucket empties it first.
+    /// Deleting a bucket empties it first; one that keeps versions is refused as not empty.
     async fn delete(&self, paths: &[String]) -> AppResult<()> {
-        let resolved: Vec<String> = paths.iter().map(|path| self.resolve(path)).collect();
-        for path in protocol::outermost(&resolved)? {
-            let (Some(bucket), key) = split(&path) else {
-                return Err(AppError::invalid("Refusing to delete /"));
-            };
-            let prefix = match key.as_str() {
-                "" => String::new(),
-                key => format!("{key}/"),
-            };
-            if !key.is_empty() {
-                self.delete_object(&bucket, &key).await?;
-            }
-            let keys: Vec<String> = self
-                .list_all(&bucket, &prefix)
-                .await?
-                .into_iter()
-                .map(|object| object.key)
-                .collect();
-            self.delete_keys(&bucket, &keys).await?;
-            if key.is_empty() {
-                let request = S3Request::new(Method::DELETE, Some(&bucket), "");
-                self.send_for_body(&request, &path).await?;
-            }
-            self.folders.forget(&path);
-        }
-        Ok(())
+        self.delete_paths(paths, false).await
     }
 
     async fn stat(&self, path: &str) -> AppResult<Option<RemoteStat>> {
@@ -1407,39 +1541,7 @@ impl RemoteFileSystem for S3Fs {
         path: &str,
         range: Range<u64>,
     ) -> AppResult<Box<dyn ReadStream>> {
-        let path = protocol::normalize(&self.resolve(path));
-        let (Some(bucket), key) = split(&path) else {
-            return Err(super::is_a_folder(&path));
-        };
-        if key.is_empty() {
-            return Err(super::is_a_folder(&path));
-        }
-        if range.start >= range.end {
-            if self.head_object(&bucket, &key).await?.is_none() {
-                return Err(super::not_found(&path));
-            }
-            return Ok(Box::new(HttpReader::new(None, 0)));
-        }
-        let mut request = S3Request::new(Method::GET, Some(&bucket), &key);
-        if range.start > 0 || range.end != u64::MAX {
-            let last = match range.end {
-                u64::MAX => String::new(),
-                end => (end - 1).to_string(),
-            };
-            request = request.header("range", format!("bytes={}-{last}", range.start));
-        }
-        let response = self.send(&request).await?;
-        let length = range.end - range.start;
-        match response.status() {
-            StatusCode::PARTIAL_CONTENT => Ok(Box::new(HttpReader::new(Some(response), length))),
-            StatusCode::OK => Ok(Box::new(HttpReader::skipping(
-                response,
-                range.start,
-                length,
-            ))),
-            StatusCode::RANGE_NOT_SATISFIABLE => Ok(Box::new(HttpReader::new(None, 0))),
-            _ => Err(failure(response, &path).await),
-        }
+        self.read_object(path, None, range).await
     }
 
     async fn open_write(self: Arc<Self>, request: WriteRequest) -> AppResult<Box<dyn WriteStream>> {
@@ -1464,6 +1566,10 @@ impl RemoteFileSystem for S3Fs {
             etags: Vec::new(),
         };
         Ok(Box::new(ChunkedUpload::new(target, request.size)))
+    }
+
+    fn as_versioned(&self) -> Option<&dyn crate::versions::ObjectVersions> {
+        Some(self)
     }
 }
 
@@ -1965,6 +2071,33 @@ mod tests {
             .cloned()
             .collect();
         assert_eq!(deleted, vec!["DELETE /bucket/ab HTTP/1.1"]);
+    }
+
+    /// A folder's deleted files, which a restore or purge acts on, are only what is inside it,
+    /// whatever a broken service lists.
+    #[tokio::test]
+    async fn deleted_files_of_a_folder_are_only_those_inside_it() {
+        use crate::versions::ObjectVersions;
+        let (address, _) = stub_service(|request| {
+            if request.contains("versions") && request.contains("prefix=ab%2F") {
+                (
+                    200,
+                    "<ListVersionsResult><IsTruncated>false</IsTruncated>\
+                     <DeleteMarker><Key>x</Key><VersionId>m1</VersionId><IsLatest>true</IsLatest></DeleteMarker>\
+                     <Version><Key>x</Key><VersionId>v1</VersionId><IsLatest>false</IsLatest><Size>3</Size></Version>\
+                     <DeleteMarker><Key>ab/in.txt</Key><VersionId>m2</VersionId><IsLatest>true</IsLatest></DeleteMarker>\
+                     <Version><Key>ab/in.txt</Key><VersionId>v2</VersionId><IsLatest>false</IsLatest><Size>3</Size></Version>\
+                     </ListVersionsResult>",
+                )
+            } else {
+                (200, EMPTY_LISTING)
+            }
+        })
+        .await;
+        let files = files(&address, 443, Addressing::Automatic);
+        let hidden = files.deleted_under("/bucket/ab").await.unwrap();
+        let paths: Vec<&str> = hidden.iter().map(|file| file.path.as_str()).collect();
+        assert_eq!(paths, vec!["/bucket/ab/in.txt"]);
     }
 
     /// 24 May 2013, midnight UTC: the time of the examples in the S3 API reference.
