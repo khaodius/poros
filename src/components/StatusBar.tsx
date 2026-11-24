@@ -20,6 +20,7 @@ import {
   useUpdateStore,
   type InstallStage,
 } from "../state/updateStore";
+import { DriveStatus } from "./DriveStatus";
 import { LimitScheduleStatus } from "./LimitScheduleStatus";
 import { t, useT } from "../i18n";
 
@@ -134,6 +135,7 @@ export function StatusBar() {
         {session.text}
       </span>
       <span className="status-right">
+        <DriveStatus />
         <ExternalEditsStatus />
         {pending > 0 && (
           <span className="status-item status-queue">

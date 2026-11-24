@@ -39,6 +39,7 @@ export const workspace = {
     other:
       "{count} transfers for this server are still in the queue. They can keep running on their own connections after the tab closes, or wait paused until you resume them.",
   },
+  unmountAndClose: "Unmount and close",
 
   // components/DockArea
   dragToResizeDoubleClick: "Drag to resize, double-click to even out",
@@ -99,6 +100,9 @@ export const workspace = {
   unsavedChanges: "Unsaved changes",
   close2: "Close {label}",
   closeCtrlW: "Close (Ctrl+W)",
+  mountAsDrive: "Mount as drive...",
+  mountedAsADriveAt: "Mounted as a drive at {paths}",
+  mountedAsADrive: "Mounted as a drive",
 
   // components/TabContent
   local: "Local",

@@ -118,6 +118,9 @@ async fn run_line(context: &Context, parsed: Parsed) -> AppResult<Reply> {
     })?;
     match &line.command {
         Command::Batch => Err(AppError::invalid("batch cannot run inside batch")),
+        Command::Mount(_) => Err(AppError::invalid(
+            "mount stays until interrupted, so it cannot run inside batch",
+        )),
         Command::Schedule(_) => Err(AppError::invalid(
             "schedule opens connections of its own, so it cannot run inside batch",
         )),

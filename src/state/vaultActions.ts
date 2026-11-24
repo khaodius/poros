@@ -10,6 +10,7 @@ import { savedOrDiscarded, unsavedOnlyThrough } from "./editorActions";
 import { editsAllowLock } from "./externalEditStore";
 import { useLayoutStore } from "./layoutStore";
 import { useLogStore } from "./logStore";
+import { mountedDrives } from "./mountStore";
 import { getPane } from "./paneRegistry";
 import { useSessionStore } from "./sessionStore";
 import { useSettingsStore } from "./settingsStore";
@@ -59,7 +60,7 @@ export async function lockVault(sessionId: string): Promise<void> {
 /**
  * Locks a vault, asking first when files in it have unsaved changes, which nothing can save once
  * it is locked, when files from it are open in other programs, which locking ends, or when
- * transfers for it are still in the queue.
+ * transfers for it are still in the queue or it is mounted as a drive.
  */
 export async function requestLockVault(sessionId: string): Promise<void> {
   const info = useSessionStore.getState().sessions[sessionId]?.info;
@@ -74,10 +75,11 @@ export async function requestLockVault(sessionId: string): Promise<void> {
   if (!useSessionStore.getState().sessions[sessionId]) return;
   const confirm = useSettingsStore.getState().settings.interface.confirmCloseWithTransfers;
   const pendingTransfers = confirm ? await transfers.sessionJobs(sessionId).catch(() => 0) : 0;
-  if (pendingTransfers > 0) {
+  const drives = mountedDrives([sessionId]).map((drive) => drive.mountPoint);
+  if (pendingTransfers > 0 || drives.length > 0) {
     useUiStore
       .getState()
-      .open({ kind: "lockVault", sessionId, name: info.vault.name, pendingTransfers });
+      .open({ kind: "lockVault", sessionId, name: info.vault.name, pendingTransfers, drives });
     return;
   }
   await lockVault(sessionId);

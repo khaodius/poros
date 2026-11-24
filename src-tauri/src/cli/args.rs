@@ -268,6 +268,9 @@ pub enum Command {
     Share(ShareArgs),
     /// Run a command on the server through its shell, exiting with its status
     Exec(ExecArgs),
+    /// Show a folder of the server as a folder on this computer, so any program can open and
+    /// save its files, until interrupted: mount MOUNTPOINT [PATH]
+    Mount(MountArgs),
     /// Run commands read from standard input over one connection: one JSON array of
     /// arguments per line, or an object {"id", "args", "input"}, answered with one JSON line
     /// each
@@ -284,6 +287,25 @@ impl Command {
     pub fn needs_connection(&self) -> bool {
         !matches!(self, Self::Connections | Self::Schedule(_))
     }
+
+    /// Whether the first Ctrl+C lets the command finish what is under way, and only a second
+    /// one stops it: a drive waits for its uploads before it goes.
+    pub fn finishes_on_interrupt(&self) -> bool {
+        matches!(self, Self::Mount(_))
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct MountArgs {
+    /// An empty or new folder on this computer to show the files in
+    #[arg(value_name = "MOUNTPOINT")]
+    pub mount_point: PathBuf,
+    /// The folder on the server to show; the connection's own by default
+    #[arg(value_name = "PATH")]
+    pub path: Option<String>,
+    /// Refuse every change through the drive
+    #[arg(long)]
+    pub read_only: bool,
 }
 
 #[derive(Debug, Args)]

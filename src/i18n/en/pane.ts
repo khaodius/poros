@@ -149,6 +149,7 @@ export const pane = {
     one: "Every older version and deleted file kept in the bucket goes too.",
     other: "Every older version and deleted file kept in the buckets goes too.",
   },
+  mountAsDrive: "Mount as drive...",
 
   // components/PathBar
   clickToTypeOrCopy: "Click to type or copy the path (Ctrl+L)",

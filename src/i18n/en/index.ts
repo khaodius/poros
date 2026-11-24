@@ -9,6 +9,7 @@ import { common } from "./common";
 import { compare } from "./compare";
 import { connect } from "./connect";
 import { dialogs } from "./dialogs";
+import { drives } from "./drives";
 import { editor } from "./editor";
 import { fileList } from "./fileList";
 import { limits } from "./limits";
@@ -39,6 +40,7 @@ export const english = {
   compare,
   connect,
   dialogs,
+  drives,
   editor,
   fileList,
   limits,

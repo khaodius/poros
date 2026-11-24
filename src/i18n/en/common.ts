@@ -41,14 +41,18 @@ export const common = {
   connect: "Connect",
   save: "Save",
 
+  // components/DriveStatus
+  discard: "Discard",
+  open: "Open",
+
+  // components/DrivesGoing
+  listSeparator: ", ",
+
   // components/EditorPane
   dismiss: "Dismiss",
 
   // components/ExternalEditDialogs
   upload: "Upload",
-
-  // components/ExternalEditsStatus
-  discard: "Discard",
 
   // components/FileList
   folder: "Folder",
@@ -61,10 +65,8 @@ export const common = {
   cut: "Cut",
   copy: "Copy",
   paste: "Paste",
-  open: "Open",
   edit: "Edit",
   loading: "Loading...",
-  listSeparator: ", ",
 
   // components/FontPicker
   default: "Default",

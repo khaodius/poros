@@ -39,6 +39,8 @@ use crate::import::{
 };
 use crate::local;
 use crate::model::{DirListing, FileEntry};
+use crate::mount::manager::{DriveView, MountManager, MountRequest, MountSupport};
+use crate::mount::spool::UnsentFile;
 use crate::route;
 use crate::search::{Recheck, SearchManager, SearchReport, SearchRequest, SearchSummary};
 use crate::session::{SessionInfo, SessionManager};
@@ -169,12 +171,15 @@ fn prepare_cloud_sign_in(window: &WebviewWindow, profile: &mut ConnectProfile) -
 pub async fn reconnect(
     window: WebviewWindow,
     sessions: State<'_, Arc<SessionManager>>,
+    mounts: State<'_, Arc<MountManager>>,
     session_id: String,
     host_key_approval: Option<HostKeyApproval>,
 ) -> AppResult<SessionInfo> {
-    sessions
+    let info = sessions
         .reconnect(&session_id, host_key_approval, window.label())
-        .await
+        .await?;
+    mounts.follow(&session_id, &info.id);
+    Ok(info)
 }
 
 #[tauri::command]
@@ -189,8 +194,11 @@ pub async fn adopt_session(
 #[tauri::command]
 pub async fn disconnect(
     sessions: State<'_, Arc<SessionManager>>,
+    mounts: State<'_, Arc<MountManager>>,
     session_id: String,
 ) -> AppResult<()> {
+    // The page asked before closing a session with a drive.
+    mounts.end_for_session(&session_id).await;
     sessions.disconnect(&session_id).await
 }
 
@@ -1409,6 +1417,73 @@ pub async fn update_find_release(webview: Webview, version: String) -> AppResult
 #[tauri::command]
 pub fn update_restart(app: AppHandle, pending: State<'_, PendingUpdate>) -> AppResult<()> {
     update::restart(&app, &pending)
+}
+
+#[tauri::command]
+pub fn mount_support() -> MountSupport {
+    MountManager::support()
+}
+
+#[tauri::command]
+pub fn mount_default_point(
+    mounts: State<'_, Arc<MountManager>>,
+    name: String,
+) -> AppResult<String> {
+    mounts.default_mount_point(&name)
+}
+
+#[tauri::command]
+pub async fn mount_start(
+    mounts: State<'_, Arc<MountManager>>,
+    request: MountRequest,
+) -> AppResult<DriveView> {
+    mounts.mount(request).await
+}
+
+#[tauri::command]
+pub fn mount_list(mounts: State<'_, Arc<MountManager>>) -> Vec<DriveView> {
+    mounts.list()
+}
+
+#[tauri::command]
+pub async fn mount_unmount(
+    mounts: State<'_, Arc<MountManager>>,
+    drive_id: String,
+    force: bool,
+) -> AppResult<()> {
+    mounts.unmount(&drive_id, force).await
+}
+
+#[tauri::command]
+pub async fn mount_open(mounts: State<'_, Arc<MountManager>>, drive_id: String) -> AppResult<()> {
+    let mount_point = mounts.mount_point(&drive_id)?;
+    // Off the async workers: looking at the folder asks the drive, which they serve.
+    tokio::task::spawn_blocking(move || themes::open_folder(&mount_point)).await?
+}
+
+#[tauri::command]
+pub fn mount_retry(mounts: State<'_, Arc<MountManager>>, drive_id: String) -> AppResult<()> {
+    mounts.retry(&drive_id)
+}
+
+#[tauri::command]
+pub fn mount_unsent(mounts: State<'_, Arc<MountManager>>) -> Vec<UnsentFile> {
+    mounts.unsent()
+}
+
+#[tauri::command]
+pub async fn mount_unsent_save(
+    mounts: State<'_, Arc<MountManager>>,
+    path: String,
+    destination: String,
+) -> AppResult<()> {
+    let mounts = mounts.inner().clone();
+    tokio::task::spawn_blocking(move || mounts.save_unsent(&path, &destination)).await?
+}
+
+#[tauri::command]
+pub fn mount_unsent_discard(mounts: State<'_, Arc<MountManager>>, path: String) -> AppResult<()> {
+    mounts.discard_unsent(&path)
 }
 
 fn now_millis() -> u64 {

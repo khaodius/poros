@@ -4,6 +4,7 @@ export const vault = {
   // components/LockVaultDialog
   lock: "Lock {name}?",
   pauseTransfersAndLock: "Pause transfers and lock",
+  unmountAndLock: "Unmount and lock",
   transfersForThisVaultStillQueued: {
     one: "{count} transfer for this vault is still in the queue. Nothing can be copied into or out of a locked vault, so it waits paused until you unlock the vault again and resume it.",
     other:

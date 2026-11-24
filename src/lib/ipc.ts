@@ -24,6 +24,8 @@ import type {
   DragOutHover,
   DragOutOutcome,
   DragOutRequest,
+  DriveChanges,
+  DriveView,
   EnqueueRequest,
   ExistsAction,
   ExternalEdit,
@@ -50,6 +52,8 @@ import type {
   ObjectVersion,
   JobState,
   LogRecord,
+  MountRequest,
+  MountSupport,
   MoveCopyRequest,
   OperationProgress,
   OperationSummary,
@@ -96,6 +100,7 @@ import type {
   ThemeFile,
   TransferList,
   TransferUpdate,
+  UnsentFile,
   UpdateProgress,
   VersionCompareRequest,
   VersionDownload,
@@ -112,6 +117,10 @@ export const SYNC_PROGRESS_EVENT = "poros://sync-progress";
 export const QUEUE_FINISHED_EVENT = "poros://queue-finished";
 export const COMMAND_OUTPUT_EVENT = "poros://command-output";
 export const FILE_OPERATION_EVENT = "poros://file-operation";
+/** Drives were mounted or unmounted, or an upload of one failed. */
+export const MOUNTS_EVENT = "poros://mounts";
+/** Folders a mounted drive changed on a server, whose remembered listings are out of date. */
+export const DRIVE_CHANGES_EVENT = "poros://drive-changes";
 export const EXTERNAL_EDIT_EVENT = "poros://external-edit";
 /** Sent by a torn-out window to hand a tab back to the main window. */
 export const RETURN_TAB_EVENT = "poros://return-tab";
@@ -341,6 +350,26 @@ export const system = {
   runCommand: (command: string, environment: Record<string, string>) =>
     call<void>("local_command_run", { command, environment }),
   exit: () => call<void>("app_exit"),
+};
+
+/** Servers and unlocked vaults shown as drives on this computer. */
+export const mounts = {
+  support: () => call<MountSupport>("mount_support"),
+  /** A free folder under ~/Poros named after `name`. */
+  defaultPoint: (name: string) => call<string>("mount_default_point", { name }),
+  start: (request: MountRequest) => call<DriveView>("mount_start", { request }),
+  list: () => call<DriveView[]>("mount_list"),
+  /** Refused while files are open or uploads pending, unless `force`. */
+  unmount: (driveId: string, force: boolean) => call<void>("mount_unmount", { driveId, force }),
+  /** Opens the drive in the file manager. */
+  open: (driveId: string) => call<void>("mount_open", { driveId }),
+  /** Sends again the uploads of a drive that failed. */
+  retry: (driveId: string) => call<void>("mount_retry", { driveId }),
+  /** Files kept from drives that are gone, newest first. */
+  unsent: () => call<UnsentFile[]>("mount_unsent"),
+  saveUnsent: (path: string, destination: string) =>
+    call<void>("mount_unsent_save", { path, destination }),
+  discardUnsent: (path: string) => call<void>("mount_unsent_discard", { path }),
 };
 
 export const schedules = {
@@ -608,5 +637,8 @@ export const onCommandOutput = (handler: (chunk: OutputChunk) => void) =>
   subscribe(COMMAND_OUTPUT_EVENT, handler);
 export const onFileOperation = (handler: (progress: OperationProgress) => void) =>
   subscribe(FILE_OPERATION_EVENT, handler);
+export const onMounts = (handler: () => void) => subscribe<null>(MOUNTS_EVENT, handler);
+export const onDriveChanges = (handler: (changes: DriveChanges) => void) =>
+  subscribe(DRIVE_CHANGES_EVENT, handler);
 export const onExternalEdits = (handler: (update: ExternalEditsUpdate) => void) =>
   subscribe(EXTERNAL_EDIT_EVENT, handler);

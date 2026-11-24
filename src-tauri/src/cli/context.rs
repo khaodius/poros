@@ -21,7 +21,7 @@ use crate::ssh::HostKeyApproval;
 /// Sessions belong to a window in the app; the command line's belong to this name.
 pub const OWNER: &str = "cli";
 /// The app's identifier, which names its config folder.
-const APP_IDENTIFIER: &str = "io.github.khaodius.poros";
+pub const APP_IDENTIFIER: &str = "io.github.khaodius.poros";
 
 pub struct Context {
     pub options: GlobalOptions,
@@ -31,6 +31,8 @@ pub struct Context {
     pub events: Events,
     /// Cancelled on Ctrl+C.
     pub interrupt: CancellationToken,
+    /// Cancelled on a second Ctrl+C, for a command that finishes work under way on the first.
+    pub force: CancellationToken,
     session: OnceCell<Connected>,
 }
 
@@ -89,7 +91,11 @@ pub fn config_dir(options: &GlobalOptions) -> AppResult<PathBuf> {
 }
 
 impl Context {
-    pub fn new(options: GlobalOptions, interrupt: CancellationToken) -> AppResult<Self> {
+    pub fn new(
+        options: GlobalOptions,
+        interrupt: CancellationToken,
+        force: CancellationToken,
+    ) -> AppResult<Self> {
         let folder = config_dir(&options)?;
         let settings = if options.default_settings {
             Settings::default()
@@ -134,6 +140,7 @@ impl Context {
             sessions,
             events,
             interrupt,
+            force,
             session: OnceCell::new(),
         })
     }

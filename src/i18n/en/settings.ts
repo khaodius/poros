@@ -1,6 +1,9 @@
 import type { MessageArea } from "../catalog";
 
 export const settings = {
+  // components/LanguagePicker
+  languageSystem: "System ({language})",
+
   // components/SettingsDialog
   settingsSections: "Settings sections",
   queue: "Queue",
@@ -179,12 +182,11 @@ export const settings = {
   checkForUpdates: "Check for updates",
   listing: "Listing...",
   showVersions: "Show versions",
+  language: "Language",
+  languageHint:
+    "System follows the computer's language. Messages from servers and the log stay in English.",
 
   // components/Stepper
   decrease: "Decrease {label}",
   increase: "Increase {label}",
-  language: "Language",
-  languageHint:
-    "System follows the computer's language. Messages from servers and the log stay in English.",
-  languageSystem: "System ({language})",
 } as const satisfies MessageArea;
