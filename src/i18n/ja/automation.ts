@@ -103,6 +103,11 @@ export const automation = {
   theFullPathsOfAll: "選択したすべての項目のフルパス",
   theNamesOfAllSelected: "選択したすべての項目の名前",
   theFolderShown: "表示中のフォルダー",
+  keepPlaceholdersOutOfAnotherShell:
+    "{bashExample} や {sshExample} のように別のシェルが読み込むコマンド文字列には、プレースホルダーを入れないでください。そのシェルが名前をコマンドの一部として読み込んでしまいます。",
+  cannotTellHowTheShellReads:
+    "このコマンドにはヒアドキュメント、{ansiQuoted}、または閉じていない引用符か括弧があるため、シェルがどう読み込むかを Poros では確実に判断できません。各プレースホルダーは {parameter} のような形で順に挿入されます。この形で名前が 1 つの単語のまま保たれるのは、引用符の外にある場合だけです。",
+  commandWithParameters: "{command} (引数: {parameters})",
   stoppedAfter: "{elapsed} 後に停止しました",
   endedBySignal: "{elapsed} 後にシグナル {signal} で終了しました",
   endedWithoutStatus: "{elapsed} 後に終了コードなしで終了しました",
