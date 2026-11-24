@@ -1,4 +1,5 @@
 import { Fragment, useMemo } from "react";
+import { useLatest } from "../hooks/useLatest";
 import { formatVersion } from "../lib/format";
 import { parseReleaseNotes, type NoteSpan } from "../lib/releaseNotes";
 import { useUiStore } from "../state/uiStore";
@@ -8,12 +9,13 @@ import { Dialog } from "./Dialog";
 export function UpdateDialog({ onClose }: { onClose: () => void }) {
   const update = useUpdateStore((state) => state.update);
   const closeDialogs = useUiStore((state) => state.close);
+  const latestOnClose = useLatest(onClose);
   const notes = useMemo(() => parseReleaseNotes(update?.body ?? ""), [update]);
   if (!update) return null;
 
   const skip = async () => {
     await skipUpdate();
-    onClose();
+    latestOnClose.current();
   };
   const install = () => {
     void startUpdate(update);
