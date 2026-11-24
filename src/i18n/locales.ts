@@ -12,4 +12,4 @@ export { default as en } from "./en";
 
 // export { default as ja } from "./ja";
 
-// export { default as zhHans } from "./zh-Hans";
+export { default as zhHans } from "./zh-Hans";

@@ -1,0 +1,72 @@
+import type { TranslatedArea } from "../catalog";
+
+export const limits = {
+  // components/LimitScheduleSettings
+  speedLimitSchedule: "速度限制计划",
+  followTheSchedule: "按计划执行",
+  followTheScheduleHint:
+    "按这台计算机的时间，在一周中的设定时段使用其他限制或暂停。没有规则适用时，使用上方的限制。",
+  whereRulesOverlapTheOne:
+    "规则重叠时，列表中靠下的规则优先。暂停会挂起该方向的传输，暂停结束后从中断处继续。文件夹同步、rsync 更新和计划任务也遵循此计划，poros-cli 也是如此，除非为其指定了单独的限制。",
+  addRule: "添加规则",
+  theScheduleIsOffThe: "计划已关闭：周视图显示计划打开后其规则的效果。",
+  closeTheRule: "收起规则",
+  editTheRule: "编辑规则",
+  moveUp: "上移",
+  moveUp2: "上移 {label}",
+  moveDownSoItWins: "下移，使其优先于上方的规则",
+  moveDown: "下移 {label}",
+  deleteRule: "删除规则",
+  delete: "删除 {label}",
+  nameOf: "{label} 的名称",
+  nameSuchAsOfficeHours: "名称，例如“办公时间”",
+  daysOfTheWeek: "星期",
+  startTime: "开始时间",
+  to: "至",
+  endTime: "结束时间",
+  limitTo: "限制为",
+  unlimited: "不限速",
+  noDaysSoItNever: "未选择任何日期，因此永远不会生效",
+  uploadLimit: "上传限制",
+  downloadLimit: "下载限制",
+
+  // components/LimitScheduleStatus
+  followSchedule: "按计划执行",
+  followTheSpeedLimitSchedule: "重新按速度限制计划执行",
+  ignoreSchedule: "忽略计划",
+  ignoreTheSpeedLimitSchedule: "忽略速度限制计划，直到其下次变化",
+  clickToChangeTheSchedule: "{scheduleTooltip}\n点击以更改计划。",
+  scheduleIgnoredShort: "已忽略计划",
+  scheduleIgnoredShortUntil: "已忽略计划，直到 {time}",
+  untilTime: "直到 {time}",
+
+  // components/LimitScheduleWeek
+  speedLimitsThroughTheWeek: "一周中的速度限制",
+  eachHourUploadsAboveDownloads: "每小时：上方为上传，下方为下载",
+  now: "现在",
+  limited: "限速",
+  paused: "暂停",
+  nowSpan: "现在，{span}",
+
+  // lib/limitSchedule
+  ruleNumber: "规则 {number}",
+  kibPerSecond: "{kib} KiB/s",
+  unlimitedInASentence: "不限速",
+  pausedInASentence: "暂停",
+  uploadsAndDownloads: "上传和下载：{limit}",
+  uploadsThenDownloads: "上传：{upload}，下载：{download}",
+  allDay: "全天",
+  twentyFourHoursFrom: "从 {start} 起 24 小时",
+  midnight: "午夜",
+  fromToTheNextDay: "{start} 至次日 {end}",
+  fromTo: "{start} 至 {end}",
+  noRuleTheOrdinaryLimits: "无规则，使用常规限制",
+  spanDescription: "{weekday} {start} 至 {end}：{source}，{limits}",
+  weekdayAndTime: "{weekday} {time}",
+  waitingForTheSpeedLimitSchedule: "正在等待速度限制计划",
+  waitingForTheSpeedLimitScheduleUntil: "正在等待速度限制计划，直到 {time}",
+  scheduleIgnored: "已忽略速度限制计划：“{rule}”被搁置，使用常规限制，{limits}。",
+  scheduleApplies: "速度限制计划：“{rule}”生效，{limits}。",
+  scheduleIgnoredUntil: "已忽略速度限制计划，直到 {time}：“{rule}”被搁置，使用常规限制，{limits}。",
+  scheduleAppliesUntil: "速度限制计划：“{rule}”生效，直到 {time}，{limits}。",
+} satisfies TranslatedArea<"limits">;
