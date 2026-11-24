@@ -38,7 +38,7 @@ export const limits = {
   clickToChangeTheSchedule: "{scheduleTooltip}\nClick to change the schedule.",
   scheduleIgnoredShort: "Schedule ignored",
   scheduleIgnoredShortUntil: "Schedule ignored until {time}",
-  untilTime: "until {time}",
+  limitsUntilTime: "{limits} until {time}",
 
   // components/LimitScheduleWeek
   speedLimitsThroughTheWeek: "Speed limits through the week",

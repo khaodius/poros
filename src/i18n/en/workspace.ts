@@ -35,7 +35,7 @@ export const workspace = {
   pauseTransfersAndClose: "Pause transfers and close",
   keepTransferring: "Keep transferring",
   transfersForThisServerStillQueued: {
-    one: "{count} transfer for this server is still in the queue. They can keep running on their own connections after the tab closes, or wait paused until you resume them.",
+    one: "{count} transfer for this server is still in the queue. It can keep running on its own connection after the tab closes, or wait paused until you resume it.",
     other:
       "{count} transfers for this server are still in the queue. They can keep running on their own connections after the tab closes, or wait paused until you resume them.",
   },

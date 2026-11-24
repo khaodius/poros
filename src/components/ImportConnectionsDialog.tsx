@@ -118,18 +118,20 @@ export function ImportConnectionsDialog({ onClose }: { onClose: () => void }) {
         folderNames,
       });
       pendingScan.current = null;
-      const imported = t("connect.importedConnections", { count: outcome.imported });
       const passwords =
         outcome.withoutPasswords > 0
           ? t("connect.passwordsLeftOut", { count: outcome.withoutPasswords })
           : null;
       const sentences = (...texts: (string | null)[]) =>
-        texts.filter((text) => text !== null).join(" ");
+        texts.filter((text) => text !== null).join(t("common.sentenceSeparator"));
       if (outcome.failures.length === 0) {
         showToast(
           "info",
           sentences(
-            t("connect.importedFrom", { imported, label: IMPORT_SOURCES[scan.source].label }),
+            t("connect.importedFrom", {
+              count: outcome.imported,
+              label: IMPORT_SOURCES[scan.source].label,
+            }),
             passwords,
           ),
         );
@@ -139,9 +141,11 @@ export function ImportConnectionsDialog({ onClose }: { onClose: () => void }) {
       setScan(null);
       setError(
         sentences(
-          t("connect.imported", { imported }),
+          t("connect.imported", { count: outcome.imported }),
           passwords,
-          t("connect.theseCouldNotBeSaved", { failures: outcome.failures.join("; ") }),
+          t("connect.theseCouldNotBeSaved", {
+            failures: outcome.failures.join(t("common.clauseSeparator")),
+          }),
         ),
       );
     } catch (caught) {
@@ -357,11 +361,12 @@ function ImportReview({
             const jump = entry.jump != null ? entries[entry.jump] : undefined;
             const detail = [
               connectionDetail(entry.connection),
-              jump && `through ${jump.connection.name}`,
-              broughtAlong && `needed by ${entries[neededBy].connection.name}`,
+              jump && t("connect.throughConnection", { name: jump.connection.name }),
+              broughtAlong &&
+                t("connect.neededByConnection", { name: entries[neededBy].connection.name }),
             ]
               .filter(Boolean)
-              .join(", ");
+              .join(t("common.listSeparator"));
             return (
               <li key={index}>
                 <label className={`import-entry ${broughtAlong ? "is-brought-along" : ""}`}>

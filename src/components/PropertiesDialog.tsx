@@ -254,7 +254,10 @@ export function PropertiesDialog({
         t("dialogs.files", { count: usage.files }),
         usage.folders > 0 && t("dialogs.folders", { count: usage.folders }),
       ].filter(Boolean);
-      return `${formatSize(usage.bytes)} (${parts.join(", ")})`;
+      return t("dialogs.sizeWithContents", {
+        size: formatSize(usage.bytes),
+        contents: parts.join(t("common.listSeparator")),
+      });
     }
     if (measuring.progress) {
       return t("dialogs.countingFiles", {
@@ -296,7 +299,7 @@ export function PropertiesDialog({
                   links > 0 && t("dialogs.links", { count: links }),
                 ]
                   .filter(Boolean)
-                  .join(", ")}
+                  .join(t("common.listSeparator"))}
               </dd>
             </>
           )}

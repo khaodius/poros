@@ -2,13 +2,16 @@ import type { MessageArea } from "../catalog";
 
 export const rsync = {
   // components/RsyncOptionsEditor
-  changed: "{changed} changed",
+  changed: { one: "{count} changed", other: "{count} changed" },
   noLimit: "No limit",
   extraRsyncArguments: "Extra rsync arguments",
   typedAsOnRsyncsCommandLine:
     "Typed as on rsync's command line; they apply over the options above.",
 
   // lib/rsyncOptions
+  unitSeconds: { one: "s", other: "s" },
+  unitBytes: { one: "byte", other: "bytes" },
+  unitItems: { one: "item", other: "items" },
   sizeAndModificationTime: "Size and modification time",
   sizeOnlySizeOnly: "Size only (--size-only)",
   contentsCReadsFilesOf: "Contents (-c, reads files of equal size)",

@@ -724,11 +724,12 @@ export function nameProblem(name: string, target: NameTarget): NameProblem | nul
   if (length !== null) {
     return {
       problem: "tooLong",
-      message: t("rename.theNameIsTooLong", {
-        length,
-        maxLength: target.maxLength,
-        lengthUnit: target.lengthUnit,
-      }),
+      message: t(
+        target.lengthUnit === "bytes"
+          ? "rename.theNameIsTooLongInBytes"
+          : "rename.theNameIsTooLongInCharacters",
+        { length, count: target.maxLength },
+      ),
     };
   }
   return null;

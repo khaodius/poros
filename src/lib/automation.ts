@@ -3,7 +3,7 @@
 import { formatDuration, formatSize } from "./format";
 import type { WhenDoneAction } from "./settings";
 import type { QueueFinished } from "./types";
-import { t } from "../i18n";
+import { t, type MessageKey } from "../i18n";
 
 export const WHEN_DONE_LABELS: Record<WhenDoneAction, string> = {
   get nothing() {
@@ -87,6 +87,16 @@ export const COUNTDOWN_TEXT: Record<CountdownAction, { title: string; confirm: s
 };
 
 export const COUNTDOWN_SECONDS = 30;
+
+/** What the countdown says, whole for each action; `{seconds}` is the time left. */
+export const COUNTDOWN_MESSAGE = {
+  close: "automation.queueFinishedClosingPorosIn",
+  lock: "automation.queueFinishedLockingIn",
+  sleep: "automation.queueFinishedSleepingIn",
+  hibernate: "automation.queueFinishedHibernatingIn",
+  logOff: "automation.queueFinishedLoggingOffIn",
+  shutDown: "automation.queueFinishedShuttingDownIn",
+} as const satisfies Record<CountdownAction, MessageKey>;
 
 export function describeQueueFinished(finished: QueueFinished): { title: string; body: string } {
   const title =

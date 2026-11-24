@@ -146,7 +146,6 @@ export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const [confirmReload, setConfirmReload] = useState(false);
   const markUnsaved = useUnsavedStore((state) => state.mark);
-  const where = tab.sessionId ? "on the server" : "on disk";
 
   const refreshUnsaved = useCallback(() => {
     setUnsaved(hasChanges(viewRef.current, baselineRef.current, formatRef.current));
@@ -394,9 +393,16 @@ export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
         <div className="editor-banner is-warning" role="alert">
           <TriangleAlert size={14} />
           <span>
-            {conflict.removed
-              ? t("editor.wasDeletedAfterYouOpened", { name: tab.name, where })
-              : t("editor.changedSinceYouOpenedIt", { name: tab.name, where })}
+            {t(
+              conflict.removed
+                ? tab.sessionId
+                  ? "editor.wasDeletedOnTheServerAfterYouOpened"
+                  : "editor.wasDeletedOnDiskAfterYouOpened"
+                : tab.sessionId
+                  ? "editor.changedOnTheServerSinceYouOpened"
+                  : "editor.changedOnDiskSinceYouOpened",
+              { name: tab.name },
+            )}
           </span>
           <button type="button" className="button" onClick={() => void save(true)}>
             {conflict.removed ? t("editor.saveItAgain") : t("common.overwrite")}
