@@ -21,8 +21,15 @@ import {
 import type { ConnectProfile, SessionInfo } from "../lib/types";
 import { serverSessionId, sessionFamily } from "../lib/vaults";
 import { landingCorner, landingCornerHere, type ScreenPoint } from "../lib/windowAreas";
+import { untilAnswered } from "./answers";
 import type { DropTarget } from "./dragStore";
-import { askToSave, closeEditorTab } from "./editorActions";
+import {
+  askToSaveAndWait,
+  closeEditorTab,
+  savedOrDiscarded,
+  unsavedEditorTabs,
+  unsavedOnlyThrough,
+} from "./editorActions";
 import { getEditor } from "./editorRegistry";
 import { useLayoutStore } from "./layoutStore";
 import { mountedDrives } from "./mountStore";
@@ -32,7 +39,7 @@ import { useSessionStore, withoutSecrets } from "./sessionStore";
 import { useSettingsStore } from "./settingsStore";
 import { closeTerminalTab } from "./terminalActions";
 import { useToastStore } from "./toastStore";
-import { useUiStore } from "./uiStore";
+import { useUiStore, type AppDialog } from "./uiStore";
 
 const TORN_OUT_SHARE = 0.6;
 const TORN_OUT_MIN = { width: 640, height: 420 };
@@ -164,8 +171,8 @@ export function familyOf(sessionId: string): string[] {
 }
 
 /** Closes a tab, disconnecting its server and locking that server's vaults; asks first when
- * transfers for them are queued, they are mounted as drives, or the file it edits has unsaved
- * changes. */
+ * transfers for them are queued, they are mounted as drives, or files that only they can save
+ * have unsaved changes. Resolves once what it asked is answered. */
 export async function requestCloseTab(tabId: string): Promise<void> {
   const layout = useLayoutStore.getState();
   const tab = findTab(layout.root, tabId);
@@ -175,7 +182,7 @@ export async function requestCloseTab(tabId: string): Promise<void> {
     return;
   }
   if (tab.kind === "editor") {
-    if (getEditor(tabId)?.draft()) askToSave([tabId]);
+    if (getEditor(tabId)?.draft()) await askToSaveAndWait([tabId]);
     else closeEditorTab(tabId);
     return;
   }
@@ -188,6 +195,11 @@ export async function requestCloseTab(tabId: string): Promise<void> {
     return;
   }
   const [serverId, ...vaultIds] = familyOf(tab.sessionId);
+  const unsaved = unsavedOnlyThrough([serverId, ...vaultIds]);
+  if (unsaved.length > 0) {
+    if (await savedOrDiscarded(unsaved)) await requestCloseTab(tabId);
+    return;
+  }
   const server = useSessionStore.getState().sessions[serverId];
   const confirm = useSettingsStore.getState().settings.interface.confirmCloseWithTransfers;
   const jobsOf = (sessionId: string) => transfers.sessionJobs(sessionId).catch(() => 0);
@@ -197,7 +209,7 @@ export async function requestCloseTab(tabId: string): Promise<void> {
   const vaultTransfers = transfersOfVaults.reduce((total, jobs) => total + jobs, 0);
   const drives = mountedDrives([serverId, ...vaultIds]).map((drive) => drive.mountPoint);
   if (serverTransfers + vaultTransfers > 0 || drives.length > 0) {
-    useUiStore.getState().open({
+    const question: AppDialog = {
       kind: "closeTab",
       tabId,
       sessionId: tab.sessionId,
@@ -205,10 +217,26 @@ export async function requestCloseTab(tabId: string): Promise<void> {
       pendingTransfers: serverTransfers + vaultTransfers,
       vaultTransfers,
       drives,
-    });
+    };
+    useUiStore.getState().open(question);
+    await untilAnswered((dialog) => dialog === question);
     return;
   }
   closeRemoteTab(tabId, tab.sessionId);
+}
+
+/**
+ * Closes tabs one after another, each once the user has answered what closing the one before
+ * asked, and stops at the first one the user keeps. The files among them with unsaved changes
+ * are asked about together, first.
+ */
+export async function requestCloseTabs(tabIds: readonly string[]): Promise<void> {
+  const unsaved = unsavedEditorTabs().filter((tab) => tabIds.includes(tab.id));
+  if (unsaved.length > 0 && !(await savedOrDiscarded(unsaved))) return;
+  for (const tabId of tabIds) {
+    await requestCloseTab(tabId);
+    if (findTab(useLayoutStore.getState().root, tabId)) return;
+  }
 }
 
 /** Closes a server tab and its server's session, whose unlocked vaults close with it. */

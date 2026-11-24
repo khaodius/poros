@@ -12,6 +12,7 @@ import type { ChangedDirectory, TransferUpdate } from "../lib/types";
 import { noteTransferUpdate } from "./fileFlight";
 import { forgetListing } from "./listings";
 import { panesShowing } from "./paneRegistry";
+import { currentSessionId } from "./sessionStore";
 
 const REFRESH_DELAY_MILLIS = 400;
 /** Reads of the list in a row while updates keep going missing, before waiting for the next. */
@@ -92,10 +93,10 @@ function forgetChangedListing(sessionId: string, path: string): void {
 /** Panes showing a folder a transfer or a drive wrote to reload, once per burst of changes. */
 export function refreshChangedPanes(changed: ChangedDirectory[]): void {
   for (const directory of changed) {
-    if (directory.side === "remote" && directory.sessionId) {
-      forgetChangedListing(directory.sessionId, directory.path);
-    }
-    for (const pane of panesShowing(directory.side, directory.path, directory.sessionId)) {
+    // A transfer queued before its server reconnected still names the session it was queued on.
+    const sessionId = directory.sessionId && currentSessionId(directory.sessionId);
+    if (directory.side === "remote" && sessionId) forgetChangedListing(sessionId, directory.path);
+    for (const pane of panesShowing(directory.side, directory.path, sessionId)) {
       if (pendingRefreshes.has(pane.tabId)) continue;
       pendingRefreshes.set(
         pane.tabId,

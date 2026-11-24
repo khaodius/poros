@@ -30,6 +30,7 @@ import {
   moveTabTo,
   moveTabToWindow,
   requestCloseTab,
+  requestCloseTabs,
   returnTabToMain,
   splitTab,
   tearOutTab,
@@ -132,7 +133,7 @@ export function TabBar({ group }: { group: GroupNode }) {
         label: "Close other tabs",
         icon: <XSquare size={14} />,
         disabled: others.length === 0,
-        onSelect: () => others.forEach((other) => void requestCloseTab(other.id)),
+        onSelect: () => void requestCloseTabs(others.map((other) => other.id)),
       },
       {
         label: "Close",

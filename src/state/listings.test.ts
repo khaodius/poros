@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { remoteSource } from "../lib/fileSource";
+import { group } from "../lib/layout";
 import { LISTING_CACHE_LIMITS, listingScope } from "../lib/listingCache";
 import { SAVED_RETENTION_MILLIS } from "../lib/listingShare";
 import { DEFAULT_SETTINGS } from "../lib/settings";
 import type { ConnectProfile, DirListing, FileEntry, SessionInfo } from "../lib/types";
+import { closeEditorTab } from "./editorActions";
+import { useLayoutStore } from "./layoutStore";
 import {
   forgetListing,
   forgetListingOf,
@@ -342,6 +345,44 @@ describe("sessions that close", () => {
     await useSessionStore.getState().reconnect("s1");
     expect(Object.keys(useSessionStore.getState().sessions)).toEqual(["s2"]);
     expect(cache.has(SERVER, "/srv")).toBe(true);
+  });
+
+  it("drops them when the tab closes while the server reconnects", async () => {
+    know(server("s1"));
+    remember(SERVER, "/srv");
+    let finish: () => void = () => undefined;
+    invoke.mockImplementation((command: string) =>
+      command === "reconnect"
+        ? new Promise<SessionInfo>((resolve) => (finish = () => resolve(server("s2"))))
+        : Promise.resolve(),
+    );
+    const reconnecting = useSessionStore.getState().reconnect("s1");
+    await useSessionStore.getState().disconnect("s1");
+    finish();
+    await expect(reconnecting).rejects.toMatchObject({ kind: "sessionNotFound" });
+    expect(useSessionStore.getState().sessions).toEqual({});
+    expect(cache.has(SERVER, "/srv")).toBe(false);
+  });
+
+  it("drops an unsaved connection's listings with the last editor tab that used it", () => {
+    know(server("s1"));
+    remember(SERVER, "/srv");
+    useLayoutStore.getState().setRoot(
+      group([
+        {
+          id: "page",
+          kind: "editor",
+          documentId: "document-page",
+          name: "index.html",
+          path: "/srv/index.html",
+          origin: "deploy@web.example.com",
+          sessionId: "s1",
+        },
+      ]),
+    );
+    closeEditorTab("page");
+    expect(useSessionStore.getState().sessions).toEqual({});
+    expect(cache.has(SERVER, "/srv")).toBe(false);
   });
 });
 

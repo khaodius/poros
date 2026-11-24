@@ -77,17 +77,18 @@ export function paneWritingTo(pane: PaneHandle, folder: string): PaneHandle {
  * Says so and returns true when `folder` is a vault that is not unlocked: files put there
  * through the server would lie unencrypted among the vault's encrypted files. The pane showing
  * the vault's folder knows by its card. A folder `target` does not show, usually a row of the
- * folder the vault is in, is listed to find out. Where the user asked to see what the server
- * stores in a vault, files go in as on any server.
+ * folder the vault is in, is listed to find out, and so is one whose pane has not said whether
+ * its card is up, which is refused when it cannot be listed. Where the user asked to see what
+ * the server stores in a vault, files go in as on any server.
  */
 export async function refusesLockedVault(target: PaneHandle, folder: string): Promise<boolean> {
   if (target.kind !== "remote" || !target.sessionId) return false;
   const showToast = useToastStore.getState().show;
   // A pane still waiting for the server may show the folder as it was remembered, from before
   // it became a vault, so it is listed below like a folder no pane shows.
-  if (target.path() === folder && !target.loading?.()) {
+  if (target.path() === folder && target.locked !== undefined && !target.loading?.()) {
     if (target.locked) showToast("info", "Unlock the vault to copy files into it.");
-    return target.locked === true;
+    return target.locked;
   }
   const session = useSessionStore.getState().sessions[target.sessionId] as
     { info: SessionInfo } | undefined;
@@ -96,8 +97,11 @@ export async function refusesLockedVault(target: PaneHandle, folder: string): Pr
   try {
     entries = (await remote.list(target.sessionId, folder)).entries;
   } catch {
-    // A folder that cannot be listed is for the copy itself to report.
-    return false;
+    // The folder the pane shows may be a vault whose card is not up yet: nothing goes in
+    // unchecked. Any other folder that cannot be listed is for the copy itself to report.
+    if (target.path() !== folder) return false;
+    showToast("error", "Could not check whether this folder is a vault.");
+    return true;
   }
   if (vaultSign(entries) === "none") return false;
   showToast("info", `${baseName(folder)} is a locked vault. Open it to copy files into it.`);

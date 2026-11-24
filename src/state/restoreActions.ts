@@ -16,7 +16,7 @@ import type { DocumentLocation, SessionInfo } from "../lib/types";
 import { NEEDS_CREDENTIALS, connectWithPrompts } from "./connectFlow";
 import { useLayoutStore } from "./layoutStore";
 import { useSavedConnections } from "./savedConnectionsStore";
-import { useSessionStore } from "./sessionStore";
+import { disconnectUnused, useSessionStore } from "./sessionStore";
 import { useSettingsStore } from "./settingsStore";
 import { useToastStore } from "./toastStore";
 import { useUiStore } from "./uiStore";
@@ -55,12 +55,17 @@ function waitingFor(key: string): RestoringTab[] {
   );
 }
 
-/** Local files being opened, so a tab mounted twice opens its file once. */
-const openingFiles = new Set<string>();
+/**
+ * Files being opened, by tab, with the session each is opened on: a tab mounted twice opens its
+ * file once, and a session stays while a file is still being opened on it.
+ */
+const openingFiles = new Map<string, string | undefined>();
 
 async function reopenEditor(tab: RestoringTab, location: DocumentLocation): Promise<void> {
   if (tab.kind !== "editor" || openingFiles.has(tab.id)) return;
-  openingFiles.add(tab.id);
+  const sessionId = location.side === "remote" ? location.sessionId : undefined;
+  openingFiles.set(tab.id, sessionId);
+  let opened = false;
   try {
     const document = await editor.open(location);
     const layout = useLayoutStore.getState();
@@ -68,8 +73,8 @@ async function reopenEditor(tab: RestoringTab, location: DocumentLocation): Prom
       void editor.close(document.id).catch(() => undefined);
       return;
     }
-    const sessionId = location.side === "remote" ? location.sessionId : undefined;
     layout.replaceTab(tab.id, { ...editorTab(document, sessionId), id: tab.id });
+    opened = true;
   } catch (caught) {
     useToastStore
       .getState()
@@ -77,6 +82,10 @@ async function reopenEditor(tab: RestoringTab, location: DocumentLocation): Prom
     useLayoutStore.getState().closeTab(tab.id);
   } finally {
     openingFiles.delete(tab.id);
+    // The last of the files opened on a session to settle tells whether anything still uses it.
+    if (!opened && sessionId && ![...openingFiles.values()].includes(sessionId)) {
+      disconnectUnused(sessionId);
+    }
   }
 }
 
