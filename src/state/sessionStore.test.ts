@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { allTabs, group, type PaneTab } from "../lib/layout";
 import type { ConnectProfile, SessionInfo } from "../lib/types";
+import { closeEditorTab } from "./editorActions";
 import { useLayoutStore } from "./layoutStore";
 import { registerPane } from "./paneRegistry";
 import { savedServerOf, serverEntry, useSessionStore, vaultOf } from "./sessionStore";
+import { closeRemoteTab } from "./tabActions";
+import { closeTerminalTab } from "./terminalActions";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke, Channel: class {} }));
@@ -194,5 +197,133 @@ describe("unlocked vaults", () => {
       "reconnect",
       expect.objectContaining({ sessionId: "v1" }),
     );
+  });
+});
+
+const page = (id: string, sessionId: string): PaneTab => ({
+  id,
+  kind: "editor",
+  documentId: `document-${id}`,
+  name: "index.html",
+  path: "/srv/www/index.html",
+  origin: "deploy@web.example.com",
+  sessionId,
+});
+
+const disconnected = () =>
+  invoke.mock.calls.flatMap(([command, args]) =>
+    command === "disconnect" ? [(args as { sessionId: string }).sessionId] : [],
+  );
+
+describe("a server that reconnects", () => {
+  it("takes the editors and terminals opened from it along to its new session", async () => {
+    know(server("s1"), server("s2"));
+    show(
+      { id: "files", kind: "remote", sessionId: "s1", path: "/srv/www" },
+      page("page", "s1"),
+      { id: "shell", kind: "terminal", sessionId: "s1", label: "deploy@web.example.com" },
+      page("elsewhere", "s2"),
+    );
+    invoke.mockImplementation(async (command: string) =>
+      command === "reconnect" ? server("s3") : undefined,
+    );
+    await useSessionStore.getState().reconnect("s1");
+
+    expect(allTabs(useLayoutStore.getState().root)).toEqual([
+      { id: "files", kind: "remote", sessionId: "s3", path: "/srv/www" },
+      page("page", "s3"),
+      { id: "shell", kind: "terminal", sessionId: "s3", label: "deploy@web.example.com" },
+      page("elsewhere", "s2"),
+    ]);
+  });
+
+  /** Holds the reconnect until `finish` is called. */
+  function reconnectHeld(): { reconnecting: Promise<SessionInfo>; finish: () => void } {
+    let finish: () => void = () => undefined;
+    invoke.mockImplementation((command: string) =>
+      command === "reconnect"
+        ? new Promise<SessionInfo>((resolve) => (finish = () => resolve(server("s3"))))
+        : Promise.resolve(),
+    );
+    return { reconnecting: useSessionStore.getState().reconnect("s1"), finish: () => finish() };
+  }
+
+  it("closes the session it opened when the tab was closed meanwhile", async () => {
+    know(server("s1"));
+    show({ id: "files", kind: "remote", sessionId: "s1", path: "/srv/www" });
+    const { reconnecting, finish } = reconnectHeld();
+    closeRemoteTab("files", "s1");
+    finish();
+
+    await expect(reconnecting).rejects.toMatchObject({ kind: "sessionNotFound" });
+    expect(sessionIds()).toEqual([]);
+    expect(disconnected()).toEqual(["s1", "s3"]);
+  });
+
+  it("leaves the session alone that went to another window meanwhile", async () => {
+    know(server("s1"));
+    show({ id: "files", kind: "remote", sessionId: "s1", path: "/srv/www" });
+    const { reconnecting, finish } = reconnectHeld();
+    useSessionStore.getState().release("s1");
+    finish();
+
+    await expect(reconnecting).rejects.toMatchObject({ kind: "sessionNotFound" });
+    expect(sessionIds()).toEqual([]);
+    expect(disconnected()).toEqual(["s3"]);
+  });
+
+  it("leaves open the session its vaults moved to when it went to another window meanwhile", async () => {
+    know(server("s1"), vault("v1", "s1", "/srv/private"));
+    show({ id: "files", kind: "remote", sessionId: "s1", path: "/srv/www" });
+    const { reconnecting, finish } = reconnectHeld();
+    useSessionStore.getState().release("s1");
+    finish();
+
+    await expect(reconnecting).rejects.toMatchObject({ kind: "sessionNotFound" });
+    expect(sessionIds()).toEqual([]);
+    expect(disconnected()).toEqual([]);
+  });
+
+  it("closes the session its vaults moved to when the tab was closed meanwhile", async () => {
+    know(server("s1"), vault("v1", "s1", "/srv/private"));
+    show({ id: "files", kind: "remote", sessionId: "s1", path: "/srv/www" });
+    const { reconnecting, finish } = reconnectHeld();
+    closeRemoteTab("files", "s1");
+    finish();
+
+    await expect(reconnecting).rejects.toMatchObject({ kind: "sessionNotFound" });
+    expect(sessionIds()).toEqual([]);
+    expect(disconnected()).toEqual(["s1", "s3"]);
+  });
+});
+
+describe("a session no file tab shows", () => {
+  it("closes with the last editor or terminal tab that used it", () => {
+    know(server("s1"), server("s2"));
+    show(
+      page("page", "s1"),
+      { id: "shell", kind: "terminal", sessionId: "s1", label: "deploy@web.example.com" },
+      { id: "files", kind: "remote", sessionId: "s2", path: "/srv" },
+      page("elsewhere", "s2"),
+    );
+    closeEditorTab("page");
+    expect(disconnected()).toEqual([]);
+    closeTerminalTab("shell");
+    expect(disconnected()).toEqual(["s1"]);
+    closeEditorTab("elsewhere");
+    expect(sessionIds()).toEqual(["s2"]);
+  });
+
+  it("stays while a tab shows one of the vaults unlocked on it", () => {
+    know(server("s1"), vault("v1", "s1", "/srv/private"));
+    show(page("page", "s1"), {
+      id: "secret",
+      kind: "remote",
+      sessionId: "v1",
+      path: "/srv/private",
+    });
+    closeEditorTab("page");
+    expect(disconnected()).toEqual([]);
+    expect(sessionIds()).toEqual(["s1", "v1"]);
   });
 });

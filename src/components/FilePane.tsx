@@ -106,6 +106,7 @@ import {
   lastActivePane,
   listPanes,
   registerPane,
+  unregisterPane,
   updatePane,
   type PaneHandle,
 } from "../state/paneRegistry";
@@ -384,9 +385,12 @@ export function FilePane({
       ?.querySelector<HTMLElement>(PANE_KEYBOARD_TARGET)
       ?.focus({ preventScroll: true });
 
+  // The pane stays in the registry while it registers again under another session or name, so
+  // what the registry was told of it since (on screen, used last, locked) holds; it leaves the
+  // registry only with its tab.
   useEffect(
     () =>
-      registerPane({
+      void registerPane({
         tabId,
         kind: source.kind,
         sessionId,
@@ -407,6 +411,7 @@ export function FilePane({
       }),
     [tabId, source.kind, sessionId, title],
   );
+  useEffect(() => () => unregisterPane(tabId), [tabId]);
 
   useEffect(() => {
     updatePane(tabId, active ? { visible, activatedAt: Date.now() } : { visible });

@@ -2,8 +2,10 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { editor, toAppError } from "../lib/ipc";
 import { allTabs, editorTab, findTab, type EditorTab, type PaneTab } from "../lib/layout";
 import type { DocumentLocation } from "../lib/types";
+import { untilAnswered } from "./answers";
 import { getEditor, useUnsavedStore } from "./editorRegistry";
 import { useLayoutStore } from "./layoutStore";
+import { disconnectUnused, useSessionStore } from "./sessionStore";
 import { useToastStore } from "./toastStore";
 import { useUiStore } from "./uiStore";
 import { stopSavingWorkspace } from "./workspace";
@@ -43,6 +45,7 @@ export function closeEditorTab(tabId: string): void {
   if (tab?.kind !== "editor") return;
   useLayoutStore.getState().closeTab(tabId);
   void editor.close(tab.documentId).catch(() => undefined);
+  if (tab.sessionId) disconnectUnused(tab.sessionId);
 }
 
 /** Editor tabs in this window with unsaved changes. */
@@ -50,6 +53,20 @@ export function unsavedEditorTabs(): EditorTab[] {
   const unsaved = useUnsavedStore.getState().tabs;
   return allTabs(useLayoutStore.getState().root).filter(
     (tab): tab is EditorTab => tab.kind === "editor" && Boolean(unsaved[tab.id]),
+  );
+}
+
+/**
+ * Editor tabs with unsaved changes to files that only these sessions can save: those in a vault,
+ * and those on a server other than over SFTP, where the editor connects again on its own.
+ */
+export function unsavedOnlyThrough(sessionIds: readonly string[]): EditorTab[] {
+  const { sessions } = useSessionStore.getState();
+  return unsavedEditorTabs().filter(
+    (tab) =>
+      tab.sessionId !== undefined &&
+      sessionIds.includes(tab.sessionId) &&
+      sessions[tab.sessionId]?.info.protocol !== "sftp",
   );
 }
 
@@ -64,6 +81,22 @@ export function askToSave(tabIds: string[], closeWindow = false): void {
     tabIds: joined,
     closeWindow: closeWindow || !!asking?.closeWindow,
   });
+}
+
+/** Asks whether to save before the tabs close; resolves once no question about them is open. */
+export function askToSaveAndWait(tabIds: string[]): Promise<void> {
+  askToSave(tabIds);
+  return untilAnswered(
+    (dialog) =>
+      dialog?.kind === "unsavedChanges" && tabIds.every((tabId) => dialog.tabIds.includes(tabId)),
+  );
+}
+
+/** Asks about the tabs' unsaved changes; resolves true once each was saved or discarded. */
+export async function savedOrDiscarded(tabs: readonly EditorTab[]): Promise<boolean> {
+  await askToSaveAndWait(tabs.map((tab) => tab.id));
+  const unsaved = new Set(unsavedEditorTabs().map((tab) => tab.id));
+  return !tabs.some((tab) => unsaved.has(tab.id));
 }
 
 /** Saves the tabs and closes those that saved; resolves whether all of them did. */
