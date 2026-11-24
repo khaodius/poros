@@ -463,6 +463,15 @@ struct ErrorDetail {
     code: serde_json::Value,
     #[serde(default)]
     errors: Vec<ErrorReason>,
+    /// Microsoft's narrower reason inside the general one.
+    #[serde(default, alias = "innerError")]
+    innererror: Option<InnerError>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct InnerError {
+    #[serde(default)]
+    code: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -475,19 +484,57 @@ struct ServiceError {
     error: AppError,
     /// The service asked to slow down; the request did not go through.
     throttled: bool,
+    /// The names the service gave the failure, such as `invalidSharingRequest`.
+    reasons: Vec<String>,
+}
+
+/// What a service said about a request it refused, for a caller that asked to see the
+/// answer with `send_expecting`: the error `send` would have returned, and the reasons the
+/// service named, which tell a rule of the organization from a missing permission.
+pub struct Refusal {
+    pub error: AppError,
+    pub reasons: Vec<String>,
+}
+
+impl Refusal {
+    pub fn has_reason(&self, names: &[&str]) -> bool {
+        self.reasons
+            .iter()
+            .any(|reason| names.contains(&reason.as_str()))
+    }
+}
+
+pub async fn refusal(response: Response) -> Refusal {
+    let status = response.status();
+    let body = body_bytes(response).await.unwrap_or_default();
+    refusal_from(status, &body)
+}
+
+/// A refusal read from the status and body of an answer.
+pub fn refusal_from(status: StatusCode, body: &[u8]) -> Refusal {
+    let failure = ServiceError::describe(status, serde_json::from_slice(body).unwrap_or_default());
+    Refusal {
+        error: failure.error,
+        reasons: failure.reasons,
+    }
 }
 
 impl ServiceError {
     async fn read(response: Response) -> Self {
         let status = response.status();
-        let body: ErrorBody = decode(response).await.unwrap_or_default();
+        Self::describe(status, decode(response).await.unwrap_or_default())
+    }
+
+    fn describe(status: StatusCode, body: ErrorBody) -> Self {
         let detail = body.error;
         let reasons: Vec<&str> = detail
             .errors
             .iter()
             .map(|reason| reason.reason.as_str())
             .chain(detail.code.as_str())
+            .chain(detail.innererror.iter().map(|inner| inner.code.as_str()))
             .chain(body.code.as_str())
+            .filter(|reason| !reason.is_empty())
             .collect();
         let has_reason = |names: &[&str]| reasons.iter().any(|reason| names.contains(reason));
         let throttled = status == StatusCode::TOO_MANY_REQUESTS
@@ -534,6 +581,7 @@ impl ServiceError {
         Self {
             error: AppError::new(kind, message),
             throttled,
+            reasons: reasons.into_iter().map(str::to_string).collect(),
         }
     }
 }

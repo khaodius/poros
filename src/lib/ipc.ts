@@ -63,6 +63,8 @@ import type {
   SearchSummary,
   SessionClosed,
   SessionInfo,
+  ShareLink,
+  ShareOptions,
   SignedIn,
   StoreName,
   SyncDirection,
@@ -387,6 +389,18 @@ export const files = {
 export const clipboard = {
   /** Copies text with no click or key press behind it, which the web view's clipboard refuses. */
   writeText: (text: string) => call<void>("clipboard_write_text", { text }),
+};
+
+export const share = {
+  /** The links `path` has now, on the services that keep them. */
+  links: (sessionId: string, path: string) => call<ShareLink[]>("share_links", { sessionId, path }),
+  create: (sessionId: string, path: string, options: ShareOptions) =>
+    call<ShareLink>("share_create", { sessionId, path, options }),
+  /** Stops the link working for everyone. */
+  remove: (sessionId: string, path: string, linkId: string) =>
+    call<void>("share_remove", { sessionId, path, linkId }),
+  /** Opens a link in the system's browser; only web addresses are taken. */
+  openInBrowser: (url: string) => call<void>("share_open", { url }),
 };
 
 export const windows = {
