@@ -100,7 +100,11 @@ export interface HostKeyInfo {
   certificateProblem?: string;
 }
 
+/** The answer to one question about a server's host key or certificate. */
 export interface HostKeyApproval {
+  /** The server the question named. The answer holds for that server alone. */
+  host: string;
+  port: number;
   fingerprint: string;
   remember: boolean;
 }

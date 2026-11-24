@@ -86,6 +86,15 @@ pub fn endpoint_label(profile: &ConnectProfile) -> String {
     }
 }
 
+pub(super) fn is_secure(profile: &ConnectProfile) -> Option<bool> {
+    Some(Endpoint::parse(profile).ok()?.secure)
+}
+
+pub(super) fn server_address(profile: &ConnectProfile) -> Option<(String, u16)> {
+    let endpoint = Endpoint::parse(profile).ok()?;
+    Some((endpoint.host, endpoint.port))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Endpoint {
     secure: bool,
@@ -829,7 +838,7 @@ impl S3Fs {
         with_versions: bool,
     ) -> AppResult<()> {
         let resolved: Vec<String> = paths.iter().map(|path| self.resolve(path)).collect();
-        for path in protocol::outermost(&resolved) {
+        for path in protocol::outermost(&resolved)? {
             let (Some(bucket), key) = split(&path) else {
                 return Err(AppError::invalid("Refusing to delete /"));
             };
@@ -888,9 +897,11 @@ impl S3Fs {
             .await
             .map_err(|error| (error, String::new()))?;
         let status = response.status();
-        let body = api::body_bytes(response)
-            .await
-            .map_err(|error| (error, String::new()))?;
+        let body = match status.is_success() {
+            true => api::body_bytes(response).await,
+            false => api::error_body(response).await,
+        }
+        .map_err(|error| (error, String::new()))?;
         let error = match status.is_success() {
             true => match xml::embedded_error(&body) {
                 Some(error) => error,
@@ -1037,7 +1048,7 @@ fn no_such_bucket(bucket: &str) -> AppError {
 /// An error for a failed answer, from the service's `<Error>` body when it sent one.
 async fn failure(response: Response, path: &str) -> AppError {
     let status = response.status();
-    let error = match api::body_bytes(response).await {
+    let error = match api::error_body(response).await {
         Ok(body) => xml::embedded_error(&body).unwrap_or_default(),
         Err(error) => return error,
     };
@@ -1176,6 +1187,9 @@ impl RemoteFileSystem for S3Fs {
         match &bucket {
             None => {
                 for bucket in self.list_buckets().await? {
+                    if protocol::validate_name(&bucket.name).is_err() {
+                        continue;
+                    }
                     let path = format!("/{}", bucket.name);
                     let created = bucket
                         .creation_date
@@ -1195,9 +1209,13 @@ impl RemoteFileSystem for S3Fs {
                         .list_page(bucket, &prefix, false, token.as_deref(), PAGE_SIZE)
                         .await?;
                     for folder in &page.common_prefixes {
-                        let name = folder.prefix[prefix.len().min(folder.prefix.len())..]
-                            .trim_end_matches('/');
-                        if name.is_empty() || name.contains('/') {
+                        let Some(name) = folder.prefix.strip_prefix(&prefix) else {
+                            continue;
+                        };
+                        let name = name.trim_end_matches('/');
+                        // Keys may hold `.` and `..` parts, which as folders would stand for
+                        // this folder and the one above it.
+                        if protocol::validate_name(name).is_err() {
                             continue;
                         }
                         let path = remote_path::join(&directory, name);
@@ -1209,7 +1227,7 @@ impl RemoteFileSystem for S3Fs {
                             continue;
                         };
                         // The folder's own marker, or a name no path can reach.
-                        if name.is_empty() || name.contains('/') {
+                        if protocol::validate_name(name).is_err() {
                             continue;
                         }
                         let path = remote_path::join(&directory, name);
@@ -1297,7 +1315,7 @@ impl RemoteFileSystem for S3Fs {
     /// S3 has no rename: objects are copied to the new name, then deleted.
     async fn rename(&self, path: &str, new_name: &str) -> AppResult<String> {
         protocol::validate_name(new_name)?;
-        let path = protocol::normalize(&self.resolve(path));
+        let path = protocol::normalize_exact(&self.resolve(path))?;
         let parent = remote_path::parent(&path)
             .ok_or_else(|| AppError::invalid("Cannot rename the root folder"))?;
         let target = remote_path::join(&parent, new_name);

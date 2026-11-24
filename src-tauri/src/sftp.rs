@@ -23,7 +23,7 @@ use crate::error::{AppError, AppResult, ErrorKind};
 use crate::model::{kind_from_mode, DirListing, EntryKind, FileEntry, LinkTarget};
 pub use crate::protocol::RemoteStat;
 use crate::protocol::{
-    Capabilities, Protocol, ReadStream, RemoteFileSystem, WriteRequest, WriteStream,
+    self, Capabilities, Protocol, ReadStream, RemoteFileSystem, WriteRequest, WriteStream,
 };
 use crate::remote_path;
 use crate::stall::Activity;
@@ -270,7 +270,7 @@ impl RemoteFs {
 
     pub async fn rename(&self, path: &str, new_name: &str) -> AppResult<String> {
         validate_name(new_name)?;
-        let path = self.resolve(path);
+        let path = protocol::normalize_exact(&self.resolve(path))?;
         let parent = remote_path::parent(&path)
             .ok_or_else(|| AppError::invalid("Cannot rename the root directory"))?;
         let target = remote_path::join(&parent, new_name);
@@ -285,8 +285,11 @@ impl RemoteFs {
 
     /// Symlinks are removed, never followed.
     pub async fn delete(&self, paths: &[String]) -> AppResult<()> {
+        let paths = paths
+            .iter()
+            .map(|path| protocol::normalize_exact(&self.resolve(path)))
+            .collect::<AppResult<Vec<String>>>()?;
         for path in paths {
-            let path = self.resolve(path);
             if path == "/" {
                 return Err(AppError::invalid("Refusing to delete /"));
             }
@@ -601,7 +604,8 @@ impl RemoteFs {
                 Ok(name) => out.extend(
                     name.files
                         .into_iter()
-                        .filter(|file| file.filename != "." && file.filename != "..")
+                        // `.`, `..` and names with a slash would stand for another folder.
+                        .filter(|file| validate_name(&file.filename).is_ok())
                         .map(|file| (file.filename, file.longname, file.attrs)),
                 ),
                 Err(SftpError::Status(status)) if status.status_code == StatusCode::Eof => {

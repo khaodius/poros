@@ -194,10 +194,10 @@ impl FtpFs {
             }
         }
         if guard.is_none() {
-            let approval = self.certificate.clone().map(|fingerprint| HostKeyApproval {
-                fingerprint,
-                remember: false,
-            });
+            let approval = self
+                .certificate
+                .as_deref()
+                .map(|fingerprint| HostKeyApproval::for_server(&self.profile, fingerprint));
             let quiet = Events::default();
             let tls = Self::tls(
                 &self.session_id,
@@ -399,7 +399,7 @@ impl RemoteFileSystem for FtpFs {
 
     async fn rename(&self, path: &str, new_name: &str) -> AppResult<String> {
         protocol::validate_name(new_name)?;
-        let path = self.resolve(path);
+        let path = protocol::normalize_exact(&self.resolve(path))?;
         let parent = remote_path::parent(&path)
             .ok_or_else(|| AppError::invalid("Cannot rename the root folder"))?;
         let target = remote_path::join(&parent, new_name);
@@ -415,7 +415,7 @@ impl RemoteFileSystem for FtpFs {
 
     async fn delete(&self, paths: &[String]) -> AppResult<()> {
         let resolved: Vec<String> = paths.iter().map(|path| self.resolve(path)).collect();
-        let targets = protocol::outermost(&resolved);
+        let targets = protocol::outermost(&resolved)?;
         self.with_control(move |control| {
             Box::pin(async move {
                 for path in targets {
