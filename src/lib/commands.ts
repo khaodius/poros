@@ -47,19 +47,25 @@ export const PLACEHOLDERS: { placeholder: string; meaning: string }[] = [
   },
 ];
 
+/** Shell code the advice and the warning below name, which reads the same in every language. */
+const ANOTHER_SHELL_EXAMPLES = { bashExample: 'bash -c "..."', sshExample: 'ssh host "..."' };
+const UNCERTAIN_SYNTAX_EXAMPLES = { ansiQuoted: "$'...'", parameter: '"${1}"' };
+
 /**
  * Said under the placeholders: each is one word to the command, but a shell the command starts
  * reads its own command string, names and all.
  */
-export const PLACEHOLDER_ADVICE =
-  'Keep placeholders out of a command string another shell reads, such as bash -c "..." or ssh host "...": that shell would read a name as part of its command.';
+export function placeholderAdvice(): string {
+  return t("automation.keepPlaceholdersOutOfAnotherShell", ANOTHER_SHELL_EXAMPLES);
+}
 
 /**
  * Shown when a command could not be read with certainty, so its placeholders are all quoted the
  * one way that is right outside quotes.
  */
-export const UNCERTAIN_COMMAND_WARNING =
-  "Poros cannot tell for sure how the shell reads this command: it has a here-document, $'...', or a quote or bracket left open. Each placeholder goes in as \"${1}\" and so on, which keeps a name one word only outside quotes.";
+export function uncertainCommandWarning(): string {
+  return t("automation.cannotTellHowTheShellReads", UNCERTAIN_SYNTAX_EXAMPLES);
+}
 
 const PLACEHOLDER_PATTERN = /\{(path|name|paths|names|folder)\}/g;
 const PER_ITEM_PATTERN = /\{(path|name)\}/;
@@ -257,7 +263,10 @@ function reference(parameters: string[], quoting: Quoting): string {
 function describeCommand(command: string, values: string[]): string {
   if (values.length === 0) return command;
   const meanings = values.map((value, index) => `$${index + 1} = ${shellQuote(value)}`);
-  return `${command} with ${meanings.join(", ")}`;
+  return t("automation.commandWithParameters", {
+    command,
+    parameters: meanings.join(t("common.listSeparator")),
+  });
 }
 
 /**

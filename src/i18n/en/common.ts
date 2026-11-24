@@ -15,6 +15,7 @@ export const common = {
   // components/AutomationSettings
   refresh: "Refresh",
   add: "Add",
+  labelWithMessage: "{label}: {message}",
 
   // components/BulkRenameDialog
   sentenceSeparator: " ",
@@ -112,7 +113,4 @@ export const common = {
   durationSeconds: "{seconds}s",
   durationMinutes: "{minutes}m {seconds}s",
   durationHours: "{hours}h {minutes}m",
-
-  // state/archiveActions
-  labelWithMessage: "{label}: {message}",
 } as const satisfies MessageArea;

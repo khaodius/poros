@@ -1,11 +1,11 @@
 import { useState, type FormEvent } from "react";
 import {
-  PLACEHOLDER_ADVICE,
   PLACEHOLDERS,
-  UNCERTAIN_COMMAND_WARNING,
   needsSelection,
+  placeholderAdvice,
   prepareCommands,
   readsUncertainly,
+  uncertainCommandWarning,
   type CommandTarget,
 } from "../lib/commands";
 import { useCommandStore } from "../state/commandStore";
@@ -70,8 +70,8 @@ export function RunCommandDialog({ sessionId, target, onClose }: RunCommandDialo
             </div>
           ))}
         </dl>
-        <p className="field-hint">{PLACEHOLDER_ADVICE}</p>
-        {uncertain && <p className="field-hint warning-text">{UNCERTAIN_COMMAND_WARNING}</p>}
+        <p className="field-hint">{placeholderAdvice()}</p>
+        {uncertain && <p className="field-hint warning-text">{uncertainCommandWarning()}</p>}
         <label className="check">
           <input
             type="checkbox"
