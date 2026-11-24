@@ -109,7 +109,10 @@ export const connect = {
     "Poros copies the saved sites of these apps into its own saved connections. Nothing changes in the other app.",
   chooseFile: "Choose file...",
   alreadySaved: "Already saved",
-  leftOutSincePorosCannot: "{count} left out, since Poros cannot connect to them as they are",
+  leftOutSincePorosCannot: {
+    one: "{count} left out, since Poros cannot connect to them as they are",
+    other: "{count} left out, since Poros cannot connect to them as they are",
+  },
   putFolderNamesInFront: "Put folder names in front of connection names",
   reading: "Reading...",
   otherFile: "Other file...",

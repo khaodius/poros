@@ -85,8 +85,8 @@ export const automation = {
   confirmShutDownNow: "Shut down now",
   transfersFinishedWithErrors: "Transfers finished with errors",
   transfersFinished: "Transfers finished",
-  failedCount: "{count} failed",
-  skippedCount: "{count} skipped",
+  failedCount: { one: "{count} failed", other: "{count} failed" },
+  skippedCount: { one: "{count} skipped", other: "{count} skipped" },
 
   // lib/commands
   eachSelectedItemsFullPath: "each selected item's full path, running once per item",
@@ -103,7 +103,10 @@ export const automation = {
   // state/commandStore
   stopped: "Stopped",
   nothingToRun: "Nothing to run",
-  allCommandsFinished: "All {finished} commands finished",
+  allCommandsFinished: {
+    one: "All {count} commands finished",
+    other: "All {count} commands finished",
+  },
   ofCommandsFailed: "{failed} of {finished} commands failed",
 
   // state/whenDone

@@ -92,9 +92,13 @@ function warnMissing(key: string, locale: string): void {
 const formatLocales = new Map<string, string>();
 
 /**
- * The tag dates, times and numbers are written in while the interface shows `locale`: the
- * computer's own when the interface is in English or in the computer's language and script, so
- * an en-GB, it-IT or de-AT computer keeps its own formats, and the translation's tag otherwise.
+ * The tag dates, times and numbers are written in while the interface shows `locale`.
+ * - The computer's own tag when it has the interface's language and script, so an en-GB or
+ *   de-AT computer keeps its formats.
+ * - Otherwise the interface's language in the computer's region, in Latin digits: `en-DE`
+ *   writes "1.234,5" on a German computer, and an Arabic or Persian one brings no digits of
+ *   its own into an English sentence.
+ * - The translation's own tag when the computer gives no usable tag or region.
  * Words, such as lists and plural forms, follow the translation whatever this gives.
  */
 export function formatLocaleFor(locale: string, system: string | undefined): string {
@@ -104,10 +108,14 @@ export function formatLocaleFor(locale: string, system: string | undefined): str
   if (found === undefined) {
     found = locale;
     try {
-      const [canonical] = Intl.getCanonicalLocales(system);
+      const computer = new Intl.Locale(system);
       const ownScript = languageAndScript(locale);
-      const sameLanguage = ownScript !== null && languageAndScript(canonical) === ownScript;
-      if (canonical && (locale === ENGLISH.locale || sameLanguage)) found = canonical;
+      const { region } = computer.maximize();
+      if (ownScript !== null && languageAndScript(computer.toString()) === ownScript) {
+        found = computer.toString();
+      } else if (region) {
+        found = new Intl.Locale(locale, { region, numberingSystem: "latn" }).toString();
+      }
     } catch {
       // Not a tag Intl knows: the translation's own formats.
     }
@@ -179,10 +187,18 @@ export const t: Translate = Object.defineProperty(
   { get: () => active().locale },
 ) as unknown as Translate;
 
-/** A label as it reads inside a sentence or a list, in the active language. */
+/**
+ * A label as it reads inside a sentence or a list, in the active language: "Smaller than 1 MB"
+ * reads "smaller than 1 MB" in English. Only the leading word changes, and not when it is an
+ * acronym such as SFTP, so units and names keep their capitals.
+ */
 export function midSentence(label: string): string {
   const { translation } = useLanguageStore.getState();
-  return translation.lowercaseMidSentence ? label.toLocaleLowerCase(translation.locale) : label;
+  if (!translation.lowercaseMidSentence) return label;
+  const [word] = /^\p{L}+/u.exec(label) ?? [""];
+  const acronym = word.length > 1 && word === word.toLocaleUpperCase(translation.locale);
+  if (word === "" || acronym) return label;
+  return word.toLocaleLowerCase(translation.locale) + label.slice(word.length);
 }
 
 /** The tag of the language the interface shows, which its words and plurals follow: `de`. */
@@ -211,8 +227,16 @@ export function setLanguage(choice: LanguageChoice): void {
   if (typeof document !== "undefined") document.documentElement.lang = translation.locale;
   if (typeof localStorage !== "undefined") remember(choice);
   const state = useLanguageStore.getState();
-  if (state.choice === choice && state.translation === translation) return;
-  useLanguageStore.setState({ choice, translation, translate: translatorFor(translation) });
+  // A new translator also when only the computer's region moved, for the numbers it writes.
+  const translate = translatorFor(translation);
+  if (
+    state.choice === choice &&
+    state.translation === translation &&
+    state.translate === translate
+  ) {
+    return;
+  }
+  useLanguageStore.setState({ choice, translation, translate });
 }
 
 /** Applies the language the last run used, so the first frame is already in it. */

@@ -75,8 +75,12 @@ const LETTER_CASE_LABELS: Record<LetterCase, string> = {
   get unchanged() {
     return t("rename.unchanged");
   },
-  lower: "lowercase",
-  upper: "UPPERCASE",
+  get lower() {
+    return t("rename.lowercase");
+  },
+  get upper() {
+    return t("rename.uppercase");
+  },
   get title() {
     return t("rename.titleCase");
   },
@@ -88,8 +92,12 @@ const EXTENSION_LABELS: Record<ExtensionChange, string> = {
   get keep() {
     return t("common.keep");
   },
-  lower: "lowercase",
-  upper: "UPPERCASE",
+  get lower() {
+    return t("rename.lowercase");
+  },
+  get upper() {
+    return t("rename.uppercase");
+  },
   get replace() {
     return t("rename.replaceWith");
   },

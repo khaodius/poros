@@ -9,7 +9,7 @@ import type {
   ShareLink,
   ShareOptions,
 } from "./types";
-import { dateWordFormat, formatList, t } from "../i18n";
+import { dateTimeFormat, formatList, t, type MessageKey } from "../i18n";
 
 /** How a server pane's menu shows sharing: offered, or shown with why it is not. */
 export interface ShareMenuEntry {
@@ -181,28 +181,85 @@ export function draftOptions(draft: ShareDraft, sharing: ShareCapabilities): Sha
   };
 }
 
-function twoDigits(value: number): string {
-  return value < 10 ? `0${value}` : String(value);
-}
+const DEADLINE: Intl.DateTimeFormatOptions = {
+  day: "numeric",
+  month: "long",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+};
+const DEADLINE_WITH_YEAR: Intl.DateTimeFormatOptions = { ...DEADLINE, year: "numeric" };
 
-/** Local time as `14 May, 18:30`, with the year when it is not the current one. */
+/**
+ * Local time as one date, `May 14 at 18:30` in English and `5月14日 18:30` in Chinese, with the
+ * year when it is not the current one. `Intl` writes it whole, as each language orders it.
+ */
 export function formatDeadline(epochSeconds: number, nowMillis: number): string {
   const date = new Date(epochSeconds * 1000);
-  const parts = {
-    day: String(date.getDate()),
-    month: dateWordFormat({ month: "long" }).format(date),
-    time: `${twoDigits(date.getHours())}:${twoDigits(date.getMinutes())}`,
-  };
-  return date.getFullYear() === new Date(nowMillis).getFullYear()
-    ? t("share.deadline", parts)
-    : t("share.deadlineWithYear", { ...parts, year: String(date.getFullYear()) });
+  const sameYear = date.getFullYear() === new Date(nowMillis).getFullYear();
+  return dateTimeFormat(sameYear ? DEADLINE : DEADLINE_WITH_YEAR).format(date);
 }
 
+/** Who the link lets in, as the statements tell them apart. */
+type StatementAudience = "anyone" | "namedOrganization" | "organization" | "invited";
+
+/**
+ * The statements, whole for each audience, one link or several, and what the link allows, so
+ * that a language can make the verb agree with who it is about.
+ */
 const STATEMENTS = {
-  download: "share.statementDownload",
-  edit: "share.statementEdit",
-  view: "share.statementView",
-} as const;
+  anyone: {
+    one: {
+      download: "share.anyoneWithThisLinkCanDownload",
+      edit: "share.anyoneWithThisLinkCanEdit",
+      view: "share.anyoneWithThisLinkCanView",
+    },
+    several: {
+      download: "share.anyoneWithOneOfTheseLinksCanDownload",
+      edit: "share.anyoneWithOneOfTheseLinksCanEdit",
+      view: "share.anyoneWithOneOfTheseLinksCanView",
+    },
+  },
+  namedOrganization: {
+    one: {
+      download: "share.peopleInWithThisLinkCanDownload",
+      edit: "share.peopleInWithThisLinkCanEdit",
+      view: "share.peopleInWithThisLinkCanView",
+    },
+    several: {
+      download: "share.peopleInWithOneOfTheseLinksCanDownload",
+      edit: "share.peopleInWithOneOfTheseLinksCanEdit",
+      view: "share.peopleInWithOneOfTheseLinksCanView",
+    },
+  },
+  organization: {
+    one: {
+      download: "share.peopleInYourOrganizationWithThisLinkCanDownload",
+      edit: "share.peopleInYourOrganizationWithThisLinkCanEdit",
+      view: "share.peopleInYourOrganizationWithThisLinkCanView",
+    },
+    several: {
+      download: "share.peopleInYourOrganizationWithOneOfTheseLinksCanDownload",
+      edit: "share.peopleInYourOrganizationWithOneOfTheseLinksCanEdit",
+      view: "share.peopleInYourOrganizationWithOneOfTheseLinksCanView",
+    },
+  },
+  invited: {
+    one: {
+      download: "share.peopleAlreadyInvitedWhoHaveThisLinkCanDownload",
+      edit: "share.peopleAlreadyInvitedWhoHaveThisLinkCanEdit",
+      view: "share.peopleAlreadyInvitedWhoHaveThisLinkCanView",
+    },
+    several: {
+      download: "share.peopleAlreadyInvitedWhoHaveOneOfTheseLinksCanDownload",
+      edit: "share.peopleAlreadyInvitedWhoHaveOneOfTheseLinksCanEdit",
+      view: "share.peopleAlreadyInvitedWhoHaveOneOfTheseLinksCanView",
+    },
+  },
+} as const satisfies Record<
+  StatementAudience,
+  Record<"one" | "several", Record<LinkKind, MessageKey>>
+>;
 
 export interface StatementSubject {
   kind: LinkKind;
@@ -224,23 +281,13 @@ export interface StatementSubject {
 /** In plain words: `Anyone with this link can download the file until 14 May, 18:30.` */
 export function linkStatement(subject: StatementSubject): string {
   const several = subject.count > 1;
-  const { organization } = subject;
-  const who =
-    subject.audience === "anyone"
-      ? several
-        ? t("share.anyoneWithOneOfTheseLinks")
-        : t("share.anyoneWithThisLink")
-      : subject.audience === "organization"
-        ? organization
-          ? several
-            ? t("share.peopleInWithOneOfTheseLinks", { organization })
-            : t("share.peopleInWithThisLink", { organization })
-          : several
-            ? t("share.peopleInYourOrganizationWithOneOfTheseLinks")
-            : t("share.peopleInYourOrganizationWithThisLink")
-        : several
-          ? t("share.peopleAlreadyInvitedWhoHaveOneOfTheseLinks")
-          : t("share.peopleAlreadyInvitedWhoHaveThisLink");
+  const organization = subject.organization ?? "";
+  const audience: StatementAudience =
+    subject.audience === "organization"
+      ? organization
+        ? "namedOrganization"
+        : "organization"
+      : subject.audience;
   const what = several
     ? subject.folder
       ? t("share.theItemItIsFor")
@@ -256,7 +303,8 @@ export function linkStatement(subject: StatementSubject): string {
       : subject.revocable
         ? t("share.untilYouStopSharing")
         : t("share.forAsLongAsItIsThere");
-  const statement = t(STATEMENTS[subject.kind], { who, what, until });
+  const key = STATEMENTS[audience][several ? "several" : "one"][subject.kind];
+  const statement = t(key, { organization, what, until });
   return subject.hasPassword ? t("share.statementWithPassword", { statement }) : statement;
 }
 

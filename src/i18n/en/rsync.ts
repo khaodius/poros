@@ -2,7 +2,7 @@ import type { MessageArea } from "../catalog";
 
 export const rsync = {
   // components/RsyncOptionsEditor
-  changed: "{changed} changed",
+  changed: { one: "{count} changed", other: "{count} changed" },
   noLimit: "No limit",
   extraRsyncArguments: "Extra rsync arguments",
   typedAsOnRsyncsCommandLine:

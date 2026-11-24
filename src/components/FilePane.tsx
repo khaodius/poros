@@ -401,7 +401,7 @@ export function FilePane({
   // vault's encrypted files only.
   const overSftp = protocol === "sftp";
   const worksHere = source.kind === "local" || overSftp;
-  const needsSftp = vault ? "not in a vault" : "SFTP only";
+  const needsSftp = vault ? t("pane.notInAVault") : t("pane.sftpOnly");
   const paneRef = useRef(pane);
   useLayoutEffect(() => {
     paneRef.current = pane;

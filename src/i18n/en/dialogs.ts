@@ -19,7 +19,7 @@ export const dialogs = {
   // components/DeleteDialog
   nothingToDelete: "Nothing to delete",
   deleteItem: "Delete item",
-  deleteItems: "Delete {count} items",
+  deleteItems: { one: "Delete {count} items", other: "Delete {count} items" },
   checkingTheFolder: "Checking the folder...",
   theseItemsAreNoLonger: "These items are no longer in the folder.",
 
@@ -32,7 +32,7 @@ export const dialogs = {
     other: "Counting: {count} files, {size}",
   },
   propertiesOf: "Properties of {name}",
-  propertiesOfItems: "Properties of {count} items",
+  propertiesOfItems: { one: "Properties of {count} items", other: "Properties of {count} items" },
   items2: "Items",
   links: { one: "{count} link", other: "{count} links" },
   type: "Type",
@@ -44,7 +44,10 @@ export const dialogs = {
   permissions: "Permissions",
   linksHaveNoPermissionsOf:
     "Links have no permissions of their own, so they keep theirs. Owner and group changes apply to the links themselves.",
-  andMoreListedInThe: "and {count} more, listed in the log",
+  andMoreListedInThe: {
+    one: "and {count} more, listed in the log",
+    other: "and {count} more, listed in the log",
+  },
   changedItems: { one: "Changed {count} item", other: "Changed {count} items" },
   octal: "Octal",
   mixed: "Mixed",
@@ -54,7 +57,10 @@ export const dialogs = {
   folders2: "Folders",
   files2: "Files",
   oneItemCouldNotBe: "One item could not be changed:",
-  itemsCouldNotBeChanged: "{count} items could not be changed:",
+  itemsCouldNotBeChanged: {
+    one: "{count} items could not be changed:",
+    other: "{count} items could not be changed:",
+  },
   applying: "Applying...",
   linkToAFolder: "Link to a folder",
   linkToAFile: "Link to a file",
@@ -70,10 +76,13 @@ export const dialogs = {
   permissionOfClass: "{who} {permission}",
 
   // lib/deletion
-  deletedCount: "{count} deleted",
+  deletedCount: { one: "{count} deleted", other: "{count} deleted" },
   countingToDelete: "Counting what to delete...",
-  deletedFoundSoFar: "{count} deleted, {found} found so far",
-  deletedOfTotal: "{count} of {total} deleted",
+  deletedFoundSoFar: {
+    one: "{count} deleted, {found} found so far",
+    other: "{count} deleted, {found} found so far",
+  },
+  deletedOfTotal: { one: "{count} of {total} deleted", other: "{count} of {total} deleted" },
 
   // lib/permissions
   setUserId: "Set user ID",

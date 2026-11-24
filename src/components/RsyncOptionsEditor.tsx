@@ -34,7 +34,7 @@ export function RsyncOptionsEditor({ options, direction, onChange, initiallyOpen
             <summary>
               <span>{group.title}</span>
               {changed > 0 && (
-                <span className="rsync-group-count">{t("rsync.changed", { changed })}</span>
+                <span className="rsync-group-count">{t("rsync.changed", { count: changed })}</span>
               )}
             </summary>
             <div className="rsync-fields">
