@@ -262,9 +262,12 @@ impl B2Fs {
         let mut newest_seen = None;
         let mut start: Option<Start> = None;
         loop {
-            let page = self
+            let mut page = self
                 .versions_page(&bucket_id, prefix, grouped, start.as_ref(), PAGE_SIZE, path)
                 .await?;
+            // Only a broken service lists names outside the prefix asked for, and restoring or
+            // purging a folder must not touch them.
+            page.files.retain(|file| file.file_name.starts_with(prefix));
             let (records, grouped_names) = history_records(&page.files, &mut newest_seen);
             hidden.add_page(records);
             folders.extend(
@@ -306,7 +309,11 @@ impl ObjectVersions for B2Fs {
                 .await?;
             // Names come in order, the name itself before every longer one starting with it.
             let mut reached_other_names = false;
-            for file in &page.files {
+            for file in page
+                .files
+                .iter()
+                .filter(|file| file.file_name.starts_with(&key))
+            {
                 if file.file_name != key {
                     reached_other_names = true;
                 } else if let Some(version) = history_entry(file, history.is_empty()) {

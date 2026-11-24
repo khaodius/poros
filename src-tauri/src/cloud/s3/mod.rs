@@ -1925,6 +1925,33 @@ mod tests {
         assert_eq!(deleted, vec!["DELETE /bucket/ab HTTP/1.1"]);
     }
 
+    /// A folder's deleted files, which a restore or purge acts on, are only what is inside it,
+    /// whatever a broken service lists.
+    #[tokio::test]
+    async fn deleted_files_of_a_folder_are_only_those_inside_it() {
+        use crate::versions::ObjectVersions;
+        let (address, _) = stub_service(|request| {
+            if request.contains("versions") && request.contains("prefix=ab%2F") {
+                (
+                    200,
+                    "<ListVersionsResult><IsTruncated>false</IsTruncated>\
+                     <DeleteMarker><Key>x</Key><VersionId>m1</VersionId><IsLatest>true</IsLatest></DeleteMarker>\
+                     <Version><Key>x</Key><VersionId>v1</VersionId><IsLatest>false</IsLatest><Size>3</Size></Version>\
+                     <DeleteMarker><Key>ab/in.txt</Key><VersionId>m2</VersionId><IsLatest>true</IsLatest></DeleteMarker>\
+                     <Version><Key>ab/in.txt</Key><VersionId>v2</VersionId><IsLatest>false</IsLatest><Size>3</Size></Version>\
+                     </ListVersionsResult>",
+                )
+            } else {
+                (200, EMPTY_LISTING)
+            }
+        })
+        .await;
+        let files = files(&address, 443, Addressing::Automatic);
+        let hidden = files.deleted_under("/bucket/ab").await.unwrap();
+        let paths: Vec<&str> = hidden.iter().map(|file| file.path.as_str()).collect();
+        assert_eq!(paths, vec!["/bucket/ab/in.txt"]);
+    }
+
     /// 24 May 2013, midnight UTC: the time of the examples in the S3 API reference.
     const EXAMPLE_TIME: i64 = 1_369_353_600;
 

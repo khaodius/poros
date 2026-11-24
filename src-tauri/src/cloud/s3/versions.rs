@@ -180,6 +180,10 @@ impl S3Fs {
             let mut page = self
                 .versions_page(bucket, prefix, grouped, marker.as_ref())
                 .await?;
+            // Only a broken service lists keys outside the prefix asked for, and restoring or
+            // purging a folder must not touch them.
+            page.records.retain(|record| record.key.starts_with(prefix));
+            page.folders.retain(|folder| folder.starts_with(prefix));
             let next = page.next.take();
             // A service that repeats a marker would never finish.
             let more = visit(page) && next.is_some() && next != marker;
