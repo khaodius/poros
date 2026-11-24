@@ -564,13 +564,18 @@ impl Refusal {
     }
 }
 
+/// Reads a refused answer the way `send` reads every failed one.
 pub async fn refusal(response: Response) -> Refusal {
-    let status = response.status();
-    let body = body_bytes(response).await.unwrap_or_default();
-    refusal_from(status, &body)
+    let failure = ServiceError::read(response).await;
+    Refusal {
+        error: failure.error,
+        reasons: failure.reasons,
+    }
 }
 
-/// A refusal read from the status and body of an answer.
+/// The refusal `refusal` reads from an answer with this status and body, for tests that have
+/// no server to send it.
+#[cfg(test)]
 pub fn refusal_from(status: StatusCode, body: &[u8]) -> Refusal {
     let failure = ServiceError::describe(status, serde_json::from_slice(body).unwrap_or_default());
     Refusal {
@@ -810,6 +815,50 @@ mod tests {
             error_body(response).await.unwrap().len(),
             MAX_ERROR_BODY_BYTES
         );
+    }
+
+    /// Answers one request with a refusal whose JSON is followed by more padding than an error
+    /// body is read for, and then by nothing, as a body that stalls.
+    async fn serve_stalling_refusal(listener: TcpListener, json: &str) {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut head = Vec::new();
+        let mut piece = [0u8; 4096];
+        while !head.windows(4).any(|window| window == b"\r\n\r\n") {
+            let read = stream.read(&mut piece).await.unwrap();
+            assert!(read > 0, "the request ended early");
+            head.extend_from_slice(&piece[..read]);
+        }
+        let chunk =
+            |data: &[u8]| [format!("{:x}\r\n", data.len()).as_bytes(), data, b"\r\n"].concat();
+        let mut answer =
+            b"HTTP/1.1 400 Bad Request\r\ncontent-type: application/json\r\ntransfer-encoding: chunked\r\n\r\n"
+                .to_vec();
+        answer.extend_from_slice(&chunk(json.as_bytes()));
+        let padding = vec![b' '; 64 * 1024];
+        for _ in 0..(2 * MAX_ERROR_BODY_BYTES / padding.len()) {
+            answer.extend_from_slice(&chunk(&padding));
+        }
+        if stream.write_all(&answer).await.is_err() {
+            return;
+        }
+        // The body never ends; the connection stays open until the client drops it.
+        let _ = stream.read(&mut piece).await;
+    }
+
+    #[tokio::test]
+    async fn a_refusal_is_read_as_far_as_its_explanation_goes() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let url = format!("http://{}/permissions", listener.local_addr().unwrap());
+        let json = r#"{"error":{"message":"Sharing outside the domain is off","errors":[{"reason":"invalidSharingRequest"}]}}"#;
+        tokio::spawn(serve_stalling_refusal(listener, json));
+        let response = http_client().unwrap().get(&url).send().await.unwrap();
+        // Read to its end, the body would stall until STALL_TIMEOUT.
+        let refused = tokio::time::timeout(Duration::from_secs(10), refusal(response))
+            .await
+            .expect("the refusal waited for the rest of the body");
+        assert!(refused.has_reason(&["invalidSharingRequest"]));
+        assert_eq!(refused.error.kind, ErrorKind::InvalidInput);
+        assert_eq!(refused.error.message, "Sharing outside the domain is off");
     }
 
     /// A token endpoint that, as Box does, hands out a new refresh token with every access
