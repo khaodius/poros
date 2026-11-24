@@ -8,10 +8,10 @@ import type { NameClash, OperationFailure, OperationProgress, PlaceMode } from "
 const SHOW_AFTER_MILLIS = 400;
 
 /**
- * Deletes and renames count entries; extractions say which program runs; the rest count files
- * and bytes.
+ * Deletes, restores of deleted files and renames count entries; extractions say which program
+ * runs; the rest count files and bytes.
  */
-export type OperationKind = "place" | "delete" | "extract" | "rename";
+export type OperationKind = "place" | "delete" | "restore" | "extract" | "rename";
 
 export interface RunningOperation {
   id: string;

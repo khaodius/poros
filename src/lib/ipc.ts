@@ -13,6 +13,8 @@ import type {
   Comparison,
   ConnectProfile,
   DeleteRequest,
+  DeletedRequest,
+  DeletedSummary,
   ExtractRequest,
   ExtractSummary,
   DeleteSummary,
@@ -46,6 +48,8 @@ import type {
   ImportSource,
   ImportSourceInfo,
   HostKeyApproval,
+  ListingWithDeleted,
+  ObjectVersion,
   JobState,
   LogRecord,
   MountRequest,
@@ -97,6 +101,9 @@ import type {
   TransferUpdate,
   UnsentFile,
   UpdateProgress,
+  VersionCompareRequest,
+  VersionDownload,
+  Versioning,
   WindowCorners,
 } from "./types";
 
@@ -186,7 +193,9 @@ export const remote = {
     call<string>("remote_make_file", { sessionId, parent, name }),
   rename: (sessionId: string, path: string, newName: string) =>
     call<string>("remote_rename", { sessionId, path, newName }),
-  remove: (sessionId: string, paths: string[]) => call<void>("remote_delete", { sessionId, paths }),
+  /** `withVersions`: buckets among `paths` to delete with their older versions and deleted files. */
+  remove: (sessionId: string, paths: string[], withVersions: readonly string[] = []) =>
+    call<void>("remote_delete", { sessionId, paths, withVersions }),
 };
 
 /** Cryptomator vaults kept in a folder of a session's server. */
@@ -391,6 +400,30 @@ export const editor = {
   adopt: (documentId: string) => call<void>("editor_adopt", { documentId }),
   save: (request: SaveRequest) => call<SaveOutcome>("editor_save", { request }),
   close: (documentId: string) => call<void>("editor_close", { documentId }),
+};
+
+/** The history versioned S3 buckets and Backblaze B2 keep of each file. */
+export const versions = {
+  status: (sessionId: string, path: string) =>
+    call<Versioning>("versions_status", { sessionId, path }),
+  list: (sessionId: string, path: string) =>
+    call<ObjectVersion[]>("versions_list", { sessionId, path }),
+  listWithDeleted: (sessionId: string, path: string) =>
+    call<ListingWithDeleted>("versions_list_deleted", { sessionId, path }),
+  /** Copies the version over the file, which keeps what it replaces in the history. */
+  restore: (sessionId: string, path: string, versionId: string) =>
+    call<void>("versions_restore", { sessionId, path, versionId }),
+  /** Removes one version or delete marker for good. */
+  remove: (sessionId: string, path: string, versionId: string) =>
+    call<void>("versions_delete", { sessionId, path, versionId }),
+  /** Queues the download of one version. */
+  download: (request: VersionDownload) => call<void>("versions_download", { request }),
+  compare: (request: VersionCompareRequest) => call<Comparison>("versions_compare", { request }),
+  /** Opens one version in the editor, to read only. */
+  open: (sessionId: string, path: string, versionId: string) =>
+    call<DocumentInfo>("versions_open", { sessionId, path, versionId }),
+  /** Restores or removes deleted files and folders, reporting progress as file operations do. */
+  deleted: (request: DeletedRequest) => call<DeletedSummary>("versions_deleted", { request }),
 };
 
 /** Files opened in the user's own programs: server files through a working copy. */

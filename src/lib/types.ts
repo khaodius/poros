@@ -1,7 +1,7 @@
 // Mirrors the serde types in src-tauri/src (model.rs, error.rs, protocol.rs, ssh/mod.rs,
 // session.rs, events.rs, transfer/, sync/, file_ops/, connections.rs, cloud/, themes.rs,
-// fonts.rs, automation/, text.rs, editor.rs, terminal.rs, desktop.rs). Field names are camelCase
-// on the wire.
+// fonts.rs, automation/, text.rs, editor.rs, terminal.rs, desktop.rs, versions.rs). Field names
+// are camelCase on the wire.
 
 export type EntryKind = "dir" | "file" | "symlink" | "other";
 export type LinkTarget = "dir" | "file" | "broken";
@@ -1193,6 +1193,8 @@ export interface DocumentInfo {
   path: string;
   /** "Local", or the label of the server the file is on. */
   origin: string;
+  /** An older version of a file, shown and never saved. */
+  readOnly?: boolean;
 }
 
 export type TextEncoding = "utf8" | "utf8Bom" | "utf16Le" | "utf16Be" | "latin1";
@@ -1298,6 +1300,87 @@ export interface PreviewPlacement {
  */
 export type UpdateProgress =
   { stage: "downloading"; received: number; total: number | null } | { stage: "installing" };
+
+/** Whether the bucket a path is in keeps versions; `unknown` when the keys may not ask. */
+export type Versioning = "enabled" | "suspended" | "off" | "unknown";
+
+/** A delete marker is what a delete leaves over S3 versions, or a B2 hide marker. */
+export type VersionKind = "version" | "deleteMarker";
+
+/** One entry of a file's history, as `versions::ObjectVersion` sends it. */
+export interface ObjectVersion {
+  /** `null` on S3 for what was written before versioning, or while it was suspended. */
+  versionId: string;
+  kind: VersionKind;
+  /** The newest entry: the file as it is now, or the marker that hides it. */
+  latest: boolean;
+  /** Seconds since the Unix epoch. */
+  modified: number | null;
+  size: number;
+  etag?: string;
+  storageClass?: string;
+}
+
+/** A file or folder a delete hid in a bucket that keeps versions. */
+export interface DeletedEntry {
+  name: string;
+  path: string;
+  isDir: boolean;
+  /** Seconds since the Unix epoch; null for a folder. */
+  deleted: number | null;
+  /** The size of the version a restore brings back. */
+  size: number;
+}
+
+export interface ListingWithDeleted {
+  listing: DirListing;
+  deleted: DeletedEntry[];
+}
+
+export interface VersionDownload {
+  sessionId: string;
+  path: string;
+  versionId: string;
+  /** The folder on this computer the version goes into. */
+  targetDirectory: string;
+  /** The name it gets there; the file's own when left out. */
+  name?: string;
+  size?: number;
+}
+
+export interface VersionCompareRequest {
+  operationId: string;
+  sessionId: string;
+  path: string;
+  /** The left side; the right is the file as it is now. */
+  versionId: string;
+  ignoreWhitespace: boolean;
+  ignoreCase: boolean;
+}
+
+/** Restore removes the delete markers; purge removes every version and marker for good. */
+export type DeletedAction = "restore" | "purge";
+
+export interface DeletedItem {
+  path: string;
+  /** A folder stands for everything deleted under it. */
+  isDir: boolean;
+}
+
+export interface DeletedRequest {
+  operationId: string;
+  sessionId: string;
+  action: DeletedAction;
+  items: DeletedItem[];
+}
+
+export interface DeletedSummary {
+  /** Files brought back or removed, counting those inside folders. */
+  files: number;
+  /** Files that could not be, of which `failures` holds the first ones. */
+  failed: number;
+  failures: OperationFailure[];
+}
 
 /** What to open a file with. Mirrored in src-tauri/src/external_editor/mod.rs. */
 export type OpenWith =

@@ -13,7 +13,9 @@ use tokio_util::sync::CancellationToken;
 
 use super::{Channel, Location};
 use crate::error::{AppError, AppResult, ErrorKind};
+use crate::protocol::{ReadStream, RemoteFileSystem};
 use crate::session::{Session, SessionManager};
+use crate::versions::PinnedVersion;
 
 /// Larger files are compared byte for byte only.
 const MAX_TEXT_BYTES: u64 = 8 * 1024 * 1024;
@@ -42,6 +44,22 @@ pub struct CompareRequest {
     pub left: FileRef,
     pub right: FileRef,
     /// Lines that differ only in spaces and tabs count as equal.
+    #[serde(default)]
+    pub ignore_whitespace: bool,
+    #[serde(default)]
+    pub ignore_case: bool,
+}
+
+/// One version of a file in a bucket that keeps versions, compared with the file as it is now.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionCompareRequest {
+    /// Names this comparison for cancelling.
+    pub operation_id: String,
+    pub session_id: String,
+    pub path: String,
+    /// The left side; the right is the current file.
+    pub version_id: String,
     #[serde(default)]
     pub ignore_whitespace: bool,
     #[serde(default)]
@@ -130,6 +148,34 @@ pub async fn compare(
         ignore_whitespace: request.ignore_whitespace,
         ignore_case: request.ignore_case,
     };
+    compare_sides(left, right, options, cancel).await
+}
+
+pub async fn compare_version(
+    sessions: &SessionManager,
+    request: &VersionCompareRequest,
+    cancel: &CancellationToken,
+) -> AppResult<Comparison> {
+    let files = sessions.get(&request.session_id).await?.files();
+    let path = files.resolve(&request.path);
+    let left = Side::Stored {
+        files: PinnedVersion::over(files.clone(), &path, &request.version_id)?,
+        path: path.clone(),
+    };
+    let right = Side::Stored { files, path };
+    let options = Options {
+        ignore_whitespace: request.ignore_whitespace,
+        ignore_case: request.ignore_case,
+    };
+    compare_sides(left, right, options, cancel).await
+}
+
+async fn compare_sides(
+    left: Side,
+    right: Side,
+    options: Options,
+    cancel: &CancellationToken,
+) -> AppResult<Comparison> {
     let work = async {
         let (left_size, right_size) = (left.size().await?, right.size().await?);
         if left_size > MAX_TEXT_BYTES || right_size > MAX_TEXT_BYTES {
@@ -162,7 +208,16 @@ pub async fn compare(
 
 enum Side {
     Local(PathBuf),
-    Remote { session: Arc<Session>, path: String },
+    Remote {
+        session: Arc<Session>,
+        path: String,
+    },
+    /// A file read through the file system every protocol shares, which is how one version of
+    /// a file in a bucket is reached.
+    Stored {
+        files: Arc<dyn RemoteFileSystem>,
+        path: String,
+    },
 }
 
 impl Side {
@@ -180,7 +235,7 @@ impl Side {
     fn path(&self) -> String {
         match self {
             Self::Local(path) => path.to_string_lossy().into_owned(),
-            Self::Remote { path, .. } => path.clone(),
+            Self::Remote { path, .. } | Self::Stored { path, .. } => path.clone(),
         }
     }
 
@@ -206,7 +261,28 @@ impl Side {
                         .with_path(path.clone()),
                 ),
             },
+            Self::Stored { files, path } => match files.stat(path).await? {
+                Some(stat) if !stat.is_dir => Ok(stat.size),
+                Some(_) => Err(not_a_file()),
+                None => Err(
+                    AppError::new(ErrorKind::NotFound, "The file no longer exists")
+                        .with_path(path.clone()),
+                ),
+            },
         }
+    }
+
+    /// Opens a stored file from its start.
+    async fn stream(&self) -> AppResult<Reader<'_>> {
+        let size = self.size().await?;
+        let Self::Stored { files, path } = self else {
+            return Err(AppError::invalid("Only stored files are read as a stream"));
+        };
+        Ok(Reader::Stored {
+            stream: files.clone().open_read(path, 0..size).await?,
+            buffered: Vec::new(),
+            ended: false,
+        })
     }
 
     async fn read_all(&self) -> AppResult<Vec<u8>> {
@@ -224,6 +300,27 @@ impl Side {
                     .read_to_end(path, MAX_TEXT_BYTES)
                     .await
             }
+            Self::Stored { .. } => {
+                let mut reader = self.stream().await?;
+                let mut contents = Vec::new();
+                let read: AppResult<()> = async {
+                    loop {
+                        let block = reader.next_block(contents.len() as u64).await?;
+                        if block.is_empty() {
+                            return Ok(());
+                        }
+                        contents.extend_from_slice(&block);
+                        // The caller compares only files within the limit; this guards a
+                        // file that grew since its size was read.
+                        if contents.len() as u64 > MAX_TEXT_BYTES {
+                            return Ok(());
+                        }
+                    }
+                }
+                .await;
+                reader.close().await;
+                read.map(|()| contents)
+            }
         }
     }
 
@@ -239,13 +336,23 @@ impl Side {
                 let handle = fs.open_for_read(path).await?;
                 Reader::Remote { fs, handle }
             }
+            Self::Stored { .. } => self.stream().await?,
         })
     }
 }
 
 enum Reader<'a> {
     Local(tokio::fs::File),
-    Remote { fs: Channel<'a>, handle: String },
+    Remote {
+        fs: Channel<'a>,
+        handle: String,
+    },
+    Stored {
+        stream: Box<dyn ReadStream>,
+        /// Read from the stream and not yet handed out.
+        buffered: Vec<u8>,
+        ended: bool,
+    },
 }
 
 impl Reader<'_> {
@@ -278,12 +385,33 @@ impl Reader<'_> {
                 }
                 Ok(block)
             }
+            Self::Stored {
+                stream,
+                buffered,
+                ended,
+            } => {
+                let block_bytes = (BLOCK_PARTS * BLOCK_PART_BYTES) as usize;
+                while buffered.len() < block_bytes && !*ended {
+                    match stream.next_chunk().await? {
+                        Some(chunk) => buffered.extend_from_slice(&chunk),
+                        None => *ended = true,
+                    }
+                }
+                let rest = buffered.split_off(buffered.len().min(block_bytes));
+                Ok(std::mem::replace(buffered, rest))
+            }
         }
     }
 
     async fn close(self) {
-        if let Self::Remote { fs, handle } = self {
-            let _ = fs.close_handle(handle).await;
+        match self {
+            Self::Local(_) => {}
+            Self::Remote { fs, handle } => {
+                let _ = fs.close_handle(handle).await;
+            }
+            Self::Stored { stream, .. } => {
+                let _ = stream.finish().await;
+            }
         }
     }
 }

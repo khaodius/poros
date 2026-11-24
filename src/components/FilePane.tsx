@@ -60,6 +60,7 @@ import { useBackForwardButtons } from "../hooks/useBackForwardButtons";
 import { useFolderCompare, useHiddenIdentical } from "../hooks/useFolderCompare";
 import { useListingPrefetch } from "../hooks/useListingPrefetch";
 import { usePane, type Focus } from "../hooks/usePane";
+import { useBucketVersioning, usePaneVersions } from "../hooks/usePaneVersions";
 import { useSearch, type SearchView } from "../hooks/useSearch";
 import { archiveFormatOf, isSingleFile, unpackedName } from "../lib/archives";
 import { COLUMN_LABELS, availableColumns, type DetailColumn } from "../lib/columns";
@@ -87,6 +88,7 @@ import { groupOfTab } from "../lib/layout";
 import { isDirLike, type SortKey, type SortSpec } from "../lib/sort";
 import type { DirListing, FileEntry, FileLocation, PlaceMode } from "../lib/types";
 import { sessionShowing, vaultSessions, vaultSign } from "../lib/vaults";
+import { bucketOf, deletionsIn } from "../lib/versions";
 import { archivesAmong, extractArchives } from "../state/archiveActions";
 import { useClipboardStore } from "../state/clipboardStore";
 import { beginDrag, useDragStore, type DropHandler } from "../state/dragStore";
@@ -133,6 +135,7 @@ import {
 } from "../state/transferActions";
 import { useUiStore } from "../state/uiStore";
 import { requestLockVault, vaultHandover } from "../state/vaultActions";
+import { bucketsKeepingVersions, resolveDeleted } from "../state/versionActions";
 import { workspaceChanged } from "../state/workspace";
 import { BulkRenameDialog } from "./BulkRenameDialog";
 import { CompareDialog, type CompareSide } from "./CompareDialog";
@@ -153,17 +156,22 @@ import { ShareDialog } from "./ShareDialog";
 import { VaultUnlockCard } from "./VaultUnlockCard";
 import { serverCommandsMenu } from "./commandMenu";
 import { shareMenuItem } from "./shareMenu";
+import { deletedMenuItems, showDeletedMenuItem, versionsMenuItem } from "./versionMenu";
+import { PurgeDeletedDialog, VersionsDialog } from "./VersionsDialog";
 
 type PaneDialog =
   | { type: "newFolder" }
   | { type: "newFile"; example: string }
   | { type: "newVault" }
-  | { type: "delete"; entries: FileEntry[] }
+  /** `withVersions`: the buckets the dialog says go with their versions, as it opened. */
+  | { type: "delete"; entries: FileEntry[]; withVersions: ReadonlySet<string> }
   | { type: "placeTo"; mode: PlaceMode; entries: FileEntry[] }
   | { type: "properties"; entries: FileEntry[] }
   | { type: "share"; entries: FileEntry[] }
   | { type: "bulkRename"; origin: FileOrigin; folder: string; entries: FileEntry[] }
-  | { type: "compare"; left: CompareSide; right: CompareSide };
+  | { type: "compare"; left: CompareSide; right: CompareSide }
+  | { type: "versions"; entry: FileEntry }
+  | { type: "purgeDeleted"; entries: FileEntry[] };
 
 interface FilePaneProps {
   tabId: string;
@@ -295,9 +303,12 @@ export function FilePane({
   const groupByDate = useSettingsStore((state) => state.settings.appearance[groupSetting]);
   // A server and its unlocked vaults share their paths: wherever the pane goes, the path tells
   // which of their sessions lists it, and the tab takes that session.
+  const objectVersions = usePaneVersions(source, sessionId);
+  const { deletedView } = objectVersions;
   const handover = useCallback(
-    (path: string) => (sessionId ? vaultHandover(tabId, sessionId, path) : null),
-    [tabId, sessionId],
+    (path: string) =>
+      sessionId ? (vaultHandover(tabId, sessionId, path) ?? deletedView(path)) : null,
+    [tabId, sessionId, deletedView],
   );
   const hiddenIdentical = useHiddenIdentical(tabId);
   /** The entry whose row shows the name field. */
@@ -414,7 +425,11 @@ export function FilePane({
         refresh: (focus) => refreshRef.current(focus),
         clear: () => paneRef.current.clear(),
         loading: () => paneRef.current.isLoading(),
-        selected: () => paneRef.current.selectedEntries(),
+        selected: () => {
+          // A deleted row is not there to be copied, compared or transferred.
+          const deleted = deletionsIn(paneRef.current.listing);
+          return paneRef.current.selectedEntries().filter((entry) => !deleted.has(entry.path));
+        },
         entries: () => paneRef.current.listing?.entries ?? [],
         showsResults: () => paneRef.current.showingResults,
         visible: false,
@@ -433,6 +448,19 @@ export function FilePane({
   useEffect(() => {
     if (listedPath) workspaceChanged();
   }, [listedPath]);
+
+  const versioning = useBucketVersioning(sessionId, listedPath, objectVersions.available);
+  const deletions = deletionsIn(pane.listing);
+  const deletedPaths = useMemo(() => new Set(deletions.keys()), [deletions]);
+  /** Leaves out deleted rows, which offer only what brings them back or removes them. */
+  const live = (entries: FileEntry[]) => entries.filter((entry) => !deletions.has(entry.path));
+  // Counted apart from the files there, among the entries the filter lets through.
+  const deletedCount =
+    deletions.size === 0
+      ? 0
+      : (pane.groups ? pane.groups.flatMap((group) => group.entries) : pane.visibleEntries).filter(
+          (entry) => deletions.has(entry.path),
+        ).length;
 
   // What a server's folder is by its listing: a locked vault, one too old to open, or neither.
   // An unlocked vault lists its decrypted files, among which nothing marks a vault.
@@ -729,7 +757,20 @@ export function FilePane({
       entries,
     });
   };
-  const openDelete = () => selected.length > 0 && setDialog({ type: "delete", entries: selected });
+  /** Asks before deleting. Only the buckets its confirmation names lose their versions: one
+   * learned as keeping none, and switched on elsewhere since, is refused as not empty. */
+  const confirmDelete = (entries: FileEntry[]) =>
+    setDialog({
+      type: "delete",
+      entries,
+      withVersions: new Set(bucketsKeepingVersions(sessionId, protocol, entries)),
+    });
+  const openDelete = () => {
+    const kept = live(selected);
+    const deleted = selected.filter((entry) => deletions.has(entry.path));
+    if (kept.length > 0) confirmDelete(kept);
+    else if (deleted.length > 0) setDialog({ type: "purgeDeleted", entries: deleted });
+  };
 
   const copyPaths = (entries: FileEntry[]) => {
     const text =
@@ -766,8 +807,9 @@ export function FilePane({
   }, [previewOpen]);
 
   const startDrag = (event: ReactPointerEvent<HTMLElement>, entry: FileEntry) => {
+    if (deletions.has(entry.path)) return;
     const wasSelected = pane.selection.has(entry.path);
-    const selectedNow = pane.selectedEntries();
+    const selectedNow = live(pane.selectedEntries());
     const drop: DropHandler = (target, payload, copy) => {
       if (target.kind !== "pane" || payload.kind !== "files") return;
       const action = dropAction(tabId, payload.entries, target, copy);
@@ -818,7 +860,7 @@ export function FilePane({
   const ownGroup = () => groupOfTab(useLayoutStore.getState().root, tabId)?.id;
 
   const edit = (entry: FileEntry) => {
-    if (isDirLike(entry)) return;
+    if (isDirLike(entry) || deletions.has(entry.path)) return;
     const location =
       source.kind === "remote" && sessionId
         ? { side: "remote" as const, sessionId, path: entry.path }
@@ -833,12 +875,13 @@ export function FilePane({
 
   /** Open: the file's own program, with Ctrl+Enter. */
   const openExternally = (entry: FileEntry) => {
-    if (!isDirLike(entry)) void openWithDefault(openTarget(entry));
+    if (!isDirLike(entry) && !deletions.has(entry.path)) void openWithDefault(openTarget(entry));
   };
 
   const cutOrCopy = (mode: PlaceMode, entries: FileEntry[]) => {
     const self = getPane(tabId);
-    if (self) putOnClipboard(mode, self, entries);
+    const kept = live(entries);
+    if (self && kept.length > 0) putOnClipboard(mode, self, kept);
   };
 
   /** Into the folder clicked, else the one on show. */
@@ -857,6 +900,7 @@ export function FilePane({
   };
 
   const activateFile = (entry: FileEntry) => {
+    if (deletions.has(entry.path)) return;
     if (doubleClickFile === "transfer") transferToOtherSide(tabId, [entry]);
     else if (doubleClickFile === "edit") edit(entry);
     else if (doubleClickFile === "open") openExternally(entry);
@@ -1135,6 +1179,32 @@ export function FilePane({
     ];
   };
 
+  const toggleDeleted = () => {
+    objectVersions.setShowDeleted(!objectVersions.showDeleted);
+    void pane.refresh();
+  };
+
+  /** Show deleted files, in a bucket of a server that keeps versions. */
+  const showDeletedItems = (): MenuItem[] =>
+    objectVersions.available && listedPath && bucketOf(listedPath) && !inResults
+      ? [showDeletedMenuItem(versioning, objectVersions.showDeleted, toggleDeleted)]
+      : [];
+
+  const deletedRowMenu = (entries: FileEntry[]): MenuItem[] =>
+    deletedMenuItems({
+      count: entries.length,
+      file: entries[0].kind !== "dir",
+      restore: () =>
+        sessionId &&
+        listedPath &&
+        void resolveDeleted("restore", { sessionId, folder: listedPath, entries }),
+      versions: () => setDialog({ type: "versions", entry: entries[0] }),
+      purge: () => setDialog({ type: "purgeDeleted", entries }),
+      copyPaths: () => copyPaths(entries),
+      refresh: () => void pane.refresh(),
+      showDeleted: showDeletedMenuItem(versioning, objectVersions.showDeleted, toggleDeleted),
+    });
+
   /** Commands run in one folder, so results from several have none to run in. */
   const commandsMenuItem = (server: string, shown: string, targets: FileEntry[]): MenuItem => {
     const folder = !inResults ? shown : targets.length > 0 ? sharedFolder(targets, style) : shown;
@@ -1150,7 +1220,11 @@ export function FilePane({
   };
 
   const contextMenuItems = (entry: FileEntry | null): MenuItem[] => {
-    const targets = entry ? (pane.selection.has(entry.path) ? selected : [entry]) : [];
+    const chosen = entry ? (pane.selection.has(entry.path) ? selected : [entry]) : [];
+    if (entry && deletions.has(entry.path)) {
+      return deletedRowMenu(chosen.filter((target) => deletions.has(target.path)));
+    }
+    const targets = live(chosen);
     const compare = compareMenuItem(targets);
     const extract = extractMenuItems(targets);
     const lockable = lockableVault(targets.length > 1 ? null : entry);
@@ -1246,8 +1320,9 @@ export function FilePane({
             },
           ]
         : []),
-      ...(entry ? [] : [sortMenu(), groupMenu()]),
-      // The server, or the unlocked vault, as a drive other programs open files on.
+      ...(entry ? [] : [sortMenu(), groupMenu(), ...showDeletedItems()]),
+      // The server, or the unlocked vault, as a drive other programs open files on. A deleted
+      // row has a menu of its own, so this is only ever offered on empty space.
       ...(!entry && source.kind === "remote" && sessionId
         ? [
             {
@@ -1281,6 +1356,9 @@ export function FilePane({
       },
       ...(shareItem ? [shareItem] : []),
       ...(compare ? [compare] : []),
+      ...(objectVersions.available && targets.length === 1 && !isDirLike(targets[0])
+        ? [versionsMenuItem(versioning, () => setDialog({ type: "versions", entry: targets[0] }))]
+        : []),
       ...(source.kind === "remote" && targets.length > 0
         ? [
             {
@@ -1299,7 +1377,7 @@ export function FilePane({
         shortcut: "Del",
         danger: true,
         disabled: targets.length === 0,
-        onSelect: () => setDialog({ type: "delete", entries: targets }),
+        onSelect: () => confirmDelete(targets),
       },
     ];
   };
@@ -1583,6 +1661,7 @@ export function FilePane({
                   onOpenInEditor={edit}
                   onSwitchPane={focusNextPane}
                   onLeave={focusList}
+                  leftOut={deletedPaths}
                 />
               ) : null
             }
@@ -1603,6 +1682,7 @@ export function FilePane({
               fontSize={fontSize}
               dropFolder={dropFolder}
               cutPaths={cutPaths}
+              deletedPaths={deletedPaths}
               compareMarks={folderCompare.marks}
               onActivate={markActive}
               onContextMenu={showContextMenu}
@@ -1610,8 +1690,13 @@ export function FilePane({
               onDelete={openDelete}
               renaming={renaming}
               heldPaths={heldPaths}
-              onRename={(entry) => setRenaming(entry.path)}
-              onRenameSeveral={() => openBulkRename(pane.selectedEntries())}
+              onRename={(entry) => !deletions.has(entry.path) && setRenaming(entry.path)}
+              onRenameSeveral={() => {
+                // Deleted rows stay out: one live row left among them renames in place.
+                const kept = live(pane.selectedEntries());
+                if (kept.length === 1) setRenaming(kept[0].path);
+                else openBulkRename(kept);
+              }}
               onRenameSubmit={renameEntry}
               onRenameCancel={() => setRenaming(null)}
               onEdit={edit}
@@ -1674,8 +1759,11 @@ export function FilePane({
 
       <footer className="pane-footer">
         <span>
-          {lockedCard ? "Locked vault" : pluralize(pane.entryCount, inResults ? "result" : "item")}
+          {lockedCard
+            ? "Locked vault"
+            : pluralize(pane.entryCount - deletedCount, inResults ? "result" : "item")}
           {!lockedCard && pane.hiddenCount > 0 && `, ${pane.hiddenCount} hidden`}
+          {!lockedCard && deletedCount > 0 && `, ${deletedCount} deleted`}
           {!lockedCard && identicalHidden > 0 && `, ${identicalHidden} identical not shown`}
         </span>
         {selected.length > 0 && (
@@ -1800,12 +1888,43 @@ export function FilePane({
         <CompareDialog left={dialog.left} right={dialog.right} onClose={() => setDialog(null)} />
       )}
 
+      {dialog?.type === "versions" && sessionId && (
+        <VersionsDialog
+          file={{ sessionId, path: dialog.entry.path, name: dialog.entry.name }}
+          nearGroupId={ownGroup()}
+          onClose={closeDialog(dialog)}
+        />
+      )}
+
+      {dialog?.type === "purgeDeleted" && sessionId && listedPath && (
+        <PurgeDeletedDialog
+          chosen={dialog.entries}
+          listing={pane.listing}
+          onClose={closeDialog(dialog)}
+          onConfirm={async (entries) => {
+            const removed = new Set(entries.map((entry) => entry.path));
+            void resolveDeleted("purge", {
+              sessionId,
+              folder: listedPath,
+              entries,
+              focusPath: entryAfterRemoval(pane.visibleEntries, removed, pane.cursorPath),
+            });
+          }}
+        />
+      )}
+
       {dialog?.type === "delete" && (
         <DeleteDialog
           chosen={dialog.entries}
           listing={pane.listing}
           checking={pane.stale === "refreshing"}
-          summary={(entries) => <DeleteSummary entries={entries} where={where} />}
+          summary={(entries) => (
+            <DeleteSummary
+              entries={entries}
+              where={where}
+              buckets={entries.filter((entry) => dialog.withVersions.has(entry.path)).length}
+            />
+          )}
           onClose={closeDialog(dialog)}
           onConfirm={async (entries) => {
             const removed = entries.map((entry) => entry.path);
@@ -1822,7 +1941,10 @@ export function FilePane({
               });
               return;
             }
-            await source.remove(removed);
+            await source.remove(
+              removed,
+              removed.filter((path) => dialog.withVersions.has(path)),
+            );
             writeLog("info", `Deleted ${pluralize(entries.length, `${where} item`)} in ${folder}`);
             if (inResults) await resultsChanged(entries, [], next, true);
             else await pane.refresh(next);
@@ -1833,7 +1955,14 @@ export function FilePane({
   );
 }
 
-function DeleteSummary({ entries, where }: { entries: FileEntry[]; where: string }) {
+interface DeleteSummaryProps {
+  entries: FileEntry[];
+  where: string;
+  /** Buckets among `entries` that may keep older versions and deleted files. */
+  buckets?: number;
+}
+
+function DeleteSummary({ entries, where, buckets = 0 }: DeleteSummaryProps) {
   const folders = entries.filter((entry) => entry.kind === "dir").length;
   const preview = entries.slice(0, 5);
   return (
@@ -1849,6 +1978,12 @@ function DeleteSummary({ entries, where }: { entries: FileEntry[]; where: string
       </p>
       {folders > 0 && (
         <p className="warning-text">Folders are deleted with everything inside them.</p>
+      )}
+      {buckets > 0 && (
+        <p className="warning-text">
+          Every older version and deleted file kept in the {buckets === 1 ? "bucket" : "buckets"}{" "}
+          goes too.
+        </p>
       )}
       {entries.length > 1 && (
         <ul className="delete-preview">

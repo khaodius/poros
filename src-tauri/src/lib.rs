@@ -52,6 +52,7 @@ pub mod tls;
 pub mod transfer;
 #[cfg(feature = "gui")]
 pub mod update;
+pub mod versions;
 #[cfg(feature = "gui")]
 pub mod workspace;
 
@@ -340,6 +341,15 @@ pub fn run() {
             commands::files_compare,
             commands::files_extract,
             commands::archive_tools,
+            commands::versions_status,
+            commands::versions_list,
+            commands::versions_list_deleted,
+            commands::versions_restore,
+            commands::versions_delete,
+            commands::versions_download,
+            commands::versions_compare,
+            commands::versions_open,
+            commands::versions_deleted,
             commands::transfer_enqueue,
             commands::transfer_list,
             commands::transfer_set_paused,
