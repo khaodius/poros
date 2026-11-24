@@ -22,7 +22,7 @@ export const connect = {
   privateKeyFile: "Private Schlüsseldatei",
   sshIdEd25519OrC: "~/.ssh/id_ed25519 oder C:\\keys\\server.ppk",
   opensshPemPkcs8And:
-    "Unterstützt werden Schlüssel in OpenSSH, PEM, PKCS#8 und PuTTY .ppk (v2 und v3).",
+    "Unterstützt werden Schlüssel in den Formaten OpenSSH, PEM, PKCS#8 und PuTTY .ppk (v2 und v3).",
   usesKeysLoadedInYour:
     "Verwendet die Schlüssel, die in Ihrem SSH-Agent geladen sind: {variable} unter Linux und macOS, den Dienst OpenSSH Authentication Agent oder Pageant unter Windows.",
   region: "Region",
@@ -102,9 +102,9 @@ export const connect = {
   imported: { one: "{count} Verbindung importiert.", other: "{count} Verbindungen importiert." },
   theseCouldNotBeSaved: "Diese konnten nicht gespeichert werden: {failures}",
   passwordsLeftOut: {
-    one: "Der Schlüsselbund des Systems ist nicht verfügbar, daher wurde {count} Passwort ausgelassen. Poros fragt danach, wenn Sie verbinden.",
+    one: "Der Schlüsselbund des Systems ist nicht verfügbar, daher wurde {count} Passwort ausgelassen. Poros fragt danach, wenn Sie sich verbinden.",
     other:
-      "Der Schlüsselbund des Systems ist nicht verfügbar, daher wurden {count} Passwörter ausgelassen. Poros fragt danach, wenn Sie verbinden.",
+      "Der Schlüsselbund des Systems ist nicht verfügbar, daher wurden {count} Passwörter ausgelassen. Poros fragt danach, wenn Sie sich verbinden.",
   },
   porosWorksOutWhichApp: "Poros erkennt, welches Programm die Datei geschrieben hat",
   lookingForOtherApps: "Andere Programme werden gesucht...",

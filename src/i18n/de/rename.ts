@@ -37,7 +37,7 @@ export const rename = {
   extension: "Erweiterung",
   newExtension: "Neue Erweiterung",
   newExtensionSuchAsJpg: "Neue Erweiterung, etwa jpg",
-  trimAndTidy: "Kürzen und aufräumen",
+  trimAndTidy: "Bereinigen",
   trimSpacesAtTheEnds: "Leerzeichen an den Enden entfernen",
   makeRepeatedSpacesOne: "Mehrfache Leerzeichen zu einem machen",
   replaceSpacesWith: "Leerzeichen ersetzen durch",

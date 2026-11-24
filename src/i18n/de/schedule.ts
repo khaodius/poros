@@ -78,7 +78,7 @@ export const schedule = {
   addTheServerPathsThe:
     "Fügen Sie die Serverpfade hinzu, die die Aufgabe kopiert, etwa /var/www/site. Ein Ordner kommt mit seinem gesamten Inhalt.",
   betweenServers: "Zwischen Servern",
-  chooseTheFolderToDownload: "Ordner zum Herunterladen auswählen",
+  chooseTheFolderToDownload: "Zielordner für den Download auswählen",
   copiesFilesAndFoldersFrom: "Kopiert Dateien und Ordner von diesem Computer auf den Server.",
   copiesFilesAndFoldersFromOne:
     "Kopiert Dateien und Ordner von einer gespeicherten Verbindung zu einer anderen.",
@@ -104,7 +104,7 @@ export const schedule = {
   overwriteIfSizeOrDate: "Überschreiben, wenn Größe oder Datum abweichen",
   keepBoth: "Beide behalten",
   everyDay: "Jeden Tag",
-  weekdays: "Werktags",
+  weekdays: "Montag bis Freitag",
   weekends: "Am Wochenende",
   onceAt: "Einmal, {date}",
   everyMinutes: { one: "Jede Minute", other: "Alle {count} Minuten" },

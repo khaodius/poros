@@ -5,7 +5,7 @@ export const settings = {
   languageSystem: "System ({language})",
 
   // components/SettingsDialog
-  settingsSections: "Bereiche der Einstellungen",
+  settingsSections: "Abschnitte der Einstellungen",
   queue: "Warteschlange",
   simultaneousTransfers: "Gleichzeitige Übertragungen",
   simultaneousTransfersHint: "Wie viele Dateien gleichzeitig übertragen werden.",
@@ -49,7 +49,7 @@ export const settings = {
     "Eine Datei erscheint erst unter ihrem Namen, wenn sie vollständig und geprüft ist, und eine ersetzte Datei bleibt nie halb geschrieben zurück. Uploads auf FTP-Server werden direkt geschrieben.",
   verifyChecksums: "Prüfsummen kontrollieren",
   verifyChecksumsHint:
-    "Vergleicht nach jeder Datei einen SHA-256 beider Kopien, auf SFTP-Servern mit deren eigenem sha256sum berechnet. SHA-1 und MD5 werden dafür nie verwendet, da sie sich fälschen lassen. Liest jede Datei auf beiden Seiten ein weiteres Mal.",
+    "Vergleicht nach jeder Datei die SHA-256-Prüfsumme beider Kopien, auf SFTP-Servern mit deren eigenem sha256sum berechnet. SHA-1 und MD5 werden dafür nie verwendet, da sie sich fälschen lassen. Liest jede Datei auf beiden Seiten ein weiteres Mal.",
   readFilesBackWhenThe: "Dateien zurücklesen, wenn der Server sie nicht hashen kann",
   readFilesBackWhenTheHint:
     "Auf SFTP-Servern ohne sha256sum sowie auf FTP- und WebDAV-Servern wird jede fertige Datei zurückgelesen und hier gehasht. Verdoppelt den Datenverkehr mit diesen Servern. Cloud-Speicher wird nicht zurückgelesen.",
@@ -61,7 +61,7 @@ export const settings = {
     "Vergleicht Teil für Teil, was schon vorhanden ist, mit der Quelle und setzt beim ersten abweichenden Teil fort. Wo der Server Teile einer Datei nicht hashen kann, werden die letzten 64 KiB verglichen.",
   flushToDiskBeforeFinishing: "Vor dem Abschluss auf den Datenträger schreiben",
   flushToDiskBeforeFinishingHint:
-    "Eine Datei gilt erst als fertig, wenn sie gespeichert ist, sodass ein Stromausfall direkt danach sie nicht kosten kann. Auf Servern, die das unterstützen. Verlangsamt viele kleine Dateien.",
+    "Eine Datei gilt erst als fertig, wenn sie gespeichert ist, sodass sie bei einem Stromausfall direkt danach nicht verloren geht. Auf Servern, die das unterstützen. Verlangsamt viele kleine Dateien.",
   checkTimesAndPermissionsAfter: "Zeiten und Berechtigungen nach dem Setzen prüfen",
   checkTimesAndPermissionsAfterHint:
     "Liest sie zurück, sobald eine Datei an ihrem Platz ist, und vermerkt im Protokoll, was der Server oder das Dateisystem nicht behalten hat.",
@@ -116,7 +116,7 @@ export const settings = {
   forget: "Vergessen",
   lookUpServerNamesThrough: "Servernamen über den Proxy auflösen",
   lookUpServerNamesThroughHint:
-    "Der DNS dieses Computers sieht nie die Namen der Server, mit denen Sie sich verbinden. HTTP-Proxys tun das immer.",
+    "Der DNS-Server dieses Computers sieht nie die Namen der Server, mit denen Sie sich verbinden. HTTP-Proxys tun das immer.",
   proxyPassword: "Proxy-Passwort",
   saved: "Gespeichert",
   doubleClickingAFile: "Doppelklick auf eine Datei",
@@ -138,10 +138,10 @@ export const settings = {
     "Ein schon geöffneter Ordner erscheint sofort so, wie er zuletzt aussah, und wird aktualisiert, sobald der Server antwortet. Listen bleiben nur im Arbeitsspeicher, nie auf dem Datenträger.",
   loadNearbyFoldersAhead: "Benachbarte Ordner vorab laden",
   loadNearbyFoldersAheadHint:
-    "Listet den übergeordneten Ordner und den Ordner unter dem Cursor, während der Server nichts zu tun hat, einen nach dem anderen. Pausiert bei FTP, solange Übertragungen laufen.",
+    "Listet den übergeordneten Ordner und den Ordner unter dem Cursor auf, während der Server nichts zu tun hat, einen nach dem anderen. Ruht bei FTP, solange Übertragungen laufen.",
   alsoOnCloudStorage: "Auch auf Cloud-Speicher",
   alsoOnCloudStorageHint:
-    "Aus: Auf Cloud-Speicher, wo Anfragen gezählt und begrenzt werden, wird nichts vorab gelistet.",
+    "Aus: Auf Cloud-Speicher, wo Anfragen gezählt und begrenzt werden, wird nichts vorab aufgelistet.",
   tabsAndWindows: "Tabs und Fenster",
   askBeforeClosingATab: "Vor dem Schließen eines Tabs mit wartenden Übertragungen fragen",
   rememberTabsAndLayout: "Tabs und Anordnung merken",
@@ -151,7 +151,7 @@ export const settings = {
   reconnectToServersOnStartHint: "Aus: Wieder geöffnete Server-Tabs warten, bis Sie sie verbinden.",
   useTheSystemTitleBar: "Titelleiste des Systems verwenden",
   useTheSystemTitleBarHint:
-    "Aus: Die obere Leiste trägt die Fensterknöpfe und verschiebt das Fenster.",
+    "Aus: Die obere Leiste trägt die Fensterschaltflächen und verschiebt das Fenster.",
   log: "Protokoll",
   linesToKeep: "Zu behaltende Zeilen",
   showTimes: "Uhrzeiten zeigen",
@@ -184,7 +184,7 @@ export const settings = {
   keepBoth: "Beide behalten",
   checking: "Wird geprüft...",
   checkForUpdates: "Nach Updates suchen",
-  listing: "Wird gelistet...",
+  listing: "Wird aufgelistet...",
   showVersions: "Versionen zeigen",
   language: "Sprache",
   languageHint:

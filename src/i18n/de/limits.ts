@@ -15,7 +15,7 @@ export const limits = {
   editTheRule: "Regel bearbeiten",
   moveUp: "Nach oben",
   moveUp2: "{label} nach oben verschieben",
-  moveDownSoItWins: "Nach unten, damit sie über die Regeln darüber gewinnt",
+  moveDownSoItWins: "Nach unten, damit sie Vorrang vor den Regeln darüber hat",
   moveDown: "{label} nach unten verschieben",
   deleteRule: "Regel löschen",
   delete: "{label} löschen",

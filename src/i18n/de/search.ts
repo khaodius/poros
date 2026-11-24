@@ -98,8 +98,8 @@ export const search = {
   untilDay: "Bis {day}",
   levelsDown: { one: "{count} Ebene tiefer", other: "{count} Ebenen tiefer" },
   everything: "Alles",
-  regularExpressionInAList: "regulärer Ausdruck",
+  regularExpressionInAList: "Regulärer Ausdruck",
   matchCaseInAList: "Groß-/Kleinschreibung beachten",
-  hiddenFoldersInAList: "versteckte Ordner",
+  hiddenFoldersInAList: "Versteckte Ordner",
   followingLinksInAList: "Verknüpfungen folgen",
 } satisfies TranslatedArea<"search">;

@@ -110,7 +110,7 @@ export const pane = {
     "Dateien hier werden im Tresor {name} verschlüsselt, bevor sie den Server erreichen",
   filter: "Filter",
   filterThisFolderCtrlF: "Diesen Ordner filtern (Ctrl+F)",
-  clearFilter: "Filter löschen",
+  clearFilter: "Filter leeren",
   thisFolderIsALocked: "Dieser Ordner ist ein gesperrter Cryptomator-Tresor.",
   unlock: "Entsperren",
   thisVaultUsesAnOlder:

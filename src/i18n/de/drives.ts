@@ -41,9 +41,9 @@ export const drives = {
     other: "Die Laufwerke unter {paths} werden getrennt, wenn Poros beendet wird.",
   },
   busyDrivesLoseOpenFiles:
-    "Programme haben noch Dateien darauf geöffnet, oder Uploads stehen aus. Die Programme verlieren die geöffneten Dateien, und was noch nicht auf dem Server ist, bleibt auf diesem Computer, aufgeführt unter den Laufwerken in der Statusleiste.",
+    "Programme haben noch Dateien darauf geöffnet, oder Uploads stehen aus. Die Programme verlieren die geöffneten Dateien, und was noch nicht auf dem Server ist, bleibt auf diesem Computer, aufgelistet unter den Laufwerken in der Statusleiste.",
   busyDrivesLoseOpenFilesWithVault:
-    "Programme haben noch Dateien darauf geöffnet, oder Uploads stehen aus. Die Programme verlieren die geöffneten Dateien, und was noch nicht auf dem Server ist, bleibt auf diesem Computer, aufgeführt unter den Laufwerken in der Statusleiste. Aus einem Tresor aufbewahrte Dateien liegen unverschlüsselt vor, bis Sie sie speichern oder verwerfen.",
+    "Programme haben noch Dateien darauf geöffnet, oder Uploads stehen aus. Die Programme verlieren die geöffneten Dateien, und was noch nicht auf dem Server ist, bleibt auf diesem Computer, aufgelistet unter den Laufwerken in der Statusleiste. Aus einem Tresor aufbewahrte Dateien liegen unverschlüsselt vor, bis Sie sie speichern oder verwerfen.",
 
   // components/MountDialog
   mountNameAsADrive: "{name} als Laufwerk einbinden",
@@ -66,7 +66,7 @@ export const drives = {
   readOnlyProgramsCanOpen: "Schreibgeschützt: Programme können Dateien öffnen, aber nicht ändern",
   openInFileManagerWhen: "Nach dem Einbinden im Dateimanager öffnen",
   theConnectionIsLostReconnect:
-    "Die Verbindung ist unterbrochen. Verbinden Sie erneut, um das Laufwerk einzubinden.",
+    "Die Verbindung ist unterbrochen. Verbinden Sie sich erneut, um das Laufwerk einzubinden.",
   mounting: "Wird eingebunden...",
   mount: "Einbinden",
 

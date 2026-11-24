@@ -30,7 +30,7 @@ export const fileList = {
   earlierThisWeek: "Anfang dieser Woche",
   lastWeek: "Letzte Woche",
   earlierThisMonth: "Anfang dieses Monats",
-  lastMonth: "Letzter Monat",
+  lastMonth: "Letzten Monat",
   earlierThisYear: "Anfang dieses Jahres",
   aLongTimeAgo: "Vor langer Zeit",
   dateUnknown: "Datum unbekannt",

@@ -23,9 +23,9 @@ export const transfers = {
   connectionLostWaitingForTheServer: "Verbindung unterbrochen, wartet auf den Server",
   waitingToRetry: "Wartet auf Wiederholung (Versuch {attempt})",
   queued: "Wartet",
-  listingFolder: "Ordner wird gelistet",
-  updatingWithRsyncSent: "Aktualisiert mit rsync, {size} gesendet",
-  copyingDirectlyBetweenTheServers: "Kopiert direkt zwischen den Servern",
+  listingFolder: "Ordner wird aufgelistet",
+  updatingWithRsyncSent: "Wird mit rsync aktualisiert, {size} gesendet",
+  copyingDirectlyBetweenTheServers: "Wird direkt zwischen den Servern kopiert",
   transferringOnConnections: {
     one: "Überträgt über {count} Verbindung",
     other: "Überträgt über {count} Verbindungen",

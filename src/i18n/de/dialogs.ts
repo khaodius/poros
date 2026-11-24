@@ -49,8 +49,8 @@ export const dialogs = {
   linksHaveNoPermissionsOf:
     "Verknüpfungen haben keine eigenen Berechtigungen und bleiben daher, wie sie sind. Änderungen an Besitzer und Gruppe gelten für die Verknüpfungen selbst.",
   andMoreListedInThe: {
-    one: "und {count} weiteres, im Protokoll aufgeführt",
-    other: "und {count} weitere, im Protokoll aufgeführt",
+    one: "und {count} weiteres, im Protokoll aufgelistet",
+    other: "und {count} weitere, im Protokoll aufgelistet",
   },
   changedItems: { one: "{count} Element geändert", other: "{count} Elemente geändert" },
   octal: "Oktal",

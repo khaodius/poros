@@ -34,8 +34,8 @@ export const compare = {
   stopComparing: "Vergleich beenden ({shortcut})",
   rowsByHowTheyCompare: "Zeilen nach Vergleichsergebnis",
   comparingSubfoldersItemsListedSo: {
-    one: "Unterordner werden verglichen: bisher {count} Element gelistet",
-    other: "Unterordner werden verglichen: bisher {count} Elemente gelistet",
+    one: "Unterordner werden verglichen: bisher {count} Element aufgelistet",
+    other: "Unterordner werden verglichen: bisher {count} Elemente aufgelistet",
   },
   couldNotCompareSubfolders: "Unterordner konnten nicht verglichen werden: {message}",
   thereAreTooManySubfolders:
@@ -97,17 +97,17 @@ export const compare = {
   differentAndNeitherIsNewer: "Verschieden, aber keine Seite ist neuer",
   onBothSidesTheContents: "Auf beiden Seiten. Der Inhalt wird nicht verglichen.",
   neitherListingRefreshed:
-    "Die Liste keines der beiden Bereiche konnte aktualisiert werden. Die Markierungen sind daher womöglich veraltet, bis beide neu gelistet sind",
+    "Die Liste keines der beiden Bereiche konnte aktualisiert werden. Die Markierungen sind daher womöglich veraltet, bis beide neu aufgelistet sind",
   thisListingNotRefreshed:
-    "Die Liste dieses Bereichs konnte nicht aktualisiert werden. Die Markierungen sind daher womöglich veraltet, bis er neu gelistet ist",
+    "Die Liste dieses Bereichs konnte nicht aktualisiert werden. Die Markierungen sind daher womöglich veraltet, bis er neu aufgelistet ist",
   partnerListingNotRefreshed:
-    "Die Liste in {partner} konnte nicht aktualisiert werden. Die Markierungen sind daher womöglich veraltet, bis sie neu gelistet ist",
+    "Die Liste in {partner} konnte nicht aktualisiert werden. Die Markierungen sind daher womöglich veraltet, bis sie neu aufgelistet ist",
   pausedBothShowResults:
-    "Der Vergleich pausiert, solange beide Bereiche Suchergebnisse zeigen. Die Markierungen kehren zurück, wenn die Ergebnisse geschlossen werden",
+    "Der Vergleich ruht, solange beide Bereiche Suchergebnisse zeigen. Die Markierungen kehren zurück, wenn die Ergebnisse geschlossen werden",
   pausedThisShowsResults:
-    "Der Vergleich pausiert, solange dieser Bereich Suchergebnisse zeigt. Die Markierungen kehren zurück, wenn die Ergebnisse geschlossen werden",
+    "Der Vergleich ruht, solange dieser Bereich Suchergebnisse zeigt. Die Markierungen kehren zurück, wenn die Ergebnisse geschlossen werden",
   pausedPartnerShowsResults:
-    "Der Vergleich pausiert, solange {partner} Suchergebnisse zeigt. Die Markierungen kehren zurück, wenn die Ergebnisse geschlossen werden",
+    "Der Vergleich ruht, solange {partner} Suchergebnisse zeigt. Die Markierungen kehren zurück, wenn die Ergebnisse geschlossen werden",
   summaryNewerHere: { one: "{count} hier neuer", other: "{count} hier neuer" },
   summaryOlderHere: { one: "{count} hier älter", other: "{count} hier älter" },
   summaryOnlyHere: { one: "{count} nur hier", other: "{count} nur hier" },

@@ -10,7 +10,7 @@ export const workspace = {
   // components/BottomPanel
   queue: "Warteschlange",
   failed: "Fehlgeschlagen",
-  completed: "Erledigt",
+  completed: "Fertig",
   startQueue: "Warteschlange starten",
   pauseQueue: "Warteschlange anhalten",
   pauseSelected: "Auswahl anhalten",
@@ -23,7 +23,7 @@ export const workspace = {
   clearFailedTransfers: "Fehlgeschlagene Übertragungen entfernen",
   keepEachTransferInView: "Jede Übertragung im Blick behalten, wenn sie fertig wird",
   follow: "Folgen",
-  clearFinishedTransfers: "Erledigte Übertragungen entfernen",
+  clearFinishedTransfers: "Fertige Übertragungen entfernen",
   simultaneousTransfers: "Gleichzeitige Übertragungen",
   workers: "Parallel",
   log: "Protokoll",
@@ -137,5 +137,5 @@ export const workspace = {
 
   // state/restoreActions
   couldNotReopen: "{name} konnte nicht wieder geöffnet werden: {message}",
-  porosNoLongerKnowsHow: "Poros weiß nicht mehr, wie es erreichbar ist.",
+  porosNoLongerKnowsHow: "Poros weiß nicht mehr, wie der Server zu erreichen ist.",
 } satisfies TranslatedArea<"workspace">;

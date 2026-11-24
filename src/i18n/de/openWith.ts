@@ -81,18 +81,19 @@ export const openWith = {
     other: "{count} Dateien von diesem Server sind in anderen Programmen geöffnet:",
   },
   couldNotBeUploadedLockingWipes: {
-    one: "Diese konnte nicht hochgeladen werden. Trotzdem sperren löscht die Änderungen darin.",
-    other: "Diese konnten nicht hochgeladen werden. Trotzdem sperren löscht die Änderungen darin.",
+    one: "Diese konnte nicht hochgeladen werden. „Trotzdem sperren“ löscht die Änderungen darin.",
+    other:
+      "Diese konnten nicht hochgeladen werden. „Trotzdem sperren“ löscht die Änderungen darin.",
   },
   couldNotBeUploadedClosingWipes: {
-    one: "Diese konnte nicht hochgeladen werden. Trotzdem schließen löscht die Änderungen in Tresordateien.",
+    one: "Diese konnte nicht hochgeladen werden. „Trotzdem schließen“ löscht die Änderungen in Tresordateien.",
     other:
-      "Diese konnten nicht hochgeladen werden. Trotzdem schließen löscht die Änderungen in Tresordateien.",
+      "Diese konnten nicht hochgeladen werden. „Trotzdem schließen“ löscht die Änderungen in Tresordateien.",
   },
   couldNotBeUploadedClosingLeaves: {
-    one: "Diese konnte nicht hochgeladen werden. Trotzdem schließen lässt sie in der Liste der Statusleiste, um sie später hochzuladen.",
+    one: "Diese konnte nicht hochgeladen werden. „Trotzdem schließen“ lässt sie in der Liste der Statusleiste, um sie später hochzuladen.",
     other:
-      "Diese konnten nicht hochgeladen werden. Trotzdem schließen lässt sie in der Liste der Statusleiste, um sie später hochzuladen.",
+      "Diese konnten nicht hochgeladen werden. „Trotzdem schließen“ lässt sie in der Liste der Statusleiste, um sie später hochzuladen.",
   },
   lockingEndsEditing: {
     one: "Das Sperren des Tresors beendet die Bearbeitung der Datei daraus und löscht die Arbeitskopien. Was gespeichert wurde, wird zuerst hochgeladen.",
@@ -157,7 +158,7 @@ export const openWith = {
   stopEditingAndDeleteThe: "Bearbeitung beenden und Arbeitskopie löschen",
   stopEditing2: "Bearbeitung von {name} beenden",
   savedButNotUploadedWhen: "Gespeichert, aber beim letzten Schließen von Poros nicht hochgeladen",
-  saved: "gespeichert {date}",
+  saved: "am {date} gespeichert",
   thisCopyOfAVault:
     "Diese Kopie einer Tresordatei ist auf diesem Computer nicht verschlüsselt. Laden Sie sie hoch oder verwerfen Sie sie.",
   uploadTo: "Auf {label} hochladen",

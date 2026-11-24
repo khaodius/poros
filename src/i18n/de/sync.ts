@@ -26,7 +26,7 @@ export const sync = {
   compareDryRun: "Vergleichen (Probelauf)",
   compare: "Vergleichen",
   listingFoldersLocalAndServer:
-    "Ordner werden gelistet: {local} lokale Einträge und {remote} auf dem Server",
+    "Ordner werden aufgelistet: {local} lokale Einträge und {remote} auf dem Server",
 
   // components/SyncPlanList
   rsync: "rsync {arguments}",
@@ -41,9 +41,9 @@ export const sync = {
   action: "Aktion",
   why: "Grund",
   entriesPassedOverBrokenOr: {
-    one: "{count} Eintrag übergangen: defekte oder kreisförmige Verknüpfungen, Spezialdateien und Ordner, die nicht gelesen werden konnten",
+    one: "{count} Eintrag übergangen: defekte oder zirkuläre Verknüpfungen, Spezialdateien und Ordner, die nicht gelesen werden konnten",
     other:
-      "{count} Einträge übergangen: defekte oder kreisförmige Verknüpfungen, Spezialdateien und Ordner, die nicht gelesen werden konnten",
+      "{count} Einträge übergangen: defekte oder zirkuläre Verknüpfungen, Spezialdateien und Ordner, die nicht gelesen werden konnten",
   },
   include: "{path} einbeziehen",
   settle: "{path} klären",
@@ -82,7 +82,7 @@ export const sync = {
   rsyncOnTheServerHint: "Der Befehl, der es startet, für Server, bei denen es nicht im PATH liegt.",
   folderSynchronization: "Ordnersynchronisierung",
   eachSynchronizationStartsWithThese:
-    "Jede Synchronisierung beginnt mit diesen Optionen. Die eigenen rsync-Argumente einer gespeicherten Verbindung kommen hinzu, und Ordner synchronisieren kann jede davon für einen Lauf ändern.",
+    "Jede Synchronisierung beginnt mit diesen Optionen. Die eigenen rsync-Argumente einer gespeicherten Verbindung kommen hinzu, und „Ordner synchronisieren“ kann jede davon für eine Ausführung ändern.",
   typedAsOnRsyncsCommand:
     "So geschrieben wie auf der Befehlszeile von rsync. Sie haben bei jeder Synchronisierung Vorrang vor den Optionen darüber.",
 
@@ -120,9 +120,9 @@ export const sync = {
     one: "{count} unveränderte Quelldatei entfernt",
     other: "{count} unveränderte Quelldateien entfernt",
   },
-  localToServer: "Lokal zum Server",
+  localToServer: "Zum Server",
   makesTheServerFolderMatch: "Gleicht den Ordner auf dem Server an den lokalen an.",
-  serverToLocal: "Server zum lokalen Ordner",
+  serverToLocal: "Vom Server",
   makesTheLocalFolderMatch: "Gleicht den lokalen Ordner an den auf dem Server an.",
   bothWays: "In beide Richtungen",
   copiesNewFilesEachWay:

@@ -89,7 +89,7 @@ export const automation = {
   confirmCloseNow: "Jetzt schließen",
   confirmLockNow: "Jetzt sperren",
   confirmSleepNow: "Jetzt Energie sparen",
-  confirmHibernateNow: "Jetzt Ruhezustand",
+  confirmHibernateNow: "Jetzt in den Ruhezustand",
   confirmLogOffNow: "Jetzt abmelden",
   confirmShutDownNow: "Jetzt herunterfahren",
   transfersFinishedWithErrors: "Übertragungen mit Fehlern beendet",

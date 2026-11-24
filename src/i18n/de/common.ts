@@ -65,7 +65,7 @@ export const common = {
 
   // components/FilePane
   asSentence: "{text}.",
-  none: "Keine",
+  none: "Ohne",
   cut: "Ausschneiden",
   copy: "Kopieren",
   paste: "Einfügen",

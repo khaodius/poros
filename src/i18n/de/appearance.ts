@@ -34,7 +34,7 @@ export const appearance = {
   systemFileIcons: "Dateisymbole des Systems",
   smoothScrolling: "Weicher Bildlauf",
   smoothScrollingHint:
-    "Das Mausrad bewegt Dateilisten, das Protokoll und andere Bereiche gleitend statt in Schritten.",
+    "Das Mausrad bewegt Dateilisten, das Protokoll und andere Ansichten gleitend statt in Schritten.",
   grouping: "Gruppierung",
   groupLocalFilesByDate: "Lokale Dateien nach Datum gruppieren",
   groupLocalFilesByDateHint:
@@ -104,9 +104,9 @@ export const appearance = {
   theSystemAsksAppsFor:
     "Das System bittet Programme um weniger Bewegung, wie Windows, solange seine Animationseffekte aus sind. Solange dies an ist, fliegen Dateien trotzdem.",
   solid: "Einfarbig",
-  oneFlatColor: "Eine flache Farbe.",
+  oneFlatColor: "Eine einheitliche Farbe.",
   gradient: "Verlauf",
-  fadesInFromTheStart: "Blendet vom Anfang des Balkens ein.",
+  fadesInFromTheStart: "Wird vom Anfang des Balkens her eingeblendet.",
   striped: "Gestreift",
   faintDiagonalStripes: "Blasse diagonale Streifen.",
   segmented: "Segmentiert",
@@ -187,7 +187,7 @@ export const appearance = {
   colorAccentSofter: "Blasse Akzenttönung",
   colorTextOnAccent: "Text auf Akzent",
   colorSurfaceBase: "Fensterhintergrund",
-  colorSurfaceRaised: "Bereiche",
+  colorSurfaceRaised: "Bedienfelder",
   colorSurfaceSunken: "Eingabefelder und Listen",
   colorSurfaceOverlay: "Menüs und Dialoge",
   colorSurfaceHover: "Beim Zeigen",
