@@ -4,13 +4,12 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { clipboard, terminal as terminals, toAppError } from "../lib/ipc";
-import { findTab, type TerminalTab } from "../lib/layout";
+import type { TerminalTab } from "../lib/layout";
 import { clipboardText } from "../lib/osc52";
 import { terminalTheme } from "../lib/terminalTheme";
 import type { TerminalEvent } from "../lib/types";
-import { useLayoutStore } from "../state/layoutStore";
 import { useSettingsStore } from "../state/settingsStore";
-import { closeTerminalTab } from "../state/terminalActions";
+import { closeTerminalTab, openShell } from "../state/terminalActions";
 import { useToastStore } from "../state/toastStore";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 
@@ -114,15 +113,9 @@ export default function TerminalPane({ tab, visible, active }: TerminalPaneProps
           await terminals.attach(known, onEvent);
           await terminals.resize(known, xterm.cols, xterm.rows);
         } else {
-          const { sessionId } = tabRef.current;
-          const info = await terminals.open(sessionId, xterm.cols, xterm.rows, onEvent);
-          const layout = useLayoutStore.getState();
-          if (disposed || !findTab(layout.root, tabRef.current.id)) {
-            void terminals.close(info.id).catch(() => undefined);
-            return;
-          }
-          terminalIdRef.current = info.id;
-          layout.replaceTab(tabRef.current.id, { ...tabRef.current, terminalId: info.id });
+          const id = await openShell(tabRef.current.id, xterm, onEvent, () => disposed);
+          if (!id) return;
+          terminalIdRef.current = id;
         }
         if (!disposed) setPhase((current) => (current === "connecting" ? "running" : current));
       } catch (caught) {
