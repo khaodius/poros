@@ -8012,3 +8012,676 @@ textarea::placeholder {
   color: var(--text);
   background: var(--surface-hover);
 }
+
+/* Share links */
+
+.share-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.share-subject {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 12px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.share-subject > svg,
+.share-subject > .file-icon {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.share-subject-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.share-subject-text strong,
+.share-subject-text span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.share-subject-text strong {
+  font-weight: 500;
+}
+
+.share-subject-text span {
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+}
+
+.share-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.share-section-title {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+  font-weight: 600;
+}
+
+.share-links {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.share-link {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 12px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  transition: border-color var(--transition-fast);
+}
+
+.share-link.is-new {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px var(--accent-softer);
+}
+
+.share-link-field,
+.share-batch-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.share-address {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-small);
+  text-overflow: ellipsis;
+}
+
+.button.share-copy {
+  min-width: 86px;
+}
+
+.share-copy.is-copied,
+.share-copy.is-copied:hover:not(:disabled) {
+  color: var(--success);
+}
+
+.share-link-facts {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.share-link-statement {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--font-size-small);
+  line-height: 1.45;
+}
+
+.share-link-note {
+  margin: 0;
+  color: var(--warning);
+  font-size: var(--font-size-small);
+  line-height: 1.45;
+}
+
+.share-stop {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  font-size: var(--font-size-small);
+  background: var(--danger-soft);
+  border-radius: var(--radius-small);
+}
+
+.share-stop span {
+  flex: 1;
+  min-width: 180px;
+}
+
+.share-lifetime {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.share-lifetime .segmented {
+  flex: 1 1 320px;
+}
+
+.share-lifetime .segmented button {
+  padding: 0 8px;
+  white-space: nowrap;
+}
+
+.share-custom-lifetime {
+  display: flex;
+  gap: 6px;
+}
+
+.share-custom-lifetime input {
+  width: 64px;
+}
+
+.share-statement {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: var(--font-size-small);
+  line-height: 1.45;
+  background: var(--accent-softer);
+  border: 1px solid var(--accent-soft);
+  border-radius: var(--radius-small);
+}
+
+.share-batch {
+  max-height: 260px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.share-batch-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: 4px 10px;
+  align-items: center;
+  min-height: 38px;
+  padding: 5px 6px 5px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.share-batch-row:last-child {
+  border-bottom: none;
+}
+
+.share-batch-row.is-new {
+  background: var(--accent-softer);
+}
+
+.share-batch-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.share-batch-name .file-icon {
+  flex: none;
+}
+
+.share-batch-name span,
+.share-batch-status {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.share-batch-link .share-address {
+  height: 24px;
+}
+
+.share-batch-status {
+  color: var(--text-faint);
+  font-size: var(--font-size-small);
+}
+
+.share-batch-error {
+  grid-column: 1 / -1;
+  color: var(--danger);
+  font-size: var(--font-size-small);
+  overflow-wrap: anywhere;
+}
+
+.share-batch-where {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.share-batch-where .share-batch-place {
+  color: var(--text-faint);
+  font-size: var(--font-size-small);
+}
+
+.share-batch-label,
+.share-batch-note {
+  grid-column: 1 / -1;
+  padding-left: 24px;
+  font-size: var(--font-size-small);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.share-batch-label {
+  color: var(--text-muted);
+}
+
+.share-batch-note {
+  color: var(--warning);
+}
+
+/* Preview pane */
+.preview-split {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.preview-split.is-below {
+  flex-direction: column;
+}
+
+.preview-split-list {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.preview-split-preview {
+  display: flex;
+  flex: none;
+  min-width: 0;
+  min-height: 0;
+}
+
+.preview-split.is-side > .preview-split-preview {
+  min-width: 200px;
+  max-width: calc(100% - 180px);
+}
+
+.preview-split.is-below > .preview-split-preview {
+  min-height: 120px;
+  max-height: calc(100% - 96px);
+}
+
+.preview-resizer {
+  position: relative;
+  flex: none;
+  background: var(--border);
+  touch-action: none;
+}
+
+.preview-split.is-side > .preview-resizer {
+  width: 1px;
+  cursor: col-resize;
+}
+
+.preview-split.is-below > .preview-resizer {
+  height: 1px;
+  cursor: row-resize;
+}
+
+/* Wider than the line drawn, so the divider is easy to take hold of. */
+.preview-resizer::before {
+  position: absolute;
+  z-index: 1;
+  content: "";
+}
+
+.preview-split.is-side > .preview-resizer::before {
+  inset: 0 -4px;
+}
+
+.preview-split.is-below > .preview-resizer::before {
+  inset: -4px 0;
+}
+
+.preview-resizer::after {
+  position: absolute;
+  z-index: 1;
+  background: var(--accent);
+  opacity: 0;
+  content: "";
+  transition: opacity var(--transition-fast);
+}
+
+.preview-split.is-side > .preview-resizer::after {
+  inset: 0 -1px;
+}
+
+.preview-split.is-below > .preview-resizer::after {
+  inset: -1px 0;
+}
+
+.preview-resizer:hover::after,
+.preview-resizer:active::after {
+  opacity: 0.6;
+}
+
+.preview {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface-base);
+}
+
+.preview-header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 4px 0 10px;
+  background: var(--list-header);
+  border-bottom: 1px solid var(--border);
+}
+
+.preview-header > .file-icon,
+.preview-header > svg {
+  flex: none;
+}
+
+.preview-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.preview-header .icon-button {
+  width: 22px;
+  height: 22px;
+}
+
+.preview-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: var(--surface-sunken);
+}
+
+.preview-scroll {
+  overflow: auto;
+}
+
+.preview-text {
+  position: absolute;
+  inset: 0;
+}
+
+/* A picture lies on a checkerboard, which shows through where the picture is see-through. */
+.preview-image {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  padding: 12px;
+  overflow: auto;
+  background: var(--surface-sunken);
+}
+
+.preview-image-toggle {
+  display: flex;
+  flex: none;
+  margin: auto;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 0;
+  cursor: zoom-in;
+}
+
+.preview-image.is-actual-size .preview-image-toggle {
+  cursor: zoom-out;
+}
+
+/* Sized by the component, which measures the space it is fitted in. */
+.preview-image img {
+  display: block;
+  background: repeating-conic-gradient(var(--surface-pressed) 0% 25%, var(--surface-raised) 0% 50%)
+    0 0 / 16px 16px;
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+.preview-notice {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 0;
+  padding: 16px;
+  overflow: auto;
+  text-align: center;
+  background: var(--surface-sunken);
+}
+
+.preview-notice-icon {
+  flex: none;
+  color: var(--text-faint);
+}
+
+.preview-notice-title {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.preview-notice-detail {
+  max-width: 300px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+  overflow-wrap: anywhere;
+}
+
+.preview-notice .button {
+  flex: none;
+  margin-top: 4px;
+}
+
+/* Shows only once a load has taken a moment, so quick loads pass without a flicker. */
+.preview-loading {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 0;
+  color: var(--text-muted);
+  background: var(--surface-sunken);
+  animation: preview-appear 120ms ease-out 300ms both;
+}
+
+@keyframes preview-appear {
+  from {
+    opacity: 0;
+  }
+}
+
+.preview-note {
+  display: flex;
+  flex: none;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+  padding: 5px 10px;
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+  background: var(--accent-softer);
+  border-top: 1px solid var(--border);
+}
+
+.preview-header + .preview-note {
+  border-top: none;
+  border-bottom: 1px solid var(--border);
+}
+
+.preview-note > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.preview-note .link-button {
+  flex: none;
+}
+
+.preview-details {
+  display: grid;
+  flex: none;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 3px 12px;
+  max-height: 40%;
+  margin: 0;
+  padding: 8px 10px;
+  overflow-y: auto;
+  font-size: var(--font-size-small);
+  border-top: 1px solid var(--border);
+}
+
+.preview-details > div {
+  display: contents;
+}
+
+.preview-details dt {
+  color: var(--text-faint);
+}
+
+.preview-details dd {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Below a list the preview is short, so its details run on in lines and leave it the room. */
+.preview-split.is-below .preview-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 16px;
+  max-height: 30%;
+}
+
+.preview-split.is-below .preview-details > div {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.preview-binary {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 20px 16px 12px;
+  text-align: center;
+}
+
+/* Small enough for a row to fit a preview at its default width beside a file list. */
+.preview-hex {
+  width: max-content;
+  margin: 0 auto;
+  padding: 0 10px 16px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-tiny);
+  line-height: 1.7;
+  white-space: pre;
+}
+
+.preview-hex-row {
+  display: flex;
+  gap: 10px;
+}
+
+.preview-hex-offset {
+  color: var(--text-faint);
+}
+
+.preview-hex-characters {
+  color: var(--text-muted);
+}
+
+.preview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--thumbnail-size), 1fr));
+  gap: 10px;
+  padding: 12px;
+}
+
+.preview-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+}
+
+.preview-tile-picture {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1;
+  overflow: hidden;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+}
+
+.preview-tile-picture img {
+  max-width: 100%;
+  max-height: 100%;
+  background: repeating-conic-gradient(var(--surface-pressed) 0% 25%, var(--surface-raised) 0% 50%)
+    0 0 / 12px 12px;
+}
+
+.preview-tile-icon {
+  display: flex;
+}
+
+.preview-tile-icon.is-pending {
+  opacity: 0.35;
+}
+
+.preview-tile figcaption {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--font-size-tiny);
+  text-align: center;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.preview-grid-more {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+  text-align: center;
+}

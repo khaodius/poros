@@ -93,6 +93,10 @@ struct SavedJob {
     resolution: Option<ExistsAction>,
     #[serde(default)]
     resume: Option<ResumePoint>,
+    /// A temporary file that failed a check, deleted if the job is removed. Absent from queues
+    /// saved before it was kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    stale_partial: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     options: Option<JobOptions>,
 }
@@ -232,6 +236,7 @@ fn snapshot(shared: &Shared) -> Option<(SavedQueue, &Path)> {
             error: job.error,
             resolution: job.resolution,
             resume: job.resume,
+            stale_partial: job.stale_partial,
             options: spec.options.as_deref().cloned(),
         });
     }
@@ -260,19 +265,17 @@ pub(super) fn save_in_background(shared: &Arc<Shared>) {
     if shared.saving.swap(true, Ordering::AcqRel) {
         return;
     }
-    let Some((saved, file)) = snapshot(shared) else {
-        shared.saving.store(false, Ordering::Release);
-        return;
-    };
-    let file = file.to_path_buf();
     let shared = shared.clone();
     crate::runtime::spawn_blocking(move || {
-        write(&file, &saved);
+        save(&shared);
         shared.saving.store(false, Ordering::Release);
     });
 }
 
+/// Saves one at a time, each from the queue as it stands once the save before it is written,
+/// so an older queue never replaces a newer one.
 pub(super) fn save(shared: &Shared) {
+    let _writing = shared.writing.lock().unwrap();
     if let Some((saved, file)) = snapshot(shared) {
         write(file, &saved);
     }
@@ -297,6 +300,9 @@ pub(super) fn restore(shared: &Shared, file: &Path) -> usize {
         .iter()
         .map(|_| format!("restored-{}", uuid::Uuid::new_v4()))
         .collect();
+    // The servers and their jobs go in under one lock of the queue, under which servers no job
+    // involves are forgotten.
+    let mut queue = shared.queue.lock().unwrap();
     let mut targets = shared.targets.lock().unwrap();
     for (server, session_id) in saved.servers.iter().zip(&session_ids) {
         let login = Login {
@@ -313,7 +319,6 @@ pub(super) fn restore(shared: &Shared, file: &Path) -> usize {
     }
     drop(targets);
 
-    let mut queue = shared.queue.lock().unwrap();
     let mut restored = 0;
     for job in saved.jobs {
         let Some(session_id) = session_ids.get(job.server) else {
@@ -348,6 +353,7 @@ pub(super) fn restore(shared: &Shared, file: &Path) -> usize {
             error: job.error,
             resolution: job.resolution,
             resume: job.resume,
+            stale_partial: job.stale_partial,
         });
         restored += 1;
     }
@@ -439,6 +445,31 @@ mod tests {
             .profile();
         assert_eq!(restored.protocol, Protocol::GoogleDrive);
         assert!(restored.lacks_secret());
+    }
+
+    #[test]
+    fn jobs_saved_by_0_7_0_load_and_a_failed_check_keeps_its_temporary_file() {
+        let text = r#"{"server":0,"direction":"upload","kind":"file","name":"live.log",
+            "source":"/home/me/live.log","target":"/srv/live.log","targetDirectory":"/srv",
+            "size":100,"ancestors":[],"failed":true,
+            "error":"live.log changed while it was being uploaded","resolution":"overwrite",
+            "resume":null}"#;
+        let job = serde_json::from_str::<SavedJob>(text).unwrap();
+        assert!(job.stale_partial.is_none());
+        assert!(!serde_json::to_string(&job)
+            .unwrap()
+            .contains("stalePartial"));
+
+        let job = SavedJob {
+            stale_partial: Some("/srv/.live.log.poros-part".into()),
+            ..job
+        };
+        let text = serde_json::to_string(&job).unwrap();
+        let job = serde_json::from_str::<SavedJob>(&text).unwrap();
+        assert_eq!(
+            job.stale_partial.as_deref(),
+            Some("/srv/.live.log.poros-part")
+        );
     }
 
     #[test]

@@ -137,14 +137,7 @@ async fn connect_with(manager: &SessionManager, profile: ConnectProfile) -> Sess
                 .host_key
                 .unwrap_or_else(|| panic!("{label}: {}", error.message));
             manager
-                .connect(
-                    profile,
-                    Some(HostKeyApproval {
-                        fingerprint: host_key.fingerprint,
-                        remember: true,
-                    }),
-                    OWNER,
-                )
+                .connect(profile, Some(HostKeyApproval::of(&host_key, true)), OWNER)
                 .await
                 .unwrap_or_else(|error| panic!("{label}: {}", error.message))
         }
@@ -636,6 +629,10 @@ async fn manages_files_and_folders() {
         assert_eq!(files.stat(&sub).await.unwrap(), None);
         let taken = files.rename(&file, "renamed").await.unwrap_err();
         assert_eq!(taken.kind, ErrorKind::AlreadyExists);
+        // A `..` part would name another item than the one asked for.
+        let around = remote_path::join(&remote_path::join(root, "renamed"), "../moved.txt");
+        let refused = files.rename(&around, "elsewhere").await.unwrap_err();
+        assert_eq!(refused.kind, ErrorKind::InvalidInput);
         let renamed_file = files.rename(&file, "moved.txt").await.unwrap();
         assert_eq!(read_remote(files, &renamed_file).await, contents);
 
@@ -1147,7 +1144,7 @@ async fn ftps_asks_about_the_certificate() {
 
         let wrong = HostKeyApproval {
             fingerprint: "SHA256:not-it".into(),
-            remember: true,
+            ..HostKeyApproval::of(&certificate, true)
         };
         let error = manager
             .connect(profile(&server, &server.password), Some(wrong), OWNER)
@@ -1155,11 +1152,20 @@ async fn ftps_asks_about_the_certificate() {
             .unwrap_err();
         assert_eq!(error.kind, ErrorKind::HostKeyUnknown);
 
-        // Approved for this connection only.
-        let once = HostKeyApproval {
-            fingerprint: certificate.fingerprint.clone(),
-            remember: false,
+        // An approval given for another server is no answer for this one.
+        let elsewhere = HostKeyApproval {
+            host: "elsewhere.example".into(),
+            ..HostKeyApproval::of(&certificate, true)
         };
+        let error = manager
+            .connect(profile(&server, &server.password), Some(elsewhere), OWNER)
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind, ErrorKind::HostKeyUnknown);
+        assert_eq!(manager.certificates.get("127.0.0.1", server.port), None);
+
+        // Approved for this connection only.
+        let once = HostKeyApproval::of(&certificate, false);
         let info = manager
             .connect(profile(&server, &server.password), Some(once), OWNER)
             .await
@@ -1184,10 +1190,7 @@ async fn ftps_asks_about_the_certificate() {
         assert_eq!(error.host_key.unwrap().fingerprint, certificate.fingerprint);
 
         // Remembered from then on, and pinned for the workers' connections.
-        let remembered = HostKeyApproval {
-            fingerprint: certificate.fingerprint.clone(),
-            remember: true,
-        };
+        let remembered = HostKeyApproval::of(&certificate, true);
         let info = manager
             .connect(profile(&server, &server.password), Some(remembered), OWNER)
             .await
@@ -1232,6 +1235,20 @@ async fn ftps_asks_about_the_certificate() {
         );
         files.delete(std::slice::from_ref(&remote)).await.unwrap();
         manager.disconnect(&info.id).await.unwrap();
+
+        // Pinned to another certificate, as poros-cli --host-key does, the one on record is
+        // refused, and so is an approval of it.
+        manager
+            .certificates
+            .pin("127.0.0.1", server.port, "SHA256:not-it");
+        for approval in [None, Some(HostKeyApproval::of(&certificate, true))] {
+            let error = manager
+                .connect(profile(&server, &server.password), approval, OWNER)
+                .await
+                .unwrap_err();
+            assert_eq!(error.kind, ErrorKind::HostKeyChanged, "{}", error.message);
+            assert_eq!(error.host_key.unwrap().fingerprint, certificate.fingerprint);
+        }
     }
 }
 

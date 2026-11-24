@@ -213,6 +213,9 @@ pub enum Command {
     Verify(VerifyArgs),
     /// Make a local and a server folder match, the way rsync does
     Sync(SyncArgs),
+    /// Make links that open files for people without an account, on S3, Backblaze B2,
+    /// Google Drive, OneDrive and Box
+    Share(ShareArgs),
     /// Run a command on the server through its shell, exiting with its status
     Exec(ExecArgs),
     /// Run commands read from standard input over one connection: one JSON array of
@@ -538,7 +541,8 @@ pub struct SyncArgs {
     /// Leave out paths that match
     #[arg(long, value_name = "PATTERN")]
     pub exclude: Vec<String>,
-    /// Keep paths that match, even when an exclude would leave them out
+    /// Keep paths that match, even when an --exclude would leave them out. Rules in the
+    /// connection's saved rsync arguments are checked first, as rsync checks rules in order
     #[arg(long, value_name = "PATTERN")]
     pub include: Vec<String>,
     /// Compare contents instead of size and time
@@ -587,6 +591,70 @@ pub enum SyncConflict {
 }
 
 #[derive(Debug, Args)]
+pub struct ShareArgs {
+    #[arg(required = true, value_name = "PATH")]
+    pub paths: Vec<String>,
+    /// How long the link works: seconds, or a number with s, m, h or d, such as 90m or 7d.
+    /// S3 and Backblaze B2 links always end, after 1h unless told otherwise and within 7d
+    #[arg(short, long, value_name = "LIFETIME", value_parser = parse_lifetime)]
+    pub expires: Option<u64>,
+    /// What the link lets its holder do
+    #[arg(short, long, value_enum, default_value_t = ShareKind::View)]
+    pub kind: ShareKind,
+    /// Who the link works for, where the service has a choice
+    #[arg(long, value_enum, default_value_t = ShareAudience::Anyone)]
+    pub audience: ShareAudience,
+    /// Remove the links the paths have instead of making one, where the service keeps them
+    #[arg(long, conflicts_with_all = ["expires", "kind", "audience"])]
+    pub revoke: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ShareKind {
+    /// Open the item in the browser
+    View,
+    /// Let the holder change the item
+    Edit,
+    /// Save the file under its name
+    Download,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ShareAudience {
+    /// Whoever holds the link
+    Anyone,
+    /// People signed in to the account's organization
+    Organization,
+    /// People the item is already shared with
+    Invited,
+}
+
+/// A lifetime in seconds: `3600`, `90s`, `45m`, `12h` or `7d`.
+fn parse_lifetime(text: &str) -> Result<u64, String> {
+    let text = text.trim();
+    let (digits, unit) = match text.find(|character: char| !character.is_ascii_digit()) {
+        Some(split) => text.split_at(split),
+        None => (text, "s"),
+    };
+    let seconds_per_unit: u64 = match unit {
+        "s" => 1,
+        "m" => 60,
+        "h" => 3600,
+        "d" => 86_400,
+        _ => {
+            return Err(format!(
+                "{text} is not a lifetime such as 3600, 90m, 12h or 7d"
+            ))
+        }
+    };
+    digits
+        .parse::<u64>()
+        .ok()
+        .and_then(|count| count.checked_mul(seconds_per_unit))
+        .ok_or_else(|| format!("{text} is not a lifetime such as 3600, 90m, 12h or 7d"))
+}
+
+#[derive(Debug, Args)]
 pub struct ExecArgs {
     /// Run in this folder on the server
     #[arg(long, value_name = "FOLDER")]
@@ -610,6 +678,55 @@ mod tests {
     fn arguments_are_consistent() {
         Cli::command().debug_assert();
         BatchLine::command().debug_assert();
+    }
+
+    #[test]
+    fn share_reads_lifetimes_and_kinds() {
+        assert_eq!(parse_lifetime("3600"), Ok(3600));
+        assert_eq!(parse_lifetime("90s"), Ok(90));
+        assert_eq!(parse_lifetime("45m"), Ok(2700));
+        assert_eq!(parse_lifetime("1h"), Ok(3600));
+        assert_eq!(parse_lifetime("7d"), Ok(604_800));
+        assert_eq!(parse_lifetime("0"), Ok(0));
+        for refused in ["", "h", "1w", "-5m", "1.5h", "1 h", "99999999999999999999d"] {
+            assert!(parse_lifetime(refused).is_err(), "{refused}");
+        }
+        let cli = Cli::try_parse_from([
+            "poros-cli",
+            "share",
+            "/bucket/a.txt",
+            "b.txt",
+            "--expires",
+            "2h",
+            "--kind",
+            "download",
+            "-c",
+            "files",
+        ])
+        .unwrap();
+        let Command::Share(share) = cli.command else {
+            panic!("not share");
+        };
+        assert_eq!(share.paths, ["/bucket/a.txt", "b.txt"]);
+        assert_eq!(share.expires, Some(7200));
+        assert_eq!(share.kind, ShareKind::Download);
+        assert_eq!(share.audience, ShareAudience::Anyone);
+        assert!(!share.revoke);
+        let defaults = Cli::try_parse_from(["poros-cli", "share", "a.txt"]).unwrap();
+        let Command::Share(share) = defaults.command else {
+            panic!("not share");
+        };
+        assert_eq!((share.expires, share.kind), (None, ShareKind::View));
+        assert!(Cli::try_parse_from(["poros-cli", "share"]).is_err());
+        assert!(Cli::try_parse_from([
+            "poros-cli",
+            "share",
+            "a.txt",
+            "--revoke",
+            "--expires",
+            "1h"
+        ])
+        .is_err());
     }
 
     #[test]

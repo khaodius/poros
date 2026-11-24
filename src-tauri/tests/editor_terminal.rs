@@ -1,15 +1,19 @@
 //! End-to-end tests of the editor and the terminal against real servers, set up as
 //! `sftp_server.rs` and `ftp_server.rs` describe. The SSH tests are skipped unless
-//! `POROS_TEST_SSH_PORT` is set, the FTP test unless `POROS_TEST_FTP_PORT` is.
+//! `POROS_TEST_SSH_PORT` is set, the FTP tests unless `POROS_TEST_FTP_PORT` is, and WebDAV is
+//! left out of the tests that take it unless `POROS_TEST_WEBDAV_PORT` is.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
+use poros_lib::automation::remote_command;
 use poros_lib::editor::{EditorManager, FileLocation, SaveOutcome, SaveRequest};
 use poros_lib::error::ErrorKind;
 use poros_lib::events::Events;
 use poros_lib::protocol::{Protocol, RemoteFileSystem, WriteRequest};
+use poros_lib::remote_path;
 use poros_lib::session::SessionManager;
 use poros_lib::sftp::RemoteFs;
 use poros_lib::ssh::{AuthMethod, ConnectProfile, HostKeyApproval, Route};
@@ -25,6 +29,14 @@ fn profile() -> Option<ConnectProfile> {
 
 fn ftp_profile() -> Option<ConnectProfile> {
     server_profile(Protocol::Ftp, "POROS_TEST_FTP_PORT", "POROS_TEST_FTP")
+}
+
+fn webdav_profile() -> Option<ConnectProfile> {
+    server_profile(
+        Protocol::WebDav,
+        "POROS_TEST_WEBDAV_PORT",
+        "POROS_TEST_WEBDAV",
+    )
 }
 
 /// The test server named by `port_variable`, logging in as `{prefix}_USER`.
@@ -68,10 +80,7 @@ async fn connect(profile: &ConnectProfile) -> (tempfile::TempDir, Arc<SessionMan
             let host_key = error
                 .host_key
                 .expect("the server should only ask about its key");
-            let approval = HostKeyApproval {
-                fingerprint: host_key.fingerprint,
-                remember: true,
-            };
+            let approval = HostKeyApproval::of(&host_key, true);
             manager
                 .connect(profile.clone(), Some(approval), OWNER)
                 .await
@@ -266,6 +275,157 @@ async fn ftp_files_edit_and_save_through_their_session() {
     sessions.disconnect_all().await;
 }
 
+/// The session a reconnect leaves in place of `session_id`, which is closed as the window does
+/// once its tabs moved over.
+async fn reconnect(sessions: &SessionManager, session_id: &str) -> String {
+    let reconnected = sessions.reconnect(session_id, None, OWNER).await.unwrap();
+    sessions.disconnect(session_id).await.unwrap();
+    assert_ne!(reconnected.id, session_id);
+    reconnected.id
+}
+
+#[tokio::test]
+async fn files_save_through_the_session_that_took_the_place_of_theirs() {
+    for profile in [ftp_profile(), webdav_profile()].into_iter().flatten() {
+        let label = profile.protocol.display_name();
+        let (_temp_dir, sessions, session_id) = connect(&profile).await;
+        let files = sessions.get(&session_id).await.unwrap().files();
+        let name = format!("editor-{}.txt", uuid::Uuid::new_v4());
+        let path = remote_path::join(files.home(), &name);
+        write_through(&files, &path, b"first\r\n").await;
+
+        let editor = EditorManager::new(sessions.clone(), Events::default());
+        let location = FileLocation::Remote {
+            session_id: session_id.clone(),
+            path: path.clone(),
+        };
+        let info = editor.open(location, OWNER).await.unwrap();
+        let document = editor.load(&info.id, OWNER).await.unwrap();
+        assert_eq!(document.text, "first\n", "{label}");
+        drop(files);
+
+        let reconnected = reconnect(&sessions, &session_id).await;
+        let saved = editor
+            .save(save_request(
+                &info.id,
+                "after a reconnect\n",
+                Some(document.stamp),
+            ))
+            .await
+            .unwrap_or_else(|error| panic!("{label}: {}", error.message));
+        assert!(matches!(saved, SaveOutcome::Saved { .. }), "{label}");
+        let files = sessions.get(&reconnected).await.unwrap().files();
+        assert_eq!(
+            read_through(&files, &path).await,
+            b"after a reconnect\r\n",
+            "{label}"
+        );
+        drop(files);
+
+        // With the server's tab closed nothing reaches the file, and the error says what does.
+        sessions.disconnect(&reconnected).await.unwrap();
+        let closed = editor
+            .save(save_request(&info.id, "with no session\n", None))
+            .await
+            .unwrap_err();
+        assert_eq!(closed.kind, ErrorKind::SessionNotFound, "{label}");
+        assert!(
+            closed.message.contains("Connect to it again"),
+            "{label}: {}",
+            closed.message
+        );
+
+        let reopened = sessions
+            .connect(profile.clone(), None, OWNER)
+            .await
+            .unwrap();
+        let saved = editor
+            .save(save_request(&info.id, "after connecting again\n", None))
+            .await
+            .unwrap_or_else(|error| panic!("{label}: {}", error.message));
+        assert!(matches!(saved, SaveOutcome::Saved { .. }), "{label}");
+        let files = sessions.get(&reopened.id).await.unwrap().files();
+        assert_eq!(
+            read_through(&files, &path).await,
+            b"after connecting again\r\n",
+            "{label}"
+        );
+
+        files.delete(std::slice::from_ref(&path)).await.unwrap();
+        editor.close(&info.id).await;
+        sessions.disconnect_all().await;
+    }
+}
+
+#[tokio::test]
+async fn a_file_in_a_vault_saves_through_its_vault_or_not_at_all() {
+    const PASSWORD: &str = "a vault's password";
+    let Some(profile) = ftp_profile() else { return };
+    let (_temp_dir, sessions, session_id) = connect(&profile).await;
+    let server_files = sessions.get(&session_id).await.unwrap().files();
+    let scratch = server_files
+        .make_dir("~", &format!("editor-vault-{}", uuid::Uuid::new_v4()))
+        .await
+        .unwrap();
+    let vault = sessions
+        .create_vault(&session_id, &scratch, "Vault", PASSWORD.to_string(), OWNER)
+        .await
+        .unwrap();
+    let root = remote_path::join(&scratch, "Vault");
+    let path = remote_path::join(&root, "notes.txt");
+    let vault_files = sessions.get(&vault.id).await.unwrap().files();
+    write_through(&vault_files, &path, b"secret\n").await;
+    drop(vault_files);
+
+    let editor = EditorManager::new(sessions.clone(), Events::default());
+    let location = FileLocation::Remote {
+        session_id: vault.id.clone(),
+        path: path.clone(),
+    };
+    let info = editor.open(location, OWNER).await.unwrap();
+    let document = editor.load(&info.id, OWNER).await.unwrap();
+    assert_eq!(document.text, "secret\n");
+
+    // Locked, the vault's files are out of reach: the server's own session, which is still
+    // open, must not be written to in the vault's place.
+    sessions.disconnect(&vault.id).await.unwrap();
+    let locked = editor
+        .save(save_request(&info.id, "written past the vault\n", None))
+        .await
+        .unwrap_err();
+    assert_eq!(locked.kind, ErrorKind::SessionNotFound);
+    assert!(
+        locked.message.contains("Unlock the vault again"),
+        "{}",
+        locked.message
+    );
+    assert_eq!(server_files.stat(&path).await.unwrap(), None);
+
+    let unlocked = sessions
+        .unlock_vault(&session_id, &root, PASSWORD.to_string(), OWNER)
+        .await
+        .unwrap();
+    assert_ne!(unlocked.id, vault.id);
+    let saved = editor
+        .save(save_request(&info.id, "secret, edited\n", None))
+        .await
+        .unwrap();
+    assert!(matches!(saved, SaveOutcome::Saved { .. }));
+    let vault_files = sessions.get(&unlocked.id).await.unwrap().files();
+    assert_eq!(
+        read_through(&vault_files, &path).await,
+        b"secret, edited\r\n"
+    );
+    assert_eq!(server_files.stat(&path).await.unwrap(), None);
+
+    editor.close(&info.id).await;
+    server_files
+        .delete(std::slice::from_ref(&scratch))
+        .await
+        .unwrap();
+    sessions.disconnect_all().await;
+}
+
 /// Collects a terminal's output and tells when text shows up in it.
 #[derive(Clone, Default)]
 struct Screen {
@@ -355,4 +515,108 @@ async fn terminals_run_a_shell_that_outlives_the_session() {
     assert!(terminals
         .write(&info.id, b"echo closed\n".to_vec())
         .is_err());
+}
+
+/// A port that relays to the server until `closed` is set, then turns every new connection
+/// away, as a server that allows one connection per client does.
+async fn relay_until(server_port: u16, closed: Arc<AtomicBool>) -> u16 {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        while let Ok((mut client, _)) = listener.accept().await {
+            if closed.load(Ordering::SeqCst) {
+                continue;
+            }
+            tokio::spawn(async move {
+                let address = ("127.0.0.1", server_port);
+                if let Ok(mut server) = tokio::net::TcpStream::connect(address).await {
+                    let _ = tokio::io::copy_bidirectional(&mut client, &mut server).await;
+                }
+            });
+        }
+    });
+    port
+}
+
+/// Whether a process with exactly this command line runs on the server.
+async fn runs_on_server(sessions: &SessionManager, session_id: &str, command_line: &str) -> bool {
+    let session = sessions.get(session_id).await.unwrap();
+    let check = format!("pgrep -f -x '{command_line}'");
+    let result = remote_command::run_on(
+        &session,
+        &check,
+        None,
+        &tokio_util::sync::CancellationToken::new(),
+        |_, _| {},
+    )
+    .await
+    .unwrap();
+    result.exit_status == Some(0)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_terminal_on_the_browsing_connection_ends_its_shell_when_closed() {
+    let Some(profile) = profile() else { return };
+    let closed = Arc::new(AtomicBool::new(false));
+    let relayed = ConnectProfile {
+        port: relay_until(profile.port, closed.clone()).await,
+        ..profile
+    };
+    let (_temp_dir, sessions, session_id) = connect(&relayed).await;
+    closed.store(true, Ordering::SeqCst);
+    let events = Events::keeping_startup_log();
+    let terminals = TerminalManager::new(sessions.clone(), events.clone());
+    let screen = Screen::default();
+    let info = terminals
+        .open(&session_id, 80, 24, screen.sink(), OWNER)
+        .await
+        .unwrap();
+
+    // A process name no other test run shares, which ends by itself should a run fail.
+    let sleeper = format!("sleep 300.{:06}", std::process::id() % 1_000_000);
+    terminals
+        .write(
+            &info.id,
+            format!("echo sleeping-$((6*7)); {sleeper}\n").into_bytes(),
+        )
+        .unwrap();
+    screen.wait_for_text("sleeping-42").await;
+    assert!(runs_on_server(&sessions, &session_id, &sleeper).await);
+
+    terminals.close(&info.id).await;
+    let deadline = Instant::now() + WAIT;
+    while runs_on_server(&sessions, &session_id, &sleeper).await {
+        if Instant::now() > deadline {
+            let session = sessions.get(&session_id).await.unwrap();
+            let _ = remote_command::run_on(
+                &session,
+                &format!("pkill -f -x '{sleeper}'"),
+                None,
+                &tokio_util::sync::CancellationToken::new(),
+                |_, _| {},
+            )
+            .await;
+            panic!("the shell and {sleeper} still run on the server after the tab closed");
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    // The browsing connection is still there for everything else.
+    assert!(!runs_on_server(&sessions, &session_id, &sleeper).await);
+    // The shell's output is no longer read, although the browsing connection stays.
+    let log: Vec<String> = events
+        .take_startup_log()
+        .into_iter()
+        .map(|record| record.message)
+        .collect();
+    assert!(
+        log.iter()
+            .any(|message| message.contains("shares the browsing connection")),
+        "the terminal got a connection of its own: {log:?}"
+    );
+    let closing_line = format!("Terminal on {} closed", info.label);
+    assert!(
+        log.contains(&closing_line),
+        "the shell's output is still read: {log:?}"
+    );
+    sessions.disconnect_all().await;
 }

@@ -19,6 +19,7 @@ use crate::error::{AppError, AppResult};
 use crate::events::{Events, LogLevel};
 use crate::format::format_size;
 use crate::local;
+use crate::model::{EntryKind, LinkTarget};
 use crate::remote_path;
 use crate::sftp::RemoteFs;
 use crate::transfer::{
@@ -508,7 +509,9 @@ impl Run {
         }
     }
 
-    /// `--remove-source-files` for files that were already the same on the target.
+    /// `--remove-source-files` for files that were already the same on the target. As in
+    /// rsync, a file whose size or time changed since it was compared stays where it is: the
+    /// target holds a copy of what it was.
     async fn remove_sources(
         &self,
         place: Place,
@@ -518,6 +521,19 @@ impl Run {
         let mut removed = 0;
         for relative in paths {
             let path = self.path(place, relative);
+            match self.still_as_compared(place, relative, &path).await {
+                Ok(true) => {}
+                Ok(false) => {
+                    failures.push(format!(
+                        "{path}: changed since the comparison, so it was left in place"
+                    ));
+                    continue;
+                }
+                Err(error) => {
+                    failures.push(format!("{path}: {}", error.message));
+                    continue;
+                }
+            }
             let result = match place {
                 Place::Remote => self.fs.remove_file(&path).await,
                 Place::Local => {
@@ -537,6 +553,33 @@ impl Run {
             }
         }
         removed
+    }
+
+    /// Whether the file at `path` still has the size and time the comparison found, read the
+    /// way the comparison read it: a link that was followed by what it leads to.
+    async fn still_as_compared(&self, place: Place, relative: &str, path: &str) -> AppResult<bool> {
+        let Some(compared) = self.tree(place).nodes.get(relative) else {
+            return Ok(false);
+        };
+        let now = match place {
+            Place::Remote => self
+                .fs
+                .stat(path)
+                .await?
+                .filter(|stat| !stat.is_dir)
+                .map(|stat| (stat.size, stat.modified)),
+            Place::Local => {
+                let local = path.to_string();
+                tokio::task::spawn_blocking(move || local::stat_paths(&[local]))
+                    .await?
+                    .into_iter()
+                    .find(|entry| {
+                        entry.kind == EntryKind::File || entry.link_target == Some(LinkTarget::File)
+                    })
+                    .map(|entry| (entry.size, entry.modified))
+            }
+        };
+        Ok(now == Some((compared.size, compared.modified)))
     }
 
     fn log(&self, level: LogLevel, message: impl Into<String>) {
@@ -916,8 +959,7 @@ impl FollowUp {
         lines.extend(failures.iter().cloned());
 
         let deleted = summary.deleted + deleted_later;
-        // Jobs that left the queue were done before completed ones were cleared.
-        let copied = outcome.done + outcome.removed;
+        let copied = outcome.done;
         let mut message = format!(
             "Synchronized {} with {}: {} copied",
             run.stored.local.root,

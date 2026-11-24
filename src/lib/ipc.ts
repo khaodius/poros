@@ -2,6 +2,7 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Update } from "@tauri-apps/plugin-updater";
 import type { PanePicture } from "./panePicture";
+import { parsePreviewFrame } from "./previewFrame";
 import type {
   AppError,
   CloudProvider,
@@ -49,6 +50,8 @@ import type {
   PowerAction,
   PreviewContent,
   PreviewPlacement,
+  PreviewRead,
+  PreviewReadRequest,
   PreviewSupport,
   QueueFinished,
   RenameRequest,
@@ -63,6 +66,8 @@ import type {
   SearchSummary,
   SessionClosed,
   SessionInfo,
+  ShareLink,
+  ShareOptions,
   SignedIn,
   StoreName,
   SyncDirection,
@@ -351,6 +356,23 @@ export const editor = {
   close: (documentId: string) => call<void>("editor_close", { documentId }),
 };
 
+export const filePreview = {
+  /** Part of a file, as raw bytes, with the file's size and time as they are now. */
+  read: async (request: PreviewReadRequest): Promise<PreviewRead> => {
+    const reply = await call<ArrayBuffer>("file_preview_read", { request });
+    try {
+      return parsePreviewFrame(reply);
+    } catch (rejection) {
+      throw toAppError(rejection);
+    }
+  },
+  /** Stops a read by the name its request gave it, also one that has not started yet. */
+  cancel: (requestId: string) => call<void>("file_preview_cancel", { requestId }),
+  /** A server's folder, unless transfers are using the connection it would be listed over. */
+  list: (sessionId: string, path: string) =>
+    call<DirListing>("file_preview_list", { sessionId, path }),
+};
+
 function outputChannel(onEvent: (event: TerminalEvent) => void): Channel<TerminalEvent> {
   const channel = new Channel<TerminalEvent>();
   channel.onmessage = onEvent;
@@ -387,6 +409,18 @@ export const files = {
 export const clipboard = {
   /** Copies text with no click or key press behind it, which the web view's clipboard refuses. */
   writeText: (text: string) => call<void>("clipboard_write_text", { text }),
+};
+
+export const share = {
+  /** The links `path` has now, on the services that keep them. */
+  links: (sessionId: string, path: string) => call<ShareLink[]>("share_links", { sessionId, path }),
+  create: (sessionId: string, path: string, options: ShareOptions) =>
+    call<ShareLink>("share_create", { sessionId, path, options }),
+  /** Stops the link working for everyone. */
+  remove: (sessionId: string, path: string, linkId: string) =>
+    call<void>("share_remove", { sessionId, path, linkId }),
+  /** Opens a link in the system's browser; only web addresses are taken. */
+  openInBrowser: (url: string) => call<void>("share_open", { url }),
 };
 
 export const windows = {

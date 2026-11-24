@@ -145,6 +145,40 @@ impl ConnectProfile {
         }
     }
 
+    /// The host and port the server's host key or certificate is checked under, which a
+    /// question about it names. WebDAV and S3 take them from the address typed as the host.
+    pub fn server_address(&self) -> (String, u16) {
+        crate::cloud::server_address(self)
+            .unwrap_or_else(|| (self.host.trim().to_string(), self.port))
+    }
+
+    /// Whether Poros itself checks the server's host key or certificate, so that an approval or
+    /// a pin can name it. Other servers show none, or only the system checks their certificate.
+    pub fn checks_server_key(&self) -> bool {
+        match self.protocol {
+            Protocol::Sftp | Protocol::Ftps | Protocol::FtpsImplicit => true,
+            // An address that does not parse fails on connecting, with its own message.
+            Protocol::WebDav | Protocol::WebDavs | Protocol::S3 => {
+                crate::cloud::checks_certificate(self).unwrap_or(true)
+            }
+            _ => false,
+        }
+    }
+
+    /// The kind of server, as a message names it: the protocol, and plain HTTP where WebDAV or S3
+    /// go without TLS.
+    pub fn kind_of_server(&self) -> String {
+        let name = self.protocol.display_name();
+        match self.protocol {
+            Protocol::WebDav | Protocol::WebDavs | Protocol::S3
+                if crate::cloud::checks_certificate(self) == Some(false) =>
+            {
+                format!("{name} over plain HTTP")
+            }
+            _ => name.to_string(),
+        }
+    }
+
     pub fn label(&self) -> String {
         if self.protocol.service_host().is_some() {
             return format!("{} ({})", self.protocol.display_name(), self.username);
@@ -195,12 +229,52 @@ impl ConnectProfile {
     }
 }
 
+/// The answer to one question about a server's host key or certificate.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HostKeyApproval {
+    /// The server the question named. The answer holds for that server alone: a jump host and
+    /// the server behind it are asked about one at a time, and may show the same key.
+    pub host: String,
+    pub port: u16,
     pub fingerprint: String,
     /// Save to the app's known_hosts. `false` trusts the key for this connection only.
     pub remember: bool,
+}
+
+impl HostKeyApproval {
+    /// The answer that accepts the key a question showed, for the server it named.
+    pub fn of(offered: &HostKeyInfo, remember: bool) -> Self {
+        Self {
+            host: offered.host.clone(),
+            port: offered.port,
+            fingerprint: offered.fingerprint.clone(),
+            remember,
+        }
+    }
+
+    /// Accepts, for this connection only, the key the server of `profile` showed before: how a
+    /// session's further connections get past a key that was trusted for the session alone.
+    pub fn for_server(profile: &ConnectProfile, fingerprint: &str) -> Self {
+        let (host, port) = profile.server_address();
+        Self {
+            host,
+            port,
+            fingerprint: fingerprint.to_string(),
+            remember: false,
+        }
+    }
+
+    /// Whether this is an answer about the server at `host` and `port`.
+    pub fn names(&self, host: &str, port: u16) -> bool {
+        self.port == port && self.host.trim().eq_ignore_ascii_case(host.trim())
+    }
+
+    /// Whether this answers the question about the key with `fingerprint` that the server at
+    /// `host` and `port` shows.
+    pub fn accepts(&self, host: &str, port: u16, fingerprint: &str) -> bool {
+        self.names(host, port) && self.fingerprint == fingerprint
+    }
 }
 
 pub type SshHandle = Handle<ClientHandler>;
@@ -248,8 +322,42 @@ impl client::Handler for ClientHandler {
             algorithm: key.algorithm().as_str().to_string(),
             fingerprint: fingerprint(&key),
             certificate_problem: None,
+            differs_from_pin: false,
         };
         let status = self.known_hosts.check(&self.host, self.port, &key);
+        if status == HostKeyStatus::Revoked {
+            // Not a question for the user: no approval lets a revoked key in.
+            *self.rejection.lock().unwrap() = Some(AppError::new(
+                ErrorKind::HostKeyChanged,
+                format!(
+                    "The host key for {}:{} is revoked in known_hosts ({} {}), so Poros will not connect. Ask the server's administrator for its new key.",
+                    info.host, info.port, info.algorithm, info.fingerprint
+                ),
+            ));
+            return Ok(false);
+        }
+        let pinned = self.known_hosts.pinned(&self.host, self.port);
+        if pinned.is_some_and(|pinned| pinned != info.fingerprint) {
+            // The only key to accept this server with was given, which outweighs known_hosts
+            // and any approval.
+            let kind = match status {
+                HostKeyStatus::Unknown => ErrorKind::HostKeyUnknown,
+                _ => ErrorKind::HostKeyChanged,
+            };
+            let message = format!(
+                "The host key for {}:{} is not the one given to connect with ({} {}).",
+                info.host, info.port, info.algorithm, info.fingerprint
+            );
+            let info = HostKeyInfo {
+                differs_from_pin: true,
+                ..info
+            };
+            *self.rejection.lock().unwrap() = Some(AppError {
+                message,
+                ..AppError::host_key(kind, info)
+            });
+            return Ok(false);
+        }
         if status == HostKeyStatus::Trusted {
             self.log(
                 LogLevel::Info,
@@ -263,7 +371,7 @@ impl client::Handler for ClientHandler {
         }
 
         if let Some(approval) = &self.approval {
-            if approval.fingerprint == info.fingerprint {
+            if approval.accepts(&self.host, self.port, &info.fingerprint) {
                 if approval.remember {
                     if let Err(error) = self.known_hosts.trust(&self.host, self.port, &key) {
                         self.log(LogLevel::Warn, format!("Could not save host key: {error}"));
@@ -670,4 +778,246 @@ pub async fn disconnect(handle: &SshHandle) {
     let _ = handle
         .disconnect(russh::Disconnect::ByApplication, "", "en")
         .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use russh::client::Handler as _;
+
+    use super::*;
+
+    const SERVER_KEY: &str = "AAAAC3NzaC1lZDI1NTE5AAAAIJdD7y3aLq454yWBdwLWbieU1ebz9/cu7/QEXn9OIeZJ";
+
+    struct Checked {
+        accepted: bool,
+        rejection: Option<AppError>,
+        recorded: String,
+    }
+
+    /// Shows `SERVER_KEY` to the handler of the hop at `host`, port 22, with nothing on record.
+    async fn show_key(hop: Hop, host: &str, approval: Option<HostKeyApproval>) -> Checked {
+        show_key_with(hop, host, approval, "", |_| {}).await
+    }
+
+    /// `show_key` with `system_lines` in the system known_hosts file, and `prepare` run on the
+    /// known hosts first.
+    async fn show_key_with(
+        hop: Hop,
+        host: &str,
+        approval: Option<HostKeyApproval>,
+        system_lines: &str,
+        prepare: impl FnOnce(&KnownHosts),
+    ) -> Checked {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let app_file = temp_dir.path().join("known_hosts");
+        let system_file = temp_dir.path().join("system_known_hosts");
+        std::fs::write(&system_file, system_lines).unwrap();
+        let known_hosts = KnownHosts::new(app_file.clone(), vec![system_file]);
+        prepare(&known_hosts);
+        let rejection = Arc::new(Mutex::new(None));
+        let mut handler = ClientHandler {
+            host: host.to_string(),
+            port: 22,
+            hop,
+            session_id: "test".to_string(),
+            known_hosts,
+            approval,
+            rejection: rejection.clone(),
+            accepted_fingerprint: Arc::default(),
+            events: Events::default(),
+            _tunnel: None,
+        };
+        let key = russh::keys::parse_public_key_base64(SERVER_KEY).unwrap();
+        let accepted = handler
+            .check_server_key(&PublicKeyOrCertificate::from(key))
+            .await
+            .unwrap();
+        let rejection = rejection.lock().unwrap().take();
+        Checked {
+            accepted,
+            rejection,
+            recorded: std::fs::read_to_string(app_file).unwrap_or_default(),
+        }
+    }
+
+    fn approval_for(host: &str, remember: bool) -> HostKeyApproval {
+        let key = russh::keys::parse_public_key_base64(SERVER_KEY).unwrap();
+        HostKeyApproval {
+            host: host.to_string(),
+            port: 22,
+            fingerprint: fingerprint(&key),
+            remember,
+        }
+    }
+
+    #[tokio::test]
+    async fn an_approval_for_a_jump_host_does_not_cover_the_server_behind_it() {
+        // The jump host answers for the server too, with the key the user just approved.
+        let asked = show_key(Hop::Server, "target", Some(approval_for("bastion", true))).await;
+        assert!(!asked.accepted);
+        let rejection = asked.rejection.expect("the server is asked about");
+        assert_eq!(rejection.kind, ErrorKind::HostKeyUnknown);
+        let offered = rejection.host_key.unwrap();
+        assert_eq!((offered.host.as_str(), offered.port), ("target", 22));
+        assert_eq!(asked.recorded, "", "nothing is remembered for the server");
+
+        // Nor does an approval for the server let a jump host in.
+        let asked = show_key(Hop::JumpHost, "bastion", Some(approval_for("target", true))).await;
+        assert!(!asked.accepted);
+        assert_eq!(asked.recorded, "");
+    }
+
+    #[tokio::test]
+    async fn an_approval_covers_the_server_it_names() {
+        let once = show_key(Hop::Server, "target", Some(approval_for("target", false))).await;
+        assert!(once.accepted);
+        assert_eq!(once.recorded, "");
+
+        let remembered = show_key(Hop::Server, "Target", Some(approval_for("target", true))).await;
+        assert!(remembered.accepted);
+        assert!(
+            remembered.recorded.starts_with("target ssh-ed25519 "),
+            "{}",
+            remembered.recorded
+        );
+
+        let other_port = HostKeyApproval {
+            port: 2222,
+            ..approval_for("target", true)
+        };
+        assert!(
+            !show_key(Hop::Server, "target", Some(other_port))
+                .await
+                .accepted
+        );
+    }
+
+    #[tokio::test]
+    async fn no_approval_lets_a_revoked_key_in() {
+        let revoked = format!("@revoked * ssh-ed25519 {SERVER_KEY}\n");
+        for hop in [Hop::Server, Hop::JumpHost] {
+            let approval = Some(approval_for("target", true));
+            let asked = show_key_with(hop, "target", approval, &revoked, |_| {}).await;
+            assert!(!asked.accepted);
+            assert_eq!(asked.recorded, "", "a revoked key is never saved");
+            let rejection = asked.rejection.expect("the refusal says why");
+            assert_eq!(rejection.kind, ErrorKind::HostKeyChanged);
+            assert!(
+                rejection.message.contains("revoked"),
+                "{}",
+                rejection.message
+            );
+            // Nothing to approve: the page does not ask about it.
+            assert!(rejection.host_key.is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn a_pinned_key_outweighs_known_hosts_and_approvals() {
+        let on_record = format!("target ssh-ed25519 {SERVER_KEY}\n");
+        let pin_another = |known_hosts: &KnownHosts| known_hosts.pin("target", 22, "SHA256:not-it");
+
+        let asked = show_key_with(Hop::Server, "target", None, &on_record, pin_another).await;
+        assert!(!asked.accepted, "on record, but not the pinned key");
+        assert_eq!(asked.rejection.unwrap().kind, ErrorKind::HostKeyChanged);
+
+        let approval = Some(approval_for("target", true));
+        let asked = show_key_with(Hop::Server, "target", approval, "", pin_another).await;
+        assert!(!asked.accepted, "approved, but not the pinned key");
+        let rejection = asked.rejection.unwrap();
+        assert_eq!(rejection.kind, ErrorKind::HostKeyUnknown);
+        assert!(rejection.host_key.is_some());
+        assert_eq!(asked.recorded, "");
+
+        // The pin is the server's: a jump host on the way is asked about as before.
+        let approval = Some(approval_for("bastion", false));
+        let asked = show_key_with(Hop::JumpHost, "bastion", approval, "", pin_another).await;
+        assert!(asked.accepted);
+
+        let key = russh::keys::parse_public_key_base64(SERVER_KEY).unwrap();
+        let pin_this = |known_hosts: &KnownHosts| known_hosts.pin("target", 22, &fingerprint(&key));
+        let asked = show_key_with(Hop::Server, "target", None, &on_record, pin_this).await;
+        assert!(asked.accepted);
+        let asked = show_key_with(Hop::Server, "target", None, "", pin_this).await;
+        assert!(!asked.accepted, "a pin alone is no approval");
+        assert_eq!(asked.rejection.unwrap().kind, ErrorKind::HostKeyUnknown);
+    }
+
+    #[test]
+    fn only_servers_whose_key_poros_checks_can_be_held_to_one() {
+        let checks = |protocol: &str, host: &str| -> (bool, String) {
+            let profile: ConnectProfile = serde_json::from_value(serde_json::json!({
+                "protocol": protocol,
+                "host": host,
+                "port": 0,
+                "username": "poros",
+                "auth": { "type": "password", "password": "" },
+            }))
+            .unwrap();
+            (profile.checks_server_key(), profile.kind_of_server())
+        };
+        assert!(checks("sftp", "files.example.com").0);
+        assert!(checks("ftps", "files.example.com").0);
+        assert!(checks("ftpsImplicit", "files.example.com").0);
+        assert!(checks("webDavs", "dav.example.com").0);
+        assert!(checks("webDav", "https://dav.example.com").0);
+        assert!(checks("s3", "").0, "Amazon S3 goes over TLS");
+        assert_eq!(checks("ftp", "files.example.com"), (false, "FTP".into()));
+        assert_eq!(
+            checks("webDav", "dav.example.com"),
+            (false, "WebDAV over plain HTTP".into())
+        );
+        assert_eq!(
+            checks("s3", "http://127.0.0.1:9000"),
+            (false, "S3 over plain HTTP".into())
+        );
+        for service in ["backblazeB2", "googleDrive", "oneDrive", "box"] {
+            assert!(!checks(service, "").0, "{service}");
+        }
+    }
+
+    #[test]
+    fn a_session_approves_its_key_for_its_own_server_only() {
+        let profile = |protocol: &str, host: &str, port: u16| -> ConnectProfile {
+            serde_json::from_value(serde_json::json!({
+                "protocol": protocol,
+                "host": host,
+                "port": port,
+                "username": "poros",
+                "auth": { "type": "password", "password": "" },
+            }))
+            .unwrap()
+        };
+        let address = |profile: &ConnectProfile| {
+            let approval = HostKeyApproval::for_server(profile, "SHA256:key");
+            assert!(!approval.remember);
+            assert_eq!(approval.fingerprint, "SHA256:key");
+            (approval.host, approval.port)
+        };
+        assert_eq!(
+            address(&profile("sftp", " files.example.com ", 2222)),
+            ("files.example.com".to_string(), 2222)
+        );
+        assert_eq!(
+            address(&profile("ftps", "ftp.example.com", 21)),
+            ("ftp.example.com".to_string(), 21)
+        );
+        // The certificate of these is checked under the address typed as the host.
+        assert_eq!(
+            address(&profile(
+                "webDavs",
+                "https://dav.example.com:8443/files",
+                443
+            )),
+            ("dav.example.com".to_string(), 8443)
+        );
+        assert_eq!(
+            address(&profile("webDavs", "dav.example.com/files", 443)),
+            ("dav.example.com".to_string(), 443)
+        );
+        assert_eq!(
+            address(&profile("s3", "https://Storage.example.com:9000", 443)),
+            ("storage.example.com".to_string(), 9000)
+        );
+    }
 }

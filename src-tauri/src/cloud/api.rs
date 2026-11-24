@@ -14,7 +14,7 @@ use serde::Deserialize;
 use tokio::sync::Mutex;
 
 use super::oauth::{self, OAuthClient};
-use super::TokenRotation;
+use super::{TokenReload, TokenRotation};
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::stall::Activity;
 
@@ -26,6 +26,11 @@ const RENEW_BEFORE: Duration = Duration::from_secs(120);
 const DEFAULT_TOKEN_LIFETIME: Duration = Duration::from_secs(3600);
 /// How long a request may move no bytes, in either direction, before it counts as stalled.
 pub const STALL_TIMEOUT: Duration = Duration::from_secs(60);
+/// The most of a response read into memory whole, such as a folder listing: as much as an FTP
+/// listing may take.
+const MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
+/// The most of a failed answer's body read for the explanation in it.
+const MAX_ERROR_BODY_BYTES: usize = 1024 * 1024;
 /// Request bodies go out in pieces this size, each taken once the connection has room for it,
 /// which is how a slow upload shows that it is still moving.
 const BODY_PIECE: usize = 64 * 1024;
@@ -211,11 +216,33 @@ fn is_transient(status: StatusCode, repeatable: bool) -> bool {
         ))
 }
 
-/// A whole response body, however it failed or succeeded.
+/// A whole response body, however it failed or succeeded, refused past `MAX_BODY_BYTES`.
 pub async fn body_bytes(mut response: Response) -> AppResult<Vec<u8>> {
     let mut body = Vec::new();
     while let Some(chunk) = next_chunk(&mut response).await? {
+        if body.len() + chunk.len() > MAX_BODY_BYTES {
+            return Err(AppError::new(
+                ErrorKind::Cloud,
+                format!(
+                    "The server sent an answer larger than {} MiB",
+                    MAX_BODY_BYTES / (1024 * 1024)
+                ),
+            ));
+        }
         body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
+/// The start of a failed answer's body, as much as the explanation in it can need.
+pub async fn error_body(mut response: Response) -> AppResult<Vec<u8>> {
+    let mut body = Vec::new();
+    while let Some(chunk) = next_chunk(&mut response).await? {
+        let room = MAX_ERROR_BODY_BYTES - body.len();
+        body.extend_from_slice(&chunk[..chunk.len().min(room)]);
+        if body.len() == MAX_ERROR_BODY_BYTES {
+            break;
+        }
     }
     Ok(body)
 }
@@ -244,10 +271,12 @@ struct AccessToken {
 
 pub struct AccessTokens {
     http: Client,
+    token_url: String,
     client: OAuthClient,
     refresh_token: SyncMutex<String>,
     current: Mutex<Option<AccessToken>>,
     rotation: Option<TokenRotation>,
+    reload: Option<TokenReload>,
 }
 
 impl AccessTokens {
@@ -256,13 +285,16 @@ impl AccessTokens {
         client: OAuthClient,
         refresh_token: String,
         rotation: Option<TokenRotation>,
+        reload: Option<TokenReload>,
     ) -> Self {
         Self {
             http,
+            token_url: client.token_url(),
             client,
             refresh_token: SyncMutex::new(refresh_token),
             current: Mutex::new(None),
             rotation,
+            reload,
         }
     }
 
@@ -273,8 +305,26 @@ impl AccessTokens {
                 return Ok(token.value.clone());
             }
         }
-        let refresh_token = self.refresh_token.lock().unwrap().clone();
-        let response = oauth::refresh(&self.http, &self.client, &refresh_token).await?;
+        let mut refresh_token = self.refresh_token.lock().unwrap().clone();
+        let response =
+            match oauth::refresh(&self.http, &self.client, &self.token_url, &refresh_token).await {
+                // Some services take a refresh token once. Another session or poros-cli on the
+                // same account may have used it up and stored the one it got in its place.
+                Err(refused) if refused.kind == ErrorKind::AuthFailed => {
+                    let Some(stored) = self
+                        .stored_refresh_token()
+                        .await
+                        .filter(|stored| !stored.is_empty() && *stored != refresh_token)
+                    else {
+                        return Err(refused);
+                    };
+                    refresh_token = stored;
+                    *self.refresh_token.lock().unwrap() = refresh_token.clone();
+                    oauth::refresh(&self.http, &self.client, &self.token_url, &refresh_token)
+                        .await?
+                }
+                result => result?,
+            };
         if let Some(replacement) = response
             .refresh_token
             .filter(|replacement| !replacement.is_empty() && *replacement != refresh_token)
@@ -293,6 +343,16 @@ impl AccessTokens {
             renew_at: Instant::now() + lifetime - RENEW_BEFORE.min(lifetime / 2),
         });
         Ok(response.access_token)
+    }
+
+    /// The refresh token stored for the account now, read off the async runtime since the
+    /// keychain can take a while to answer.
+    async fn stored_refresh_token(&self) -> Option<String> {
+        let reload = self.reload.clone()?;
+        tokio::task::spawn_blocking(move || reload())
+            .await
+            .ok()
+            .flatten()
     }
 
     /// The service refused `token` before it was due to expire (revoked, or a clock jump).
@@ -463,6 +523,15 @@ struct ErrorDetail {
     code: serde_json::Value,
     #[serde(default)]
     errors: Vec<ErrorReason>,
+    /// Microsoft's narrower reason inside the general one.
+    #[serde(default, alias = "innerError")]
+    innererror: Option<InnerError>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct InnerError {
+    #[serde(default)]
+    code: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -475,19 +544,68 @@ struct ServiceError {
     error: AppError,
     /// The service asked to slow down; the request did not go through.
     throttled: bool,
+    /// The names the service gave the failure, such as `invalidSharingRequest`.
+    reasons: Vec<String>,
+}
+
+/// What a service said about a request it refused, for a caller that asked to see the
+/// answer with `send_expecting`: the error `send` would have returned, and the reasons the
+/// service named, which tell a rule of the organization from a missing permission.
+pub struct Refusal {
+    pub error: AppError,
+    pub reasons: Vec<String>,
+}
+
+impl Refusal {
+    pub fn has_reason(&self, names: &[&str]) -> bool {
+        self.reasons
+            .iter()
+            .any(|reason| names.contains(&reason.as_str()))
+    }
+}
+
+/// Reads a refused answer the way `send` reads every failed one.
+pub async fn refusal(response: Response) -> Refusal {
+    let failure = ServiceError::read(response).await;
+    Refusal {
+        error: failure.error,
+        reasons: failure.reasons,
+    }
+}
+
+/// The refusal `refusal` reads from an answer with this status and body, for tests that have
+/// no server to send it.
+#[cfg(test)]
+pub fn refusal_from(status: StatusCode, body: &[u8]) -> Refusal {
+    let failure = ServiceError::describe(status, serde_json::from_slice(body).unwrap_or_default());
+    Refusal {
+        error: failure.error,
+        reasons: failure.reasons,
+    }
 }
 
 impl ServiceError {
     async fn read(response: Response) -> Self {
         let status = response.status();
-        let body: ErrorBody = decode(response).await.unwrap_or_default();
+        // Only the start of the body is read, as with every failed answer. One that breaks off
+        // leaves the status to explain the failure.
+        let body = match error_body(response).await {
+            Ok(body) => serde_json::from_slice(&body).unwrap_or_default(),
+            Err(_) => ErrorBody::default(),
+        };
+        Self::describe(status, body)
+    }
+
+    fn describe(status: StatusCode, body: ErrorBody) -> Self {
         let detail = body.error;
         let reasons: Vec<&str> = detail
             .errors
             .iter()
             .map(|reason| reason.reason.as_str())
             .chain(detail.code.as_str())
+            .chain(detail.innererror.iter().map(|inner| inner.code.as_str()))
             .chain(body.code.as_str())
+            .filter(|reason| !reason.is_empty())
             .collect();
         let has_reason = |names: &[&str]| reasons.iter().any(|reason| names.contains(reason));
         let throttled = status == StatusCode::TOO_MANY_REQUESTS
@@ -534,6 +652,7 @@ impl ServiceError {
         Self {
             error: AppError::new(kind, message),
             throttled,
+            reasons: reasons.into_iter().map(str::to_string).collect(),
         }
     }
 }
@@ -643,6 +762,213 @@ mod tests {
         let error = AppError::from(failure);
         assert_eq!(error.kind, ErrorKind::Timeout);
         assert!(error.is_connection_lost());
+    }
+
+    /// Answers one request with a chunked body of `length` bytes, or less once the client stops
+    /// reading. Returns how many bytes of it went out.
+    async fn serve_long_body(listener: TcpListener, length: usize) -> usize {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut head = Vec::new();
+        let mut piece = [0u8; 4096];
+        while !head.windows(4).any(|window| window == b"\r\n\r\n") {
+            let read = stream.read(&mut piece).await.unwrap();
+            assert!(read > 0, "the request ended early");
+            head.extend_from_slice(&piece[..read]);
+        }
+        let started = stream
+            .write_all(b"HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n")
+            .await;
+        if started.is_err() {
+            return 0;
+        }
+        let chunk = vec![b'x'; 64 * 1024];
+        let mut sent = 0;
+        while sent < length {
+            let framed = [format!("{:x}\r\n", chunk.len()).as_bytes(), &chunk, b"\r\n"].concat();
+            if stream.write_all(&framed).await.is_err() {
+                return sent;
+            }
+            sent += chunk.len();
+        }
+        let _ = stream.write_all(b"0\r\n\r\n").await;
+        sent
+    }
+
+    #[tokio::test]
+    async fn an_answer_that_never_ends_is_cut_off() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let url = format!("http://{}/listing", listener.local_addr().unwrap());
+        let server = tokio::spawn(serve_long_body(listener, 2 * MAX_BODY_BYTES));
+        let http = http_client().unwrap();
+        let response = http.get(&url).send().await.unwrap();
+        let error = body_bytes(response).await.unwrap_err();
+        assert_eq!(error.kind, ErrorKind::Cloud);
+        let sent = server.await.unwrap();
+        assert!(sent < 2 * MAX_BODY_BYTES, "the whole body was read");
+
+        // The explanation in a failed answer is read only so far.
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let url = format!("http://{}/error", listener.local_addr().unwrap());
+        tokio::spawn(serve_long_body(listener, 4 * MAX_ERROR_BODY_BYTES));
+        let response = http.get(&url).send().await.unwrap();
+        assert_eq!(
+            error_body(response).await.unwrap().len(),
+            MAX_ERROR_BODY_BYTES
+        );
+    }
+
+    /// Answers one request with a refusal whose JSON is followed by more padding than an error
+    /// body is read for, and then by nothing, as a body that stalls.
+    async fn serve_stalling_refusal(listener: TcpListener, json: &str) {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut head = Vec::new();
+        let mut piece = [0u8; 4096];
+        while !head.windows(4).any(|window| window == b"\r\n\r\n") {
+            let read = stream.read(&mut piece).await.unwrap();
+            assert!(read > 0, "the request ended early");
+            head.extend_from_slice(&piece[..read]);
+        }
+        let chunk =
+            |data: &[u8]| [format!("{:x}\r\n", data.len()).as_bytes(), data, b"\r\n"].concat();
+        let mut answer =
+            b"HTTP/1.1 400 Bad Request\r\ncontent-type: application/json\r\ntransfer-encoding: chunked\r\n\r\n"
+                .to_vec();
+        answer.extend_from_slice(&chunk(json.as_bytes()));
+        let padding = vec![b' '; 64 * 1024];
+        for _ in 0..(2 * MAX_ERROR_BODY_BYTES / padding.len()) {
+            answer.extend_from_slice(&chunk(&padding));
+        }
+        if stream.write_all(&answer).await.is_err() {
+            return;
+        }
+        // The body never ends; the connection stays open until the client drops it.
+        let _ = stream.read(&mut piece).await;
+    }
+
+    #[tokio::test]
+    async fn a_refusal_is_read_as_far_as_its_explanation_goes() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let url = format!("http://{}/permissions", listener.local_addr().unwrap());
+        let json = r#"{"error":{"message":"Sharing outside the domain is off","errors":[{"reason":"invalidSharingRequest"}]}}"#;
+        tokio::spawn(serve_stalling_refusal(listener, json));
+        let response = http_client().unwrap().get(&url).send().await.unwrap();
+        // Read to its end, the body would stall until STALL_TIMEOUT.
+        let refused = tokio::time::timeout(Duration::from_secs(10), refusal(response))
+            .await
+            .expect("the refusal waited for the rest of the body");
+        assert!(refused.has_reason(&["invalidSharingRequest"]));
+        assert_eq!(refused.error.kind, ErrorKind::InvalidInput);
+        assert_eq!(refused.error.message, "Sharing outside the domain is off");
+    }
+
+    /// A token endpoint that, as Box does, hands out a new refresh token with every access
+    /// token and refuses a refresh token once it was used.
+    async fn serve_rotating_tokens(listener: TcpListener) {
+        let mut valid = "R0".to_string();
+        for issued in 1.. {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                return;
+            };
+            let mut request = Vec::new();
+            let mut piece = [0u8; 4096];
+            let body = loop {
+                let read = stream.read(&mut piece).await.unwrap();
+                assert!(read > 0, "the request ended early");
+                request.extend_from_slice(&piece[..read]);
+                let text = String::from_utf8_lossy(&request).into_owned();
+                let Some((head, body)) = text.split_once("\r\n\r\n") else {
+                    continue;
+                };
+                let length: usize = head
+                    .to_ascii_lowercase()
+                    .lines()
+                    .find_map(|line| line.strip_prefix("content-length:"))
+                    .map_or(0, |value| value.trim().parse().unwrap());
+                if body.len() >= length {
+                    break body.to_string();
+                }
+            };
+            let presented = body
+                .split('&')
+                .find_map(|pair| pair.strip_prefix("refresh_token="))
+                .unwrap_or_default();
+            let (status, answer) = if presented == valid {
+                valid = format!("R{issued}");
+                let access = format!("A{issued}");
+                let answer = serde_json::json!({
+                    "access_token": access,
+                    "expires_in": 3600,
+                    "refresh_token": valid,
+                });
+                ("200 OK", answer.to_string())
+            } else {
+                let answer =
+                    r#"{"error":"invalid_grant","error_description":"Refresh token has expired"}"#;
+                ("400 Bad Request", answer.to_string())
+            };
+            let reply = format!(
+                "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{answer}",
+                answer.len()
+            );
+            stream.write_all(reply.as_bytes()).await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn sessions_on_one_account_keep_signing_in_as_its_token_rotates() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let token_url = format!("http://{}/token", listener.local_addr().unwrap());
+        tokio::spawn(serve_rotating_tokens(listener));
+        // The keychain entry of the saved connection both sessions were opened from.
+        let stored = Arc::new(SyncMutex::new("R0".to_string()));
+        let open_session = || {
+            let (kept, read) = (stored.clone(), stored.clone());
+            let client = OAuthClient {
+                provider: crate::cloud::CloudProvider::Box,
+                client_id: "poros".into(),
+                client_secret: "secret".into(),
+                tenant: String::new(),
+            };
+            let refresh_token = stored.lock().unwrap().clone();
+            let rotation: TokenRotation = Arc::new(move |replacement: &str| {
+                *kept.lock().unwrap() = replacement.to_string();
+            });
+            let reload: TokenReload = Arc::new(move || Some(read.lock().unwrap().clone()));
+            let mut tokens = AccessTokens::new(
+                http_client().unwrap(),
+                client,
+                refresh_token,
+                Some(rotation),
+                Some(reload),
+            );
+            tokens.token_url = token_url.clone();
+            tokens
+        };
+        let expire = |tokens: &AccessTokens| {
+            let mut current = tokens.current.try_lock().unwrap();
+            current.as_mut().unwrap().renew_at = Instant::now();
+        };
+
+        let first = open_session();
+        first.get().await.unwrap();
+        // Opened with the token the first session stored, which the first one still holds too.
+        let second = open_session();
+        second.get().await.unwrap();
+        assert_eq!(*stored.lock().unwrap(), "R2");
+
+        // An hour on, each renews its access token with a refresh token the other used up.
+        expire(&first);
+        first.get().await.unwrap();
+        expire(&second);
+        second.get().await.unwrap();
+        expire(&first);
+        first.get().await.unwrap();
+
+        // With nothing newer stored, a refused token stays refused.
+        *stored.lock().unwrap() = "R0".to_string();
+        let lost = open_session();
+        let error = lost.get().await.unwrap_err();
+        assert_eq!(error.kind, ErrorKind::AuthFailed);
     }
 
     #[test]

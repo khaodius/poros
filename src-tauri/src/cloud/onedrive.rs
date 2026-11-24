@@ -1,6 +1,8 @@
 //! OneDrive over Microsoft Graph, for personal, work and school accounts. Graph addresses
 //! items by path, so unlike Google Drive no lookups are needed to reach a file.
 
+mod sharing;
+
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -109,6 +111,14 @@ impl DriveItem {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Drive {
+    /// `personal`, `business` or `documentLibrary`.
+    #[serde(default)]
+    drive_type: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct Children {
     #[serde(default)]
     value: Vec<DriveItem>,
@@ -153,6 +163,8 @@ fn file_system_info(modified: i64) -> serde_json::Value {
 
 pub struct OneDriveFs {
     api: Api,
+    /// What kind of account the drive belongs to, which decides the links it can make.
+    account: sharing::Account,
     folders: FolderCache,
     /// Keeps parallel uploads from racing to create the same folder.
     folder_creation: tokio::sync::Mutex<()>,
@@ -160,10 +172,12 @@ pub struct OneDriveFs {
 
 impl OneDriveFs {
     pub async fn connect(api: Api) -> AppResult<Self> {
-        api.send(&|http| http.get(format!("{DRIVE_URL}?$select=id,driveType")))
+        let drive: Drive = api
+            .json(&|http| http.get(format!("{DRIVE_URL}?$select=id,driveType")))
             .await?;
         Ok(Self {
             api,
+            account: sharing::Account::of(&drive.drive_type),
             folders: FolderCache::default(),
             folder_creation: tokio::sync::Mutex::new(()),
         })
@@ -231,6 +245,10 @@ impl RemoteFileSystem for OneDriveFs {
         }
     }
 
+    fn link_sharing(&self) -> Option<&dyn crate::share::LinkSharing> {
+        Some(self)
+    }
+
     async fn canonicalize(&self, path: &str) -> AppResult<String> {
         let path = protocol::normalize(&self.resolve(path));
         match self.item(&path).await? {
@@ -253,6 +271,10 @@ impl RemoteFileSystem for OneDriveFs {
         while let Some(url) = next.take() {
             let page: Children = self.api.json(&|http| http.get(&url)).await?;
             for item in page.value {
+                // OneDrive refuses such names, but a path could not reach one anyway.
+                if protocol::validate_name(&item.name).is_err() {
+                    continue;
+                }
                 let path = remote_path::join(&directory, &item.name);
                 if item.is_folder() {
                     self.folders.insert(&path, &item.id);
@@ -279,7 +301,7 @@ impl RemoteFileSystem for OneDriveFs {
 
     async fn rename(&self, path: &str, new_name: &str) -> AppResult<String> {
         protocol::validate_name(new_name)?;
-        let path = protocol::normalize(&self.resolve(path));
+        let path = protocol::normalize_exact(&self.resolve(path))?;
         let parent = remote_path::parent(&path)
             .ok_or_else(|| AppError::invalid("Cannot rename the root folder"))?;
         let target = remote_path::join(&parent, new_name);
@@ -297,7 +319,7 @@ impl RemoteFileSystem for OneDriveFs {
     /// Moves the items to the OneDrive recycle bin.
     async fn delete(&self, paths: &[String]) -> AppResult<()> {
         let resolved: Vec<String> = paths.iter().map(|path| self.resolve(path)).collect();
-        for path in protocol::outermost(&resolved) {
+        for path in protocol::outermost(&resolved)? {
             if path == "/" {
                 return Err(AppError::invalid("Refusing to delete /"));
             }

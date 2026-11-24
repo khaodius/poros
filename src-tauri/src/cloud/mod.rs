@@ -37,7 +37,7 @@ pub use oauth::{missing_client, Authorization, OAuthClient, OAuthVault, Provider
 const FOLDER_CACHE_TTL: Duration = Duration::from_secs(60);
 
 /// Everything but unreserved characters is escaped in a path segment of a URL.
-const URL_SEGMENT: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+pub(crate) const URL_SEGMENT: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
     .remove(b'-')
     .remove(b'.')
     .remove(b'_')
@@ -58,6 +58,10 @@ fn encode_path(path: &str) -> String {
 
 /// Receives a refresh token that replaced the one the session started with.
 pub type TokenRotation = Arc<dyn Fn(&str) + Send + Sync>;
+
+/// Reads the refresh token stored for the session's account now, which another session or
+/// `poros-cli` may have replaced with the one it got for it.
+pub type TokenReload = Arc<dyn Fn() -> Option<String> + Send + Sync>;
 
 /// Mirrored in `src/lib/types.ts`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -95,6 +99,7 @@ pub struct Login<'login> {
     pub certificates: &'login TrustedCertificates,
     pub approval: Option<HostKeyApproval>,
     pub rotation: Option<TokenRotation>,
+    pub reload: Option<TokenReload>,
 }
 
 impl Login<'_> {
@@ -114,6 +119,26 @@ impl Login<'_> {
             session_id,
             events,
         )
+    }
+}
+
+/// The host and port in the address of a WebDAV server or an S3 endpoint, under which its
+/// certificate is checked.
+pub fn server_address(profile: &ConnectProfile) -> Option<(String, u16)> {
+    match profile.protocol {
+        Protocol::WebDav | Protocol::WebDavs => webdav::server_address(profile),
+        Protocol::S3 => s3::server_address(profile),
+        _ => None,
+    }
+}
+
+/// Whether a WebDAV server or an S3 endpoint is reached over TLS, with the certificate checked
+/// against what the user approved. `None` when the address does not parse.
+pub fn checks_certificate(profile: &ConnectProfile) -> Option<bool> {
+    match profile.protocol {
+        Protocol::WebDav | Protocol::WebDavs => webdav::is_secure(profile),
+        Protocol::S3 => s3::is_secure(profile),
+        _ => Some(false),
     }
 }
 
@@ -140,7 +165,8 @@ pub async fn sign_in(client: &OAuthClient, cancel: &CancellationToken) -> AppRes
     oauth::sign_in(&http, client, open_in_browser, cancel).await
 }
 
-fn open_in_browser(url: &str) -> AppResult<()> {
+/// Hands a web address to the system's browser.
+fn launch_browser(url: &str) -> std::io::Result<()> {
     #[cfg(windows)]
     let mut command = {
         let mut command = std::process::Command::new("rundll32");
@@ -151,13 +177,27 @@ fn open_in_browser(url: &str) -> AppResult<()> {
     let mut command = std::process::Command::new("open");
     #[cfg(all(unix, not(target_os = "macos")))]
     let mut command = std::process::Command::new("xdg-open");
-    command.arg(url).spawn().map_err(|error| {
+    command.arg(url).spawn().map(drop)
+}
+
+fn open_in_browser(url: &str) -> AppResult<()> {
+    launch_browser(url).map_err(|error| {
         AppError::new(
             ErrorKind::Io,
             format!("Could not open the browser to sign in: {error}"),
         )
-    })?;
-    Ok(())
+    })
+}
+
+/// Opens a share link in the browser. The address was parsed as a web address, so it is
+/// escaped and cannot be taken for an option or another program's scheme.
+pub fn open_link(url: &reqwest::Url) -> AppResult<()> {
+    launch_browser(url.as_str()).map_err(|error| {
+        AppError::new(
+            ErrorKind::Io,
+            format!("Could not open the browser: {error}"),
+        )
+    })
 }
 
 /// Opens a session's file system, returning it with the fingerprint of the certificate the
@@ -186,7 +226,10 @@ pub async fn connect(
             (Arc::new(files), fingerprint)
         }
         Protocol::BackblazeB2 => (Arc::new(b2::B2Fs::connect(profile).await?), String::new()),
-        _ => (connect_oauth(profile, login.rotation).await?, String::new()),
+        _ => (
+            connect_oauth(profile, login.rotation, login.reload).await?,
+            String::new(),
+        ),
     };
     events.log(
         LogLevel::Info,
@@ -199,6 +242,7 @@ pub async fn connect(
 async fn connect_oauth(
     profile: &ConnectProfile,
     rotation: Option<TokenRotation>,
+    reload: Option<TokenReload>,
 ) -> AppResult<Arc<dyn RemoteFileSystem>> {
     let provider = CloudProvider::for_protocol(profile.protocol)
         .ok_or_else(|| AppError::invalid("Not a cloud storage connection"))?;
@@ -227,6 +271,7 @@ async fn connect_oauth(
         client,
         refresh_token.clone(),
         rotation,
+        reload,
     ));
     let api = api::Api::new(tokens);
     Ok(match provider {

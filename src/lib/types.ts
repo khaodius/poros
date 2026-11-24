@@ -100,7 +100,11 @@ export interface HostKeyInfo {
   certificateProblem?: string;
 }
 
+/** The answer to one question about a server's host key or certificate. */
 export interface HostKeyApproval {
+  /** The server the question named. The answer holds for that server alone. */
+  host: string;
+  port: number;
   fingerprint: string;
   remember: boolean;
 }
@@ -115,6 +119,55 @@ export interface VaultInfo {
   name: string;
 }
 
+/** What a share link lets its holder do. */
+export type LinkKind = "view" | "edit" | "download";
+
+/** Who a share link works for: whoever holds it, the account's organization, or people the item
+ * is already shared with. */
+export type ShareAudience = "anyone" | "organization" | "invited";
+
+/** Whether share links end by themselves. */
+export type ShareExpiry = "never" | "optional" | "required";
+
+/** What share links a session can make. Mirrors `ShareCapabilities` in src-tauri/src/share.rs. */
+export interface ShareCapabilities {
+  kinds: LinkKind[];
+  audiences: ShareAudience[];
+  expiry: ShareExpiry;
+  /** The longest a link can last, where the service sets a limit. */
+  maxLifetimeSecs?: number;
+  password: boolean;
+  /** Links stay with the item, so they can be listed and removed. */
+  revocable: boolean;
+  folders: boolean;
+  /** The service keeps one link per item, so making a link changes the one it has. */
+  singleLink: boolean;
+  /** The organization the `organization` audience stands for, when its name is known. */
+  organization?: string;
+}
+
+export interface ShareOptions {
+  kind: LinkKind;
+  audience: ShareAudience;
+  lifetimeSecs?: number;
+  password?: string;
+}
+
+/** A share link. Its address is a credential: it is shown and copied, never logged. */
+export interface ShareLink {
+  /** Names the link when removing it; empty for a link that cannot be removed. */
+  id: string;
+  url: string;
+  kind: LinkKind;
+  audience: ShareAudience;
+  /** Seconds since the Unix epoch. */
+  expiresAt?: number;
+  hasPassword: boolean;
+  revocable: boolean;
+  /** What the user should know about the link, in whole sentences. */
+  notes: string[];
+}
+
 export interface SessionInfo {
   id: string;
   label: string;
@@ -127,6 +180,8 @@ export interface SessionInfo {
   protocol: Protocol;
   /** Set for the session of an unlocked vault, whose host, port and username are its server's. */
   vault?: VaultInfo;
+  /** The share links the session can make; absent when the service has none. */
+  sharing?: ShareCapabilities;
   /** Listings give times only to the minute, or to the day, as FTP's `LIST` does. */
   coarseTimes?: boolean;
 }
@@ -156,7 +211,9 @@ export type ErrorKind =
   | "cancelled"
   | "keychain"
   | "update"
-  | "wrongPassword";
+  | "wrongPassword"
+  | "busy"
+  | "lent";
 
 export interface AppError {
   kind: ErrorKind;
@@ -907,6 +964,8 @@ export interface MoveCopyRequest {
   sources: string[];
   targetDirectory: string;
   conflict: NameClash;
+  /** The name the one item takes in the target folder, when not its own. */
+  targetName?: string;
 }
 
 export type OperationMethod = "rename" | "copyData" | "command" | "stream" | "local";
@@ -1108,6 +1167,22 @@ export interface FileStamp {
   size: number;
   /** Milliseconds since the Unix epoch. */
   modified: number | null;
+}
+
+/** Asks for part of a file for the preview pane. Mirrors `ReadRequest` in file_preview.rs. */
+export interface PreviewReadRequest {
+  /** Names the read for cancelling it. */
+  requestId: string;
+  location: DocumentLocation;
+  offset: number;
+  /** The most bytes to read; the backend returns no more than 64 MiB whatever this says. */
+  length: number;
+}
+
+/** What a preview read returns: the file as it is now, and the bytes asked for. */
+export interface PreviewRead {
+  stamp: FileStamp;
+  bytes: Uint8Array;
 }
 
 export interface TextDocument {

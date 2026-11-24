@@ -3,6 +3,8 @@
 //! lookups for a few seconds, so a transfer of many files into one folder lists it once
 //! rather than once per file.
 
+mod sharing;
+
 use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::{Arc, Mutex};
@@ -400,6 +402,10 @@ impl RemoteFileSystem for BoxFs {
         }
     }
 
+    fn link_sharing(&self) -> Option<&dyn crate::share::LinkSharing> {
+        Some(self)
+    }
+
     async fn canonicalize(&self, path: &str) -> AppResult<String> {
         let path = protocol::normalize(&self.resolve(path));
         match self.folder_id(&path).await? {
@@ -421,8 +427,8 @@ impl RemoteFileSystem for BoxFs {
         };
         let mut entries = Vec::new();
         for item in self.list_folder(&folder_id, &directory).await? {
-            // Box refuses slashes in names, but a path could not reach one anyway.
-            if item.name.is_empty() || item.name.contains('/') {
+            // Box refuses such names, but a path could not reach one anyway.
+            if protocol::validate_name(&item.name).is_err() {
                 continue;
             }
             let path = remote_path::join(&directory, &item.name);
@@ -486,7 +492,7 @@ impl RemoteFileSystem for BoxFs {
 
     async fn rename(&self, path: &str, new_name: &str) -> AppResult<String> {
         protocol::validate_name(new_name)?;
-        let path = protocol::normalize(&self.resolve(path));
+        let path = protocol::normalize_exact(&self.resolve(path))?;
         let parent = remote_path::parent(&path)
             .ok_or_else(|| AppError::invalid("Cannot rename the root folder"))?;
         let target = remote_path::join(&parent, new_name);
@@ -511,7 +517,7 @@ impl RemoteFileSystem for BoxFs {
     /// Moves the items to the Box trash, where they can be restored.
     async fn delete(&self, paths: &[String]) -> AppResult<()> {
         let resolved: Vec<String> = paths.iter().map(|path| self.resolve(path)).collect();
-        for path in protocol::outermost(&resolved) {
+        for path in protocol::outermost(&resolved)? {
             if path == "/" {
                 return Err(AppError::invalid("Refusing to delete /"));
             }

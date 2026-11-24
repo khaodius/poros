@@ -4,7 +4,9 @@
 //! one command beats a round trip per file. When neither works, data is read and written back
 //! over SFTP in memory.
 
+use std::collections::HashSet;
 use std::future::Future;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use futures::future::BoxFuture;
@@ -90,6 +92,15 @@ pub struct Work<'a> {
     progress: &'a Progress,
     /// Whether the server runs shell commands, once asked.
     runs_commands: OnceCell<bool>,
+    /// Paths the top-level items have taken in the target folder. Items are placed several at
+    /// a time, so a name found free is free for this item only once it is in here.
+    claimed: Mutex<HashSet<String>>,
+}
+
+/// The folder items go into, as given and with links followed.
+struct Target<'b> {
+    directory: &'b str,
+    real_directory: &'b str,
 }
 
 impl<'a> Work<'a> {
@@ -106,7 +117,13 @@ impl<'a> Work<'a> {
             cancel,
             progress,
             runs_commands: OnceCell::new(),
+            claimed: Mutex::new(HashSet::new()),
         })
+    }
+
+    /// Takes `path` for one item; false when another item already has it.
+    fn claim(&self, path: &str) -> bool {
+        self.claimed.lock().unwrap().insert(path.to_string())
     }
 
     pub async fn move_or_copy(&self, request: &MoveCopyRequest) -> AppResult<OperationSummary> {
@@ -122,13 +139,28 @@ impl<'a> Work<'a> {
                 .with_path(directory))
             }
         }
+        let real_directory = match self.fs.canonicalize(&directory).await {
+            Ok(real) => trim_trailing_slash(&real),
+            Err(_) => directory.clone(),
+        };
+        let target = Target {
+            directory: &directory,
+            real_directory: &real_directory,
+        };
         let results = stream::iter(request.sources.iter().cloned())
             .map(|source| {
                 let source = trim_trailing_slash(&self.fs.resolve(&source));
-                let directory = &directory;
+                let name = match &request.target_name {
+                    Some(name) => name.clone(),
+                    None => remote_path::file_name(&source).to_string(),
+                };
+                // Claimed in the order the items are given, so of two items with one name the
+                // first keeps it.
+                let name_is_ours = self.claim(&remote_path::join(&directory, &name));
+                let target = &target;
                 async move {
                     let result = self
-                        .place(&source, directory, request.mode, request.conflict)
+                        .place(&source, target, &name, name_is_ours, request)
                         .await;
                     (source, result)
                 }
@@ -155,45 +187,99 @@ impl<'a> Work<'a> {
         }
     }
 
-    /// Moves or copies one item into `directory`; `None` when it was skipped.
+    /// Moves or copies one item into the target folder under `name`; `None` when it was
+    /// skipped. `name_is_ours` is false when another item of the operation goes to that name.
     async fn place(
         &self,
         source: &str,
-        directory: &str,
-        mode: Mode,
-        conflict: Conflict,
+        target: &Target<'_>,
+        name: &str,
+        name_is_ours: bool,
+        request: &MoveCopyRequest,
     ) -> AppResult<Option<String>> {
         self.check_cancelled()?;
-        let name = remote_path::file_name(source).to_string();
+        let directory = target.directory;
+        let own_name = remote_path::file_name(source);
         let stat = self.fs.lstat_entry(source).await?.ok_or_else(|| {
-            AppError::new(ErrorKind::NotFound, format!("{name} no longer exists")).with_path(source)
+            AppError::new(ErrorKind::NotFound, format!("{own_name} no longer exists"))
+                .with_path(source)
         })?;
-        if stat.kind == EntryKind::Dir && is_within(directory, source) {
-            let verb = if mode == Mode::Move { "move" } else { "copy" };
+        if stat.kind == EntryKind::Dir && self.goes_into_itself(source, target).await {
+            let verb = if request.mode == Mode::Move {
+                "move"
+            } else {
+                "copy"
+            };
             return Err(AppError::invalid(format!(
-                "Cannot {verb} the folder {name} into itself"
+                "Cannot {verb} the folder {own_name} into itself"
             )));
         }
-        let in_place = remote_path::parent(source).as_deref() == Some(directory);
-        let destination = match (mode, in_place) {
+        let in_place =
+            remote_path::parent(source).as_deref() == Some(directory) && name == own_name;
+        let destination = match (request.mode, in_place) {
             (Mode::Move, true) => return Ok(None),
             (Mode::Copy, true) => Some(Destination::Fresh(
-                self.free_name(directory, &name, stat.kind).await?,
+                self.free_name(directory, name, stat.kind).await?,
             )),
+            _ if !name_is_ours => match request.conflict {
+                Conflict::Skip => None,
+                Conflict::KeepBoth => Some(Destination::Fresh(
+                    self.free_name(directory, name, stat.kind).await?,
+                )),
+                Conflict::Replace | Conflict::Fail => {
+                    return Err(AppError::new(
+                        ErrorKind::AlreadyExists,
+                        format!("Another item named {name} goes there too"),
+                    )
+                    .with_path(source))
+                }
+            },
             _ => {
-                self.destination(directory, &name, stat.kind, conflict)
+                self.destination(directory, name, stat.kind, request.conflict)
                     .await?
             }
         };
         let Some(destination) = destination else {
             return Ok(None);
         };
+        if let Destination::Replace(existing) = &destination {
+            if self.same_file(source, existing).await {
+                return Err(
+                    AppError::invalid(format!("{name} would be replaced with itself"))
+                        .with_path(source),
+                );
+            }
+        }
         self.progress.working_on(source);
-        match mode {
+        match request.mode {
             Mode::Move => self.move_to(source, stat, &destination).await?,
             Mode::Copy => self.copy_to(source, stat, &destination, true).await?,
         }
         Ok(Some(destination.path().to_string()))
+    }
+
+    /// Whether `source` is the file at `existing` once links are followed, as a link to it, or
+    /// the file reached through a linked folder, is. When the server cannot tell, they differ.
+    async fn same_file(&self, source: &str, existing: &str) -> bool {
+        match (
+            self.fs.canonicalize(source).await,
+            self.fs.canonicalize(existing).await,
+        ) {
+            (Ok(source), Ok(existing)) => source == existing,
+            _ => false,
+        }
+    }
+
+    /// Whether the target folder is the folder `source` or inside it, as spelled or once links
+    /// are followed.
+    async fn goes_into_itself(&self, source: &str, target: &Target<'_>) -> bool {
+        if is_within(target.directory, source) {
+            return true;
+        }
+        match self.fs.canonicalize(source).await {
+            Ok(real_source) => is_within(target.real_directory, &trim_trailing_slash(&real_source)),
+            Err(_) => false,
+        }
     }
 
     /// Where an item named `name` goes in `directory`; `None` to skip it.
@@ -210,6 +296,7 @@ impl<'a> Work<'a> {
         };
         match conflict {
             Conflict::Skip => Ok(None),
+            Conflict::Fail => Err(crate::protocol::already_exists(&path)),
             Conflict::KeepBoth => Ok(Some(Destination::Fresh(
                 self.free_name(directory, name, kind).await?,
             ))),
@@ -222,11 +309,15 @@ impl<'a> Work<'a> {
         }
     }
 
+    /// A numbered name in `directory` that nothing has and no other item of this operation took.
     async fn free_name(&self, directory: &str, name: &str, kind: EntryKind) -> AppResult<String> {
         for candidate in names::numbered(name, kind == EntryKind::Dir).take(MAX_FREE_NAME_ATTEMPTS)
         {
             let path = remote_path::join(directory, &candidate);
-            if self.fs.lstat_entry(&path).await?.is_none() {
+            if self.claimed.lock().unwrap().contains(&path) {
+                continue;
+            }
+            if self.fs.lstat_entry(&path).await?.is_none() && self.claim(&path) {
                 return Ok(path);
             }
         }
@@ -308,6 +399,13 @@ impl<'a> Work<'a> {
         destination: &Destination,
         rename_error: AppError,
     ) -> AppResult<()> {
+        // A rename onto a name something took since it was found free fails the same way, and
+        // `mv` or a copy would then write over that.
+        if let Destination::Fresh(target) = destination {
+            if self.fs.lstat_entry(target).await?.is_some() {
+                return Err(crate::protocol::already_exists(target));
+            }
+        }
         if self.runs_commands().await {
             let target = destination.path();
             self.run(&format!(
@@ -729,7 +827,117 @@ pub(super) fn trim_trailing_slash(path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
+    use crate::events::Events;
+    use crate::protocol::Protocol;
+    use crate::session::{SessionInfo, SessionManager};
+    use crate::ssh::{AuthMethod, ConnectProfile, HostKeyApproval, Route};
+
+    /// Signed in to the SSH test server that `tests/sftp_server.rs` describes; `None` unless
+    /// `POROS_TEST_SSH_PORT` is set.
+    async fn test_server(
+        known_hosts: &std::path::Path,
+    ) -> Option<(Arc<SessionManager>, SessionInfo)> {
+        let port = std::env::var("POROS_TEST_SSH_PORT").ok()?.parse().ok()?;
+        let profile = || ConnectProfile {
+            protocol: Protocol::Sftp,
+            host: "127.0.0.1".into(),
+            port,
+            username: std::env::var("POROS_TEST_SSH_USER").unwrap_or_else(|_| "poros".into()),
+            auth: AuthMethod::Password {
+                password: std::env::var("POROS_TEST_SSH_PASSWORD")
+                    .unwrap_or_else(|_| "poros-pass".into()),
+            },
+            initial_path: None,
+            timeout_secs: Some(10),
+            keepalive_secs: None,
+            compression: false,
+            receive_buffer_kib: None,
+            send_buffer_kib: None,
+            saved_connection_id: None,
+            ftp_active: false,
+            bypass_proxy: false,
+            jump_connection_id: None,
+            rsync_path: None,
+            s3: Default::default(),
+            route: Route::default(),
+        };
+        let manager = Arc::new(SessionManager::new(
+            known_hosts.join("known_hosts"),
+            Events::default(),
+        ));
+        let info = match manager.connect(profile(), None, "main").await {
+            Ok(info) => info,
+            Err(error) => {
+                let host_key = error.host_key.expect("only the host key may be unknown");
+                let approval = HostKeyApproval::of(&host_key, true);
+                manager
+                    .connect(profile(), Some(approval), "main")
+                    .await
+                    .unwrap()
+            }
+        };
+        Some((manager, info))
+    }
+
+    async fn write(fs: &RemoteFs, path: &str, contents: &[u8]) {
+        let handle = fs.open_for_write(path, true, Some(0o644)).await.unwrap();
+        fs.write_chunk(&handle, 0, contents.to_vec()).await.unwrap();
+        fs.close_handle(handle).await.unwrap();
+    }
+
+    /// A rename to another disk fails the way a rename onto a taken name does. Should the name
+    /// found free have been taken since, neither `mv` nor a copy may write over it.
+    #[tokio::test]
+    async fn a_move_that_falls_back_never_writes_over_a_name_taken_meanwhile() {
+        let known_hosts = tempfile::tempdir().unwrap();
+        let Some((manager, info)) = test_server(known_hosts.path()).await else {
+            return;
+        };
+        let session = manager.get(&info.id).await.unwrap();
+        let fs = session.sftp().unwrap();
+        let scratch = format!(
+            "{}/poros-fileops-guard-{}",
+            info.home.trim_end_matches('/'),
+            std::process::id()
+        );
+        let _ = fs.delete(std::slice::from_ref(&scratch)).await;
+        fs.make_dir_at(&scratch, None).await.unwrap();
+        let (source, taken) = (
+            format!("{scratch}/moved.txt"),
+            format!("{scratch}/taken.txt"),
+        );
+        write(fs, &source, b"moved").await;
+        write(fs, &taken, b"kept").await;
+
+        for commands in [true, false] {
+            let features = ServerFeatures {
+                copy_data: true,
+                commands,
+            };
+            let (cancel, progress) = (CancellationToken::new(), Progress::default());
+            let work = Work::new(&session, features, &cancel, &progress)
+                .await
+                .unwrap();
+            let stat = work.fs.lstat_entry(&source).await.unwrap().unwrap();
+            let rename_error = AppError::new(ErrorKind::Sftp, "Failure");
+            let error = work
+                .move_across_disks(
+                    &source,
+                    stat,
+                    &Destination::Fresh(taken.clone()),
+                    rename_error,
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(error.kind, ErrorKind::AlreadyExists, "commands: {commands}");
+            assert_eq!(fs.read_to_end(&taken, 64).await.unwrap(), b"kept");
+            assert_eq!(fs.read_to_end(&source, 64).await.unwrap(), b"moved");
+        }
+        fs.delete(std::slice::from_ref(&scratch)).await.unwrap();
+    }
 
     #[test]
     fn folders_contain_their_descendants_only() {

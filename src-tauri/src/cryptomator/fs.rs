@@ -46,6 +46,16 @@ const SYMLINK_LIMIT: u64 = 64 * 1024;
 const DIRECTORY_ID_LIFETIME: Duration = Duration::from_secs(60);
 /// Requests in flight at once while looking into several nodes of one folder.
 const LOOKUPS_AT_ONCE: usize = 8;
+
+/// One FTP control connection answers one request at a time, so there lookups go one by one
+/// instead of queueing for it side by side.
+fn lookups_at_once(server: &Arc<dyn RemoteFileSystem>) -> usize {
+    if server.transport().is_ftp() {
+        1
+    } else {
+        LOOKUPS_AT_ONCE
+    }
+}
 /// How much of a file is held in memory while it is copied over a connection that cannot read
 /// and write at once.
 const COPY_PIECE: u64 = 4 * 1024 * 1024;
@@ -704,7 +714,8 @@ impl VaultFs {
         server.delete(&[node.to_string()]).await
     }
 
-    /// Gives the node of a file or folder another name in the same folder.
+    /// Gives the node of a file or folder another name in the same folder. A rename that
+    /// fails part way leaves the entry under its old name, as long as the server still answers.
     async fn rename_node(
         &self,
         server: &Arc<dyn RemoteFileSystem>,
@@ -719,15 +730,23 @@ impl VaultFs {
             Found::Nothing => unreachable!("the caller found the entry"),
             Found::Folder { node, .. } | Found::Link { node } => {
                 server.rename(&node, &new.stored_name).await?;
-                match (full_name, &old.full_name) {
+                let named = match (full_name, &old.full_name) {
                     (Some(full_name), _) => write_small(server, &name_file, full_name).await,
                     (None, Some(_)) => server.delete(&[name_file]).await,
                     (None, None) => Ok(()),
+                };
+                if named.is_err() {
+                    rename_back(server, new_node_path, &node, old).await;
                 }
+                named
             }
             Found::File { node, .. } if old.full_name.is_some() && full_name.is_some() => {
                 server.rename(&node, &new.stored_name).await?;
-                write_small(server, &name_file, full_name.unwrap_or_default()).await
+                let named = write_small(server, &name_file, full_name.unwrap_or_default()).await;
+                if named.is_err() {
+                    rename_back(server, new_node_path, &node, old).await;
+                }
+                named
             }
             Found::File { node, .. } if old.full_name.is_none() && full_name.is_none() => {
                 server.rename(&node, &new.stored_name).await.map(drop)
@@ -741,19 +760,52 @@ impl VaultFs {
                 stored_size,
                 modified,
             } => {
-                let target = match full_name {
-                    Some(full_name) => {
-                        server.ensure_dir(new_node_path).await?;
-                        write_small(server, &name_file, full_name).await?;
-                        remote_path::join(new_node_path, CONTENTS_FILE)
-                    }
-                    None => new_node_path.to_string(),
-                };
-                copy_stored(server, &stored, &target, stored_size, modified).await?;
+                let copied = async {
+                    let target = match full_name {
+                        Some(full_name) => {
+                            server.ensure_dir(new_node_path).await?;
+                            write_small(server, &name_file, full_name).await?;
+                            remote_path::join(new_node_path, CONTENTS_FILE)
+                        }
+                        None => new_node_path.to_string(),
+                    };
+                    copy_stored(server, &stored, &target, stored_size, modified).await
+                }
+                .await;
+                if let Err(error) = copied {
+                    // A part copy would show as a second, damaged file.
+                    let _ = server.delete(&[new_node_path.to_string()]).await;
+                    return Err(error);
+                }
+                // Should the old file stay, both copies are whole, so nothing is lost.
                 server.delete(&[node]).await
             }
         }
     }
+}
+
+/// Moves a node renamed to `new_node_path` back to `old_node_path` after what had to follow
+/// the rename failed, and gives it back the name file it had: without one that matches its
+/// name, a shortened node is not shown at all. Best effort, as the connection may be gone.
+async fn rename_back(
+    server: &Arc<dyn RemoteFileSystem>,
+    new_node_path: &str,
+    old_node_path: &str,
+    old: &Node,
+) {
+    if server
+        .rename(new_node_path, &old.stored_name)
+        .await
+        .is_err()
+    {
+        return;
+    }
+    let name_file = remote_path::join(old_node_path, FULL_NAME_FILE);
+    let _ = match &old.full_name {
+        Some(full_name) => write_small(server, &name_file, full_name.clone().into_bytes()).await,
+        // A plain node needs none; one the failed write may have left is removed.
+        None => server.delete(&[name_file]).await,
+    };
 }
 
 #[async_trait]
@@ -830,7 +882,7 @@ impl RemoteFileSystem for VaultFs {
             .map(|(stored_name, modified)| {
                 self.shortened_entry(&keys, &server, &folder, &directory, stored_name, modified)
             })
-            .buffer_unordered(LOOKUPS_AT_ONCE)
+            .buffer_unordered(lookups_at_once(&server))
             .try_collect()
             .await?;
         entries.extend(read.into_iter().flatten());
@@ -858,7 +910,7 @@ impl RemoteFileSystem for VaultFs {
         protocol::validate_name(new_name)?;
         let keys = self.keys()?;
         let server = self.server();
-        let names = self.relative(path)?;
+        let names = self.relative(&protocol::normalize_exact(&self.resolve(path))?)?;
         let Some((name, parent)) = names.split_last() else {
             return Err(AppError::invalid(
                 "Lock the vault to rename its folder on the server",
@@ -884,9 +936,12 @@ impl RemoteFileSystem for VaultFs {
         ) {
             return Err(protocol::already_exists(&renamed));
         }
-        self.rename_node(&server, found, &old, &new, &new_node_path)
-            .await?;
+        let result = self
+            .rename_node(&server, found, &old, &new, &new_node_path)
+            .await;
+        // Even a rename that failed may have left a folder under its new name.
         self.vault.directory_ids.forget(&names);
+        result?;
         Ok(renamed)
     }
 
@@ -894,7 +949,7 @@ impl RemoteFileSystem for VaultFs {
         let keys = self.keys()?;
         let server = self.server();
         let resolved: Vec<String> = paths.iter().map(|path| self.resolve(path)).collect();
-        for path in protocol::outermost(&resolved) {
+        for path in protocol::outermost(&resolved)? {
             let names = self.relative(&path)?;
             let Some((name, parent)) = names.split_last() else {
                 return Err(AppError::invalid(

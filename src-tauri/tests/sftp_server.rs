@@ -5,9 +5,9 @@
 //! The end-to-end step in `.github/workflows/ci.yml` starts a suitable throwaway `sshd`.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime};
 
 use poros_lib::automation::remote_command::{self, OutputStream};
 use poros_lib::automation::scheduler::{self, TaskAction, TaskContext};
@@ -22,14 +22,16 @@ use poros_lib::ssh::proxy::{Proxy, ProxyKind};
 use poros_lib::ssh::{AuthMethod, ConnectProfile, HostKeyApproval, Route};
 use poros_lib::sync::{
     CompareMode, SyncAction, SyncChoice, SyncDirection, SyncManager, SyncOptions, SyncPlanView,
-    SyncReason, SyncRequest, SyncRunRequest,
+    SyncReason, SyncReport, SyncRequest, SyncRunRequest, SyncRunSummary,
 };
 use poros_lib::transfer::{
     Direction, EnqueueRequest, ExistsAction, JobSnapshot, JobState, TransferItem, TransferList,
     TransferManager,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::task::AbortHandle;
 use tokio_util::sync::CancellationToken;
 
 /// The window label sessions belong to.
@@ -100,10 +102,7 @@ async fn trusted_manager(server: &Server) -> (tempfile::TempDir, SessionManager)
         let info = manager
             .connect(
                 profile(server, password),
-                Some(HostKeyApproval {
-                    fingerprint: host_key.fingerprint,
-                    remember: true,
-                }),
+                Some(HostKeyApproval::of(&host_key, true)),
                 OWNER,
             )
             .await
@@ -133,7 +132,7 @@ async fn host_key_prompt_then_remembered() {
 
         let wrong = HostKeyApproval {
             fingerprint: "SHA256:not-it".into(),
-            remember: true,
+            ..HostKeyApproval::of(&host_key, true)
         };
         let error = manager
             .connect(profile(&server, auth.clone()), Some(wrong), OWNER)
@@ -141,10 +140,7 @@ async fn host_key_prompt_then_remembered() {
             .unwrap_err();
         assert_eq!(error.kind, ErrorKind::HostKeyUnknown);
 
-        let ok = HostKeyApproval {
-            fingerprint: host_key.fingerprint,
-            remember: true,
-        };
+        let ok = HostKeyApproval::of(&host_key, true);
         let info = manager
             .connect(profile(&server, auth.clone()), Some(ok), OWNER)
             .await
@@ -527,6 +523,122 @@ fn remote_path_join(folder: &str, name: &str) -> String {
     format!("{}/{name}", folder.trim_end_matches('/'))
 }
 
+/// A local port that carries connections to the test server, so a test can count the bytes
+/// that really crossed the connection, and cut it as an unstable link does.
+struct Relay {
+    port: u16,
+    to_server: Arc<AtomicU64>,
+    from_server: Arc<AtomicU64>,
+    carried: Arc<Mutex<Vec<AbortHandle>>>,
+}
+
+impl Relay {
+    async fn start(server_port: u16) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let relay = Self {
+            port: listener.local_addr().unwrap().port(),
+            to_server: Arc::default(),
+            from_server: Arc::default(),
+            carried: Arc::default(),
+        };
+        let (to_server, from_server) = (relay.to_server.clone(), relay.from_server.clone());
+        let carried = relay.carried.clone();
+        tokio::spawn(async move {
+            while let Ok((client, _)) = listener.accept().await {
+                let Ok(server) = TcpStream::connect(("127.0.0.1", server_port)).await else {
+                    continue;
+                };
+                let (from_client, to_client) = client.into_split();
+                let (from_server_side, to_server_side) = server.into_split();
+                let (sent, received) = (to_server.clone(), from_server.clone());
+                // Either side closing, or the task being aborted, closes both.
+                let connection = tokio::spawn(async move {
+                    tokio::select! {
+                        () = carry(from_client, to_server_side, sent) => {}
+                        () = carry(from_server_side, to_client, received) => {}
+                    }
+                });
+                carried.lock().unwrap().push(connection.abort_handle());
+            }
+        });
+        relay
+    }
+
+    /// The test server, reached through this relay.
+    fn in_front_of(&self, server: Server) -> Server {
+        Server {
+            port: self.port,
+            ..server
+        }
+    }
+
+    /// Bytes carried so far in the direction a transfer's file data goes.
+    fn carried(&self, direction: Direction) -> u64 {
+        match direction {
+            Direction::Download => self.from_server.load(Ordering::SeqCst),
+            Direction::Upload | Direction::Relay => self.to_server.load(Ordering::SeqCst),
+        }
+    }
+
+    fn connections(&self) -> usize {
+        self.carried.lock().unwrap().len()
+    }
+
+    /// Drops every connection opened after the first `kept`.
+    fn cut_after(&self, kept: usize) {
+        for connection in self.carried.lock().unwrap().iter().skip(kept) {
+            connection.abort();
+        }
+    }
+
+    /// Waits until nothing has crossed for a moment, so what a stopped transfer still had
+    /// under way is not counted as moved afterwards.
+    async fn quiet(&self) {
+        let total = || self.carried(Direction::Upload) + self.carried(Direction::Download);
+        let mut before = total();
+        loop {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            let now = total();
+            if now == before {
+                return;
+            }
+            before = now;
+        }
+    }
+}
+
+async fn carry(mut from: OwnedReadHalf, mut to: OwnedWriteHalf, count: Arc<AtomicU64>) {
+    let mut buffer = vec![0; 64 * 1024];
+    loop {
+        match from.read(&mut buffer).await {
+            Ok(read) if read > 0 => {
+                if to.write_all(&buffer[..read]).await.is_err() {
+                    return;
+                }
+                count.fetch_add(read as u64, Ordering::SeqCst);
+            }
+            _ => return,
+        }
+    }
+}
+
+/// What tells a transfer that continued from one that started over, which the finished file
+/// cannot: starting over moves the whole file again and says so in the log, and either way
+/// the result has the right bytes.
+fn assert_continued(log: &[String], moved: u64, size: usize) {
+    assert!(
+        moved < size as u64,
+        "{moved} bytes crossed the connection to finish a file of {size}, so it started over: {log:#?}"
+    );
+    let started_over: Vec<&String> = log
+        .iter()
+        .filter(|message| {
+            message.contains("starting it over") || message.contains("continuing from there")
+        })
+        .collect();
+    assert!(started_over.is_empty(), "{started_over:#?}");
+}
+
 /// Waits until nothing is queued or running, tracking the most workers any job had at once.
 async fn wait_until_settled(transfers: &TransferManager) -> (TransferList, u32) {
     let deadline = Instant::now() + Duration::from_secs(120);
@@ -613,6 +725,8 @@ async fn transfer_tree_both_ways_with_parallel_workers() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn transfer_conflicts_and_resume() {
     let Some(server) = server() else { return };
+    let relay = Relay::start(server.port).await;
+    let server = relay.in_front_of(server);
     let fixture = TransferFixture::new(&server, "conflicts").await;
     let source = fixture.local.path().join("source");
     write_tree(&source);
@@ -661,12 +775,13 @@ async fn transfer_conflicts_and_resume() {
     assert_eq!(list.jobs[0].state, JobState::Skipped);
     transfers.clear(&[JobState::Skipped]);
 
-    // Resuming keeps what is already there when every check is off, so a marked prefix
-    // survives.
+    // Resuming keeps what is already there when every check is off, so a mark in the second
+    // of its 4 MiB parts survives.
     let downloads = fixture.local.path().join("downloads");
     std::fs::create_dir_all(&downloads).unwrap();
+    let mark = 5 * MEBIBYTE..5 * MEBIBYTE + 512;
     let mut partial = large_bytes[..7 * MEBIBYTE].to_vec();
-    partial[..512].fill(0);
+    partial[mark.clone()].fill(0);
     let resuming = TransferSettings {
         exists_action: ExistsAction::Resume,
         ..transfer_settings()
@@ -686,38 +801,71 @@ async fn transfer_conflicts_and_resume() {
         .await;
     assert_all_done(&wait_until_settled(&transfers).await.0);
     let mut marked = large_bytes.clone();
-    marked[..512].fill(0);
+    marked[mark].fill(0);
     assert_eq!(std::fs::read(downloads.join("large.bin")).unwrap(), marked);
     transfers.clear(&[JobState::Done]);
+    drop(transfers);
 
     // With the checks on, as they are by default, the marked part is found and sent again:
-    // before resuming, by comparing the part already there, and otherwise by the checksum
-    // after the file, which repairs the one damaged part.
-    for settings in [
-        resuming.clone(),
-        TransferSettings {
-            verify_resume: false,
-            ..resuming.clone()
-        },
+    // before resuming, by comparing the part already there, which keeps the good part before
+    // it, and otherwise by the checksum after the file, which repairs the one damaged part.
+    // The log and the bytes moved tell that apart from starting over, which the result cannot.
+    for (settings, expected) in [
+        (
+            resuming.clone(),
+            "The part of large.bin already transferred differs from the source after 4.0 MB; continuing from there",
+        ),
+        (
+            TransferSettings {
+                verify_resume: false,
+                ..resuming.clone()
+            },
+            "in 1 of its 6 parts; sent 4.0 MB of it again",
+        ),
     ] {
-        resume_with(settings);
+        std::fs::write(downloads.join("large.bin"), &partial).unwrap();
+        let events = Events::keeping_startup_log();
+        let transfers = TransferManager::new(fixture.manager.clone(), events.clone(), settings);
+        relay.quiet().await;
+        let before = relay.carried(Direction::Download);
         fixture
             .download(&transfers, &[&remote_large], &downloads)
             .await;
         assert_all_done(&wait_until_settled(&transfers).await.0);
+        let moved = relay.carried(Direction::Download) - before;
+        drop(transfers);
         assert_eq!(
             std::fs::read(downloads.join("large.bin")).unwrap(),
             large_bytes
         );
-        transfers.clear(&[JobState::Done]);
+        let log = log_messages(&events);
+        assert!(
+            log.iter().any(|message| message.contains(expected)),
+            "{log:#?}"
+        );
+        assert!(
+            !log.iter()
+                .any(|message| message.contains("starting it over")),
+            "{log:#?}"
+        );
+        assert!(
+            moved < large_bytes.len() as u64,
+            "{moved} bytes were downloaded onto a file that had 4 MiB of {} right",
+            large_bytes.len()
+        );
     }
 
     // A paused download keeps its complete part and continues from there.
     std::fs::remove_file(downloads.join("large.bin")).unwrap();
-    transfers.configure(TransferSettings {
-        download_limit_kib: 4 * 1024,
-        ..transfer_settings()
-    });
+    let events = Events::keeping_startup_log();
+    let transfers = TransferManager::new(
+        fixture.manager.clone(),
+        events.clone(),
+        TransferSettings {
+            download_limit_kib: 4 * 1024,
+            ..transfer_settings()
+        },
+    );
     fixture
         .download(&transfers, &[&remote_large], &downloads)
         .await;
@@ -741,15 +889,20 @@ async fn transfer_conflicts_and_resume() {
     assert!(!kept.is_empty() && kept.len() < large_bytes.len());
     assert_eq!(kept[..], large_bytes[..kept.len()]);
 
+    relay.quiet().await;
+    let before = relay.carried(Direction::Download);
     transfers.configure(transfer_settings());
     transfers.resume(&[id]);
     assert_all_done(&wait_until_settled(&transfers).await.0);
+    let moved = relay.carried(Direction::Download) - before;
     assert_eq!(
         std::fs::read(downloads.join("large.bin")).unwrap(),
         large_bytes
     );
     assert!(!downloads.join(".large.bin.poros-part").exists());
     drop(transfers);
+    assert!(moved >= (large_bytes.len() - kept.len()) as u64);
+    assert_continued(&log_messages(&events), moved, large_bytes.len());
     fixture.close().await;
 }
 
@@ -772,6 +925,8 @@ async fn pause_after(transfers: &TransferManager, bytes: u64) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn replaced_files_stay_whole_and_the_queue_survives_a_restart() {
     let Some(server) = server() else { return };
+    let relay = Relay::start(server.port).await;
+    let server = relay.in_front_of(server);
     let fixture = TransferFixture::new(&server, "replace").await;
     let session = fixture.manager.get(&fixture.session.id).await.unwrap();
     let fs = session.sftp().unwrap();
@@ -825,15 +980,20 @@ async fn replaced_files_stay_whole_and_the_queue_survives_a_restart() {
     transfers.save_queue();
     drop(transfers);
 
-    // The next start finds the paused upload and continues it.
-    let transfers = fixture.transfers(checked.clone());
+    // The next start finds the paused upload and continues it from where it stopped.
+    let events = Events::keeping_startup_log();
+    let transfers = TransferManager::new(fixture.manager.clone(), events.clone(), checked.clone());
     transfers.keep_queue_in(queue_file.clone());
     let list = transfers.list();
     assert_eq!(list.jobs.len(), 1);
     assert_eq!(list.jobs[0].state, JobState::Paused);
     assert!(list.jobs[0].transferred > 0);
+    relay.quiet().await;
+    let before = relay.carried(Direction::Upload);
     transfers.resume(&[list.jobs[0].id]);
     assert_all_done(&wait_until_settled(&transfers).await.0);
+    let moved = relay.carried(Direction::Upload) - before;
+    assert_continued(&log_messages(&events), moved, new_bytes.len());
     assert_eq!(fixture.remote_bytes(&remote_file).await, new_bytes);
     assert!(fs.stat(&remote_partial).await.unwrap().is_none());
     transfers.clear(&[JobState::Done]);
@@ -861,6 +1021,164 @@ async fn replaced_files_stay_whole_and_the_queue_survives_a_restart() {
     }
     assert_eq!(fixture.remote_bytes(&remote_file).await, new_bytes);
     drop(transfers);
+    fixture.close().await;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Interruption {
+    /// The user pauses the transfer and resumes it.
+    Pause,
+    /// Every connection of the transfer drops, and it reconnects by itself.
+    LostConnection,
+}
+
+/// With the settings Poros ships with, a transfer stopped part of the way continues from
+/// there once the server has hashed what is already in place. What is in place is compared
+/// by a different command when it is longer than one 4 MiB part, so both lengths are tried.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn interrupted_transfers_continue_where_they_stopped() {
+    let Some(server) = server() else { return };
+    let relay = Relay::start(server.port).await;
+    let server = relay.in_front_of(server);
+    let fixture = TransferFixture::new(&server, "continue").await;
+    let browsing_connections = relay.connections();
+    let session = fixture.manager.get(&fixture.session.id).await.unwrap();
+    let fs = session.sftp().unwrap();
+
+    let source = fixture.local.path().join("source");
+    std::fs::create_dir_all(&source).unwrap();
+    let large = pattern(20 * MEBIBYTE + 12345, 21);
+    let small = pattern(6 * MEBIBYTE + 77, 22);
+    std::fs::write(source.join("large.bin"), &large).unwrap();
+    std::fs::write(source.join("small.bin"), &small).unwrap();
+    let seeding = fixture.transfers(TransferSettings::default());
+    fixture
+        .upload(&seeding, std::slice::from_ref(&source), &fixture.remote)
+        .await;
+    assert_all_done(&wait_until_settled(&seeding).await.0);
+    drop(seeding);
+    let remote_source = remote_path_join(&fixture.remote, "source");
+
+    let cases = [
+        (
+            Direction::Download,
+            "large.bin",
+            &large,
+            Interruption::Pause,
+        ),
+        (Direction::Upload, "large.bin", &large, Interruption::Pause),
+        (
+            Direction::Download,
+            "small.bin",
+            &small,
+            Interruption::Pause,
+        ),
+        (Direction::Upload, "small.bin", &small, Interruption::Pause),
+        (
+            Direction::Download,
+            "large.bin",
+            &large,
+            Interruption::LostConnection,
+        ),
+        (
+            Direction::Upload,
+            "large.bin",
+            &large,
+            Interruption::LostConnection,
+        ),
+    ];
+    for (number, (direction, name, bytes, interruption)) in cases.into_iter().enumerate() {
+        let case = format!("{direction:?} of {name} with {interruption:?}");
+        // Slow enough to stop the file about a third of the way: past the first part of the
+        // large file, inside the only part of the small one.
+        let stop_after = bytes.len() as u64 * 3 / 10;
+        let limit_kib = (bytes.len() / 5 / 1024) as u32;
+        let limited = match direction {
+            Direction::Download => TransferSettings {
+                download_limit_kib: limit_kib,
+                ..TransferSettings::default()
+            },
+            _ => TransferSettings {
+                upload_limit_kib: limit_kib,
+                ..TransferSettings::default()
+            },
+        };
+        let events = Events::keeping_startup_log();
+        let transfers = TransferManager::new(fixture.manager.clone(), events.clone(), limited);
+        let local_folder = fixture.local.path().join(format!("case-{number}"));
+        std::fs::create_dir_all(&local_folder).unwrap();
+        let remote_folder = remote_path_join(&fixture.remote, &format!("case-{number}"));
+        match direction {
+            Direction::Download => {
+                let remote_file = remote_path_join(&remote_source, name);
+                fixture
+                    .download(&transfers, &[&remote_file], &local_folder)
+                    .await;
+            }
+            _ => {
+                fs.ensure_dir(&remote_folder).await.unwrap();
+                fixture
+                    .upload(&transfers, &[source.join(name)], &remote_folder)
+                    .await;
+            }
+        }
+
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let id = loop {
+            let list = transfers.list();
+            if let Some(job) = list.jobs.iter().find(|job| job.transferred > stop_after) {
+                break job.id;
+            }
+            assert!(Instant::now() < deadline, "{case}: it did not start");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        };
+        match interruption {
+            Interruption::Pause => {
+                transfers.pause(&[id]);
+                let (list, _) = wait_until_settled(&transfers).await;
+                assert_eq!(list.jobs[0].state, JobState::Paused, "{case}");
+                relay.quiet().await;
+            }
+            Interruption::LostConnection => relay.cut_after(browsing_connections),
+        }
+        let before = relay.carried(direction);
+        transfers.configure(TransferSettings::default());
+        if interruption == Interruption::Pause {
+            transfers.resume(&[id]);
+        }
+        let (list, _) = wait_until_settled(&transfers).await;
+        let moved = relay.carried(direction) - before;
+        drop(transfers);
+        let log = log_messages(&events);
+        assert_eq!(
+            list.jobs[0].state,
+            JobState::Done,
+            "{case}: {:?}, {log:#?}",
+            list.jobs[0].error
+        );
+
+        let result = match direction {
+            Direction::Download => std::fs::read(local_folder.join(name)).unwrap(),
+            _ => {
+                fixture
+                    .remote_bytes(&remote_path_join(&remote_folder, name))
+                    .await
+            }
+        };
+        assert!(
+            result == *bytes,
+            "{case}: the result differs from the source"
+        );
+        assert_continued(&log, moved, bytes.len());
+        if interruption == Interruption::LostConnection {
+            for expected in ["Lost the connection to", "Reconnected to"] {
+                assert!(
+                    log.iter().any(|message| message.contains(expected)),
+                    "{case}: {log:#?}"
+                );
+            }
+        }
+    }
     fixture.close().await;
 }
 
@@ -1030,6 +1348,106 @@ b8QN6w9nN4iHOGzT0ZtAWu0ompwKIV0AbzYpASmLBK/h/eoAYgEHHv1o8tnMS49ecYBqp8a2A9O1g2hb
     assert!(
         log.iter()
             .any(|message| message == "signed.bin has a good minisign signature (file:test)"),
+        "{log:#?}"
+    );
+
+    // Written without a temporary file, a download that fails its published checksum is not
+    // left under its name either.
+    let in_place = fixture.local.path().join("in place");
+    std::fs::create_dir_all(&in_place).unwrap();
+    let remote_tampered = remote_path_join(&remote_published, "tampered.bin");
+    let transfers = fixture.transfers(TransferSettings {
+        temporary_files: false,
+        ..transfer_settings()
+    });
+    fixture
+        .download(&transfers, &[&remote_tampered], &in_place)
+        .await;
+    let (list, _) = wait_until_settled(&transfers).await;
+    drop(transfers);
+    assert_eq!(list.jobs[0].state, JobState::Failed);
+    let error = list.jobs[0].error.clone().unwrap_or_default();
+    assert!(error.ends_with("so it was not saved"), "{error}");
+    assert!(!in_place.join("tampered.bin").exists());
+
+    // Resumed onto a part that was already there, it is not the job's own to delete, so the
+    // error says where it is instead.
+    let tampered = pattern(1000, 11);
+    std::fs::write(in_place.join("tampered.bin"), &tampered[..400]).unwrap();
+    let transfers = fixture.transfers(TransferSettings {
+        exists_action: ExistsAction::Resume,
+        ..transfer_settings()
+    });
+    fixture
+        .download(&transfers, &[&remote_tampered], &in_place)
+        .await;
+    let (list, _) = wait_until_settled(&transfers).await;
+    drop(transfers);
+    assert_eq!(list.jobs[0].state, JobState::Failed);
+    let error = list.jobs[0].error.clone().unwrap_or_default();
+    assert!(!error.contains("not saved"), "{error}");
+    assert!(
+        error.contains(&in_place.join("tampered.bin").display().to_string()),
+        "{error}"
+    );
+    assert_eq!(
+        std::fs::read(in_place.join("tampered.bin")).unwrap(),
+        tampered
+    );
+    fixture.close().await;
+}
+
+/// A folder that may be entered but not listed, as with mode 0311, publishes nothing that can
+/// be found, and the files in it still download.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn files_download_from_folders_that_cannot_be_listed() {
+    let Some(server) = server() else { return };
+    let fixture = TransferFixture::new(&server, "unlisted").await;
+    let session = fixture.manager.get(&fixture.session.id).await.unwrap();
+    let fs = session.sftp().unwrap();
+    let source = fixture.local.path().join("closed");
+    std::fs::create_dir_all(&source).unwrap();
+    let bytes = pattern(300_000, 31);
+    std::fs::write(source.join("inside.bin"), &bytes).unwrap();
+    let transfers = fixture.transfers(transfer_settings());
+    fixture
+        .upload(&transfers, std::slice::from_ref(&source), &fixture.remote)
+        .await;
+    assert_all_done(&wait_until_settled(&transfers).await.0);
+    drop(transfers);
+    let closed = remote_path_join(&fixture.remote, "closed");
+    fs.set_permissions(&closed, 0o311).await.unwrap();
+    assert!(fs.list_dir(&closed).await.is_err());
+
+    let downloads = fixture.local.path().join("downloads");
+    std::fs::create_dir_all(&downloads).unwrap();
+    let events = Events::keeping_startup_log();
+    let transfers =
+        TransferManager::new(fixture.manager.clone(), events.clone(), transfer_settings());
+    // Typed in or bookmarked: the folder cannot be listed to find the file.
+    fixture
+        .enqueue(
+            &transfers,
+            Direction::Download,
+            &downloads.to_string_lossy(),
+            vec![TransferItem {
+                path: remote_path_join(&closed, "inside.bin"),
+                name: "inside.bin".into(),
+                is_dir: false,
+                size: bytes.len() as u64,
+            }],
+        )
+        .await;
+    let (list, _) = wait_until_settled(&transfers).await;
+    drop(transfers);
+    fs.set_permissions(&closed, 0o755).await.unwrap();
+    assert_all_done(&list);
+    assert_eq!(std::fs::read(downloads.join("inside.bin")).unwrap(), bytes);
+    let log = log_messages(&events);
+    assert!(
+        log.iter().any(|message| message.starts_with(&format!(
+            "Could not list {closed} to look for published checksums and signatures"
+        ))),
         "{log:#?}"
     );
     fixture.close().await;
@@ -1230,7 +1648,12 @@ fn planned(plan: &SyncPlanView) -> Vec<(String, SyncAction, SyncReason)> {
         .collect()
 }
 
-async fn run_everything(sync: &SyncManager, transfers: &TransferManager, plan: &SyncPlanView) {
+/// Runs every item as planned and waits for the queue to be done with the files.
+async fn run_as_planned(
+    sync: &SyncManager,
+    transfers: &TransferManager,
+    plan: &SyncPlanView,
+) -> (SyncRunSummary, TransferList, SyncReport) {
     let choices = plan
         .items
         .iter()
@@ -1249,9 +1672,15 @@ async fn run_everything(sync: &SyncManager, transfers: &TransferManager, plan: &
         )
         .await
         .unwrap();
-    assert!(summary.failures.is_empty(), "{:?}", summary.failures);
-    assert_all_done(&wait_until_settled(transfers).await.0);
+    let (list, _) = wait_until_settled(transfers).await;
     let report = sync.finished(&summary.run_id).await.unwrap();
+    (summary, list, report)
+}
+
+async fn run_everything(sync: &SyncManager, transfers: &TransferManager, plan: &SyncPlanView) {
+    let (summary, list, report) = run_as_planned(sync, transfers, plan).await;
+    assert!(summary.failures.is_empty(), "{:?}", summary.failures);
+    assert_all_done(&list);
     assert!(report.failures.is_empty(), "{:?}", report.failures);
 }
 
@@ -1367,6 +1796,75 @@ async fn sync_mirrors_folders_both_ways() {
         planned(&plan),
         [("nested/b.txt".into(), Upload, ContentDiffers)]
     );
+    drop(transfers);
+    fixture.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_synchronization_counts_only_the_files_it_copied() {
+    let Some(server) = server() else { return };
+    let fixture = TransferFixture::new(&server, "sync-count").await;
+    let local = fixture.local.path().join("site");
+    std::fs::create_dir_all(&local).unwrap();
+    for (seed, name) in ["a.bin", "b.bin", "c.bin"].into_iter().enumerate() {
+        std::fs::write(local.join(name), pattern(1000, seed as u64)).unwrap();
+    }
+    let sync = SyncManager::new(fixture.manager.clone(), Events::default());
+    // Completed jobs leave the queue, and the queue waits so that one can be removed first.
+    let transfers = fixture.transfers(TransferSettings {
+        keep_completed: false,
+        auto_start: false,
+        ..transfer_settings()
+    });
+    let request = sync_request(
+        &fixture,
+        &local,
+        &fixture.remote,
+        SyncDirection::Upload,
+        CompareMode::SizeAndTime,
+    );
+    let plan = sync.compare(request).await.unwrap();
+    assert_eq!(plan.items.len(), 3, "{:?}", planned(&plan));
+    let choices = plan
+        .items
+        .iter()
+        .map(|item| SyncChoice {
+            id: item.id,
+            action: item.action,
+        })
+        .collect();
+    let summary = sync
+        .run(
+            &transfers,
+            SyncRunRequest {
+                plan_id: plan.plan_id.clone(),
+                choices,
+            },
+        )
+        .await
+        .unwrap();
+    let list = transfers.list();
+    assert_eq!(list.jobs.len(), 3);
+    assert!(list.jobs.iter().all(|job| job.state == JobState::Queued));
+    let removed = list.jobs.iter().find(|job| job.name == "c.bin").unwrap().id;
+    transfers.remove(&[removed]);
+    transfers.set_paused(false);
+
+    let report = sync.finished(&summary.run_id).await.unwrap();
+    assert_eq!((report.copied, report.failed, report.bytes), (2, 0, 2000));
+    assert!(transfers.list().jobs.is_empty());
+    let fs = fixture
+        .manager
+        .get(&fixture.session.id)
+        .await
+        .unwrap()
+        .sftp()
+        .unwrap()
+        .clone();
+    for (name, there) in [("a.bin", true), ("b.bin", true), ("c.bin", false)] {
+        let path = remote_path_join(&fixture.remote, name);
+        assert_eq!(fs.stat(&path).await.unwrap().is_some(), there, "{name}");
+    }
     drop(transfers);
     fixture.close().await;
 }
@@ -1586,6 +2084,288 @@ async fn sync_carries_out_rsync_options() {
     fixture.close().await;
 }
 
+fn set_local_time(path: &Path, time: SystemTime) {
+    std::fs::File::options()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(time)
+        .unwrap();
+}
+
+/// A sync request for `local` and `remote` that compares by size and time.
+fn moving_request(
+    fixture: &TransferFixture,
+    local: &Path,
+    remote: &str,
+    direction: SyncDirection,
+    remove_source_files: bool,
+) -> SyncRequest {
+    SyncRequest {
+        options: SyncOptions {
+            remove_source_files,
+            ..SyncOptions::default()
+        },
+        arguments: String::new(),
+        ..sync_request(fixture, local, remote, direction, CompareMode::SizeAndTime)
+    }
+}
+
+fn assert_left_in_place(failures: &[String], names: &[&str]) {
+    assert_eq!(failures.len(), names.len(), "{failures:?}");
+    for name in names {
+        assert!(
+            failures
+                .iter()
+                .any(|failure| failure.contains(name) && failure.contains("changed")),
+            "{name} in {failures:?}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn removing_source_files_spares_files_changed_since_the_comparison() {
+    let Some(server) = server() else { return };
+    let fixture = TransferFixture::new(&server, "sync-remove-changed").await;
+    let fs = fixture
+        .manager
+        .get(&fixture.session.id)
+        .await
+        .unwrap()
+        .sftp()
+        .unwrap()
+        .clone();
+    let sync = SyncManager::new(fixture.manager.clone(), Events::default());
+    let transfers = fixture.transfers(transfer_settings());
+    let outbox = fixture.local.path().join("outbox");
+    std::fs::create_dir_all(&outbox).unwrap();
+    for name in ["same.txt", "edited.txt", "touched.txt"] {
+        let path = outbox.join(name);
+        std::fs::write(&path, format!("{name} as compared")).unwrap();
+        set_local_time(
+            &path,
+            std::time::UNIX_EPOCH + Duration::from_secs(1_600_000_000),
+        );
+    }
+    let target = remote_path_join(&fixture.remote, "inbox");
+    let request = |local: &Path, direction, remove_source_files| {
+        moving_request(&fixture, local, &target, direction, remove_source_files)
+    };
+    let plan = sync
+        .compare(request(&outbox, SyncDirection::Upload, false))
+        .await
+        .unwrap();
+    run_everything(&sync, &transfers, &plan).await;
+    transfers.clear(&[JobState::Done]);
+
+    // Every file is on the server already, so the upload only removes them here. While the
+    // plan is on screen, one of them is edited and one only touched.
+    let plan = sync
+        .compare(request(&outbox, SyncDirection::Upload, true))
+        .await
+        .unwrap();
+    assert!(plan.items.is_empty(), "{:?}", planned(&plan));
+    assert_eq!(plan.removes_unchanged, 3);
+    std::fs::write(outbox.join("edited.txt"), b"edited after the comparison").unwrap();
+    set_local_time(&outbox.join("touched.txt"), SystemTime::now());
+    let (summary, _, _) = run_as_planned(&sync, &transfers, &plan).await;
+    assert_eq!(summary.removed_sources, 1);
+    assert!(!outbox.join("same.txt").exists());
+    assert_eq!(
+        std::fs::read(outbox.join("edited.txt")).unwrap(),
+        b"edited after the comparison"
+    );
+    assert!(outbox.join("touched.txt").exists());
+    assert_left_in_place(&summary.failures, &["edited.txt", "touched.txt"]);
+
+    // Downloading, the files on the server are the sources.
+    let pulled = fixture.local.path().join("pulled");
+    let plan = sync
+        .compare(request(&pulled, SyncDirection::Download, false))
+        .await
+        .unwrap();
+    run_everything(&sync, &transfers, &plan).await;
+    transfers.clear(&[JobState::Done]);
+    let plan = sync
+        .compare(request(&pulled, SyncDirection::Download, true))
+        .await
+        .unwrap();
+    assert!(plan.items.is_empty(), "{:?}", planned(&plan));
+    assert_eq!(plan.removes_unchanged, 3);
+    let edited = remote_path_join(&target, "edited.txt");
+    let handle = fs.open_for_write(&edited, true, None).await.unwrap();
+    fs.write_chunk(&handle, 0, b"edited on the server".to_vec())
+        .await
+        .unwrap();
+    fs.close_handle(handle).await.unwrap();
+    let (summary, _, _) = run_as_planned(&sync, &transfers, &plan).await;
+    assert_eq!(summary.removed_sources, 2);
+    let same = remote_path_join(&target, "same.txt");
+    assert!(fs.stat(&same).await.unwrap().is_none());
+    assert_eq!(fixture.remote_bytes(&edited).await, b"edited on the server");
+    assert_left_in_place(&summary.failures, &["edited.txt"]);
+    drop(transfers);
+    fixture.close().await;
+}
+
+/// Overwrites 64 KiB at the start and at the end of `contents`, as a program saving a file in
+/// place does, and returns each piece written with where it goes. `seed` is odd, as `pattern`
+/// makes the same bytes from an even seed as from the odd one after it.
+fn edits_at_both_ends(contents: &mut [u8], seed: u64) -> [(u64, Vec<u8>); 2] {
+    let length = 64 * 1024;
+    let end = contents.len() - length;
+    let edits = [(0, pattern(length, seed)), (end, pattern(length, seed + 2))];
+    for (offset, bytes) in &edits {
+        contents[*offset..*offset + length].copy_from_slice(bytes);
+    }
+    edits.map(|(offset, bytes)| (offset as u64, bytes))
+}
+
+/// Waits until the running job for `name` has moved `bytes`.
+async fn wait_for_progress(transfers: &TransferManager, name: &str, bytes: u64) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let list = transfers.list();
+        let job = list.jobs.iter().find(|job| job.name == name);
+        if let Some(job) = job.filter(|job| job.state == JobState::Running) {
+            if job.transferred >= bytes {
+                return;
+            }
+        }
+        assert!(
+            job.is_none_or(|job| matches!(job.state, JobState::Queued | JobState::Running)),
+            "{name} ended before it could be changed: {job:?}"
+        );
+        assert!(Instant::now() < deadline, "{name} made no progress");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_source_changed_while_rsync_sends_it_is_sent_again_before_it_is_removed() {
+    use std::io::{Seek, SeekFrom, Write};
+    let Some(server) = server() else { return };
+    let fixture = TransferFixture::new(&server, "sync-delta-changed").await;
+    let fs = fixture
+        .manager
+        .get(&fixture.session.id)
+        .await
+        .unwrap()
+        .sftp()
+        .unwrap()
+        .clone();
+    let sync = SyncManager::new(fixture.manager.clone(), Events::default());
+    let size = 4 * MEBIBYTE;
+    let outbox = fixture.local.path().join("outbox");
+    std::fs::create_dir_all(&outbox).unwrap();
+    let file = outbox.join("data.bin");
+    std::fs::write(&file, pattern(size, 31)).unwrap();
+    set_local_time(
+        &file,
+        std::time::UNIX_EPOCH + Duration::from_secs(1_600_000_000),
+    );
+    let target = remote_path_join(&fixture.remote, "inbox");
+    let remote_file = remote_path_join(&target, "data.bin");
+    let request = |local: &Path, direction, remove_source_files| {
+        moving_request(&fixture, local, &target, direction, remove_source_files)
+    };
+    let setup = fixture.transfers(transfer_settings());
+    let plan = sync
+        .compare(request(&outbox, SyncDirection::Upload, false))
+        .await
+        .unwrap();
+    run_everything(&sync, &setup, &plan).await;
+    drop(setup);
+    // Slow enough to change the file on its way, with checksums off, as they would notice the
+    // change by themselves, and one more try for the file.
+    let transfers = fixture.transfers(TransferSettings {
+        upload_limit_kib: 1024,
+        download_limit_kib: 1024,
+        verify_checksums: false,
+        retry_attempts: 1,
+        retry_delay_secs: 0,
+        ..transfer_settings()
+    });
+
+    // A new version, which rsync sends as changes to the old one on the server.
+    let mut contents = pattern(size, 41);
+    std::fs::write(&file, &contents).unwrap();
+    set_local_time(
+        &file,
+        std::time::UNIX_EPOCH + Duration::from_secs(1_650_000_000),
+    );
+    let plan = sync
+        .compare(request(&outbox, SyncDirection::Upload, true))
+        .await
+        .unwrap();
+    assert_eq!(
+        planned(&plan),
+        [("data.bin".into(), SyncAction::Upload, SyncReason::Changed)]
+    );
+    let edit = async {
+        wait_for_progress(&transfers, "data.bin", MEBIBYTE as u64).await;
+        let mut opened = std::fs::File::options().write(true).open(&file).unwrap();
+        for (offset, bytes) in edits_at_both_ends(&mut contents, 61) {
+            opened.seek(SeekFrom::Start(offset)).unwrap();
+            opened.write_all(&bytes).unwrap();
+        }
+    };
+    let ((summary, list, report), ()) =
+        tokio::join!(run_as_planned(&sync, &transfers, &plan), edit);
+    assert!(summary.failures.is_empty(), "{:?}", summary.failures);
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    assert_all_done(&list);
+    assert!(list.jobs[0].delta_bytes.is_some(), "{:?}", list.jobs[0]);
+    // The source is removed only once the server holds it as it now is.
+    assert!(!file.exists());
+    assert!(
+        fixture.remote_bytes(&remote_file).await == contents,
+        "the server holds a copy the change tore"
+    );
+    assert_eq!(list.jobs[0].attempts, 1, "the change went unnoticed");
+    transfers.clear(&[JobState::Done]);
+
+    // Downloading over an older copy, while the file on the server is changed.
+    let pulled = fixture.local.path().join("pulled");
+    std::fs::create_dir_all(&pulled).unwrap();
+    let pulled_file = pulled.join("data.bin");
+    std::fs::write(&pulled_file, pattern(size, 51)).unwrap();
+    set_local_time(
+        &pulled_file,
+        std::time::UNIX_EPOCH + Duration::from_secs(1_600_000_000),
+    );
+    let plan = sync
+        .compare(request(&pulled, SyncDirection::Download, true))
+        .await
+        .unwrap();
+    assert_eq!(
+        planned(&plan),
+        [("data.bin".into(), SyncAction::Download, SyncReason::Changed)]
+    );
+    let edit = async {
+        wait_for_progress(&transfers, "data.bin", MEBIBYTE as u64).await;
+        let handle = fs.open_for_write(&remote_file, false, None).await.unwrap();
+        for (offset, bytes) in edits_at_both_ends(&mut contents, 71) {
+            fs.write_chunk(&handle, offset, bytes).await.unwrap();
+        }
+        fs.close_handle(handle).await.unwrap();
+    };
+    let ((summary, list, report), ()) =
+        tokio::join!(run_as_planned(&sync, &transfers, &plan), edit);
+    assert!(summary.failures.is_empty(), "{:?}", summary.failures);
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    assert_all_done(&list);
+    assert!(list.jobs[0].delta_bytes.is_some(), "{:?}", list.jobs[0]);
+    assert!(fs.stat(&remote_file).await.unwrap().is_none());
+    assert!(
+        std::fs::read(&pulled_file).unwrap() == contents,
+        "the download holds a copy the change tore"
+    );
+    assert_eq!(list.jobs[0].attempts, 1, "the change went unnoticed");
+    drop(transfers);
+    fixture.close().await;
+}
+
 /// A SOCKS5 or HTTP CONNECT proxy on a local port that relays to wherever it is asked, and
 /// counts the connections it carried.
 async fn start_proxy(kind: ProxyKind) -> (Proxy, Arc<AtomicUsize>) {
@@ -1794,10 +2574,7 @@ async fn a_jump_host_trusted_once_stays_trusted_until_exit() {
         .err()
         .expect("an unknown jump host asks first");
     let host_key = error.host_key.expect("the question names the jump host");
-    let once = HostKeyApproval {
-        fingerprint: host_key.fingerprint,
-        remember: false,
-    };
+    let once = HostKeyApproval::of(&host_key, false);
     let connection = poros_lib::ssh::connect(
         "test",
         &jumped(),
@@ -1809,10 +2586,7 @@ async fn a_jump_host_trusted_once_stays_trusted_until_exit() {
     .unwrap();
     poros_lib::ssh::disconnect(&connection.handle).await;
     // A transfer connection pins only the server's key, yet gets through the jump host.
-    let pinned = HostKeyApproval {
-        fingerprint: connection.host_key_fingerprint,
-        remember: false,
-    };
+    let pinned = HostKeyApproval::for_server(&jumped(), &connection.host_key_fingerprint);
     let worker = poros_lib::ssh::connect(
         "test",
         &jumped(),
@@ -1867,10 +2641,7 @@ async fn a_host_on_record_is_asked_for_the_key_type_on_record() {
     assert_eq!(error.kind, ErrorKind::HostKeyChanged);
     let host_key = error.host_key.unwrap();
     assert_eq!(host_key.algorithm, "ssh-rsa");
-    let approval = HostKeyApproval {
-        fingerprint: host_key.fingerprint,
-        remember: true,
-    };
+    let approval = HostKeyApproval::of(&host_key, true);
     let replaced = connect_with_password(&server, &known_hosts, Some(approval))
         .await
         .unwrap();
@@ -1935,6 +2706,70 @@ async fn runs_commands_on_the_server() {
     assert!(stopped.stopped);
     assert!(started.elapsed() < Duration::from_secs(10));
     fixture.close().await;
+}
+
+/// A SOCKS5 proxy that drops every connection it carries once `cut` is cancelled, as when the
+/// network goes away.
+async fn start_severable_proxy(cut: CancellationToken) -> Proxy {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        while let Ok((client, _)) = listener.accept().await {
+            let cut = cut.clone();
+            tokio::spawn(async move {
+                if let Some((mut client, mut server)) =
+                    accept_tunnel(ProxyKind::Socks5, client).await
+                {
+                    tokio::select! {
+                        _ = cut.cancelled() => {}
+                        _ = tokio::io::copy_bidirectional(&mut client, &mut server) => {}
+                    }
+                }
+            });
+        }
+    });
+    Proxy {
+        kind: ProxyKind::Socks5,
+        host: "127.0.0.1".into(),
+        port,
+        username: String::new(),
+        password: String::new(),
+        remote_dns: true,
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_command_cut_off_by_a_lost_connection_is_not_reported_as_finished() {
+    let Some(server) = server() else { return };
+    let (_known_hosts, manager) = trusted_manager(&server).await;
+    let cut = CancellationToken::new();
+    let proxy = start_severable_proxy(cut.clone()).await;
+    let info = manager
+        .connect(routed(&server, Some(proxy), Vec::new()), None, OWNER)
+        .await
+        .unwrap();
+    let session = manager.get(&info.id).await.unwrap();
+
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        cut.cancel();
+    });
+    let started = Instant::now();
+    let cut_off = remote_command::run_on(
+        &session,
+        "sleep 30",
+        None,
+        &CancellationToken::new(),
+        |_, _| {},
+    )
+    .await
+    .unwrap();
+    assert!(started.elapsed() < Duration::from_secs(20));
+    assert_eq!(cut_off.exit_status, None);
+    assert!(!cut_off.stopped);
+    assert!(!cut_off.succeeded());
+    assert_eq!(cut_off.describe(), "ended without an exit status");
+    let _ = manager.disconnect(&info.id).await;
 }
 
 /// Saved connections in these tests use keys, so no secret is ever stored.
