@@ -209,6 +209,8 @@ interface FileRowProps {
   selected: boolean;
   cursor: boolean;
   cut: boolean;
+  /** A file or folder a delete hid in a bucket that keeps versions, dated when it was deleted. */
+  deleted: boolean;
   /** Files dragged over the list would drop into this folder. */
   dropTarget: boolean;
   /** The row shows a field to type a new name in. */
@@ -234,12 +236,14 @@ const FileRow = memo(function FileRow({
   selected,
   cursor,
   cut,
+  deleted,
   dropTarget,
   renaming,
   arrivalKey,
   compare,
   events,
 }: FileRowProps) {
+  const t = useT();
   const folder = isDirLike(entry);
   const arriving = useArriving(arrivalKey);
   return (
@@ -251,6 +255,7 @@ const FileRow = memo(function FileRow({
         cursor && "is-cursor",
         entry.hidden && "is-hidden",
         cut && "is-cut",
+        deleted && "is-deleted",
         dropTarget && "is-drop-folder",
         arriving && "is-arriving",
         compare && compare.state !== "both" && "is-compared",
@@ -283,6 +288,7 @@ const FileRow = memo(function FileRow({
             ) : (
               <span className="file-name-text">{entry.name}</span>
             )}
+            {deleted && <span className="deleted-tag">{t("fileList.deletedTag")}</span>}
             {compare && <FolderCompareGlyph mark={compare} />}
           </span>
         ) : (
@@ -460,6 +466,8 @@ interface FileListProps extends FileListActions {
   dropFolder?: string;
   /** Entries cut to the clipboard, shown faded until they are pasted. */
   cutPaths?: ReadonlySet<string>;
+  /** Deleted entries shown among the others, struck through and tagged. */
+  deletedPaths?: ReadonlySet<string>;
   /** The entry whose row shows the name field. */
   renaming?: string | null;
   /** While the pane is compared with another: the mark of each compared row, by name. */
@@ -494,6 +502,7 @@ export function FileList({
   fontSize,
   dropFolder,
   cutPaths,
+  deletedPaths,
   renaming,
   compareMarks,
   folderOf,
@@ -529,10 +538,12 @@ export function FileList({
     const shown = availableColumns(pane.listing?.entries ?? []).filter(
       (key) => !hiddenColumns.includes(key),
     );
+    // The labels and the type column are in the language at hand, so they follow it.
+    void t;
     return FIT_PRIORITY.filter((key) => shown.includes(key)).map((key) =>
       detailColumn(key, dateFormat, columnWidths),
     );
-  }, [pane.listing, hiddenColumns, dateFormat, columnWidths]);
+  }, [pane.listing, hiddenColumns, dateFormat, columnWidths, t]);
   const widthOf = useCallback(
     (column: Column) => Math.round((column.width * fontSize) / BASE_FONT_SIZE),
     [fontSize],
@@ -1262,10 +1273,11 @@ export function FileList({
                 selected={pane.selection.has(entry.path)}
                 cursor={pane.cursorPath === entry.path}
                 cut={cutPaths?.has(entry.path) ?? false}
+                deleted={deletedPaths?.has(entry.path) ?? false}
                 dropTarget={isDirLike(entry) && dropFolder === entry.path}
                 renaming={renaming === entry.path}
                 arrivalKey={rowKeyOf(side, entry.path)}
-                compare={compareMarks?.get(entry.name)}
+                compare={deletedPaths?.has(entry.path) ? undefined : compareMarks?.get(entry.name)}
                 events={rowEvents}
               />
             );

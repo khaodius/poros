@@ -10,6 +10,7 @@ export const fileList = {
   nothingMatchesTheFilter: "Nothing matches the filter",
   onlyHiddenItemsHere: "Only hidden items here",
   thisFolderIsEmpty: "This folder is empty",
+  deletedTag: "deleted",
 
   // components/PropertiesDialog
   folder: "Folder",

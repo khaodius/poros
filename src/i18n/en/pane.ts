@@ -143,6 +143,11 @@ export const pane = {
     one: "Folder to copy {count} item into",
     other: "Folder to copy {count} items into",
   },
+  deleted: { one: "{count} deleted", other: "{count} deleted" },
+  everyOlderVersionGoesToo: {
+    one: "Every older version and deleted file kept in the bucket goes too.",
+    other: "Every older version and deleted file kept in the buckets goes too.",
+  },
 
   // components/PathBar
   clickToTypeOrCopy: "Click to type or copy the path (Ctrl+L)",

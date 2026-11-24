@@ -30,6 +30,10 @@ export const editor = {
   reloadFromDisk: "Reload from disk",
   lineColumn: "Ln {line}, Col {column}",
   lineColumnSelected: "Ln {line}, Col {column} ({selected} selected)",
+  anOlderVersionIsReadOnly: "An older version is read only",
+  encodingOfThisOlderVersion: "Encoding of this older version",
+  lineEndingsOfThisOlderVersion: "Line endings of this older version",
+  olderVersionReadOnly: "Older version, read only",
 
   // components/UnsavedChangesDialog
   someFilesCouldNotBe: "Some files could not be saved. Their tabs say why.",

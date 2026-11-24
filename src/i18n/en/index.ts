@@ -27,6 +27,7 @@ import { terminal } from "./terminal";
 import { transfers } from "./transfers";
 import { updates } from "./updates";
 import { vault } from "./vault";
+import { versions } from "./versions";
 import { workspace } from "./workspace";
 
 export const english = {
@@ -56,6 +57,7 @@ export const english = {
   transfers,
   updates,
   vault,
+  versions,
   workspace,
 };
 

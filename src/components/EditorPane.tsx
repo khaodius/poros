@@ -232,6 +232,8 @@ export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
           drawSelection(),
           dropCursor(),
           EditorState.allowMultipleSelections.of(true),
+          // An older version of a file is there to read; restoring it is how it changes.
+          EditorState.readOnly.of(tabRef.current.version !== undefined),
           indentOnInput(),
           syntaxHighlighting(syntaxColors),
           bracketMatching(),
@@ -348,6 +350,7 @@ export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
     }));
 
   const ready = phase === "ready";
+  const readOnly = tab.version !== undefined;
   return (
     <section className={["pane", "editor-pane", active && "is-active"].filter(Boolean).join(" ")}>
       <header className="pane-header">
@@ -372,8 +375,8 @@ export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
             <RotateCw size={15} />
           </EditorButton>
           <EditorButton
-            label={t("editor.saveCtrlS")}
-            disabled={!ready || saving}
+            label={readOnly ? t("editor.anOlderVersionIsReadOnly") : t("editor.saveCtrlS")}
+            disabled={!ready || saving || readOnly}
             onClick={() => void save(false)}
           >
             <Save size={15} />
@@ -384,6 +387,7 @@ export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
       <div className="editor-location selectable" title={tab.path}>
         <span className="editor-origin">{tab.origin}</span>
         <span className="editor-path">{tab.path}</span>
+        {readOnly && <span className="version-read-only">{t("editor.olderVersionReadOnly")}</span>}
       </div>
 
       {conflict && (
@@ -480,7 +484,12 @@ export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
             <button
               type="button"
               className="editor-status-button"
-              title={t("editor.encodingUsedWhenSaving")}
+              title={
+                readOnly
+                  ? t("editor.encodingOfThisOlderVersion")
+                  : t("editor.encodingUsedWhenSaving")
+              }
+              disabled={readOnly}
               onClick={(event) => showMenu(event, encodingMenu())}
             >
               {ENCODING_LABELS[format.encoding]}
@@ -488,7 +497,12 @@ export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
             <button
               type="button"
               className="editor-status-button"
-              title={t("editor.lineEndingsUsedWhenSaving")}
+              title={
+                readOnly
+                  ? t("editor.lineEndingsOfThisOlderVersion")
+                  : t("editor.lineEndingsUsedWhenSaving")
+              }
+              disabled={readOnly}
               onClick={(event) => showMenu(event, lineEndingMenu())}
             >
               {LINE_ENDING_LABELS[format.lineEnding]}

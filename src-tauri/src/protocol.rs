@@ -287,6 +287,12 @@ pub trait RemoteFileSystem: Send + Sync {
         None
     }
 
+    /// The history of versions and deleted files behind this file system, where the service
+    /// keeps one: versioned S3 buckets and Backblaze B2.
+    fn as_versioned(&self) -> Option<&dyn crate::versions::ObjectVersions> {
+        None
+    }
+
     /// The service's share links, where it has them: an address that opens a file for
     /// someone without an account.
     fn link_sharing(&self) -> Option<&dyn crate::share::LinkSharing> {

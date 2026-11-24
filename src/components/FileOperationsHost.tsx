@@ -6,6 +6,7 @@ import { fileOperations, onFileOperation } from "../lib/ipc";
 import { baseName } from "../lib/path";
 import { progressReach } from "../lib/progressBars";
 import type { NameClash } from "../lib/types";
+import { restoreProgressText } from "../lib/versions";
 import { closeRenameReport, useBulkRenameStore } from "../state/bulkRename";
 import {
   useOperationStore,
@@ -59,7 +60,7 @@ function OperationTray() {
           <LoaderCircle size={16} className="spin" />
           <div className="operation-text">
             <span className="operation-title">{operation.title}</span>
-            {operation.kind === "delete" ? (
+            {operation.kind === "delete" || operation.kind === "restore" ? (
               <DeleteDetail operation={operation} />
             ) : operation.kind === "extract" ? (
               <ExtractDetail operation={operation} />
@@ -131,7 +132,7 @@ function RenameDetail({ operation }: { operation: RunningOperation }) {
   );
 }
 
-/** How many entries are gone, where the delete is, and the latest that would not go. */
+/** How many entries are gone or back, where the operation is, and the latest that failed. */
 function DeleteDetail({ operation }: { operation: RunningOperation }) {
   const t = useT();
   const fraction = deleteFraction(operation);
@@ -141,10 +142,15 @@ function DeleteDetail({ operation }: { operation: RunningOperation }) {
       <span className="operation-detail">
         {failed
           ? t("pane.progressWithFailures", {
-              progress: deleteProgressText(operation),
+              progress:
+                operation.kind === "restore"
+                  ? restoreProgressText(operation)
+                  : deleteProgressText(operation),
               count: failed,
             })
-          : deleteProgressText(operation)}
+          : operation.kind === "restore"
+            ? restoreProgressText(operation)
+            : deleteProgressText(operation)}
       </span>
       <span
         className={`progress-track ${fraction === null ? "is-indeterminate" : ""}`}

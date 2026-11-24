@@ -30,6 +30,7 @@ use super::queue::{
     Direction, JobKind, JobRun, JobSpec, Plan, ResumePoint, Role, RunOutcome, SourceStamp,
 };
 use super::verify;
+use super::version;
 use super::worker::{self, Connections, Destination, JobRef};
 use super::Shared;
 use crate::error::{AppError, AppResult, ErrorKind};
@@ -76,7 +77,7 @@ async fn endpoints(job: &JobRef<'_>, connections: &mut Connections) -> AppResult
     let target = connections
         .get(job.shared, &spec.session_id, &spec.session_id)
         .await?;
-    let remote = target.files.clone();
+    let remote = version::source_files(spec, target.files.clone())?;
     let mut borrows_both = target.borrows_ftp_connection();
     let source = match (&spec.source_session_id, source_key(spec)) {
         (Some(source_id), Some(key)) => {
@@ -423,6 +424,7 @@ pub(super) async fn finalize(job: &JobRef<'_>, connections: &mut Connections) ->
         .await?
         .files
         .clone();
+    let files = version::source_files(spec, files)?;
     if spec.direction == Direction::Download {
         let source = files.stat(&spec.source).await?;
         let end = worker::downloaded_end(job, &plan, source)?;
@@ -436,7 +438,8 @@ pub(super) async fn finalize(job: &JobRef<'_>, connections: &mut Connections) ->
             let source = files.stat(&spec.source).await?;
             worker::downloaded_end(job, &plan, source)?;
         }
-        if job.settings.check_published {
+        // Checksums published beside a file describe it as it is now, not an older version.
+        if job.settings.check_published && version::source_version(spec).is_none() {
             let source = published::Source::Other(&files);
             worker::check_published(job, source, &plan, end, true).await?;
         }

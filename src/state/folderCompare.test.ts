@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { CompareEntry } from "../lib/folderCompare";
 import { DEFAULT_SETTINGS, type FolderCompareSettings } from "../lib/settings";
+import { mergeDeleted } from "../lib/versions";
 import type {
   DirListing,
   FileEntry,
@@ -332,6 +333,16 @@ describe("what a pane gives the comparison", () => {
     expect(snapshotOf(shown({ info: info({ protocol: "oneDrive" }) }))?.ignoresCase).toBe(true);
     const local = snapshotOf(shown({ location: { kind: "local" }, info: undefined }));
     expect(local).toMatchObject({ protocol: undefined, coarseTimes: false, ignoresCase: false });
+  });
+
+  it("leaves out deleted files the pane shows among the others", () => {
+    const listing = mergeDeleted({ path: "/www", parent: "/", entries: [row] }, [
+      { name: "old.html", path: "/www/old.html", isDir: false, deleted: 1_700_000_500, size: 9 },
+    ]);
+    expect(listing.entries).toHaveLength(2);
+    expect(snapshotOf(shown({ listing }))?.entries.map((entry) => entry.name)).toEqual([
+      "index.html",
+    ]);
   });
 
   it("has nothing to compare while the server is out of reach or something covers the rows", () => {
