@@ -9394,3 +9394,105 @@ textarea::placeholder {
   color: var(--text-muted);
   background: none;
 }
+
+/* Translations: the Language list, fonts for Japanese and Chinese, and room for longer text */
+:root {
+  /* The systems' own Japanese and Simplified Chinese fonts: macOS, Windows, then Linux. */
+  --font-cjk-ja:
+    "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Meiryo UI", "Noto Sans CJK JP",
+    "Noto Sans JP";
+  --font-cjk-zh-hans:
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC",
+    "Noto Sans SC";
+}
+
+/* Latin letters keep the usual fonts; Japanese and Chinese characters fall through to the
+   language's own, rather than to whichever font the system would pick for Han characters. */
+:root:lang(ja) {
+  --font-ui-default:
+    "Inter", "Segoe UI Variable Text", "Segoe UI", var(--font-cjk-ja), system-ui, -apple-system,
+    "Cantarell", "Ubuntu", sans-serif;
+  --font-mono-default:
+    "JetBrains Mono", "Cascadia Mono", "Cascadia Code", "SF Mono", "Consolas", "DejaVu Sans Mono",
+    var(--font-cjk-ja), monospace;
+}
+
+:root:lang(zh-Hans) {
+  --font-ui-default:
+    "Inter", "Segoe UI Variable Text", "Segoe UI", var(--font-cjk-zh-hans), system-ui,
+    -apple-system, "Cantarell", "Ubuntu", sans-serif;
+  --font-mono-default:
+    "JetBrains Mono", "Cascadia Mono", "Cascadia Code", "SF Mono", "Consolas", "DejaVu Sans Mono",
+    var(--font-cjk-zh-hans), monospace;
+}
+
+.language-list {
+  padding: 4px;
+}
+
+.language-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 30px;
+  padding: 0 8px;
+  font-size: calc(var(--font-size) + 1px);
+  border-radius: var(--radius-small);
+  cursor: pointer;
+}
+
+/* Each language's name is written in its own script, whatever the interface shows. */
+.language-option:lang(ja) {
+  font-family: var(--font-cjk-ja), var(--font-ui);
+}
+
+.language-option:lang(zh-Hans) {
+  font-family: var(--font-cjk-zh-hans), var(--font-ui);
+}
+
+.language-option > span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.language-option.is-active {
+  background: var(--accent-soft);
+}
+
+.language-option > svg {
+  flex: none;
+  color: var(--accent);
+}
+
+/* Longer words in the transfer panel's header: the labels of Workers, When done and the queue's
+   Start or Pause shorten, each with its full text on hover, before a button is pushed out. */
+.bottom-panel-header > .worker-control,
+.bottom-panel-header > .when-done-control,
+.bottom-panel-header > .panel-toolbar,
+.bottom-panel-header .panel-toolbar > .button-small {
+  min-width: 0;
+}
+
+.bottom-panel-header .narrow-hidden {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bottom-panel-header > .tabs,
+.bottom-panel-header .panel-toolbar > .button-small > svg,
+.when-done-control select {
+  flex: none;
+}
+
+/* Longer task kinds in the scheduler: the connection list moves below them rather than narrowing
+   until its choice cannot be read. */
+.task-form .form-row {
+  flex-wrap: wrap;
+}
+
+.task-form .form-row > .field.grow {
+  min-width: 180px;
+}

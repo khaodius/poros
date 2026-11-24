@@ -49,7 +49,6 @@ export const connect = {
   rsyncArgumentsForFolderSynchronizations: "rsync arguments for folder synchronizations",
   rsyncArgumentsForFolderSynchronizationsHint:
     "Synchronizations with this server start from the defaults in Settings with these applied over them.",
-  deleteChmodD755F644Exclude: "--delete --chmod=D755,F644 --exclude=.git/",
   password: "Password",
   keyFile: "Key file",
   sshAgent: "SSH agent",

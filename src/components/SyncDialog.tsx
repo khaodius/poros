@@ -412,7 +412,7 @@ function SetupForm({
           <span>{t("sync.serverFolder")}</span>
           <input
             value={folders.remotePath}
-            placeholder={t("sync.homeMeSite")}
+            placeholder="/home/me/site"
             spellCheck={false}
             onChange={(event) => onFolders({ remotePath: event.target.value })}
           />

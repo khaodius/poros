@@ -607,7 +607,7 @@ function SyncFields({ action, host, onChange }: SyncFieldsProps) {
           <span>{t("schedule.serverFolder")}</span>
           <input
             value={action.remotePath}
-            placeholder={t("schedule.homeMeSite")}
+            placeholder="/home/me/site"
             spellCheck={false}
             onChange={(event) => onChange({ remotePath: event.target.value })}
           />

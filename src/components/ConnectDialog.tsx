@@ -646,7 +646,7 @@ function SiteRsyncFields({
         value={syncArguments}
         label={t("connect.rsyncArgumentsForFolderSynchronizations")}
         hint={t("connect.rsyncArgumentsForFolderSynchronizationsHint")}
-        placeholder={t("connect.deleteChmodD755F644Exclude")}
+        placeholder="--delete --chmod=D755,F644 --exclude=.git/"
         onChange={onSyncArguments}
       />
       {syncArguments.trim() !== "" && <OptionCheckView check={check} />}

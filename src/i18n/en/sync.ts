@@ -9,7 +9,6 @@ export const sync = {
   server: "Server",
   noSftpServerConnected: "No SFTP server connected",
   serverFolder: "Server folder",
-  homeMeSite: "/home/me/site",
   direction: "Direction",
   rsyncOptions: "rsync options",
   schedule: "Schedule...",

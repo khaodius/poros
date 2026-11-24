@@ -48,7 +48,12 @@ export function AutomationSettingsPage({ settings }: { settings: Settings }) {
         />
         <TextSetting
           label={t("automation.command")}
-          hint={t("automation.commandHint")}
+          hint={t("automation.commandHint", {
+            done: "POROS_FILES_DONE",
+            failed: "POROS_FILES_FAILED",
+            skipped: "POROS_FILES_SKIPPED",
+            bytes: "POROS_BYTES",
+          })}
           value={automation.whenDoneCommand}
           placeholder={t("automation.aCommandOrScript")}
           disabled={automation.whenDone !== "runCommand"}

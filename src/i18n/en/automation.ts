@@ -10,7 +10,7 @@ export const automation = {
   onlyTheNextTimeHint: "Goes back to Do nothing once it has happened.",
   command: "Command",
   commandHint:
-    "For Run a command; runs on this computer. POROS_FILES_DONE, POROS_FILES_FAILED, POROS_FILES_SKIPPED and POROS_BYTES hold the totals.",
+    "For Run a command; runs on this computer. {done}, {failed}, {skipped} and {bytes} hold the totals.",
   aCommandOrScript: "A command or script",
   showANotification: "Show a notification",
   onlyWhenPorosIsIn: "Only when Poros is in the background",

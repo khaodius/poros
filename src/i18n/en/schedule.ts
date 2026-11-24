@@ -17,7 +17,6 @@ export const schedule = {
   localFolder: "Local folder",
   theFolderOnThisComputer: "The folder on this computer",
   serverFolder: "Server folder",
-  homeMeSite: "/home/me/site",
   direction: "Direction",
   conflictsAreLeftAloneAnd: "{hint} Conflicts are left alone and reported.",
   rsyncOptions: "rsync options",
