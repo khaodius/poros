@@ -11,7 +11,7 @@ use serde::Deserialize;
 
 use super::options::JobOptions;
 use super::queue::{Direction, JobKind, JobSpec};
-use super::{Placement, TransferManager};
+use super::{NewJobs, Placement, TransferManager};
 use crate::error::AppResult;
 use crate::protocol::{self, RemoteFileSystem};
 use crate::versions::{self, PinnedVersion};
@@ -68,8 +68,13 @@ impl TransferManager {
                 ..JobOptions::default()
             })),
         };
-        self.register(&session);
-        self.add_jobs(vec![spec], Placement::Last);
+        self.add_jobs(
+            NewJobs {
+                specs: vec![spec],
+                sessions: vec![session],
+            },
+            Placement::Last,
+        );
         Ok(())
     }
 }

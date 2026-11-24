@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use poros_lib::automation::remote_command::{self, OutputStream};
 use poros_lib::automation::scheduler::{self, TaskAction, TaskContext};
@@ -22,7 +22,7 @@ use poros_lib::ssh::proxy::{Proxy, ProxyKind};
 use poros_lib::ssh::{AuthMethod, ConnectProfile, HostKeyApproval, Route};
 use poros_lib::sync::{
     CompareMode, SyncAction, SyncChoice, SyncDirection, SyncManager, SyncOptions, SyncPlanView,
-    SyncReason, SyncRequest, SyncRunRequest,
+    SyncReason, SyncReport, SyncRequest, SyncRunRequest, SyncRunSummary,
 };
 use poros_lib::transfer::{
     Direction, EnqueueRequest, ExistsAction, JobSnapshot, JobState, TransferItem, TransferList,
@@ -1652,7 +1652,12 @@ fn planned(plan: &SyncPlanView) -> Vec<(String, SyncAction, SyncReason)> {
         .collect()
 }
 
-async fn run_everything(sync: &SyncManager, transfers: &TransferManager, plan: &SyncPlanView) {
+/// Runs every item as planned and waits for the queue to be done with the files.
+async fn run_as_planned(
+    sync: &SyncManager,
+    transfers: &TransferManager,
+    plan: &SyncPlanView,
+) -> (SyncRunSummary, TransferList, SyncReport) {
     let choices = plan
         .items
         .iter()
@@ -1671,9 +1676,15 @@ async fn run_everything(sync: &SyncManager, transfers: &TransferManager, plan: &
         )
         .await
         .unwrap();
-    assert!(summary.failures.is_empty(), "{:?}", summary.failures);
-    assert_all_done(&wait_until_settled(transfers).await.0);
+    let (list, _) = wait_until_settled(transfers).await;
     let report = sync.finished(&summary.run_id).await.unwrap();
+    (summary, list, report)
+}
+
+async fn run_everything(sync: &SyncManager, transfers: &TransferManager, plan: &SyncPlanView) {
+    let (summary, list, report) = run_as_planned(sync, transfers, plan).await;
+    assert!(summary.failures.is_empty(), "{:?}", summary.failures);
+    assert_all_done(&list);
     assert!(report.failures.is_empty(), "{:?}", report.failures);
 }
 
@@ -2077,6 +2088,288 @@ async fn sync_carries_out_rsync_options() {
     fixture.close().await;
 }
 
+fn set_local_time(path: &Path, time: SystemTime) {
+    std::fs::File::options()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(time)
+        .unwrap();
+}
+
+/// A sync request for `local` and `remote` that compares by size and time.
+fn moving_request(
+    fixture: &TransferFixture,
+    local: &Path,
+    remote: &str,
+    direction: SyncDirection,
+    remove_source_files: bool,
+) -> SyncRequest {
+    SyncRequest {
+        options: SyncOptions {
+            remove_source_files,
+            ..SyncOptions::default()
+        },
+        arguments: String::new(),
+        ..sync_request(fixture, local, remote, direction, CompareMode::SizeAndTime)
+    }
+}
+
+fn assert_left_in_place(failures: &[String], names: &[&str]) {
+    assert_eq!(failures.len(), names.len(), "{failures:?}");
+    for name in names {
+        assert!(
+            failures
+                .iter()
+                .any(|failure| failure.contains(name) && failure.contains("changed")),
+            "{name} in {failures:?}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn removing_source_files_spares_files_changed_since_the_comparison() {
+    let Some(server) = server() else { return };
+    let fixture = TransferFixture::new(&server, "sync-remove-changed").await;
+    let fs = fixture
+        .manager
+        .get(&fixture.session.id)
+        .await
+        .unwrap()
+        .sftp()
+        .unwrap()
+        .clone();
+    let sync = SyncManager::new(fixture.manager.clone(), Events::default());
+    let transfers = fixture.transfers(transfer_settings());
+    let outbox = fixture.local.path().join("outbox");
+    std::fs::create_dir_all(&outbox).unwrap();
+    for name in ["same.txt", "edited.txt", "touched.txt"] {
+        let path = outbox.join(name);
+        std::fs::write(&path, format!("{name} as compared")).unwrap();
+        set_local_time(
+            &path,
+            std::time::UNIX_EPOCH + Duration::from_secs(1_600_000_000),
+        );
+    }
+    let target = remote_path_join(&fixture.remote, "inbox");
+    let request = |local: &Path, direction, remove_source_files| {
+        moving_request(&fixture, local, &target, direction, remove_source_files)
+    };
+    let plan = sync
+        .compare(request(&outbox, SyncDirection::Upload, false))
+        .await
+        .unwrap();
+    run_everything(&sync, &transfers, &plan).await;
+    transfers.clear(&[JobState::Done]);
+
+    // Every file is on the server already, so the upload only removes them here. While the
+    // plan is on screen, one of them is edited and one only touched.
+    let plan = sync
+        .compare(request(&outbox, SyncDirection::Upload, true))
+        .await
+        .unwrap();
+    assert!(plan.items.is_empty(), "{:?}", planned(&plan));
+    assert_eq!(plan.removes_unchanged, 3);
+    std::fs::write(outbox.join("edited.txt"), b"edited after the comparison").unwrap();
+    set_local_time(&outbox.join("touched.txt"), SystemTime::now());
+    let (summary, _, _) = run_as_planned(&sync, &transfers, &plan).await;
+    assert_eq!(summary.removed_sources, 1);
+    assert!(!outbox.join("same.txt").exists());
+    assert_eq!(
+        std::fs::read(outbox.join("edited.txt")).unwrap(),
+        b"edited after the comparison"
+    );
+    assert!(outbox.join("touched.txt").exists());
+    assert_left_in_place(&summary.failures, &["edited.txt", "touched.txt"]);
+
+    // Downloading, the files on the server are the sources.
+    let pulled = fixture.local.path().join("pulled");
+    let plan = sync
+        .compare(request(&pulled, SyncDirection::Download, false))
+        .await
+        .unwrap();
+    run_everything(&sync, &transfers, &plan).await;
+    transfers.clear(&[JobState::Done]);
+    let plan = sync
+        .compare(request(&pulled, SyncDirection::Download, true))
+        .await
+        .unwrap();
+    assert!(plan.items.is_empty(), "{:?}", planned(&plan));
+    assert_eq!(plan.removes_unchanged, 3);
+    let edited = remote_path_join(&target, "edited.txt");
+    let handle = fs.open_for_write(&edited, true, None).await.unwrap();
+    fs.write_chunk(&handle, 0, b"edited on the server".to_vec())
+        .await
+        .unwrap();
+    fs.close_handle(handle).await.unwrap();
+    let (summary, _, _) = run_as_planned(&sync, &transfers, &plan).await;
+    assert_eq!(summary.removed_sources, 2);
+    let same = remote_path_join(&target, "same.txt");
+    assert!(fs.stat(&same).await.unwrap().is_none());
+    assert_eq!(fixture.remote_bytes(&edited).await, b"edited on the server");
+    assert_left_in_place(&summary.failures, &["edited.txt"]);
+    drop(transfers);
+    fixture.close().await;
+}
+
+/// Overwrites 64 KiB at the start and at the end of `contents`, as a program saving a file in
+/// place does, and returns each piece written with where it goes. `seed` is odd, as `pattern`
+/// makes the same bytes from an even seed as from the odd one after it.
+fn edits_at_both_ends(contents: &mut [u8], seed: u64) -> [(u64, Vec<u8>); 2] {
+    let length = 64 * 1024;
+    let end = contents.len() - length;
+    let edits = [(0, pattern(length, seed)), (end, pattern(length, seed + 2))];
+    for (offset, bytes) in &edits {
+        contents[*offset..*offset + length].copy_from_slice(bytes);
+    }
+    edits.map(|(offset, bytes)| (offset as u64, bytes))
+}
+
+/// Waits until the running job for `name` has moved `bytes`.
+async fn wait_for_progress(transfers: &TransferManager, name: &str, bytes: u64) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let list = transfers.list();
+        let job = list.jobs.iter().find(|job| job.name == name);
+        if let Some(job) = job.filter(|job| job.state == JobState::Running) {
+            if job.transferred >= bytes {
+                return;
+            }
+        }
+        assert!(
+            job.is_none_or(|job| matches!(job.state, JobState::Queued | JobState::Running)),
+            "{name} ended before it could be changed: {job:?}"
+        );
+        assert!(Instant::now() < deadline, "{name} made no progress");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_source_changed_while_rsync_sends_it_is_sent_again_before_it_is_removed() {
+    use std::io::{Seek, SeekFrom, Write};
+    let Some(server) = server() else { return };
+    let fixture = TransferFixture::new(&server, "sync-delta-changed").await;
+    let fs = fixture
+        .manager
+        .get(&fixture.session.id)
+        .await
+        .unwrap()
+        .sftp()
+        .unwrap()
+        .clone();
+    let sync = SyncManager::new(fixture.manager.clone(), Events::default());
+    let size = 4 * MEBIBYTE;
+    let outbox = fixture.local.path().join("outbox");
+    std::fs::create_dir_all(&outbox).unwrap();
+    let file = outbox.join("data.bin");
+    std::fs::write(&file, pattern(size, 31)).unwrap();
+    set_local_time(
+        &file,
+        std::time::UNIX_EPOCH + Duration::from_secs(1_600_000_000),
+    );
+    let target = remote_path_join(&fixture.remote, "inbox");
+    let remote_file = remote_path_join(&target, "data.bin");
+    let request = |local: &Path, direction, remove_source_files| {
+        moving_request(&fixture, local, &target, direction, remove_source_files)
+    };
+    let setup = fixture.transfers(transfer_settings());
+    let plan = sync
+        .compare(request(&outbox, SyncDirection::Upload, false))
+        .await
+        .unwrap();
+    run_everything(&sync, &setup, &plan).await;
+    drop(setup);
+    // Slow enough to change the file on its way, with checksums off, as they would notice the
+    // change by themselves, and one more try for the file.
+    let transfers = fixture.transfers(TransferSettings {
+        upload_limit_kib: 1024,
+        download_limit_kib: 1024,
+        verify_checksums: false,
+        retry_attempts: 1,
+        retry_delay_secs: 0,
+        ..transfer_settings()
+    });
+
+    // A new version, which rsync sends as changes to the old one on the server.
+    let mut contents = pattern(size, 41);
+    std::fs::write(&file, &contents).unwrap();
+    set_local_time(
+        &file,
+        std::time::UNIX_EPOCH + Duration::from_secs(1_650_000_000),
+    );
+    let plan = sync
+        .compare(request(&outbox, SyncDirection::Upload, true))
+        .await
+        .unwrap();
+    assert_eq!(
+        planned(&plan),
+        [("data.bin".into(), SyncAction::Upload, SyncReason::Changed)]
+    );
+    let edit = async {
+        wait_for_progress(&transfers, "data.bin", MEBIBYTE as u64).await;
+        let mut opened = std::fs::File::options().write(true).open(&file).unwrap();
+        for (offset, bytes) in edits_at_both_ends(&mut contents, 61) {
+            opened.seek(SeekFrom::Start(offset)).unwrap();
+            opened.write_all(&bytes).unwrap();
+        }
+    };
+    let ((summary, list, report), ()) =
+        tokio::join!(run_as_planned(&sync, &transfers, &plan), edit);
+    assert!(summary.failures.is_empty(), "{:?}", summary.failures);
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    assert_all_done(&list);
+    assert!(list.jobs[0].delta_bytes.is_some(), "{:?}", list.jobs[0]);
+    // The source is removed only once the server holds it as it now is.
+    assert!(!file.exists());
+    assert!(
+        fixture.remote_bytes(&remote_file).await == contents,
+        "the server holds a copy the change tore"
+    );
+    assert_eq!(list.jobs[0].attempts, 1, "the change went unnoticed");
+    transfers.clear(&[JobState::Done]);
+
+    // Downloading over an older copy, while the file on the server is changed.
+    let pulled = fixture.local.path().join("pulled");
+    std::fs::create_dir_all(&pulled).unwrap();
+    let pulled_file = pulled.join("data.bin");
+    std::fs::write(&pulled_file, pattern(size, 51)).unwrap();
+    set_local_time(
+        &pulled_file,
+        std::time::UNIX_EPOCH + Duration::from_secs(1_600_000_000),
+    );
+    let plan = sync
+        .compare(request(&pulled, SyncDirection::Download, true))
+        .await
+        .unwrap();
+    assert_eq!(
+        planned(&plan),
+        [("data.bin".into(), SyncAction::Download, SyncReason::Changed)]
+    );
+    let edit = async {
+        wait_for_progress(&transfers, "data.bin", MEBIBYTE as u64).await;
+        let handle = fs.open_for_write(&remote_file, false, None).await.unwrap();
+        for (offset, bytes) in edits_at_both_ends(&mut contents, 71) {
+            fs.write_chunk(&handle, offset, bytes).await.unwrap();
+        }
+        fs.close_handle(handle).await.unwrap();
+    };
+    let ((summary, list, report), ()) =
+        tokio::join!(run_as_planned(&sync, &transfers, &plan), edit);
+    assert!(summary.failures.is_empty(), "{:?}", summary.failures);
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    assert_all_done(&list);
+    assert!(list.jobs[0].delta_bytes.is_some(), "{:?}", list.jobs[0]);
+    assert!(fs.stat(&remote_file).await.unwrap().is_none());
+    assert!(
+        std::fs::read(&pulled_file).unwrap() == contents,
+        "the download holds a copy the change tore"
+    );
+    assert_eq!(list.jobs[0].attempts, 1, "the change went unnoticed");
+    drop(transfers);
+    fixture.close().await;
+}
+
 /// A SOCKS5 or HTTP CONNECT proxy on a local port that relays to wherever it is asked, and
 /// counts the connections it carried.
 async fn start_proxy(kind: ProxyKind) -> (Proxy, Arc<AtomicUsize>) {
@@ -2426,6 +2719,70 @@ async fn runs_commands_on_the_server() {
     assert!(stopped.stopped);
     assert!(started.elapsed() < Duration::from_secs(10));
     fixture.close().await;
+}
+
+/// A SOCKS5 proxy that drops every connection it carries once `cut` is cancelled, as when the
+/// network goes away.
+async fn start_severable_proxy(cut: CancellationToken) -> Proxy {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        while let Ok((client, _)) = listener.accept().await {
+            let cut = cut.clone();
+            tokio::spawn(async move {
+                if let Some((mut client, mut server)) =
+                    accept_tunnel(ProxyKind::Socks5, client).await
+                {
+                    tokio::select! {
+                        _ = cut.cancelled() => {}
+                        _ = tokio::io::copy_bidirectional(&mut client, &mut server) => {}
+                    }
+                }
+            });
+        }
+    });
+    Proxy {
+        kind: ProxyKind::Socks5,
+        host: "127.0.0.1".into(),
+        port,
+        username: String::new(),
+        password: String::new(),
+        remote_dns: true,
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_command_cut_off_by_a_lost_connection_is_not_reported_as_finished() {
+    let Some(server) = server() else { return };
+    let (_known_hosts, manager) = trusted_manager(&server).await;
+    let cut = CancellationToken::new();
+    let proxy = start_severable_proxy(cut.clone()).await;
+    let info = manager
+        .connect(routed(&server, Some(proxy), Vec::new()), None, OWNER)
+        .await
+        .unwrap();
+    let session = manager.get(&info.id).await.unwrap();
+
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        cut.cancel();
+    });
+    let started = Instant::now();
+    let cut_off = remote_command::run_on(
+        &session,
+        "sleep 30",
+        None,
+        &CancellationToken::new(),
+        |_, _| {},
+    )
+    .await
+    .unwrap();
+    assert!(started.elapsed() < Duration::from_secs(20));
+    assert_eq!(cut_off.exit_status, None);
+    assert!(!cut_off.stopped);
+    assert!(!cut_off.succeeded());
+    assert_eq!(cut_off.describe(), "ended without an exit status");
+    let _ = manager.disconnect(&info.id).await;
 }
 
 /// Saved connections in these tests use keys, so no secret is ever stored.

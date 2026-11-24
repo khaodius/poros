@@ -52,6 +52,11 @@ export const localSource: FileSource = {
 
 const remoteSources = new Map<string, FileSource>();
 
+/** The key of a session's source, which tells its files from those of other connections. */
+export function remoteSourceKey(sessionId: string): string {
+  return `remote:${sessionId}`;
+}
+
 /** A folder a source changed on its server, and the entries in it that are not what they were. */
 export interface RemoteChange {
   /** The connection, as `FileSource.listingScope` names it. */
@@ -91,7 +96,7 @@ export function remoteSource(session: SessionInfo, profile: ConnectProfile | nul
   const id = session.id;
   const scope = listingScope(session, profile);
   const source: FileSource = {
-    key: `remote:${id}`,
+    key: remoteSourceKey(id),
     kind: "remote",
     label: session.label,
     pathStyle: "posix",

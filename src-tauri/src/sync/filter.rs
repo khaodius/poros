@@ -3,11 +3,12 @@
 //! from, the side they are sent to, or both: the sending side's rules decide what is copied, the
 //! receiving side's what is kept from deletion.
 //!
-//! Patterns: `*` and `?` stay within one path component, `**` crosses them (`a/**/b` also
-//! matches `a/b`), `dir/***` matches a folder and everything in it, and `[...]` matches a set of
-//! characters. A leading `/` anchors a pattern to the synchronized folder (or to the folder
-//! holding a per-folder rule file); otherwise a pattern without a `/` matches a name at any
-//! depth, and one with a `/` matches the end of a path. A trailing `/` matches folders only.
+//! Patterns: `*` and `?` stay within one path component, `**` crosses them (`a/**/b` matches
+//! `a/x/b` and `a/x/y/b` but, as in rsync, not `a/b`), `dir/***` matches a folder and everything
+//! in it, and `[...]` matches a set of characters. A leading `/` anchors a pattern to the
+//! synchronized folder (or to the folder holding a per-folder rule file); otherwise a pattern
+//! without a `/` matches a name at any depth, and one with a `/` matches the end of a path. A
+//! trailing `/` matches folders only.
 //!
 //! Rule lines: `+`/`include`, `-`/`exclude`, `P`/`protect`, `R`/`risk`, `H`/`hide`,
 //! `S`/`show`, `!`/`clear`, `.`/`merge FILE` and `:`/`dir-merge FILE`, with rsync's modifiers.
@@ -77,6 +78,9 @@ pub struct FilterSpec {
     /// Rules that name no side apply to the sender only, so the receiver deletes what they
     /// exclude (`--delete-excluded`).
     pub delete_excluded: bool,
+    /// Folders, relative to the synchronized folder, that the receiver keeps from deletion
+    /// whatever the rules say, as a `!` would clear a rule.
+    pub protected_folders: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,6 +137,9 @@ struct MergeSpec {
     default_action: Option<Action>,
     /// Lines may hold `!` to clear the list, as `.cvsignore` files may.
     allows_clear: bool,
+    /// A line may start with `+ ` or `- ` to name its own action, as in the lists rsync reads
+    /// for `--include-from` and `--exclude-from`.
+    old_prefixes: bool,
     sides: Sides,
     perishable: bool,
 }
@@ -159,6 +166,7 @@ pub struct Filter {
     entries: Arc<[Entry]>,
     merges: Arc<[MergeSpec]>,
     delete_excluded: bool,
+    protected_folders: Arc<[String]>,
 }
 
 /// The rules per-folder merge files add in one folder, nearest folder first. Cheap to clone.
@@ -205,21 +213,17 @@ impl Filter {
         for rule in &spec.rules {
             builder.add_line(rule, 0)?;
         }
-        for pattern in spec.includes.iter().map(String::as_str).chain(
-            spec.include_lists
-                .iter()
-                .flat_map(|list| list.lines())
-                .filter(|line| !is_comment(line)),
-        ) {
+        for pattern in &spec.includes {
             builder.add_pattern(Action::Include, pattern)?;
         }
-        for pattern in spec.excludes.iter().map(String::as_str).chain(
-            spec.exclude_lists
-                .iter()
-                .flat_map(|list| list.lines())
-                .filter(|line| !is_comment(line)),
-        ) {
+        for list in &spec.include_lists {
+            builder.add_list(Action::Include, list)?;
+        }
+        for pattern in &spec.excludes {
             builder.add_pattern(Action::Exclude, pattern)?;
+        }
+        for list in &spec.exclude_lists {
+            builder.add_list(Action::Exclude, list)?;
         }
         if let Some(paths) = &spec.files_from {
             for rule in files_from_rules(paths, spec.recursive) {
@@ -234,6 +238,7 @@ impl Filter {
             entries: builder.entries.into(),
             merges: builder.merges.into(),
             delete_excluded: spec.delete_excluded,
+            protected_folders: spec.protected_folders.clone().into(),
         })
     }
 
@@ -326,6 +331,13 @@ impl Filter {
     /// kept from deletion (for the receiver). `folder` holds the rules of the folder `path` is
     /// in.
     pub fn verdict(&self, path: &str, is_dir: bool, side: Side, folder: &FolderRules) -> Verdict {
+        let protected = |folder: &String| {
+            path.strip_prefix(folder.as_str())
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+        };
+        if side == Side::Receiver && self.protected_folders.iter().any(protected) {
+            return Verdict::Excluded { perishable: false };
+        }
         for entry in self.entries.iter() {
             match entry {
                 Entry::Rule(rule) => {
@@ -392,6 +404,20 @@ impl Builder<'_> {
             negate: false,
         };
         self.add_parsed(Parsed::Rule(rule), 0)
+    }
+
+    /// The patterns of an include or exclude list, read as rsync reads `--include-from` and
+    /// `--exclude-from`.
+    fn add_list(&mut self, action: Action, contents: &str) -> AppResult<()> {
+        let spec = MergeSpec {
+            default_action: Some(action),
+            old_prefixes: true,
+            ..merge_spec("")?
+        };
+        for item in parse_merge_contents(&spec, contents)? {
+            self.add_parsed(item, 0)?;
+        }
+        Ok(())
     }
 
     fn add_parsed(&mut self, parsed: Parsed, depth: usize) -> AppResult<()> {
@@ -478,6 +504,9 @@ fn parse_line(line: &str) -> AppResult<Vec<Parsed>> {
             }
             let mut spec = merge_spec(modifiers)?;
             spec.file_name = argument.to_string();
+            // Such a file is a list as --include-from or --exclude-from reads it, which is the
+            // rule those options become when typed.
+            spec.old_prefixes = spec.default_action.is_some() && !spec.word_split;
             return Ok(vec![Parsed::Merge {
                 file: argument.to_string(),
                 spec,
@@ -546,6 +575,7 @@ fn parse_line(line: &str) -> AppResult<Vec<Parsed>> {
                     word_split: true,
                     default_action: Some(Action::Exclude),
                     allows_clear: false,
+                    old_prefixes: false,
                     sides,
                     perishable: true,
                 })]);
@@ -670,6 +700,7 @@ fn merge_spec(modifiers: &str) -> AppResult<MergeSpec> {
         word_split: false,
         default_action: None,
         allows_clear: true,
+        old_prefixes: false,
         sides: Sides::BOTH,
         perishable: false,
     };
@@ -695,6 +726,16 @@ fn merge_spec(modifiers: &str) -> AppResult<MergeSpec> {
     Ok(spec)
 }
 
+/// The action a list line names with a leading `+ ` or `- `, and the pattern after it.
+fn named_action(line: &str) -> Option<(Action, &str)> {
+    match line.strip_prefix("+ ") {
+        Some(pattern) => Some((Action::Include, pattern)),
+        None => line
+            .strip_prefix("- ")
+            .map(|pattern| (Action::Exclude, pattern)),
+    }
+}
+
 /// The rules in a merge file's text, with the merge rule's modifiers applied.
 fn parse_merge_contents(spec: &MergeSpec, contents: &str) -> AppResult<Vec<Parsed>> {
     let mut parsed = Vec::new();
@@ -713,8 +754,10 @@ fn parse_merge_contents(spec: &MergeSpec, contents: &str) -> AppResult<Vec<Parse
                 continue;
             }
             match spec.default_action {
-                Some(action) => {
-                    let pattern = item.trim_end();
+                Some(default_action) => {
+                    let named = spec.old_prefixes.then(|| named_action(item)).flatten();
+                    let (action, pattern) = named.unwrap_or((default_action, item));
+                    let pattern = pattern.trim_end();
                     parsed.push(Parsed::Rule(Rule {
                         action,
                         pattern: Pattern::parse(pattern).map_err(|error| {
@@ -907,9 +950,7 @@ fn glob(pattern: &[char], text: &[char]) -> bool {
                 .take_while(|character| **character == '*')
                 .count();
             let rest = &pattern[stars..];
-            // `a/**/b` also matches `a/b`.
-            let no_folders = rest.first() == Some(&'/') && glob(&rest[1..], text);
-            no_folders || (0..=text.len()).any(|skip| glob(rest, &text[skip..]))
+            (0..=text.len()).any(|skip| glob(rest, &text[skip..]))
         }
         Some('*') => {
             let rest = &pattern[1..];
@@ -1109,8 +1150,14 @@ mod tests {
             "# a comment",
             "",
         ]);
-        assert!(!sent(&filter, "a/z", false));
+        // As in rsync, `/**/` needs at least one folder there.
+        assert!(sent(&filter, "a/z", false));
+        assert!(!sent(&filter, "a/b/z", false));
         assert!(!sent(&filter, "a/b/c/z", false));
+        let triple = excludes(&["docs/***/notes.md"]);
+        assert!(sent(&triple, "docs/notes.md", false));
+        assert!(!sent(&triple, "docs/deep/notes.md", false));
+        assert!(!sent(&triple, "site/docs/deep/er/notes.md", false));
         assert!(!sent(&filter, "file1.c", false));
         assert!(!sent(&filter, "deep/fileX.h", false));
         assert!(sent(&filter, "file10.c", false));
@@ -1231,6 +1278,52 @@ mod tests {
             &read,
         )
         .is_err());
+    }
+
+    #[test]
+    fn lists_read_as_rsync_reads_include_from_and_exclude_from() {
+        let read = |name: &str| -> AppResult<String> {
+            match name {
+                "/lists/out" => Ok("+ keep.tmp\n*.tmp\n".into()),
+                other => no_files(other),
+            }
+        };
+        // A line may name its own kind.
+        let filter = Filter::build(
+            &FilterSpec {
+                excludes: vec!["*.log".into()],
+                include_lists: vec!["- drop.txt\n*.txt\n".into()],
+                exclude_lists: vec!["+ keep.bak\n*.bak\n".into()],
+                ..FilterSpec::default()
+            },
+            &read,
+        )
+        .unwrap();
+        assert!(!sent(&filter, "a.log", false));
+        assert!(!sent(&filter, "a.bak", false));
+        assert!(sent(&filter, "keep.bak", false));
+        assert!(!sent(&filter, "drop.txt", false));
+        assert!(sent(&filter, "other.txt", false));
+        // `!` clears the rules before it.
+        let filter = build(FilterSpec {
+            excludes: vec!["*.bak".into()],
+            exclude_lists: vec!["*.log\n!\n*.tmp\n".into()],
+            ..FilterSpec::default()
+        });
+        assert!(sent(&filter, "a.bak", false));
+        assert!(sent(&filter, "a.log", false));
+        assert!(!sent(&filter, "a.tmp", false));
+        // A merge,- file is the list an --exclude-from becomes.
+        let filter = Filter::build(
+            &FilterSpec {
+                rules: vec!["merge,- /lists/out".into()],
+                ..FilterSpec::default()
+            },
+            &read,
+        )
+        .unwrap();
+        assert!(sent(&filter, "keep.tmp", false));
+        assert!(!sent(&filter, "other.tmp", false));
     }
 
     #[test]

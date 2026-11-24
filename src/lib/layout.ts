@@ -40,8 +40,16 @@ export interface Restore {
 }
 
 export type PaneTab =
-  | { id: string; kind: "local"; path?: string }
-  | { id: string; kind: "remote"; sessionId: string; path?: string; restore?: Restore }
+  /** `preview` on a file pane: its preview pane is open. */
+  | { id: string; kind: "local"; path?: string; preview?: boolean }
+  | {
+      id: string;
+      kind: "remote";
+      sessionId: string;
+      path?: string;
+      preview?: boolean;
+      restore?: Restore;
+    }
   | { id: string; kind: "welcome" }
   | {
       id: string;
@@ -218,12 +226,27 @@ export function activateTab(root: LayoutNode, tabId: string): LayoutNode {
   );
 }
 
+/** Whether a tab lists files, and so can have a preview pane. */
+export function isFileTab(tab: PaneTab): tab is Extract<PaneTab, { kind: "local" | "remote" }> {
+  return tab.kind === "local" || tab.kind === "remote";
+}
+
+/**
+ * A file pane keeps its preview open when its tab is given another session or folder, as on
+ * reconnecting or going into a vault, unless the replacement says otherwise.
+ */
+function keepingPreview(previous: PaneTab, replacement: PaneTab): PaneTab {
+  if (!isFileTab(previous) || !isFileTab(replacement)) return replacement;
+  if (replacement.preview !== undefined || !previous.preview) return replacement;
+  return { ...replacement, preview: true };
+}
+
 export function updateTab(root: LayoutNode, tabId: string, replacement: PaneTab): LayoutNode {
   return mapGroups(root, (entry) =>
     entry.tabs.some((tab) => tab.id === tabId)
       ? withTabs(
           entry,
-          entry.tabs.map((tab) => (tab.id === tabId ? replacement : tab)),
+          entry.tabs.map((tab) => (tab.id === tabId ? keepingPreview(tab, replacement) : tab)),
           entry.activeTabId === tabId ? replacement.id : undefined,
         )
       : entry,
@@ -469,6 +492,19 @@ function isTab(value: unknown): value is PaneTab {
   }
 }
 
+/**
+ * A preview flag that is neither yes nor no, as a hand-edited file may hold, reads as none: the
+ * preview is only a view of the pane, so the tab is kept without it.
+ */
+function withReadablePreview(tab: PaneTab): PaneTab {
+  if (!("preview" in tab) || tab.preview === undefined || typeof tab.preview === "boolean") {
+    return tab;
+  }
+  const kept: Record<string, unknown> = { ...tab };
+  delete kept.preview;
+  return kept as PaneTab;
+}
+
 /** Checks a layout read from storage or handed over by another window. */
 export function parseLayout(value: unknown): LayoutNode | null {
   if (!value || typeof value !== "object") return null;
@@ -476,7 +512,7 @@ export function parseLayout(value: unknown): LayoutNode | null {
   if (typeof node.id !== "string") return null;
   if (node.type === "group") {
     if (!Array.isArray(node.tabs) || !node.tabs.every(isTab)) return null;
-    const tabs = node.tabs as PaneTab[];
+    const tabs = (node.tabs as PaneTab[]).map(withReadablePreview);
     const activeTabId = typeof node.activeTabId === "string" ? node.activeTabId : null;
     return normalize(withTabs({ type: "group", id: node.id, tabs, activeTabId }, tabs));
   }
@@ -529,7 +565,8 @@ function restorableTab(tab: PaneTab, current: CurrentState): PaneTab | null {
       const server = current.serverOf(sessionId);
       if (!server) return null;
       const path = vault ? vault.root : (current.folderOf(tab.id) ?? tab.path);
-      return { id: tab.id, kind: "remote", sessionId, path, restore: { server } };
+      const { id, preview } = tab;
+      return { id, kind: "remote", sessionId, path, preview, restore: { server } };
     }
     case "terminal": {
       const server = current.serverOf(tab.sessionId);

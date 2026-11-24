@@ -12,6 +12,7 @@
 use std::collections::BTreeMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -990,6 +991,223 @@ async fn renames_keep_contents_whatever_the_length_of_the_names() {
         .unwrap();
     assert_eq!(absent.kind, ErrorKind::NotFound);
     assert!(vault.rename(&root, "Other vault").await.is_err());
+}
+
+/// Picks the stored paths a test is about.
+type PathTest = fn(&str) -> bool;
+
+/// A server whose connection drops once, at the first write or delete of a path `fails`
+/// picks. A file being written is left there empty, as an interrupted upload leaves it.
+struct CutOffServer {
+    inner: Arc<dyn RemoteFileSystem>,
+    fails: PathTest,
+    cut_off: AtomicBool,
+}
+
+impl CutOffServer {
+    fn at(inner: &Arc<dyn RemoteFileSystem>, fails: PathTest) -> Arc<Self> {
+        Arc::new(Self {
+            inner: inner.clone(),
+            fails,
+            cut_off: AtomicBool::new(false),
+        })
+    }
+
+    fn cuts_off_at(&self, path: &str) -> bool {
+        (self.fails)(path) && !self.cut_off.swap(true, Ordering::SeqCst)
+    }
+}
+
+fn connection_lost() -> AppError {
+    AppError::new(ErrorKind::Disconnected, "The connection was lost")
+}
+
+#[async_trait]
+impl RemoteFileSystem for CutOffServer {
+    fn protocol(&self) -> Protocol {
+        self.inner.protocol()
+    }
+
+    fn home(&self) -> &str {
+        self.inner.home()
+    }
+
+    fn capabilities(&self) -> Capabilities {
+        self.inner.capabilities()
+    }
+
+    async fn canonicalize(&self, path: &str) -> AppResult<String> {
+        self.inner.canonicalize(path).await
+    }
+
+    async fn list_dir(&self, path: &str) -> AppResult<DirListing> {
+        self.inner.list_dir(path).await
+    }
+
+    async fn make_dir(&self, parent: &str, name: &str) -> AppResult<String> {
+        self.inner.make_dir(parent, name).await
+    }
+
+    async fn rename(&self, path: &str, new_name: &str) -> AppResult<String> {
+        self.inner.rename(path, new_name).await
+    }
+
+    async fn delete(&self, paths: &[String]) -> AppResult<()> {
+        if paths.iter().any(|path| self.cuts_off_at(path)) {
+            return Err(connection_lost());
+        }
+        self.inner.delete(paths).await
+    }
+
+    async fn stat(&self, path: &str) -> AppResult<Option<RemoteStat>> {
+        self.inner.stat(path).await
+    }
+
+    async fn ensure_dir(&self, path: &str) -> AppResult<()> {
+        self.inner.ensure_dir(path).await
+    }
+
+    async fn set_attributes(
+        &self,
+        path: &str,
+        modified: Option<i64>,
+        permissions: Option<u32>,
+    ) -> AppResult<()> {
+        self.inner.set_attributes(path, modified, permissions).await
+    }
+
+    async fn open_read(
+        self: Arc<Self>,
+        path: &str,
+        range: Range<u64>,
+    ) -> AppResult<Box<dyn ReadStream>> {
+        self.inner.clone().open_read(path, range).await
+    }
+
+    async fn open_write(self: Arc<Self>, request: WriteRequest) -> AppResult<Box<dyn WriteStream>> {
+        let cut_off = self.cuts_off_at(&request.path);
+        let stream = self.inner.clone().open_write(request).await?;
+        Ok(match cut_off {
+            true => Box::new(CutOffWrite),
+            false => stream,
+        })
+    }
+}
+
+struct CutOffWrite;
+
+#[async_trait]
+impl WriteStream for CutOffWrite {
+    async fn write(&mut self, _data: Bytes) -> AppResult<()> {
+        Ok(())
+    }
+
+    async fn finish(self: Box<Self>) -> AppResult<()> {
+        Err(connection_lost())
+    }
+}
+
+#[tokio::test]
+async fn a_rename_cut_off_part_way_leaves_the_entry_as_it_was() {
+    let folder = tempfile::tempdir().unwrap();
+    let server = DiskServer::serving(folder.path());
+    let vault = new_vault(&server, "pw").await;
+    let root = vault.root().to_string();
+    let stored = folder.path().join("storage/My vault");
+    let cleartext = contents(70_000, 4);
+    let (short, long, other_long) = ("short.bin", long_name("first"), long_name("second"));
+
+    let name_file: PathTest = |path| path.ends_with("/name.c9s");
+    let contents_file: PathTest = |path| path.ends_with("/contents.c9r");
+    let plain_file: PathTest = |path| path.ends_with(".c9r") && !path.contains(".c9s/");
+    let shortened_node: PathTest = |path| path.ends_with(".c9s");
+    let cases: [(&str, &str, &str, PathTest); 9] = [
+        // Each name stored in a file of its own: the new one is what is cut off.
+        ("file", &long, &other_long, name_file),
+        ("folder", &long, &other_long, name_file),
+        ("folder", short, &long, name_file),
+        // Back to a plain name, the old name's file goes.
+        ("folder", &long, short, name_file),
+        // Between a plain and a shortened name a file is copied.
+        ("file", short, &long, name_file),
+        ("file", short, &long, contents_file),
+        ("file", &long, short, plain_file),
+        // Only the old file's removal is cut off: both copies are whole, so both stay.
+        ("file", short, &long, plain_file),
+        ("file", &long, short, shortened_node),
+    ];
+    for (number, (kind, from, to, fails)) in cases.into_iter().enumerate() {
+        let case = format!("case {number}: {kind} {from:.12} to {to:.12}");
+        let from_path = format!("{root}/{from}");
+        let to_path = format!("{root}/{to}");
+        let file_path = match kind {
+            "file" => from_path.clone(),
+            _ => {
+                vault.make_dir(&root, from).await.unwrap();
+                format!("{from_path}/inside.bin")
+            }
+        };
+        write(&vault, &file_path, &cleartext).await.unwrap();
+        let stored_before = stored_below(&stored);
+
+        let cut_off = CutOffServer::at(&server, fails);
+        let cut_off_vault = vault.through(cut_off.clone());
+        let renamed = cut_off_vault.rename(&from_path, to).await;
+        assert!(
+            cut_off.cut_off.load(Ordering::SeqCst),
+            "{case}: not cut off"
+        );
+        assert_eq!(
+            renamed.err().map(|error| error.kind),
+            Some(ErrorKind::Disconnected),
+            "{case}"
+        );
+        let both_kept = number >= 7;
+
+        // What the server holds, read by the vault opened afresh as after a restart.
+        let reopened = VaultFs::unlock(server.clone(), &root, "pw".to_string())
+            .await
+            .unwrap();
+        let mut listed: Vec<String> = reopened
+            .list_dir(&root)
+            .await
+            .unwrap()
+            .entries
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect();
+        listed.sort();
+        let mut expected = vec![from.to_string()];
+        if both_kept {
+            expected.push(to.to_string());
+            expected.sort();
+        }
+        assert_eq!(listed, expected, "{case}");
+        assert_eq!(
+            read(&reopened, &file_path).await.unwrap(),
+            cleartext,
+            "{case}"
+        );
+        assert_eq!(read(&vault, &file_path).await.unwrap(), cleartext, "{case}");
+        if both_kept {
+            assert_eq!(
+                read(&reopened, &to_path).await.unwrap(),
+                cleartext,
+                "{case}"
+            );
+            vault.delete(std::slice::from_ref(&to_path)).await.unwrap();
+        } else {
+            // Nothing half made is left behind on the server either.
+            assert_eq!(stored_below(&stored), stored_before, "{case}");
+        }
+
+        // The rename goes through once the connection is back.
+        vault.rename(&from_path, to).await.unwrap();
+        let moved = file_path.replacen(&from_path, &to_path, 1);
+        assert_eq!(read(&vault, &moved).await.unwrap(), cleartext, "{case}");
+        vault.delete(&[to_path]).await.unwrap();
+        assert!(vault.list_dir(&root).await.unwrap().entries.is_empty());
+    }
 }
 
 /// The number of files and folders the server holds below `folder`.
