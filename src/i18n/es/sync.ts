@@ -136,9 +136,9 @@ export const sync = {
     other: "se eliminaron {count} elementos",
   },
   itemsToDeleteOnceCopying: {
-    one: "{count} elemento que eliminar cuando termine la copia",
-    many: "{count} de elementos que eliminar cuando termine la copia",
-    other: "{count} elementos que eliminar cuando termine la copia",
+    one: "{count} elemento por eliminar cuando termine la copia",
+    many: "{count} de elementos por eliminar cuando termine la copia",
+    other: "{count} elementos por eliminar cuando termine la copia",
   },
   createdFolders: {
     one: "se creó {count} carpeta",
@@ -167,7 +167,7 @@ export const sync = {
   bothWays: "En ambos sentidos",
   copiesNewFilesEachWay:
     "Copia los archivos nuevos en cada sentido; donde los dos lados tienen un archivo, gana el más reciente.",
-  deleteLocal: "Eliminar local",
+  deleteLocal: "Eliminar en local",
   deleteOnServer: "Eliminar en el servidor",
   conflict: "Conflicto",
   plannedUpload: "Subir {total}",

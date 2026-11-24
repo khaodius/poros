@@ -68,7 +68,7 @@ export const drives = {
   thisFolder: "Esta carpeta",
   readOnlyProgramsCanOpen: "Solo lectura: los programas pueden abrir archivos, pero no cambiarlos",
   openInFileManagerWhen: "Abrir en el administrador de archivos al montar",
-  theConnectionIsLostReconnect: "Se perdió la conexión. Reconecta para montarla.",
+  theConnectionIsLostReconnect: "Se perdió la conexión. Reconecta para montar la unidad.",
   mounting: "Montando...",
   mount: "Montar",
 

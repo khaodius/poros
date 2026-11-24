@@ -51,7 +51,7 @@ export const share = {
   noLinkYet: "Aún no hay enlace",
 
   // lib/shareLinks
-  shareLinkNotInA: "Enlace para compartir (no en una bóveda)",
+  shareLinkNotInA: "Enlace para compartir (no disponible en bóvedas)",
   shareLinkCloudStorageOnly: "Enlace para compartir (solo en la nube)",
   shareLinkFilesOnly: "Enlace para compartir (solo archivos)",
   shareLink: "Enlace para compartir...",
@@ -126,7 +126,7 @@ export const share = {
   theFolderAndEverythingInIt: "la carpeta y todo su contenido",
   theFile: "el archivo",
   untilDeadline: "hasta el {deadline}",
-  untilYouStopSharing: "hasta que dejes de compartirlo",
+  untilYouStopSharing: "hasta que dejes de compartir",
   forAsLongAsItIsThere: "mientras exista",
   sharedBefore: "Compartido antes: {statement}",
   notWhatWasAsked: "No es lo que se pidió: {statement}",

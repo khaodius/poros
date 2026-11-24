@@ -35,7 +35,7 @@ export const preview = {
   showPreview: "Mostrar vista previa",
   previewNotLoaded: "Vista previa no cargada",
   previewNotLoadedDetail:
-    "Leer de este almacenamiento puede tener coste, así que el archivo solo se lee cuando se pide.",
+    "Leer de este almacenamiento puede cobrarse, así que el archivo solo se lee cuando se pide.",
   emptyFile: "Archivo vacío",
   theServerSaysThereIs: "El servidor indica que está vacío.",
   thereIsNothingInIt2: "Está vacío.",
@@ -51,14 +51,14 @@ export const preview = {
   },
   folderNotListed: "Carpeta no listada",
   folderNotListedDetail:
-    "Listar en este almacenamiento puede tener coste, así que la carpeta solo se lista cuando se pide.",
+    "Listar en este almacenamiento puede cobrarse, así que la carpeta solo se lista cuando se pide.",
   cryptomatorVault: "Bóveda de Cryptomator",
   cryptomatorVaultDetail: "Abre la carpeta para desbloquearla y ver sus archivos.",
   emptyFolder: "Carpeta vacía",
   items: { one: "{count} elemento", many: "{count} de elementos", other: "{count} elementos" },
   thumbnailsNotLoaded: "Miniaturas no cargadas",
   thumbnailsNotLoadedDetail:
-    "Leer de este almacenamiento puede tener coste, así que las imágenes solo se leen cuando se pide.",
+    "Leer de este almacenamiento puede cobrarse, así que las imágenes solo se leen cuando se pide.",
   itemsSelected: {
     one: "{count} elemento seleccionado",
     many: "{count} de elementos seleccionados",
@@ -159,7 +159,7 @@ export const preview = {
   quicktimeVideo: "Video QuickTime",
   mpeg4Video: "Video MPEG-4",
   epubBook: "Libro EPUB",
-  javaArchive: "Archivo Java",
+  javaArchive: "Archivo comprimido Java",
   androidPackage: "Paquete de Android",
 
   // lib/previewText

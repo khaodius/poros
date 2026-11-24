@@ -8,7 +8,7 @@ export const settings = {
   settingsSections: "Secciones de la configuración",
   queue: "Cola",
   simultaneousTransfers: "Transferencias simultáneas",
-  simultaneousTransfersHint: "Cuántos archivos se mueven a la vez.",
+  simultaneousTransfersHint: "Cuántos archivos se transfieren a la vez.",
   startTransfersAsSoonAs: "Iniciar las transferencias en cuanto entren en la cola",
   startTransfersAsSoonAsHint: "Desactivado: la cola espera hasta que presiones Iniciar cola.",
   whenTheTargetFileExists: "Cuando el archivo de destino existe",
@@ -76,7 +76,7 @@ export const settings = {
   waitBetweenRetries: "Espera entre reintentos",
   trustedMinisignKeys: "Claves de minisign de confianza",
   onePublicKeyPerLine:
-    "Una clave pública por línea, como en el minisign.pub de un editor. Las firmas de otras claves se anotan en el registro y no se comprueban.",
+    "Una clave pública por línea, como en el minisign.pub de quien publica el programa. Las firmas de otras claves se anotan en el registro y no se comprueban.",
   autoTuneReceiveBuffer: "Ajustar automáticamente el búfer de recepción",
   autoTuneReceiveBufferHint:
     "El sistema amplía la ventana de recepción TCP según la conexión. Se aplica a las conexiones nuevas.",

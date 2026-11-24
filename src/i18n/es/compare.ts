@@ -46,7 +46,7 @@ export const compare = {
   inAnotherWindow: "{label} en otra ventana",
   nothingToCompareYet: "aún nada que comparar",
   stateCount: "{state}: {amount}",
-  stateCountHidden: "{state}: {amount}, ocultos",
+  stateCountHidden: "{state}: {amount}, no se muestran",
 
   // components/folderCompareMenu
   selectNewerAndOnlyHere: "Seleccionar más recientes y solo aquí",

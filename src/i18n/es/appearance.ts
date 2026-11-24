@@ -38,7 +38,7 @@ export const appearance = {
   grouping: "Agrupación",
   groupLocalFilesByDate: "Agrupar archivos locales por fecha",
   groupLocalFilesByDateHint:
-    "Coloca los archivos bajo Hoy, Ayer, Antes esta semana, etc., como hace el Explorador de Windows. Haz clic en un encabezado para seleccionar lo que contiene, o en su flecha para contraerlo.",
+    "Coloca los archivos bajo Hoy, Ayer, A principios de esta semana, etc., como hace el Explorador de Windows. Haz clic en un encabezado para seleccionar lo que contiene, o en su flecha para contraerlo.",
   groupServerFilesByDate: "Agrupar archivos del servidor por fecha",
   groupServerFilesByDateHint: "Lo mismo para los archivos de los servidores.",
   value: "Valor de {label}",

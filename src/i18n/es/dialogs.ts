@@ -116,7 +116,7 @@ export const dialogs = {
   runsAsTheFilesOwner: "Se ejecuta como el propietario del archivo",
   setGroupId: "Establecer ID de grupo",
   runsAsTheGroupNew: "Se ejecuta como el grupo; los archivos nuevos lo heredan",
-  sticky: "Sticky",
+  sticky: "Bit sticky",
   onlyOwnersMayDeleteOr: "Solo los propietarios pueden eliminar entradas o cambiarles el nombre",
   others: "Otros",
   read: "Lectura",

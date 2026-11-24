@@ -20,10 +20,10 @@ export const workspace = {
   removeSelected: "Quitar selección",
   retryAll: "Reintentar todo",
   retrySelected: "Reintentar selección",
-  clearFailedTransfers: "Borrar las transferencias con error",
+  clearFailedTransfers: "Quitar de la lista las transferencias con error",
   keepEachTransferInView: "Mantener a la vista cada transferencia al terminar",
   follow: "Seguir",
-  clearFinishedTransfers: "Borrar las transferencias terminadas",
+  clearFinishedTransfers: "Quitar de la lista las transferencias terminadas",
   simultaneousTransfers: "Transferencias simultáneas",
   workers: "Simultáneas",
   log: "Registro",
@@ -146,5 +146,5 @@ export const workspace = {
 
   // state/restoreActions
   couldNotReopen: "No se pudo volver a abrir {name}: {message}",
-  porosNoLongerKnowsHow: "Poros ya no sabe cómo llegar a él.",
+  porosNoLongerKnowsHow: "Poros ya no sabe cómo conectarse.",
 } satisfies TranslatedArea<"workspace">;

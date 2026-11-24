@@ -80,13 +80,13 @@ export const versions = {
   deleteMarker: "Marcador de eliminación",
   restoredCount: {
     one: "{count} restaurado",
-    many: "{count} de restaurados",
+    many: "{count} restaurados",
     other: "{count} restaurados",
   },
   findingWhatToRestore: "Buscando lo que hay que restaurar...",
   restoredFoundSoFar: {
     one: "{count} restaurado; encontrados hasta ahora: {total}",
-    many: "{count} de restaurados; encontrados hasta ahora: {total}",
+    many: "{count} restaurados; encontrados hasta ahora: {total}",
     other: "{count} restaurados; encontrados hasta ahora: {total}",
   },
   restoredOfTotal: {

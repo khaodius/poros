@@ -2,7 +2,7 @@ import type { TranslatedArea } from "../catalog";
 
 export const rename = {
   // components/BulkRenameDialog
-  nothingToRename: "Nada a lo que cambiar el nombre",
+  nothingToRename: "Nada que renombrar",
   renameItems: {
     one: "Cambiar el nombre de {count} elemento",
     many: "Cambiar el nombre de {count} de elementos",
@@ -22,7 +22,7 @@ export const rename = {
   lookIn: "Buscar en",
   template: "Plantilla",
   templateForTheNewName: "Plantilla para el nuevo nombre",
-  insertAToken: "Insertar un elemento",
+  insertAToken: "Insertar un marcador",
   dateAs: "Fecha como",
   timeAs: "Hora como",
   theDateAndTimeAre:
@@ -40,7 +40,7 @@ export const rename = {
   extension: "Extensión",
   newExtension: "Nueva extensión",
   newExtensionSuchAsJpg: "Nueva extensión, como jpg",
-  trimAndTidy: "Recortar y ordenar",
+  trimAndTidy: "Recortar y limpiar",
   trimSpacesAtTheEnds: "Quitar los espacios de los extremos",
   makeRepeatedSpacesOne: "Convertir los espacios repetidos en uno",
   replaceSpacesWith: "Reemplazar los espacios por",
@@ -137,11 +137,11 @@ export const rename = {
   keepsANameDifferingInCase:
     "{name} conserva un nombre que solo difiere en mayúsculas y minúsculas",
   keepsANameDifferingInAccents:
-    "{name} conserva un nombre que solo difiere en cómo se guardan sus tildes",
+    "{name} conserva un nombre que solo difiere en cómo se guardan sus acentos",
   getsTheSameName: "{name} recibe el mismo nombre",
   getsANameDifferingInCase: "{name} recibe un nombre que solo difiere en mayúsculas y minúsculas",
   getsANameDifferingInAccents:
-    "{name} recibe un nombre que solo difiere en cómo se guardan sus tildes",
+    "{name} recibe un nombre que solo difiere en cómo se guardan sus acentos",
   anotherSelectedItemHasTheSameName:
     "Otro elemento seleccionado tiene el mismo nombre; cámbiales el nombre de uno en uno",
   isSelectedTooAndCountsAsTheSameName:
@@ -151,7 +151,7 @@ export const rename = {
   notSelectedAndHasANameDifferingInCase:
     "{name} no está seleccionado y tiene un nombre que solo difiere en mayúsculas y minúsculas",
   notSelectedAndHasANameDifferingInAccents:
-    "{name} no está seleccionado y tiene un nombre que solo difiere en cómo se guardan sus tildes",
+    "{name} no está seleccionado y tiene un nombre que solo difiere en cómo se guardan sus acentos",
   problemSharedName: {
     one: "{count} elemento tiene el mismo nombre que otro elemento seleccionado",
     many: "{count} de elementos tienen el mismo nombre que otro elemento seleccionado",

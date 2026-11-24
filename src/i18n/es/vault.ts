@@ -6,10 +6,10 @@ export const vault = {
   pauseTransfersAndLock: "Pausar transferencias y bloquear",
   unmountAndLock: "Desmontar y bloquear",
   transfersForThisVaultStillQueued: {
-    one: "{count} transferencia de esta bóveda sigue en la cola. No se puede copiar nada dentro ni fuera de una bóveda bloqueada, así que espera en pausa hasta que vuelvas a desbloquear la bóveda y la reanudes.",
-    many: "{count} de transferencias de esta bóveda siguen en la cola. No se puede copiar nada dentro ni fuera de una bóveda bloqueada, así que esperan en pausa hasta que vuelvas a desbloquear la bóveda y las reanudes.",
+    one: "{count} transferencia de esta bóveda sigue en la cola. No se puede copiar nada a una bóveda bloqueada ni desde ella, así que espera en pausa hasta que vuelvas a desbloquear la bóveda y la reanudes.",
+    many: "{count} de transferencias de esta bóveda siguen en la cola. No se puede copiar nada a una bóveda bloqueada ni desde ella, así que esperan en pausa hasta que vuelvas a desbloquear la bóveda y las reanudes.",
     other:
-      "{count} transferencias de esta bóveda siguen en la cola. No se puede copiar nada dentro ni fuera de una bóveda bloqueada, así que esperan en pausa hasta que vuelvas a desbloquear la bóveda y las reanudes.",
+      "{count} transferencias de esta bóveda siguen en la cola. No se puede copiar nada a una bóveda bloqueada ni desde ella, así que esperan en pausa hasta que vuelvas a desbloquear la bóveda y las reanudes.",
   },
 
   // components/NewVaultDialog

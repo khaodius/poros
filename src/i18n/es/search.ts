@@ -32,8 +32,8 @@ export const search = {
   atLeast: "Al menos",
   atMost: "Como máximo",
   customDates2: "Fechas personalizadas",
-  changedOnOrAfter: "Modificado el día o después",
-  changedOnOrBefore: "Modificado el día o antes",
+  changedOnOrAfter: "Modificado desde",
+  changedOnOrBefore: "Modificado hasta",
   results: { one: "{count} resultado", many: "{count} de resultados", other: "{count} resultados" },
   folders: { one: "{count} carpeta", many: "{count} de carpetas", other: "{count} carpetas" },
   foldersCouldNotBeRead: {

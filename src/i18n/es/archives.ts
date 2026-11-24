@@ -17,7 +17,7 @@ export const archives = {
   theProgramPickedIsNo:
     "El programa elegido ya no está, así que los archivos comprimidos van al mejor programa instalado hasta que elijas otro.",
   installedPrograms: "Programas instalados",
-  installedProgramsHint: "Buscados en el PATH y donde se instalan 7-Zip, WinRAR y PeaZip.",
+  installedProgramsHint: "Encontrados en el PATH y donde se instalan 7-Zip, WinRAR y PeaZip.",
   lookAgain: "Volver a buscar",
   noProgramThatExtractsArchives:
     "No se encontró ningún programa que extraiga archivos comprimidos. Instala 7-Zip o indica un programa arriba.",

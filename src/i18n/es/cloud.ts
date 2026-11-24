@@ -11,7 +11,7 @@ export const cloud = {
   clientId: "ID de cliente",
   endsInAppsGoogleusercontentCom: "Termina en apps.googleusercontent.com",
   clientSecret: "Secreto de cliente",
-  clientSecretHint: "Google emite uno con cada cliente de aplicación de escritorio.",
+  clientSecretHint: "Google emite uno con cada cliente del tipo App de escritorio.",
   onedrive: "OneDrive",
   inTheMicrosoftEntraAdmin:
     "En el Centro de administración de Microsoft Entra, registra una aplicación para cuentas de cualquier directorio organizativo y cuentas personales de Microsoft.",

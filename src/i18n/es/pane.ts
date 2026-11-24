@@ -56,10 +56,10 @@ export const pane = {
 
   // components/FilePane
   toPasteOpenAFolder:
-    "Para pegar, abre una carpeta o haz clic con el botón derecho en una de los resultados.",
+    "Para pegar, abre una carpeta o haz clic con el botón derecho en una carpeta de los resultados.",
   synchronizeFolder: "Sincronizar carpeta...",
   synchronizeFolder2: "Sincronizar carpeta ({needsSftp})",
-  notInAVault: "no en bóvedas",
+  notInAVault: "no disponible en bóvedas",
   sftpOnly: "solo SFTP",
   sortBy: "Ordenar por",
   ascending: "Ascendente",
@@ -111,7 +111,7 @@ export const pane = {
   backAltLeft: "Atrás (Alt+Left)",
   forwardAltRight: "Adelante (Alt+Right)",
   upBackspace: "Subir un nivel (Backspace)",
-  homeAltHome: "Inicio (Alt+Home)",
+  homeAltHome: "Carpeta personal (Alt+Home)",
   drives: "Unidades",
   searchAgainF5: "Volver a buscar (F5)",
   refreshF5: "Actualizar (F5)",
@@ -140,12 +140,12 @@ export const pane = {
   goToHomeFolder: "Ir a la carpeta personal",
   selected: {
     one: "{count} seleccionado",
-    many: "{count} de seleccionados",
+    many: "{count} seleccionados",
     other: "{count} seleccionados",
   },
   selectedWithSize: {
     one: "{count} seleccionado ({size})",
-    many: "{count} de seleccionados ({size})",
+    many: "{count} seleccionados ({size})",
     other: "{count} seleccionados ({size})",
   },
   createIn: "Crear en {path}",
@@ -158,10 +158,10 @@ export const pane = {
   couldNotRefreshThisFolder2: "No se pudo actualizar esta carpeta",
   couldNotOpenThisFolder: "No se pudo abrir esta carpeta",
   lockedVault: "Bóveda bloqueada",
-  hidden: { one: "{count} oculto", many: "{count} de ocultos", other: "{count} ocultos" },
+  hidden: { one: "{count} oculto", many: "{count} ocultos", other: "{count} ocultos" },
   identicalNotShown: {
     one: "{count} idéntico no mostrado",
-    many: "{count} de idénticos no mostrados",
+    many: "{count} idénticos no mostrados",
     other: "{count} idénticos no mostrados",
   },
   scheduleUpload: "Programar subida...",
@@ -190,7 +190,7 @@ export const pane = {
     many: "Carpeta a la que copiar {count} de elementos",
     other: "Carpeta a la que copiar {count} elementos",
   },
-  deleted: { one: "{count} eliminado", many: "{count} de eliminados", other: "{count} eliminados" },
+  deleted: { one: "{count} eliminado", many: "{count} eliminados", other: "{count} eliminados" },
   everyOlderVersionGoesToo: {
     one: "También se eliminan todas las versiones anteriores y los archivos eliminados que se conservan en el bucket.",
     many: "También se eliminan todas las versiones anteriores y los archivos eliminados que se conservan en los buckets.",

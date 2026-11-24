@@ -41,10 +41,13 @@
 // Other choices: file archivo, folder carpeta, item elemento, link (symbolic) vínculo,
 // computer equipo, Settings Configuración, Delete Eliminar, Remove Quitar, Add Agregar,
 // Rename Cambiar nombre (renombrar inside running text), archive archivo comprimido,
-// endpoint punto de conexión, bucket bucket, system keychain llavero del sistema,
-// placeholder marcador, dry run simulación, log registro. Durations as 5 s, 3 min 20 s, 2 h 5 min.
+// endpoint punto de conexión (address patterns stay literal: bucket.endpoint), bucket bucket,
+// system keychain llavero del sistema, placeholder marcador, dry run simulación, log registro.
+// Durations as 5 s, 3 min 20 s, 2 h 5 min. Date groups as Windows Explorer names them: Hoy, Ayer,
+// A principios de esta semana, La semana pasada.
 // In a plural, the words around the number agree with it ("No se pudo copiar 1 elemento",
-// "1 omitido"), and `many` puts "de" only before a noun ("{count} de archivos", "{count} omitidos").
+// "1 omitido"), and `many` puts "de" only before a noun ("{count} de archivos", but
+// "{count} omitidos").
 
 import { defineTranslation } from "../catalog";
 import { appearance } from "./appearance";

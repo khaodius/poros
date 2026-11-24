@@ -34,7 +34,7 @@ export const schedule = {
   atTimeOnDays: "a las {time} {days}",
   timeOfDay: "Hora del día",
   daysOfTheWeek: "Días de la semana",
-  onDays: "Algunos días",
+  onDays: "Días fijos",
   repeat: "Repetir",
   once: "Una vez",
   synchronizeFolders: "Sincronizar carpetas",
@@ -69,7 +69,7 @@ export const schedule = {
 
   // components/TransferTaskFields
   aFullPathOnThe: "Una ruta completa en el servidor; termina una carpeta con /",
-  aRunNowGoesInto: "Una ejecución ahora va a {folder}.",
+  aRunNowGoesInto: "Si se ejecuta ahora, va a {folder}.",
   addFiles: "Agregar archivos",
   addFolders: "Agregar carpetas",
   addTheFilesAndFolders:
@@ -88,10 +88,10 @@ export const schedule = {
   subfolderExample: "copia-{date}",
   intoTheFolderOnThe: "En la carpeta del servidor",
   intoTheFolderOnThis: "En la carpeta de este equipo",
-  itemsToCopy: "Elementos que copiar",
+  itemsToCopy: "Elementos para copiar",
   remove: "Quitar {path}",
   removeFromTheTask: "Quitar de la tarea",
-  serverPathToAdd: "Ruta del servidor que agregar",
+  serverPathToAdd: "Ruta del servidor para agregar",
   theFolderToDownloadInto: "La carpeta en la que descargar",
   whenAFileIsAlready: "Cuando un archivo ya existe",
   eachRunCanGetAFolder:
@@ -161,7 +161,7 @@ export const schedule = {
     "Las transferencias seleccionadas van a carpetas distintas. Selecciona las que van a una misma carpeta.",
   selectTheFilesToSchedule: "Selecciona los archivos que quieres programar.",
   blockedNoServer: "sin servidor",
-  blockedInVault: "no disponible en una bóveda",
+  blockedInVault: "no disponible en bóvedas",
   blockedUnsaved: "guarda antes la conexión",
 
   // state/scheduleActions
