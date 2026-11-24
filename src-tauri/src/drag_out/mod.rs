@@ -363,11 +363,18 @@ impl DragOut {
             items,
             transfers: transfers.watch(),
         });
-        if staging.progress().queue_paused {
+        let progress = staging.progress();
+        if progress.queue_paused {
             events.log(
                 LogLevel::Warn,
                 Some(&staging.session_id),
                 "The transfer queue is paused: files dragged out of Poros arrive once it runs again",
+            );
+        } else if progress.waiting_for_schedule {
+            events.log(
+                LogLevel::Warn,
+                Some(&staging.session_id),
+                "The speed limit schedule pauses downloads: files dragged out of Poros arrive once it lets them continue",
             );
         }
         Ok(staging)
