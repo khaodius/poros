@@ -121,6 +121,7 @@ export const connect = {
   importCountConnections: { other: "{count} 件の接続をインポート" },
   foundFiles: "{files} が見つかりました",
   notFoundInChoose: "{places} には見つかりませんでした。{choose}",
+  placeOrPlace: "{first} または {second}",
   keepThePasswordsInTheKeychain: {
     other: "{count} 件のパスワードをシステムのキーチェーンに保存",
   },

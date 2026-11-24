@@ -10,6 +10,7 @@ export const common = {
 
   // components/ArchiveSettings
   browse: "参照",
+  listSeparator: "、",
 
   // components/AutomationSettings
   refresh: "更新",
@@ -45,14 +46,14 @@ export const common = {
   discard: "破棄",
   open: "開く",
 
-  // components/DrivesGoing
-  listSeparator: "、",
-
   // components/EditorPane
   dismiss: "閉じる",
 
   // components/ExternalEditDialogs
   upload: "アップロード",
+
+  // components/ExternalEditorSettings
+  minutesUnit: "分",
 
   // components/FileList
   folder: "フォルダー",
@@ -83,12 +84,14 @@ export const common = {
 
   // components/PropertiesDialog
   apply: "適用",
+  ok: "OK",
 
   // components/SearchBar
   search: "検索",
 
   // components/SettingsDialog
   askMe: "毎回確認",
+  secondsUnit: "秒",
 
   // components/SyncPlanList
   path: "パス",

@@ -56,6 +56,15 @@ export const sync = {
   settleByHand: "手動で解決",
   dryRun: "テスト実行",
   synchronize: "同期",
+  localSide: "ローカル",
+  serverSide: "サーバー",
+  sideMissing: "{side}: なし",
+  sideFolder: "{side}: フォルダー",
+  sideFolderWithPermissions: "{side}: フォルダー、{permissions}",
+  sideFile: "{side}: {size}、{modified}",
+  sideFileWithPermissions: "{side}: {size}、{modified}、{permissions}",
+  sideLink: "{side}: リンク、{size}、{modified}",
+  sideLinkWithPermissions: "{side}: リンク、{size}、{modified}、{permissions}",
 
   // components/SyncSettings
   rsync2: "rsync",

@@ -89,6 +89,7 @@ export const schedule = {
   filesAndFoldersOnThe: "サーバー上のファイルとフォルダー",
   filesAndFoldersOnThis: "このコンピューター上のファイルとフォルダー",
   inAFolderOfIts: "専用のフォルダーに入れる (省略可)",
+  subfolderExample: "backup-{date}",
   intoTheFolderOnThe: "サーバー上のフォルダーへ",
   intoTheFolderOnThis: "このコンピューター上のフォルダーへ",
   itemsToCopy: "コピーする項目",
