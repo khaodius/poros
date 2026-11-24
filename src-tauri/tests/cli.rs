@@ -97,10 +97,28 @@ impl Run {
         );
         let trusted = run.run(&["--trust-new-host", "--save-host-key", "info"]);
         assert_eq!(status(&trusted), 0, "{trusted:?}");
-        run.run(&["rm", "-rf", &run.remote]);
-        let made = run.run(&["mkdir", "-p", &run.remote]);
-        assert_eq!(status(&made), 0, "{made:?}");
+        run.empty_scratch_folder();
         Some(run)
+    }
+
+    /// The same on the plain FTP server `ftp_server.rs` describes, for what a server does
+    /// without SFTP. Skipped unless `POROS_TEST_FTP_PORT` is set.
+    fn online_over_ftp(name: &str) -> Option<Self> {
+        let port: u16 = std::env::var("POROS_TEST_FTP_PORT").ok()?.parse().ok()?;
+        let user = std::env::var("POROS_TEST_FTP_USER").unwrap_or_else(|_| "poros".into());
+        let run = Self::new(
+            format!("ftp://{user}@127.0.0.1:{port}"),
+            std::env::var("POROS_TEST_FTP_PASSWORD").unwrap_or_else(|_| "poros-pass".into()),
+            format!("poros-cli-{name}-{}", std::process::id()),
+        );
+        run.empty_scratch_folder();
+        Some(run)
+    }
+
+    fn empty_scratch_folder(&self) {
+        self.run(&["rm", "-rf", &self.remote]);
+        let made = self.run(&["mkdir", "-p", &self.remote]);
+        assert_eq!(status(&made), 0, "{made:?}");
     }
 
     /// A bucket of its own on the S3 test server, created empty.
@@ -161,6 +179,30 @@ impl Run {
 
     fn remote(&self, path: &str) -> String {
         format!("{}/{path}", self.remote)
+    }
+
+    /// Writes a file in the scratch folder on the server.
+    fn write(&self, path: &str, contents: &str) {
+        let written = self.with_input(&["write", &self.remote(path)], contents.as_bytes());
+        assert_eq!(status(&written), 0, "{written:?}");
+    }
+
+    /// What a file in the scratch folder on the server holds; `None` when it is not there.
+    fn read(&self, path: &str) -> Option<String> {
+        let shown = self.run(&["cat", &self.remote(path)]);
+        (status(&shown) == 0).then(|| String::from_utf8(shown.stdout).unwrap())
+    }
+
+    /// The names in a folder of the scratch folder on the server, hidden ones included.
+    fn names(&self, path: &str) -> Vec<String> {
+        let (code, listed) = self.json(&["ls", "-a", &self.remote(path)]);
+        assert_eq!(code, 0, "{listed}");
+        listed["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["name"].as_str().unwrap().to_string())
+            .collect()
     }
 
     fn local(&self, path: &str) -> PathBuf {
@@ -756,4 +798,722 @@ fn versions_of_a_bucket_without_versioning_say_so() {
     let (code, value) = sftp.json(&["versions", &sftp.remote("missing.txt")]);
     assert_eq!(code, 12, "{value}");
     assert_eq!(value["error"]["kind"], "unsupported");
+}
+
+#[test]
+fn replacing_keeps_the_old_file_until_the_new_one_is_in_place() {
+    let Some(run) = Run::online("replace") else {
+        return;
+    };
+    // One file under two spellings is not replaced with itself.
+    run.write("notes.txt", "notes\n");
+    for command in ["mv", "cp"] {
+        let (code, value) = run.json(&[
+            command,
+            "--conflict",
+            "replace",
+            &run.remote("notes.txt"),
+            &run.remote("./notes.txt"),
+        ]);
+        assert_eq!(code, 2, "{command}: {value}");
+        assert_eq!(
+            run.read("notes.txt").as_deref(),
+            Some("notes\n"),
+            "{command}"
+        );
+    }
+
+    // A copy that cannot be made leaves the file it was to replace.
+    run.write("unreadable.txt", "unreadable\n");
+    run.write("report.txt", "old\n");
+    let (code, _) = run.json(&["chmod", "000", &run.remote("unreadable.txt")]);
+    assert_eq!(code, 0);
+    let (code, value) = run.json(&[
+        "cp",
+        "--conflict",
+        "replace",
+        &run.remote("unreadable.txt"),
+        &run.remote("report.txt"),
+    ]);
+    assert_ne!(code, 0, "{value}");
+    assert_eq!(run.read("report.txt").as_deref(), Some("old\n"));
+    // Nor is the copy it was writing left behind.
+    assert_eq!(run.names(""), ["notes.txt", "report.txt", "unreadable.txt"]);
+
+    // So does a move that cannot be made: nothing leaves a folder that cannot be written.
+    let (code, _) = run.json(&["mkdir", &run.remote("locked")]);
+    assert_eq!(code, 0);
+    run.write("locked/new.txt", "new\n");
+    let (code, _) = run.json(&["chmod", "555", &run.remote("locked")]);
+    assert_eq!(code, 0);
+    let (code, value) = run.json(&[
+        "mv",
+        "--conflict",
+        "replace",
+        &run.remote("locked/new.txt"),
+        &run.remote("report.txt"),
+    ]);
+    run.json(&["chmod", "755", &run.remote("locked")]);
+    assert_ne!(code, 0, "{value}");
+    assert_eq!(run.read("report.txt").as_deref(), Some("old\n"));
+    assert_eq!(run.read("locked/new.txt").as_deref(), Some("new\n"));
+
+    // Replacing puts the new contents under the old name, in the same folder or another.
+    run.write("draft.txt", "draft\n");
+    let (code, value) = run.json(&[
+        "cp",
+        "--conflict",
+        "replace",
+        &run.remote("draft.txt"),
+        &run.remote("report.txt"),
+    ]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(run.read("report.txt").as_deref(), Some("draft\n"));
+    assert_eq!(run.read("draft.txt").as_deref(), Some("draft\n"));
+    let (code, value) = run.json(&[
+        "mv",
+        "--conflict",
+        "replace",
+        &run.remote("draft.txt"),
+        &run.remote("notes.txt"),
+    ]);
+    assert_eq!(code, 0, "{value}");
+    assert!(value["placed"][0].as_str().unwrap().ends_with("/notes.txt"));
+    assert_eq!(run.read("notes.txt").as_deref(), Some("draft\n"));
+    assert_eq!(run.read("draft.txt"), None);
+    let (code, value) = run.json(&[
+        "mv",
+        "--conflict",
+        "replace",
+        &run.remote("notes.txt"),
+        &run.remote("locked/new.txt"),
+    ]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(run.read("locked/new.txt").as_deref(), Some("draft\n"));
+    assert_eq!(run.read("notes.txt"), None);
+
+    // A folder does not replace a file.
+    let (code, value) = run.json(&[
+        "mv",
+        "--conflict",
+        "replace",
+        &run.remote("locked"),
+        &run.remote("report.txt"),
+    ]);
+    assert_eq!(code, 9, "{value}");
+    assert_eq!(run.read("report.txt").as_deref(), Some("draft\n"));
+    assert_eq!(run.names("locked"), ["new.txt"]);
+}
+
+#[test]
+fn keeping_both_numbers_the_name_asked_for() {
+    let Some(run) = Run::online("keepboth") else {
+        return;
+    };
+    run.write("a.txt", "a\n");
+    run.write("b.txt", "b\n");
+    let (code, value) = run.json(&[
+        "cp",
+        "--conflict",
+        "keep-both",
+        &run.remote("a.txt"),
+        &run.remote("b.txt"),
+    ]);
+    assert_eq!(code, 0, "{value}");
+    assert!(value["placed"][0].as_str().unwrap().ends_with("/b (2).txt"));
+    assert_eq!(run.read("b (2).txt").as_deref(), Some("a\n"));
+
+    let (code, value) = run.json(&[
+        "mv",
+        "--conflict",
+        "keep-both",
+        &run.remote("a.txt"),
+        &run.remote("b.txt"),
+    ]);
+    assert_eq!(code, 0, "{value}");
+    assert!(value["placed"][0].as_str().unwrap().ends_with("/b (3).txt"));
+    assert_eq!(run.read("b (3).txt").as_deref(), Some("a\n"));
+    assert_eq!(run.read("b.txt").as_deref(), Some("b\n"));
+    assert_eq!(run.names(""), ["b (2).txt", "b (3).txt", "b.txt"]);
+}
+
+#[test]
+fn renaming_without_sftp_replaces_safely() {
+    let Some(run) = Run::online_over_ftp("ftp-replace") else {
+        return;
+    };
+    run.write("notes.txt", "notes\n");
+    let (code, value) = run.json(&[
+        "mv",
+        "--conflict",
+        "replace",
+        &run.remote("notes.txt"),
+        &run.remote("./notes.txt"),
+    ]);
+    assert_eq!(code, 2, "{value}");
+    assert_eq!(run.read("notes.txt").as_deref(), Some("notes\n"));
+
+    run.write("draft.txt", "draft\n");
+    let (code, value) = run.json(&[
+        "mv",
+        "--conflict",
+        "replace",
+        &run.remote("draft.txt"),
+        &run.remote("notes.txt"),
+    ]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(run.read("notes.txt").as_deref(), Some("draft\n"));
+    // Neither the source nor the file moved aside is left behind.
+    assert_eq!(run.names(""), ["notes.txt"]);
+
+    run.write("more.txt", "more\n");
+    let (code, value) = run.json(&[
+        "mv",
+        "--conflict",
+        "keep-both",
+        &run.remote("more.txt"),
+        &run.remote("notes.txt"),
+    ]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(run.read("notes (2).txt").as_deref(), Some("more\n"));
+    assert_eq!(run.names(""), ["notes (2).txt", "notes.txt"]);
+
+    // A folder does not replace a file.
+    let (code, _) = run.json(&["mkdir", &run.remote("folder")]);
+    assert_eq!(code, 0);
+    let (code, value) = run.json(&[
+        "mv",
+        "--conflict",
+        "replace",
+        &run.remote("folder"),
+        &run.remote("notes.txt"),
+    ]);
+    assert_eq!(code, 9, "{value}");
+    assert_eq!(run.read("notes.txt").as_deref(), Some("draft\n"));
+}
+
+#[test]
+fn copying_without_sftp_is_refused_and_renames_nothing() {
+    let Some(run) = Run::online_over_ftp("ftp-copy") else {
+        return;
+    };
+    run.write("one.txt", "one\n");
+    let (code, value) = run.json(&["cp", &run.remote("one.txt"), &run.remote("two.txt")]);
+    assert_eq!(code, 12, "{value}");
+    assert_eq!(run.names(""), ["one.txt"]);
+    let (code, value) = run.json(&["mv", &run.remote("one.txt"), &run.remote("two.txt")]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(run.names(""), ["two.txt"]);
+}
+
+#[test]
+fn sources_with_one_name_never_replace_each_other() {
+    let Some(run) = Run::online("samename") else {
+        return;
+    };
+    for folder in ["in/a", "in/b", "archive", "kept", "skipped"] {
+        let (code, _) = run.json(&["mkdir", "-p", &run.remote(folder)]);
+        assert_eq!(code, 0);
+    }
+    run.write("in/a/report.csv", "first\n");
+    run.write("in/b/report.csv", "second\n");
+    let first = run.remote("in/a/report.csv");
+    let second = run.remote("in/b/report.csv");
+
+    // Nothing is placed when one would have to give way to the other.
+    for options in [
+        &["mv"][..],
+        &["cp"],
+        &["mv", "--conflict", "replace"],
+        &["cp", "--conflict", "replace"],
+    ] {
+        let archive = run.remote("archive");
+        let (code, value) = run.json(&[options, &[&first, &second, &archive]].concat());
+        assert_eq!(code, 9, "{options:?}: {value}");
+        assert!(run.names("archive").is_empty(), "{options:?}");
+        assert_eq!(run.read("in/a/report.csv").as_deref(), Some("first\n"));
+        assert_eq!(run.read("in/b/report.csv").as_deref(), Some("second\n"));
+    }
+
+    // Transfers are refused the same way, whatever --exists says.
+    write_tree(
+        run.local.path(),
+        &[("a/report.csv", b"first\n"), ("b/report.csv", b"second\n")],
+    );
+    std::fs::create_dir(run.local("downloaded")).unwrap();
+    for exists in ["overwrite", "rename"] {
+        let archive = run.remote("archive");
+        let (code, value) = run.json(&[
+            "put",
+            "--exists",
+            exists,
+            "a/report.csv",
+            "b/report.csv",
+            &archive,
+        ]);
+        assert_eq!(code, 9, "put --exists {exists}: {value}");
+        assert!(run.names("archive").is_empty(), "{exists}");
+        let (code, value) = run.json(&["get", "--exists", exists, &first, &second, "downloaded"]);
+        assert_eq!(code, 9, "get --exists {exists}: {value}");
+        assert_eq!(
+            std::fs::read_dir(run.local("downloaded")).unwrap().count(),
+            0
+        );
+    }
+
+    let (code, value) = run.json(&[
+        "cp",
+        "--conflict",
+        "keep-both",
+        &first,
+        &second,
+        &run.remote("kept"),
+    ]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(run.names("kept"), ["report (2).csv", "report.csv"]);
+    assert_eq!(run.read("kept/report.csv").as_deref(), Some("first\n"));
+    assert_eq!(run.read("kept/report (2).csv").as_deref(), Some("second\n"));
+
+    let (code, value) = run.json(&[
+        "mv",
+        "--conflict",
+        "skip",
+        &first,
+        &second,
+        &run.remote("skipped"),
+    ]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(value["skipped"], 1);
+    assert_eq!(run.read("skipped/report.csv").as_deref(), Some("first\n"));
+    assert_eq!(run.read("in/b/report.csv").as_deref(), Some("second\n"));
+    assert_eq!(run.read("in/a/report.csv"), None);
+}
+
+#[test]
+fn an_empty_path_is_never_the_folder_the_connection_starts_in() {
+    let Some(run) = Run::online("empty") else {
+        return;
+    };
+    let (_, info) = run.json(&["info"]);
+    let user = info["username"].as_str().unwrap().to_string();
+    let start = format!(
+        "{}/{}/start",
+        info["home"].as_str().unwrap().trim_end_matches('/'),
+        run.remote
+    );
+    let (code, _) = run.json(&["mkdir", "-p", &run.remote("start/keep")]);
+    assert_eq!(code, 0);
+    run.write("start/keep/file.txt", "kept\n");
+    write_tree(
+        run.local.path(),
+        &[
+            ("local.txt", b"local\n"),
+            ("folder/inside.txt", b"inside\n"),
+        ],
+    );
+    // Every command from here on starts in `start`, as with a saved connection's own folder.
+    let connection = format!("{}{start}", run.connection);
+    let inside = |arguments: &[&str]| {
+        let output = run
+            .command(&[&["--json"], arguments].concat())
+            .env("POROS_CONNECTION", &connection)
+            .output()
+            .unwrap();
+        (status(&output), parsed(&output))
+    };
+
+    // What a script leaves when a variable is unset, and the dots `rm` and `mv` refuse.
+    let refused: [&[&str]; 20] = [
+        &["rm", "-rf", ""],
+        &["rm", "-r", " "],
+        &["rm", "-rf", "keep", ""],
+        &["rm", "-r", "."],
+        &["rm", "-rf", "./"],
+        &["rm", "-r", ".."],
+        &["rm", "-r", "keep/.."],
+        &["chmod", "-R", "700", ""],
+        &["chown", "-R", user.as_str(), ""],
+        &["mv", "", "elsewhere"],
+        &["mv", ".", "elsewhere"],
+        &["mv", "keep", ""],
+        &["cp", "", "elsewhere"],
+        &["cp", "keep/file.txt", ""],
+        &["mkdir", "-p", ""],
+        &["write", ""],
+        &["get", "", "downloaded"],
+        &["put", "local.txt", ""],
+        &["sync", "-d", "up", "--delete", "folder", ""],
+        &["exec", "--cwd", "", "--", "rm", "-rf", "keep"],
+    ];
+    // New folders take the server's umask, so the mode to keep is whatever it is now.
+    let (_, before) = run.json(&["stat", &run.remote("start")]);
+    assert!(before["mode"].is_string(), "{before}");
+    for arguments in refused {
+        let (code, value) = inside(arguments);
+        assert_eq!(code, 2, "{arguments:?}: {value}");
+        assert_eq!(value["error"]["kind"], "invalidInput", "{arguments:?}");
+        assert_eq!(run.names(""), ["start"], "{arguments:?}");
+        assert_eq!(run.names("start"), ["keep"], "{arguments:?}");
+        assert_eq!(run.names("start/keep"), ["file.txt"], "{arguments:?}");
+    }
+    assert!(!run.local("downloaded").exists());
+    let (_, kept) = run.json(&["stat", &run.remote("start")]);
+    assert_eq!(kept["mode"], before["mode"], "{kept}");
+
+    let mut batch = run
+        .command(&["batch"])
+        .env("POROS_CONNECTION", &connection)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    batch
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"[\"rm\", \"-rf\", \"\"]\n")
+        .unwrap();
+    let answer: Value = serde_json::from_slice(&batch.wait_with_output().unwrap().stdout).unwrap();
+    assert_eq!(answer["exitCode"], 2, "{answer}");
+    assert_eq!(run.names("start"), ["keep"]);
+
+    // The folder itself is listed with no path at all, and named with a dot.
+    for arguments in [
+        &["ls"][..],
+        &["ls", "."],
+        &["ls", ""],
+        &["stat", "."],
+        &["du", "."],
+        &["chmod", "750", "."],
+        &["cp", "keep/file.txt", "."],
+        &["put", "local.txt", "."],
+    ] {
+        let (code, value) = inside(arguments);
+        assert_eq!(code, 0, "{arguments:?}: {value}");
+    }
+    assert_eq!(run.names("start"), ["file.txt", "keep", "local.txt"]);
+    let (_, changed) = run.json(&["stat", &run.remote("start")]);
+    assert_eq!(changed["mode"], "0750", "{changed}");
+}
+
+#[test]
+fn rm_force_passes_over_only_what_is_not_there() {
+    let Some(run) = Run::online("force") else {
+        return;
+    };
+    run.write("app.lock", "lock\n");
+    run.write("keep.txt", "keep\n");
+    let (code, value) = run.json(&[
+        "rm",
+        "-f",
+        &run.remote("none*.bak"),
+        &run.remote("app.lock"),
+    ]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(value["deleted"].as_array().unwrap().len(), 1, "{value}");
+    assert_eq!(run.names(""), ["keep.txt"]);
+
+    let (code, value) = run.json(&[
+        "rm",
+        "-f",
+        &run.remote("none*.bak"),
+        &run.remote("missing.txt"),
+    ]);
+    assert_eq!(code, 0, "{value}");
+    assert!(value["deleted"].as_array().unwrap().is_empty(), "{value}");
+
+    // Without -f, a pattern that matches nothing stops the command before it deletes.
+    let (code, value) = run.json(&["rm", &run.remote("none*.bak"), &run.remote("keep.txt")]);
+    assert_eq!(code, 7, "{value}");
+    assert_eq!(run.names(""), ["keep.txt"]);
+}
+
+#[test]
+fn verify_names_what_it_could_not_compare() {
+    let Some(run) = Run::online("unread") else {
+        return;
+    };
+    write_tree(
+        run.local.path(),
+        &[
+            ("site/index.html", b"<h1>poros</h1>\n"),
+            ("site/photos/a.jpg", b"a"),
+            ("site/photos/b.jpg", b"b"),
+        ],
+    );
+    let (code, value) = run.json(&["put", "site", &run.remote("")]);
+    assert_eq!(code, 0, "{value}");
+    let (code, value) = run.json(&["verify", "site", &run.remote("site")]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(value["same"], true);
+
+    // The server's photos folder cannot be listed, so nothing in it is compared.
+    let (code, _) = run.json(&["chmod", "000", &run.remote("site/photos")]);
+    assert_eq!(code, 0);
+    let unread = run.json(&["verify", "site", &run.remote("site")]);
+    let shown = run.run(&["verify", "site", &run.remote("site")]);
+    std::fs::write(run.local("site/index.html"), b"<h1>changed</h1>\n").unwrap();
+    let differing = run.json(&["verify", "site", &run.remote("site")]);
+    run.json(&["chmod", "755", &run.remote("site/photos")]);
+
+    let (code, value) = unread;
+    assert_eq!(code, 10, "{value}");
+    assert_eq!(value["same"], false, "{value}");
+    assert_eq!(value["notCompared"], serde_json::json!(["photos"]));
+    assert_eq!(status(&shown), 10);
+    let text = String::from_utf8_lossy(&shown.stdout);
+    assert!(text.contains("not compared: photos"), "{text}");
+    assert!(!text.contains("Same contents"), "{text}");
+
+    // A difference that was found is still what the status reports.
+    let (code, value) = differing;
+    assert_eq!(code, 11, "{value}");
+    assert_eq!(value["different"][0]["path"], "index.html");
+    assert_eq!(value["notCompared"], serde_json::json!(["photos"]));
+}
+
+#[test]
+fn one_item_that_cannot_be_placed_exits_with_its_own_status() {
+    let Some(run) = Run::online("single") else {
+        return;
+    };
+    for folder in ["locked", "open"] {
+        let (code, _) = run.json(&["mkdir", &run.remote(folder)]);
+        assert_eq!(code, 0);
+    }
+    run.write("locked/a.txt", "a\n");
+    run.write("open/b.txt", "b\n");
+    let (code, _) = run.json(&["chmod", "555", &run.remote("locked")]);
+    assert_eq!(code, 0);
+    let renamed = run.json(&[
+        "mv",
+        &run.remote("locked/a.txt"),
+        &run.remote("locked/c.txt"),
+    ]);
+    let moved = run.json(&["mv", &run.remote("locked/a.txt"), &run.remote("open")]);
+    let copied = run.json(&["cp", &run.remote("open/b.txt"), &run.remote("locked")]);
+    run.json(&["chmod", "755", &run.remote("locked")]);
+    for (what, (code, value)) in [("rename", renamed), ("move", moved), ("copy", copied)] {
+        assert_eq!(code, 8, "{what}: {value}");
+        assert_eq!(
+            value["error"]["kind"], "permissionDenied",
+            "{what}: {value}"
+        );
+    }
+    assert_eq!(run.names("locked"), ["a.txt"]);
+    assert_eq!(run.names("open"), ["b.txt"]);
+}
+
+#[test]
+fn a_link_that_leads_nowhere_still_takes_its_name() {
+    let Some(run) = Run::online("dangling") else {
+        return;
+    };
+    run.write("one.txt", "one\n");
+    let (code, _) = run.json(&["mkdir", &run.remote("sub")]);
+    assert_eq!(code, 0);
+    for link in ["dangling.txt", "sub/one.txt"] {
+        let (code, value) = run.json(&[
+            "exec",
+            "--cwd",
+            &run.remote(""),
+            "--",
+            "ln",
+            "-s",
+            "nowhere",
+            link,
+        ]);
+        assert_eq!(code, 0, "{value}");
+    }
+    // Without --conflict, nothing that is there is replaced or renamed around.
+    for command in ["mv", "cp"] {
+        for destination in ["dangling.txt", "sub", "sub/one.txt"] {
+            let (code, value) =
+                run.json(&[command, &run.remote("one.txt"), &run.remote(destination)]);
+            assert_eq!(code, 9, "{command} {destination}: {value}");
+            assert_eq!(value["error"]["kind"], "alreadyExists", "{command}");
+            assert_eq!(run.names(""), ["dangling.txt", "one.txt", "sub"]);
+            assert_eq!(run.names("sub"), ["one.txt"]);
+        }
+    }
+    assert_eq!(run.read("one.txt").as_deref(), Some("one\n"));
+}
+
+#[test]
+fn a_file_is_never_replaced_with_itself_through_a_link() {
+    let Some(run) = Run::online("itself") else {
+        return;
+    };
+    let (code, _) = run.json(&["mkdir", &run.remote("real")]);
+    assert_eq!(code, 0);
+    run.write("target.txt", "target\n");
+    run.write("real/notes.txt", "notes\n");
+    for (link, leads_to) in [("link.txt", "target.txt"), ("alias", "real")] {
+        let (code, value) = run.json(&[
+            "exec",
+            "--cwd",
+            &run.remote(""),
+            "--",
+            "ln",
+            "-s",
+            leads_to,
+            link,
+        ]);
+        assert_eq!(code, 0, "{value}");
+    }
+    // A link onto the file it leads to, and one file through a linked folder, given as the
+    // file or as the folder it is in.
+    for command in ["mv", "cp"] {
+        for (source, destination) in [
+            ("link.txt", "target.txt"),
+            ("alias/notes.txt", "real/notes.txt"),
+            ("alias/notes.txt", "real"),
+        ] {
+            let (code, value) = run.json(&[
+                command,
+                "--conflict",
+                "replace",
+                &run.remote(source),
+                &run.remote(destination),
+            ]);
+            assert_eq!(code, 2, "{command} {source} {destination}: {value}");
+            assert_eq!(value["error"]["kind"], "invalidInput", "{value}");
+            assert_eq!(run.read("target.txt").as_deref(), Some("target\n"));
+            assert_eq!(run.read("real/notes.txt").as_deref(), Some("notes\n"));
+            assert_eq!(run.names(""), ["alias", "link.txt", "real", "target.txt"]);
+            assert_eq!(run.names("real"), ["notes.txt"]);
+        }
+    }
+}
+
+#[test]
+fn a_source_named_twice_is_placed_once() {
+    let Some(run) = Run::online("twice") else {
+        return;
+    };
+    for folder in ["copied", "moved", "sent"] {
+        let (code, _) = run.json(&["mkdir", &run.remote(folder)]);
+        assert_eq!(code, 0);
+    }
+    run.write("p1.txt", "one\n");
+    run.write("p2.txt", "two\n");
+    let (code, value) = run.json(&[
+        "cp",
+        &run.remote("p*.txt"),
+        &run.remote("p1.txt"),
+        &run.remote("copied"),
+    ]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(value["placed"].as_array().unwrap().len(), 2, "{value}");
+    assert_eq!(run.names("copied"), ["p1.txt", "p2.txt"]);
+    let (code, value) = run.json(&[
+        "mv",
+        &run.remote("p1.txt"),
+        &run.remote("p1.txt"),
+        &run.remote("moved"),
+    ]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(run.names("moved"), ["p1.txt"]);
+    assert_eq!(run.read("moved/p1.txt").as_deref(), Some("one\n"));
+
+    write_tree(run.local.path(), &[("local.txt", b"local\n")]);
+    std::fs::create_dir(run.local("downloaded")).unwrap();
+    let (code, value) = run.json(&["put", "local.txt", "./local.txt", &run.remote("sent")]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(run.names("sent"), ["local.txt"]);
+    let two = run.remote("p2.txt");
+    let (code, value) = run.json(&["get", &two, &two, "downloaded"]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(
+        std::fs::read_to_string(run.local("downloaded/p2.txt")).unwrap(),
+        "two\n"
+    );
+}
+
+/// Root reads every folder, so where the tests run as root this is left to the unit test of
+/// the report, which is given the plan such a folder makes.
+#[cfg(unix)]
+#[test]
+fn verify_still_lists_files_only_on_the_server_when_a_local_folder_cannot_be_read() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let Some(run) = Run::online("unreadlocal") else {
+        return;
+    };
+    write_tree(
+        run.local.path(),
+        &[
+            ("site/index.html", b"<h1>poros</h1>\n"),
+            ("site/private/key", b"secret"),
+        ],
+    );
+    let (code, value) = run.json(&["put", "site", &run.remote("")]);
+    assert_eq!(code, 0, "{value}");
+    run.write("site/stale.txt", "stale\n");
+    let private = run.local("site/private");
+    std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let readable = std::fs::read_dir(&private).is_ok();
+    let compared = (!readable).then(|| run.json(&["verify", "site", &run.remote("site")]));
+    std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let Some((code, value)) = compared else {
+        return;
+    };
+    assert_eq!(code, 11, "{value}");
+    assert_eq!(value["onlyRemote"][0]["path"], "stale.txt", "{value}");
+    assert_eq!(value["notCompared"], serde_json::json!(["private"]));
+}
+
+#[test]
+fn rm_and_mv_never_take_the_home_or_start_folder_or_everything_at_the_top() {
+    let Some(run) = Run::online("own") else {
+        return;
+    };
+    let (_, info) = run.json(&["info"]);
+    let start = format!(
+        "{}/{}/start",
+        info["home"].as_str().unwrap().trim_end_matches('/'),
+        run.remote
+    );
+    let (code, _) = run.json(&["mkdir", "-p", &run.remote("start/keep")]);
+    assert_eq!(code, 0);
+    run.write("start/keep/file.txt", "kept\n");
+    // Every command starts in `start`, as with a saved connection's own folder.
+    let connection = format!("{}{start}", run.connection);
+    let inside = |arguments: &[&str]| {
+        let output = run
+            .command(&[&["--json"], arguments].concat())
+            .env("POROS_CONNECTION", &connection)
+            .output()
+            .unwrap();
+        (status(&output), parsed(&output))
+    };
+    let start_slash = format!("{start}/");
+    // Patterns that match nothing, so a regression could never delete anything there.
+    let refused: [(&[&str], &str); 8] = [
+        (&["rm", "-r", start.as_str()], "starts in"),
+        (&["rm", "-rf", start_slash.as_str()], "starts in"),
+        (&["mv", start.as_str(), "keep"], "starts in"),
+        (&["mv", "~", "keep"], "home folder"),
+        (&["mv", "~/", "keep"], "home folder"),
+        (
+            &["rm", "-rf", "/poros-nothing-is-named-this-*"],
+            "top of the server",
+        ),
+        (&["rm", "-f", "/*.poros-never-a-name"], "top of the server"),
+        (&["rm", "-rf", "//poros-nothing-??"], "top of the server"),
+    ];
+    for (arguments, says) in refused {
+        let (code, value) = inside(arguments);
+        assert_eq!(code, 2, "{arguments:?}: {value}");
+        assert_eq!(value["error"]["kind"], "invalidInput", "{arguments:?}");
+        let message = value["error"]["message"].as_str().unwrap();
+        assert!(message.contains(says), "{arguments:?}: {message}");
+        assert_eq!(run.names(""), ["start"], "{arguments:?}");
+        assert_eq!(run.names("start"), ["keep"], "{arguments:?}");
+        assert_eq!(run.names("start/keep"), ["file.txt"], "{arguments:?}");
+    }
+    // What is inside them is still named as usual.
+    let (code, value) = inside(&["rm", "-r", &format!("{start}/keep")]);
+    assert_eq!(code, 0, "{value}");
+    assert!(run.names("start").is_empty());
 }

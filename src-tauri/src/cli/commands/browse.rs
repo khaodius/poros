@@ -9,7 +9,7 @@ use bytes::Bytes;
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use super::{each, make_dirs, missing, one_or_many, parse_mode};
+use super::{each, make_dirs, missing, one_or_many, operand, parse_mode};
 use crate::cli::args::{CatArgs, ListArgs, PathsArgs, WriteArgs};
 use crate::cli::context::Context;
 use crate::cli::output::{mode_string, octal, plural, time_iso, time_string, Reply};
@@ -542,7 +542,7 @@ pub async fn write(
 ) -> AppResult<Reply> {
     let connected = context.connected().await?;
     let files = connected.files();
-    let path = connected.resolve(&arguments.path);
+    let path = operand(connected, &arguments.path)?;
     let permissions = arguments.mode.as_deref().map(parse_mode).transpose()?;
     let data = match input {
         Some(data) => data,

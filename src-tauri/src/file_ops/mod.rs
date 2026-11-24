@@ -6,7 +6,7 @@ mod compare;
 mod delete;
 mod history;
 mod local_ops;
-mod names;
+pub(crate) mod names;
 mod permissions;
 mod rename;
 mod server;
@@ -63,6 +63,9 @@ pub enum Conflict {
     /// The item gets a free name such as `name (2).txt`.
     #[default]
     KeepBoth,
+    /// The item is refused, and never given another name: what the command line asks for
+    /// when nothing should be in the way.
+    Fail,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -76,6 +79,9 @@ pub struct MoveCopyRequest {
     pub target_directory: String,
     #[serde(default)]
     pub conflict: Conflict,
+    /// The name the one item takes in the target folder, when not its own.
+    #[serde(default)]
+    pub target_name: Option<String>,
 }
 
 /// How an operation did its work.
@@ -143,6 +149,10 @@ pub struct OperationSummary {
     pub skipped: u64,
     pub failures: Vec<Failure>,
     pub methods: Vec<Method>,
+    /// The error of each item given that could not be placed, for a caller that reports one
+    /// as an error of its own.
+    #[serde(skip)]
+    pub errors: Vec<AppError>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -314,7 +324,10 @@ fn summarize(
         match result {
             Ok(Some(placed)) => summary.placed.push(placed),
             Ok(None) => summary.skipped += 1,
-            Err(error) => progress.fail(&source, error),
+            Err(error) => {
+                summary.errors.push(error.clone());
+                progress.fail(&source, error);
+            }
         }
     }
     summary.failures = progress.take_failures();
@@ -441,6 +454,12 @@ impl FileOperations {
     }
 
     pub async fn move_or_copy(&self, request: MoveCopyRequest) -> AppResult<OperationSummary> {
+        if let Some(name) = &request.target_name {
+            if request.sources.len() != 1 {
+                return Err(AppError::invalid("Only one item can be given a new name"));
+            }
+            crate::protocol::validate_name(name)?;
+        }
         let running = self.begin(&request.operation_id);
         match &request.location {
             Location::Local => {
