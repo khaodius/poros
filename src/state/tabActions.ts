@@ -24,7 +24,7 @@ import { landingCorner, landingCornerHere, type ScreenPoint } from "../lib/windo
 import { untilAnswered } from "./answers";
 import type { DropTarget } from "./dragStore";
 import {
-  askToSave,
+  askToSaveAndWait,
   closeEditorTab,
   savedOrDiscarded,
   unsavedEditorTabs,
@@ -181,7 +181,7 @@ export async function requestCloseTab(tabId: string): Promise<void> {
     return;
   }
   if (tab.kind === "editor") {
-    if (getEditor(tabId)?.draft()) await askToSave([tabId]);
+    if (getEditor(tabId)?.draft()) await askToSaveAndWait([tabId]);
     else closeEditorTab(tabId);
     return;
   }

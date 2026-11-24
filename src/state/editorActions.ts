@@ -69,8 +69,8 @@ export function unsavedOnlyThrough(sessionIds: readonly string[]): EditorTab[] {
 }
 
 /** Asks whether to save before tabs close, or before the window does. Tabs asked about while
- * the question is open join it. Resolves once no question about these tabs is open. */
-export function askToSave(tabIds: string[], closeWindow = false): Promise<void> {
+ * the question is open join it. */
+export function askToSave(tabIds: string[], closeWindow = false): void {
   const ui = useUiStore.getState();
   const asking = ui.dialog?.kind === "unsavedChanges" ? ui.dialog : null;
   const joined = [...new Set([...(asking?.tabIds ?? []), ...tabIds])];
@@ -79,6 +79,11 @@ export function askToSave(tabIds: string[], closeWindow = false): Promise<void> 
     tabIds: joined,
     closeWindow: closeWindow || !!asking?.closeWindow,
   });
+}
+
+/** Asks whether to save before the tabs close; resolves once no question about them is open. */
+export function askToSaveAndWait(tabIds: string[]): Promise<void> {
+  askToSave(tabIds);
   return untilAnswered(
     (dialog) =>
       dialog?.kind === "unsavedChanges" && tabIds.every((tabId) => dialog.tabIds.includes(tabId)),
@@ -87,7 +92,7 @@ export function askToSave(tabIds: string[], closeWindow = false): Promise<void> 
 
 /** Asks about the tabs' unsaved changes; resolves true once each was saved or discarded. */
 export async function savedOrDiscarded(tabs: readonly EditorTab[]): Promise<boolean> {
-  await askToSave(tabs.map((tab) => tab.id));
+  await askToSaveAndWait(tabs.map((tab) => tab.id));
   const unsaved = new Set(unsavedEditorTabs().map((tab) => tab.id));
   return !tabs.some((tab) => unsaved.has(tab.id));
 }
