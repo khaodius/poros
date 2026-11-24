@@ -141,6 +141,7 @@ impl FileQueue {
             size: file.size,
             ancestors: Arc::from([]),
             options: file.options,
+            batch: None,
         };
         let id = {
             // The server is kept and the job added under the one lock of the queue: an idle

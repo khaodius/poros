@@ -78,7 +78,8 @@ impl TrustedCertificates {
             .push((Self::key(host, port), fingerprint.to_string()));
     }
 
-    fn pinned(&self, host: &str, port: u16) -> Option<String> {
+    /// The fingerprint of the only certificate the server is accepted with, if it was pinned.
+    pub fn pinned(&self, host: &str, port: u16) -> Option<String> {
         let key = Self::key(host, port);
         self.pinned
             .lock()

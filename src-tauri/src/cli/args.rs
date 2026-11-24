@@ -25,7 +25,55 @@ Connections:
 Sign-in never prompts. Passwords come from --password-env, --password-file, --password-stdin,
 POROS_PASSWORD or the system keychain (for saved connections); key passphrases likewise from
 POROS_PASSPHRASE. Without any, SFTP tries the SSH agent and then ~/.ssh/id_ed25519, id_ecdsa
-and id_rsa.";
+and id_rsa.
+
+Scheduled tasks made in Poros run from here too: see poros-cli schedule --help for cron and
+systemd timers.";
+
+const SCHEDULE_HELP: &str = "\
+Tasks are made and edited in Poros, under Scheduler; poros-cli lists them, runs them and turns
+them on and off, on a computer where Poros is not open as well as beside it. A task never runs
+twice at once: Poros, a daemon and any number of runs from cron may be alive together, and a
+task one of them is running is skipped by the others. Results are written to the task, where
+Poros shows them.
+
+Run what is due from cron, every five minutes:
+  */5 * * * * poros-cli schedule run --due --quiet
+
+Or from a systemd timer, as a user service:
+  ~/.config/systemd/user/poros-schedule.service
+    [Service]
+    Type=oneshot
+    ExecStart=/usr/bin/poros-cli schedule run --due
+  ~/.config/systemd/user/poros-schedule.timer
+    [Timer]
+    OnCalendar=*:0/5
+    Persistent=true
+    [Install]
+    WantedBy=timers.target
+  systemctl --user enable --now poros-schedule.timer
+
+Or keep a daemon running, as a service of Type=simple with ExecStart=/usr/bin/poros-cli
+schedule daemon. It notices tasks edited in Poros, a wake from sleep and a clock that was set.
+
+Ctrl+C or SIGTERM, as systemctl stop and a shutdown send, stops a run or the daemon, and each
+run it stops is written to the task as stopped. A run whose process is killed outright leaves
+the same result.
+
+A run more than --missed-after minutes late, because nothing was there to start it, counts as
+missed: it happens once, late, when the task makes up for missed runs, and is passed over
+otherwise.
+
+Passwords come from the system keychain. Where there is none, as on a server without a desktop,
+connections that sign in with a key or the SSH agent work as they are; for one that needs a
+password, name it with --connection and give the password with POROS_PASSWORD, --password-env
+or --password-file (and a key passphrase likewise). Nothing given is sent to another server.
+--host-key likewise needs --connection and holds only that connection's server to the key;
+--trust-new-host accepts the new keys of other servers and jump hosts, never in place of it.
+
+Exit status: 0 when every task run succeeded, otherwise the status of the first task that did
+not succeed: 13 for one already running elsewhere, 10 when some of its files failed, 1 for a
+command that failed, 3 to 6 when it could not connect or sign in, 130 when it was stopped.";
 
 #[derive(Debug, Parser)]
 #[command(
@@ -222,13 +270,64 @@ pub enum Command {
     /// arguments per line, or an object {"id", "args", "input"}, answered with one JSON line
     /// each
     Batch,
+    /// List the scheduled tasks saved in Poros, run them now or when they are due, or keep
+    /// running them as they fall due
+    #[command(after_long_help = SCHEDULE_HELP)]
+    Schedule(ScheduleArgs),
 }
 
 impl Command {
     /// Lists saved connections or reads the command stream, so needs no connection of its own.
+    /// Scheduled tasks open the connections they are saved with.
     pub fn needs_connection(&self) -> bool {
-        !matches!(self, Self::Connections)
+        !matches!(self, Self::Connections | Self::Schedule(_))
     }
+}
+
+#[derive(Debug, Args)]
+pub struct ScheduleArgs {
+    #[command(subcommand)]
+    pub command: ScheduleCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ScheduleCommand {
+    /// List the tasks with their next and last run
+    #[command(visible_alias = "ls")]
+    List,
+    /// Run tasks now, by name or id, or with --due every enabled task whose time has come
+    Run(ScheduleRunArgs),
+    /// Stay running and run tasks as they fall due, until interrupted
+    Daemon,
+    /// Turn tasks on, so they run on their schedule
+    Enable(ScheduleTasksArgs),
+    /// Turn tasks off
+    Disable(ScheduleTasksArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ScheduleRunArgs {
+    /// The tasks, by name or id
+    #[arg(
+        value_name = "TASK",
+        required_unless_present = "due",
+        conflicts_with = "due"
+    )]
+    pub tasks: Vec<String>,
+    /// Run every enabled task whose time has come, once, then exit: the mode for cron and
+    /// systemd timers
+    #[arg(long)]
+    pub due: bool,
+    /// With --due, a run later than this counts as missed rather than due
+    #[arg(long, value_name = "MINUTES", default_value_t = 60)]
+    pub missed_after: u32,
+}
+
+#[derive(Debug, Args)]
+pub struct ScheduleTasksArgs {
+    /// The tasks, by name or id
+    #[arg(required = true, value_name = "TASK")]
+    pub tasks: Vec<String>,
 }
 
 #[derive(Debug, Args)]
@@ -788,6 +887,38 @@ mod tests {
     fn workers_are_limited() {
         assert!(Cli::try_parse_from(["poros-cli", "get", "-w", "99", "a", "b"]).is_err());
         assert!(Cli::try_parse_from(["poros-cli", "get", "a"]).is_err());
+    }
+
+    #[test]
+    fn schedule_runs_named_tasks_or_the_due_ones() {
+        let cli =
+            Cli::try_parse_from(["poros-cli", "schedule", "run", "Nightly", "abc-123"]).unwrap();
+        let Command::Schedule(ScheduleArgs {
+            command: ScheduleCommand::Run(run),
+        }) = cli.command
+        else {
+            panic!("not schedule run");
+        };
+        assert_eq!(run.tasks, ["Nightly", "abc-123"]);
+        assert!(!run.due);
+        assert_eq!(run.missed_after, 60);
+
+        let due = Cli::try_parse_from([
+            "poros-cli",
+            "schedule",
+            "run",
+            "--due",
+            "--missed-after",
+            "20",
+        ]);
+        assert!(due.is_ok());
+        assert!(Cli::try_parse_from(["poros-cli", "schedule", "run"]).is_err());
+        assert!(Cli::try_parse_from(["poros-cli", "schedule", "run", "--due", "Nightly"]).is_err());
+        assert!(Cli::try_parse_from(["poros-cli", "schedule", "enable"]).is_err());
+        assert!(!Cli::try_parse_from(["poros-cli", "schedule", "daemon"])
+            .unwrap()
+            .command
+            .needs_connection());
     }
 
     #[test]
