@@ -78,23 +78,31 @@ export function RenameReportDialog({ report, onClose }: RenameReportDialogProps)
       <div className="rename-report">
         <div className="confirm-body selectable">
           <p>
-            {t("rename.ofIn", { renamedCount, t: t("rename.items", { count: outcomes.length }) })}
-            <strong>{folder}</strong> {renamedCount === 1 ? "has its" : "have their"} new name.
+            {t.rich("rename.renamedOfItemsIn", {
+              count: renamedCount,
+              total: t("rename.items", { count: outcomes.length }),
+              folder: <strong>{folder}</strong>,
+            })}{" "}
             {stranded
-              ? " The others keep their old names, but for the one below."
-              : " The others keep their old names."}
+              ? t("rename.theOthersKeepTheirOldNamesButOne")
+              : t("rename.theOthersKeepTheirOldNames")}
           </p>
           {failure && (
             <p className="form-error">
-              <strong>{failure.from}</strong> {t("rename.couldNotBeRenamedTo")}{" "}
-              <strong>{failure.to}</strong>: {failure.message}
+              {t.rich("rename.couldNotBeRenamedTo", {
+                from: <strong>{failure.from}</strong>,
+                to: <strong>{failure.to}</strong>,
+                message: failure.message,
+              })}
             </p>
           )}
           {stranded && (
             <p className="form-error">
-              <strong>{stranded.from}</strong> {t("rename.isNowNamed")}{" "}
-              <strong>{stranded.temporary}</strong>
-              {t("rename.becauseItCouldNotBe", { message: stranded.message })}
+              {t.rich("rename.isNowNamedBecause", {
+                from: <strong>{stranded.from}</strong>,
+                temporary: <strong>{stranded.temporary}</strong>,
+                message: stranded.message,
+              })}
             </p>
           )}
         </div>

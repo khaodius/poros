@@ -342,12 +342,12 @@ function RuleEditor({
             </div>
             <div className="limit-rule-line">
               <LimitEditor
-                direction="Upload"
+                direction="upload"
                 limit={rule.upload}
                 onChange={(upload) => onChange({ upload })}
               />
               <LimitEditor
-                direction="Download"
+                direction="download"
                 limit={rule.download}
                 onChange={(download) => onChange({ download })}
               />
@@ -375,18 +375,21 @@ function LimitFact({ direction, limit }: { direction: "upload" | "download"; lim
 }
 
 interface LimitEditorProps {
-  direction: "Upload" | "Download";
+  direction: "upload" | "download";
   limit: RateLimit;
   onChange: (limit: RateLimit) => void;
 }
 
 function LimitEditor({ direction, limit, onChange }: LimitEditorProps) {
-  const Icon = direction === "Upload" ? ArrowUp : ArrowDown;
-  const label = `${direction} limit`;
+  const t = useT();
+  const Icon = direction === "upload" ? ArrowUp : ArrowDown;
+  const label = direction === "upload" ? t("limits.uploadLimit") : t("limits.downloadLimit");
   return (
     <span className="limit-rule-limit">
       <Icon size={13} className="limit-rule-direction" aria-hidden />
-      <span className="limit-rule-limit-label">{direction}</span>
+      <span className="limit-rule-limit-label">
+        {direction === "upload" ? t("common.upload") : t("common.download")}
+      </span>
       <select
         aria-label={label}
         value={limit.mode}

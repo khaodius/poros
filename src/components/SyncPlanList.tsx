@@ -140,7 +140,7 @@ export function SyncPlanList({
     direction === "upload" ? ArrowRight : direction === "download" ? ArrowLeft : ArrowLeftRight;
   // Creating the target folder or removing unchanged sources is a change of its own.
   const hasWork = plan.items.length > 0 || plan.createsTarget || plan.removesUnchanged > 0;
-  const runLabel = plan.dryRun ? "Dry run" : "Synchronize";
+  const runLabel = plan.dryRun ? t("sync.dryRun") : t("sync.synchronize");
 
   return (
     <div className="sync-preview">
@@ -176,9 +176,7 @@ export function SyncPlanList({
       {plan.removesUnchanged > 0 && (
         <p className="sync-note">
           <Info size={14} />
-          {t("sync.willBeRemovedAsWell", {
-            t: t("sync.unchangedSourceFiles", { count: plan.removesUnchanged }),
-          })}
+          {t("sync.unchangedSourceFilesWillBe", { count: plan.removesUnchanged })}
         </p>
       )}
       {plan.items.length === 0 ? (
@@ -254,9 +252,7 @@ export function SyncPlanList({
       {plan.passedOver.length > 0 && (
         <details className="sync-passed-over">
           <summary>
-            {t("sync.passedOverBrokenOrLooping", {
-              t: t("sync.entries", { count: plan.counts.passedOver }),
-            })}
+            {t("sync.entriesPassedOverBrokenOr", { count: plan.counts.passedOver })}
           </summary>
           <ul className="delete-preview selectable">
             {plan.passedOver.map((path) => (

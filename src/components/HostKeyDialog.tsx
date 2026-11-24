@@ -19,11 +19,12 @@ export function HostKeyDialog() {
     : `${hostKey.host}:${hostKey.port}`;
   const title = certificate
     ? changed
-      ? "Certificate changed"
-      : "Untrusted certificate"
+      ? t("connect.certificateChanged")
+      : t("connect.untrustedCertificate")
     : changed
-      ? "Host key changed"
-      : "Unknown host";
+      ? t("connect.hostKeyChanged")
+      : t("connect.unknownHost");
+  const shownTarget = <strong>{target}</strong>;
 
   return (
     <Dialog
@@ -39,23 +40,15 @@ export function HostKeyDialog() {
         <div>
           {certificate ? (
             <p>
-              {changed
-                ? t("connect.theCertificatePresentedBy")
-                : t("connect.thisComputerDoesNotTrust")}
-              <strong>{target}</strong>
-              {changed ? " does not match the one you trusted before. " : ". "}
-              {problem} Compare the fingerprint with the one your server administrator gave you
-              before continuing.
+              {t.rich(
+                changed ? "connect.theCertificatePresentedBy" : "connect.thisComputerDoesNotTrust",
+                { target: shownTarget, problem },
+              )}
             </p>
           ) : changed ? (
-            <p>
-              {t("connect.theKeyPresentedBy")} <strong>{target}</strong>{" "}
-              {t("connect.doesNotMatchTheOne")}
-            </p>
+            <p>{t.rich("connect.theKeyPresentedBy", { target: shownTarget })}</p>
           ) : (
-            <p>
-              <strong>{target}</strong> {t("connect.hasNotBeenSeenBefore")}
-            </p>
+            <p>{t.rich("connect.hasNotBeenSeenBefore", { target: shownTarget })}</p>
           )}
           <dl className="host-key-details">
             <dt>{certificate ? t("connect.type") : t("connect.keyType")}</dt>
@@ -79,7 +72,9 @@ export function HostKeyDialog() {
           onClick={() => answer(approvalOf(hostKey, true))}
         >
           {changed
-            ? `Replace ${certificate ? "certificate" : "key"} and connect`
+            ? certificate
+              ? t("connect.replaceCertificateAndConnect")
+              : t("connect.replaceKeyAndConnect")
             : t("connect.trustAndConnect")}
         </button>
       </div>

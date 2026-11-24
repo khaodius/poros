@@ -46,7 +46,7 @@ export function PreviewThumbnails({ place, entries, total, box, caps }: PreviewT
       ))}
       {total > entries.length && (
         <p className="preview-grid-more">
-          {t("preview.andMore", { value: total - entries.length })}
+          {t("preview.andMore", { count: total - entries.length })}
         </p>
       )}
     </div>

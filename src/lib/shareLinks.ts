@@ -9,7 +9,7 @@ import type {
   ShareLink,
   ShareOptions,
 } from "./types";
-import { t } from "../i18n";
+import { dateTimeFormat, formatList, t } from "../i18n";
 
 /** How a server pane's menu shows sharing: offered, or shown with why it is not. */
 export interface ShareMenuEntry {
@@ -54,9 +54,9 @@ export const KIND_LABELS: Record<LinkKind, string> = {
 };
 
 export function audienceLabel(audience: ShareAudience, organization?: string): string {
-  if (audience === "anyone") return "Anyone with the link";
-  if (audience === "invited") return "People already invited";
-  return organization ? `People in ${organization}` : "People in your organization";
+  if (audience === "anyone") return t("share.anyoneWithTheLink");
+  if (audience === "invited") return t("share.peopleAlreadyInvited");
+  return organization ? t("share.peopleIn", { organization }) : t("share.peopleInYourOrganization");
 }
 
 export type LifetimeUnit = "minutes" | "hours" | "days";
@@ -158,12 +158,12 @@ export function takesPassword(draft: ShareDraft, sharing: ShareCapabilities): bo
 /** Why the draft cannot be sent yet, in words for the dialog; `null` when it can. */
 export function draftProblem(draft: ShareDraft, sharing: ShareCapabilities): string | null {
   const lifetime = draftLifetime(draft, sharing);
-  if (lifetime === null) return "Enter how long the link should work, as a whole number.";
+  if (lifetime === null) return t("share.enterHowLongTheLinkShouldWork");
   if (lifetime === undefined) {
-    return sharing.expiry === "required" ? "Choose how long the link should work." : null;
+    return sharing.expiry === "required" ? t("share.chooseHowLongTheLinkShouldWork") : null;
   }
   if (sharing.maxLifetimeSecs !== undefined && lifetime > sharing.maxLifetimeSecs) {
-    return `Links here last at most ${lifetimeText(sharing.maxLifetimeSecs)}.`;
+    return t("share.linksHereLastAtMost", { lifetime: lifetimeText(sharing.maxLifetimeSecs) });
   }
   return null;
 }
@@ -181,21 +181,6 @@ export function draftOptions(draft: ShareDraft, sharing: ShareCapabilities): Sha
   };
 }
 
-const MONTHS = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
-];
-
 function twoDigits(value: number): string {
   return value < 10 ? `0${value}` : String(value);
 }
@@ -203,11 +188,21 @@ function twoDigits(value: number): string {
 /** Local time as `14 May, 18:30`, with the year when it is not the current one. */
 export function formatDeadline(epochSeconds: number, nowMillis: number): string {
   const date = new Date(epochSeconds * 1000);
-  const year =
-    date.getFullYear() === new Date(nowMillis).getFullYear() ? "" : ` ${date.getFullYear()}`;
-  const time = `${twoDigits(date.getHours())}:${twoDigits(date.getMinutes())}`;
-  return `${date.getDate()} ${MONTHS[date.getMonth()]}${year}, ${time}`;
+  const parts = {
+    day: String(date.getDate()),
+    month: dateTimeFormat({ month: "long" }).format(date),
+    time: `${twoDigits(date.getHours())}:${twoDigits(date.getMinutes())}`,
+  };
+  return date.getFullYear() === new Date(nowMillis).getFullYear()
+    ? t("share.deadline", parts)
+    : t("share.deadlineWithYear", { ...parts, year: String(date.getFullYear()) });
 }
+
+const STATEMENTS = {
+  download: "share.statementDownload",
+  edit: "share.statementEdit",
+  view: "share.statementView",
+} as const;
 
 export interface StatementSubject {
   kind: LinkKind;
@@ -229,45 +224,51 @@ export interface StatementSubject {
 /** In plain words: `Anyone with this link can download the file until 14 May, 18:30.` */
 export function linkStatement(subject: StatementSubject): string {
   const several = subject.count > 1;
-  const links = several ? "one of these links" : "this link";
+  const { organization } = subject;
   const who =
     subject.audience === "anyone"
-      ? `Anyone with ${links}`
+      ? several
+        ? t("share.anyoneWithOneOfTheseLinks")
+        : t("share.anyoneWithThisLink")
       : subject.audience === "organization"
-        ? `People in ${subject.organization ?? "your organization"} with ${links}`
-        : `People already invited who have ${links}`;
-  const action =
-    subject.kind === "download"
-      ? "can download"
-      : subject.kind === "edit"
-        ? "can open and change"
-        : "can open";
-  const item = subject.folder ? "folder" : "file";
+        ? organization
+          ? several
+            ? t("share.peopleInWithOneOfTheseLinks", { organization })
+            : t("share.peopleInWithThisLink", { organization })
+          : several
+            ? t("share.peopleInYourOrganizationWithOneOfTheseLinks")
+            : t("share.peopleInYourOrganizationWithThisLink")
+        : several
+          ? t("share.peopleAlreadyInvitedWhoHaveOneOfTheseLinks")
+          : t("share.peopleAlreadyInvitedWhoHaveThisLink");
   const what = several
-    ? `the ${subject.folder ? "item" : "file"} it is for`
+    ? subject.folder
+      ? t("share.theItemItIsFor")
+      : t("share.theFileItIsFor")
     : subject.folder
-      ? "the folder and everything in it"
-      : `the ${item}`;
+      ? t("share.theFolderAndEverythingInIt")
+      : t("share.theFile");
   const until =
     subject.expiresAt !== undefined
-      ? `until ${formatDeadline(subject.expiresAt, subject.nowMillis)}`
+      ? t("share.untilDeadline", {
+          deadline: formatDeadline(subject.expiresAt, subject.nowMillis),
+        })
       : subject.revocable
-        ? "until you stop sharing"
-        : "for as long as it is there";
-  const password = subject.hasPassword ? " It asks for the password first." : "";
-  return `${who} ${action} ${what} ${until}.${password}`;
+        ? t("share.untilYouStopSharing")
+        : t("share.forAsLongAsItIsThere");
+  const statement = t(STATEMENTS[subject.kind], { who, what, until });
+  return subject.hasPassword ? t("share.statementWithPassword", { statement }) : statement;
 }
 
 /** `3 files`, `1 folder`, `2 files and 1 folder`. */
 export function selectionSummary(entries: readonly Pick<FileEntry, "kind">[]): string {
   const folders = entries.filter((entry) => entry.kind === "dir").length;
   const files = entries.length - folders;
-  return [
+  const parts = [
     files > 0 && t("share.files", { count: files }),
     folders > 0 && t("share.folders", { count: folders }),
-  ]
-    .filter(Boolean)
-    .join(" and ");
+  ].filter((part) => part !== false);
+  return formatList(parts);
 }
 
 /** The addresses of links, one per line, for the clipboard. */
@@ -342,8 +343,8 @@ export function batchLinkLabel(
   draft: ShareOptions | null,
   statement: string,
 ): string | null {
-  if (made === null) return `Shared before: ${statement}`;
-  if (!isAsked(link, made)) return `Not what was asked: ${statement}`;
+  if (made === null) return t("share.sharedBefore", { statement });
+  if (!isAsked(link, made)) return t("share.notWhatWasAsked", { statement });
   if (draft === null || !sameOptions(draft, made.options)) return statement;
   return null;
 }

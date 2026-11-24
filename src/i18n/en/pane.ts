@@ -3,11 +3,37 @@ import type { MessageArea } from "../catalog";
 export const pane = {
   // components/FileOperationsHost
   filesDone: { one: "{count} file done, {size}", other: "{count} files done, {size}" },
-  files: { one: "{count} file", other: "{count} files" },
   namesAlreadyTaken: "Names already taken",
-  isAlreadyIn: "is already in",
+  isAlreadyIn: "{name} is already in {folder}.",
   andMore: "and {count} more",
   name2: "name (2)",
+  keepBoth: "Keep both",
+  cancelling: "Cancelling...",
+  unpacking: "Unpacking",
+  ofRenamed: "{count} of {total} renamed",
+  starting: "Starting",
+  progressWithFailures: { one: "{progress}, {count} failed", other: "{progress}, {count} failed" },
+  allItemsBeingMovedHaveNamesIn: {
+    one: "The {count} item being moved has a name already in {folder}.",
+    other: "All {count} items being moved have names already in {folder}.",
+  },
+  allItemsBeingCopiedHaveNamesIn: {
+    one: "The {count} item being copied has a name already in {folder}.",
+    other: "All {count} items being copied have names already in {folder}.",
+  },
+  someItemsBeingMovedHaveNamesIn: {
+    one: "{count} of the {total} items being moved has a name already in {folder}.",
+    other: "{count} of the {total} items being moved have names already in {folder}.",
+  },
+  someItemsBeingCopiedHaveNamesIn: {
+    one: "{count} of the {total} items being copied has a name already in {folder}.",
+    other: "{count} of the {total} items being copied have names already in {folder}.",
+  },
+  replaceOrKeepBoth: {
+    one: "Replace overwrites files and merges folders. Keep both gives the new item a name like {example}.",
+    other:
+      "Replace overwrites files and merges folders. Keep both gives the new items names like {example}.",
+  },
 
   // components/FilePane
   toPasteOpenAFolder: "To paste, open a folder or right-click one in the results.",
@@ -66,8 +92,8 @@ export const pane = {
   showHiddenFilesCtrlH: "Show hidden files (Ctrl+H)",
   closeSearchCtrlShiftF: "Close search (Ctrl+Shift+F)",
   searchCtrlShiftF: "Search (Ctrl+Shift+F)",
-  compareFolders: "Compare folders ({value})",
-  previewF3FocusIt: "Preview (F3), focus it ({value})",
+  compareFolders: "Compare folders ({shortcut})",
+  previewF3FocusIt: "Preview (F3), focus it ({shortcut})",
   encrypted: "Encrypted",
   filesHereAreEncryptedIn:
     "Files here are encrypted in the vault {name} before they reach the server",
@@ -90,6 +116,33 @@ export const pane = {
   items: { one: "{count} item", other: "{count} items" },
   move: "Move",
   foldersAreDeletedWithEverything: "Folders are deleted with everything inside them.",
+  couldNotRefreshThisFolder2: "Could not refresh this folder",
+  couldNotOpenThisFolder: "Could not open this folder",
+  lockedVault: "Locked vault",
+  hidden: { one: "{count} hidden", other: "{count} hidden" },
+  identicalNotShown: { one: "{count} identical not shown", other: "{count} identical not shown" },
+  scheduleUpload: "Schedule upload...",
+  scheduleDownload: "Schedule download...",
+  scheduleUploadUnavailable: "Schedule upload ({reason})",
+  scheduleDownloadUnavailable: "Schedule download ({reason})",
+  results: { one: "{count} result", other: "{count} results" },
+  deleteFromRemoteSide: "Permanently delete {what} from the remote side? This cannot be undone.",
+  deleteFromLocalSide: "Permanently delete {what} from the local side? This cannot be undone.",
+  localFolder: "local folder",
+  uploadTo: "Upload to {place}",
+  downloadTo: "Download to {place}",
+  uploadNoServerOpen: "Upload (no server open)",
+  downloadNoLocalTabOpen: "Download (no local tab open)",
+  folderToMoveInto: "Folder to move {name} into",
+  folderToCopyInto: "Folder to copy {name} into",
+  folderToMoveItemsInto: {
+    one: "Folder to move {count} item into",
+    other: "Folder to move {count} items into",
+  },
+  folderToCopyItemsInto: {
+    one: "Folder to copy {count} item into",
+    other: "Folder to copy {count} items into",
+  },
 
   // components/PathBar
   clickToTypeOrCopy: "Click to type or copy the path (Ctrl+L)",
@@ -106,37 +159,21 @@ export const pane = {
   filesCannotBeMovedInside: "Files cannot be moved inside a vault",
   movingOnThisServerNeeds: "Moving on this server needs SFTP",
   someOfTheseAreIn: "Some of these are in that folder already",
-  // components/FileOperationsHost
-  done: "{t} done, {size}",
-  keepBoth: "Keep both",
-  // components/FileOperationsHost
-  cancelling: "Cancelling...",
-  unpacking: "Unpacking",
-  ofRenamed: "{count} of {total} renamed",
-  starting: "Starting",
-  failed: ", {count} failed",
-
-  // components/FilePane
-  couldNotRefreshThisFolder2: "Could not refresh this folder",
-  couldNotOpenThisFolder: "Could not open this folder",
-  lockedVault: "Locked vault",
-  hidden: ", {count} hidden",
-  identicalNotShown: ", {count} identical not shown",
-
-  // components/FilePane: the menu entry that makes a scheduled task
-  scheduleUpload: "Schedule upload...",
-  scheduleDownload: "Schedule download...",
-  scheduleUploadUnavailable: "Schedule upload ({reason})",
-  scheduleDownloadUnavailable: "Schedule download ({reason})",
-
-  // components/FilePane: the pane's footer
-  results: { one: "{count} result", other: "{count} results" },
-
-  // components/FilePane: the delete question
-  deleteFromRemoteSide: "Permanently delete {what} from the remote side? This cannot be undone.",
-  deleteFromLocalSide: "Permanently delete {what} from the local side? This cannot be undone.",
-
-  // state/fileOperations
   itemsCouldNotBeMoved: "{count} items could not be moved. The log lists why.",
   itemsCouldNotBeCopied: "{count} items could not be copied. The log lists why.",
+  deletingItemsFrom: {
+    one: "Deleting {count} item from {folder}",
+    other: "Deleting {count} items from {folder}",
+  },
+  deletingNameFrom: "Deleting {name} from {folder}",
+  movingItemsTo: {
+    one: "Moving {count} item to {folder}",
+    other: "Moving {count} items to {folder}",
+  },
+  copyingItemsTo: {
+    one: "Copying {count} item to {folder}",
+    other: "Copying {count} items to {folder}",
+  },
+  movingNameTo: "Moving {name} to {folder}",
+  copyingNameTo: "Copying {name} to {folder}",
 } as const satisfies MessageArea;

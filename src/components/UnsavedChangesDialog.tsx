@@ -64,7 +64,9 @@ export function UnsavedChangesDialog({ tabIds, closeWindow, onClose }: UnsavedCh
   };
 
   const title =
-    names.length === 1 ? `Save changes to ${names[0]}?` : `Save changes to ${names.length} files?`;
+    names.length === 1
+      ? t("editor.saveChangesTo", { name: names[0] })
+      : t("editor.saveChangesToFiles", { count: names.length });
   return (
     <Dialog title={title} onClose={onClose}>
       <div className="confirm-body">

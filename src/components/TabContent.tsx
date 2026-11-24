@@ -130,10 +130,16 @@ function LostSession({ sessionId, reason }: { sessionId: string; reason?: string
       {reason && <p className="pane-empty-detail">{reason}</p>}
       {automatic.active && (
         <p className="pane-empty-detail">
-          {automatic.secondsLeft > 0
-            ? t("workspace.reconnectingInS", { secondsLeft: automatic.secondsLeft })
-            : t("workspace.reconnecting")}
-          {automatic.failures > 0 && t("workspace.attempt", { value: automatic.failures + 1 })}
+          {automatic.failures > 0
+            ? automatic.secondsLeft > 0
+              ? t("workspace.reconnectingInSecondsAttempt", {
+                  seconds: automatic.secondsLeft,
+                  attempt: automatic.failures + 1,
+                })
+              : t("workspace.reconnectingAttempt", { attempt: automatic.failures + 1 })
+            : automatic.secondsLeft > 0
+              ? t("workspace.reconnectingInS", { secondsLeft: automatic.secondsLeft })
+              : t("workspace.reconnecting")}
         </p>
       )}
       {shownError && <p className="form-error">{shownError}</p>}

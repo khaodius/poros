@@ -184,7 +184,7 @@ function ProgramList({ programs, onChange }: ProgramListProps) {
         </button>
       </form>
       <p className="setting-hint program-hint">
-        {t("openWith.inTheArgumentsStandsFor", { value: FILE_PLACEHOLDER })}
+        {t("openWith.inTheArgumentsStandsFor", { placeholder: FILE_PLACEHOLDER })}
       </p>
     </div>
   );

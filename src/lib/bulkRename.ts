@@ -707,15 +707,17 @@ function excessLength(name: string, target: NameTarget): number | null {
 export function nameProblem(name: string, target: NameTarget): NameProblem | null {
   const invalid = (message: string): NameProblem => ({ problem: "invalid", message });
   if (name === "") return { problem: "empty", message: t("rename.theNameIsEmpty") };
-  if (name === "." || name === "..") return invalid(`"${name}" is not a name`);
-  if (hasControlCharacter(name)) return invalid("Names cannot contain control characters");
+  if (name === "." || name === "..") return invalid(t("rename.isNotAName", { name }));
+  if (hasControlCharacter(name)) return invalid(t("rename.namesCannotContainControlCharacters"));
   for (const character of target.forbidden) {
-    if (name.includes(character)) return invalid(`Names cannot contain ${character}`);
+    if (name.includes(character)) return invalid(t("rename.namesCannotContain", { character }));
   }
   if (target.windowsNames) {
-    if (/[ .]$/.test(name)) return invalid("Names cannot end with a space or a dot");
+    if (/[ .]$/.test(name)) return invalid(t("rename.namesCannotEndWithASpaceOrADot"));
     if (WINDOWS_DEVICE.test(name)) {
-      return invalid(`${name.split(".")[0].toUpperCase()} is a reserved name on Windows`);
+      return invalid(
+        t("rename.isAReservedNameOnWindows", { name: name.split(".")[0].toUpperCase() }),
+      );
     }
   }
   const length = excessLength(name, target);
@@ -755,13 +757,23 @@ export interface RenamePreview {
   findError: string | null;
 }
 
-/** How two names the target holds to be one name differ, for a message; nothing when they do not. */
-function spellingNote(first: string, second: string): string {
-  if (first === second) return "";
-  return first.toLowerCase() === second.toLowerCase()
-    ? ", which differs only in case"
-    : ", which differs only in how its accents are stored";
+/** How two names the target holds to be one name differ: not at all, in case, or in accents. */
+function spellingOf(first: string, second: string): "same" | "case" | "accents" {
+  if (first === second) return "same";
+  return first.toLowerCase() === second.toLowerCase() ? "case" : "accents";
 }
+
+const KEEPS_NAME = {
+  same: "rename.keepsThisName",
+  case: "rename.keepsANameDifferingInCase",
+  accents: "rename.keepsANameDifferingInAccents",
+} as const;
+
+const GETS_NAME = {
+  same: "rename.getsTheSameName",
+  case: "rename.getsANameDifferingInCase",
+  accents: "rename.getsANameDifferingInAccents",
+} as const;
 
 /**
  * Every item with its new name and whether it can have it. A name is refused when the target
@@ -811,8 +823,8 @@ export function previewRenames(
         row,
         "sharedName",
         other === row.name
-          ? "Another selected item has the same name; rename these one at a time"
-          : `${other} is selected too and counts as the same name here; rename these one at a time`,
+          ? t("rename.anotherSelectedItemHasTheSameName")
+          : t("rename.isSelectedTooAndCountsAsTheSameName", { name: other }),
       );
       return;
     }
@@ -822,32 +834,37 @@ export function previewRenames(
       return;
     }
     if (undated.has(index)) {
-      flag(row, "undated", "The item has no modified time for {date} or {time}");
+      flag(row, "undated", t("rename.noModifiedTimeFor", { date: "{date}", time: "{time}" }));
       return;
     }
     const key = nameKey(row.newName, target);
     const sharing = holders.get(key)?.find((holder) => holder !== index);
     if (sharing !== undefined) {
       const other = rows[sharing];
-      const note = spellingNote(other.newName, row.newName);
+      const spelling = spellingOf(other.newName, row.newName);
       flag(
         row,
         "duplicate",
-        other.status === "unchanged"
-          ? `${other.name} keeps ${note ? "a" : "this"} name${note}`
-          : `${other.name} gets ${note ? "a" : "the same"} name${note}`,
+        t(other.status === "unchanged" ? KEEPS_NAME[spelling] : GETS_NAME[spelling], {
+          name: other.name,
+        }),
       );
       return;
     }
     const outside = others.get(key);
     if (outside !== undefined) {
-      const note = spellingNote(outside, row.newName);
+      const spelling = spellingOf(outside, row.newName);
       flag(
         row,
         "taken",
-        note
-          ? `${outside} is not selected and has a name${note}`
-          : "An item that is not selected has this name",
+        spelling === "same"
+          ? t("rename.anItemThatIsNotSelectedHasThisName")
+          : t(
+              spelling === "case"
+                ? "rename.notSelectedAndHasANameDifferingInCase"
+                : "rename.notSelectedAndHasANameDifferingInAccents",
+              { name: outside },
+            ),
       );
     }
   });
@@ -870,29 +887,28 @@ export function previewRenames(
   };
 }
 
-function countOf(count: number, singular: string, plural = `${singular}s`): string {
-  return `${count} ${count === 1 ? singular : plural}`;
-}
-
-const PROBLEM_NOTES: Record<ProblemKind, (count: number) => string> = {
-  sharedName: (count) =>
-    `${countOf(count, "item has", "items have")} the same name as another selected item`,
-  empty: (count) => `${countOf(count, "name is", "names are")} empty`,
-  invalid: (count) => `${countOf(count, "name")} cannot be used here`,
-  tooLong: (count) => `${countOf(count, "name is", "names are")} too long`,
-  undated: (count) => `${countOf(count, "item has", "items have")} no modified time`,
-  duplicate: (count) => `${countOf(count, "item")} would share a name`,
-  taken: (count) => `${countOf(count, "name is", "names are")} already taken`,
-};
+const PROBLEM_NOTES = {
+  sharedName: "rename.problemSharedName",
+  empty: "rename.problemEmpty",
+  invalid: "rename.problemInvalid",
+  tooLong: "rename.problemTooLong",
+  undated: "rename.problemUndated",
+  duplicate: "rename.problemDuplicate",
+  taken: "rename.problemTaken",
+} as const satisfies Record<ProblemKind, string>;
 
 /** What stands in the way of renaming, in one line, or null when nothing does. */
 export function problemSummary(preview: RenamePreview): string | null {
-  if (preview.findError) return `The regular expression is not valid: ${preview.findError}`;
+  if (preview.findError) {
+    return t("rename.theRegularExpressionIsNotValid", { error: preview.findError });
+  }
   const notes = PROBLEM_KINDS.flatMap((kind) => {
     const count = preview.problems[kind];
-    return count ? [PROBLEM_NOTES[kind](count)] : [];
+    return count ? [t(PROBLEM_NOTES[kind], { count })] : [];
   });
-  return notes.length > 0 ? `${notes.join(", ")}.` : null;
+  return notes.length > 0
+    ? t("rename.problemsSentence", { problems: notes.join(t("common.listSeparator")) })
+    : null;
 }
 
 const STARTS_WITH_MARK = /^\p{M}/u;

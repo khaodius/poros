@@ -63,31 +63,40 @@ const EMPTY_MESSAGES: Record<TransferViewKind, string> = {
 function statusText(job: JobSnapshot, scheduleWaitText: string | null): string {
   switch (job.state) {
     case "queued":
-      if (job.reconnecting) return "Connection lost, waiting for the server";
+      if (job.reconnecting) return t("transfers.connectionLostWaitingForTheServer");
       if (scheduleWaitText) return scheduleWaitText;
-      return job.attempts > 0 ? `Waiting to retry (attempt ${job.attempts + 1})` : "Queued";
+      return job.attempts > 0
+        ? t("transfers.waitingToRetry", { attempt: job.attempts + 1 })
+        : t("transfers.queued");
     case "running":
-      if (job.kind === "folder") return "Listing folder";
+      if (job.kind === "folder") return t("transfers.listingFolder");
       if (job.deltaBytes !== undefined) {
-        return `Updating with rsync, ${formatSize(job.deltaBytes)} sent`;
+        return t("transfers.updatingWithRsyncSent", { size: formatSize(job.deltaBytes) });
       }
-      if (job.direct) return "Copying directly between the servers";
+      if (job.direct) return t("transfers.copyingDirectlyBetweenTheServers");
       return job.connections > 1
-        ? `Transferring on ${job.connections} connections`
-        : "Transferring";
+        ? t("transfers.transferringOnConnections", { count: job.connections })
+        : t("transfers.transferring");
     case "paused":
-      return "Paused";
+      return t("transfers.paused");
     case "conflict":
-      return "Already exists, waiting for your choice";
+      return t("transfers.alreadyExistsWaitingForYourChoice");
     case "done":
-      if (job.direct) return "Done, copied directly between the servers";
+      if (job.direct) return t("transfers.doneCopiedDirectlyBetweenTheServers");
       return job.deltaBytes === undefined
-        ? "Done"
-        : `Done with rsync, sent ${formatSize(job.deltaBytes)} of ${formatSize(job.size)}`;
+        ? t("transfers.done")
+        : t("transfers.doneWithRsyncSent", {
+            sent: formatSize(job.deltaBytes),
+            size: formatSize(job.size),
+          });
     case "skipped":
-      return job.error ? `Skipped: ${job.error}` : "Skipped";
+      return job.error
+        ? t("transfers.skippedBecause", { error: job.error })
+        : t("transfers.skipped");
     case "failed":
-      return `Failed: ${job.error ?? "unknown error"}`;
+      return job.error
+        ? t("transfers.failedBecause", { error: job.error })
+        : t("transfers.failedUnknownError");
   }
 }
 
@@ -367,7 +376,15 @@ const TransferRow = memo(function TransferRow({
       data-direction={job.direction}
       role="row"
       aria-selected={selected}
-      title={`${job.source}\nto ${job.target}${job.label ? `\nQueued by the task ${job.label}` : ""}`}
+      title={
+        job.label
+          ? t("transfers.rowTitleQueuedByTask", {
+              source: job.source,
+              target: job.target,
+              task: job.label,
+            })
+          : t("transfers.rowTitle", { source: job.source, target: job.target })
+      }
       onClick={(event) => onClick(event, job)}
       onContextMenu={(event) => onContextMenu(event, job)}
     >

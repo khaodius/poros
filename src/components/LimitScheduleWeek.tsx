@@ -76,7 +76,7 @@ export function LimitScheduleWeek({ schedule, ordinary, now, onPickRule }: Limit
   const detail = shown
     ? describeCell(shown, "; ")
     : current
-      ? `Now, ${describeSpan(schedule, today, current)}`
+      ? t("limits.nowSpan", { span: describeSpan(schedule, today, current) })
       : "";
 
   const moveTo = (cell: Cell) => {

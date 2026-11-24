@@ -123,25 +123,28 @@ export function ConnectDialog({
       : draft.host.trim() !== "";
   const account =
     draft.signedIn?.account ?? (draft.hasSavedSecret && draft.username ? draft.username : null);
-  const secretLabel = keys
-    ? keys.secret.toLowerCase()
-    : draft.authChoice === "publicKey"
-      ? "passphrase"
-      : "password";
+  const rememberSecretLabel =
+    draft.protocol === "s3"
+      ? t("connect.rememberTheSecretAccessKey")
+      : b2
+        ? t("connect.rememberTheApplicationKey")
+        : draft.authChoice === "publicKey"
+          ? t("connect.rememberThePassphrase")
+          : t("connect.rememberThePassword");
   const namePlaceholder = browser
     ? `${protocolInfo(draft.protocol).label}${account ? ` (${account})` : ""}`
     : b2
       ? "Backblaze B2"
-      : draft.host.trim() || (s3 ? "Amazon S3" : "Shown in saved connections");
+      : draft.host.trim() || (s3 ? "Amazon S3" : t("connect.shownInSavedConnections"));
   const folderPlaceholder = browser
-    ? "Top folder of the drive"
+    ? t("connect.topFolderOfTheDrive")
     : s3 || b2
-      ? "/bucket or /bucket/folder"
+      ? t("connect.bucketOrBucketFolder", { bucket: "/bucket", folder: "/bucket/folder" })
       : ftp
-        ? "Login folder"
+        ? t("connect.loginFolder")
         : webDav
-          ? "The folder in the address, or the top"
-          : "Home folder";
+          ? t("connect.theFolderInTheAddressOrTheTop")
+          : t("connect.homeFolder");
 
   const browseForKey = async () => {
     // No extension filter: OpenSSH keys such as `id_ed25519` have none.
@@ -252,7 +255,7 @@ export function ConnectDialog({
           </div>
           {connections.length === 0 ? (
             <p className="site-list-empty">
-              {t("connect.connectionsYouSaveAppearHere")}
+              {t("connect.connectionsYouSaveAppearHere")}{" "}
               <button type="button" className="link-button" onClick={importConnections}>
                 {t("connect.importThemFromAnotherApp")}
               </button>
@@ -331,8 +334,11 @@ export function ConnectDialog({
                         s3
                           ? t("connect.emptyForAmazonS3")
                           : webDav
-                            ? t("connect.exampleComOrExampleCom")
-                            : t("connect.exampleCom")
+                            ? t("connect.hostOrAddress", {
+                                host: "example.com",
+                                address: "example.com/remote.php/dav",
+                              })
+                            : "example.com"
                       }
                       spellCheck={false}
                       autoCapitalize="off"
@@ -351,10 +357,10 @@ export function ConnectDialog({
               )}
               {s3 && (
                 <small className="field-hint">
-                  {t("connect.forAnotherServiceEnterIts")}
-                  <code>{t("connect.s3EuCentral1Wasabisys")}</code>
-                  {t("connect.or")} <code>{t("connect.httpLocalhost9000")}</code>
-                  {t("connect.forAServerWithoutTls")}
+                  {t.rich("connect.forAnotherServiceEnterIts", {
+                    example: <code>s3.eu-central-1.wasabisys.com</code>,
+                    local: <code>http://localhost:9000</code>,
+                  })}
                 </small>
               )}
 
@@ -424,7 +430,11 @@ export function ConnectDialog({
                 <small className="field-hint">{t("connect.opensshPemPkcs8And")}</small>
               </div>
               <label className="field">
-                <span>Passphrase {needsPassphrase ? "" : "(if the key has one)"}</span>
+                <span>
+                  {needsPassphrase
+                    ? t("connect.passphrase")
+                    : t("connect.passphraseIfTheKeyHasOne")}
+                </span>
                 <input
                   ref={passphraseRef}
                   type="password"
@@ -439,8 +449,7 @@ export function ConnectDialog({
 
           {draft.authChoice === "agent" && (
             <p className="field-hint">
-              {t("connect.usesKeysLoadedInYour")} <code>SSH_AUTH_SOCK</code>{" "}
-              {t("connect.onLinuxAndMacosThe")}
+              {t.rich("connect.usesKeysLoadedInYour", { variable: <code>SSH_AUTH_SOCK</code> })}
             </p>
           )}
 
@@ -529,7 +538,7 @@ export function ConnectDialog({
                   disabled={draft.authChoice === "agent"}
                   onChange={(event) => update("saveSecret", event.target.checked)}
                 />
-                {t("connect.rememberTheInTheSystem", { secretLabel })}
+                {rememberSecretLabel}
               </label>
             )}
             {ftp && (

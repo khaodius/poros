@@ -30,8 +30,10 @@ export function UpdateDialog({ onClose }: { onClose: () => void }) {
     <Dialog title={t("updates.updateAvailable")} onClose={onClose} width={560}>
       <div className="confirm-body">
         <p>
-          {t("updates.poros")} <strong>{formatVersion(update.version)}</strong>{" "}
-          {t("updates.isAvailableYouHave", { version: formatVersion(update.currentVersion) })}
+          {t.rich("updates.isAvailableYouHave", {
+            version: <strong>{formatVersion(update.version)}</strong>,
+            current: formatVersion(update.currentVersion),
+          })}
         </p>
         {notes.length > 0 && (
           <div className="release-notes selectable">

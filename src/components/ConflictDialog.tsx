@@ -59,8 +59,10 @@ export function ConflictDialog() {
     <Dialog title={t("dialogs.fileAlreadyExists")} onClose={() => answer("skip")} width={520}>
       <div className="confirm-body">
         <p>
-          <strong>{job.name}</strong>{" "}
-          {t("dialogs.alreadyExistsIn", { targetDirectory: job.targetDirectory })}
+          {t.rich("dialogs.alreadyExistsIn", {
+            name: <strong>{job.name}</strong>,
+            folder: job.targetDirectory,
+          })}
         </p>
         <table className="conflict-table">
           <thead>
@@ -92,7 +94,7 @@ export function ConflictDialog() {
             onChange={(event) => setApplyToAll(event.target.checked)}
           />
           {others > 0
-            ? `Do the same for the ${others} other ${others === 1 ? "conflict" : "conflicts"} and any that follow`
+            ? t("dialogs.doTheSameForOthers", { count: others })
             : t("dialogs.doTheSameForAny")}
         </label>
       </div>

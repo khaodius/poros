@@ -7,7 +7,6 @@ export const terminal = {
   couldNotOpenATerminal: "Could not open a terminal",
   closeTab: "Close tab",
   restart: "Restart",
-  // components/TerminalPane
   connecting: "Connecting...",
   connected: "Connected",
 } as const satisfies MessageArea;

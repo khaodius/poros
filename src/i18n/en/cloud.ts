@@ -32,6 +32,13 @@ export const cloud = {
   copyTheClientIdAnd:
     "Copy the client ID and client secret from OAuth 2.0 Credentials on the same tab.",
   clientSecretHint2: "Box asks for it with every sign-in.",
+  thisReleaseSignsInWith: "This release signs in with its own Google app. To use yours instead:",
+  porosSignsInToGoogle: "Poros signs in to Google Drive with a Google app you register:",
+  thisReleaseSignsInWithIts:
+    "This release signs in with its own Microsoft app. To use yours instead:",
+  porosSignsInToOnedrive: "Poros signs in to OneDrive with a Microsoft app you register:",
+  thisReleaseSignsInWithItsOwn: "This release signs in with its own Box app. To use yours instead:",
+  porosSignsInToBox: "Poros signs in to Box with a Box app you register:",
 
   // components/CloudSignIn
   openSettings: "Open Settings",
@@ -40,14 +47,6 @@ export const cloud = {
   signInAgain: "Sign in again",
   porosOpensTheSignIn: "Poros opens the {providerName} sign-in page in your browser.",
   signInWith: "Sign in with {providerName}",
-  // components/CloudSettings
-  thisReleaseSignsInWith: "This release signs in with its own Google app. To use yours instead:",
-  porosSignsInToGoogle: "Poros signs in to Google Drive with a Google app you register:",
-  thisReleaseSignsInWithIts:
-    "This release signs in with its own Microsoft app. To use yours instead:",
-  porosSignsInToOnedrive: "Poros signs in to OneDrive with a Microsoft app you register:",
-  thisReleaseSignsInWithItsOwn: "This release signs in with its own Box app. To use yours instead:",
-  porosSignsInToBox: "Poros signs in to Box with a Box app you register:",
   needsOwnApp:
     "Signing in to {service} needs your own {provider} app registration. Add its client ID under Settings, Cloud accounts.",
   needsOwnAppWithSecret:

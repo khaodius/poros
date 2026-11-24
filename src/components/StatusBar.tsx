@@ -1,5 +1,11 @@
 import { ArrowDown, ArrowUp, CircleArrowUp } from "lucide-react";
-import { formatDuration, formatSize, formatSpeed, formatVersion } from "../lib/format";
+import {
+  formatDuration,
+  formatPercent,
+  formatSize,
+  formatSpeed,
+  formatVersion,
+} from "../lib/format";
 import { findGroup } from "../lib/layout";
 import { secondsRemaining, showsPaused } from "../lib/transfers";
 import { useLayoutStore } from "../state/layoutStore";
@@ -15,7 +21,7 @@ import {
   type InstallStage,
 } from "../state/updateStore";
 import { LimitScheduleStatus } from "./LimitScheduleStatus";
-import { useT } from "../i18n";
+import { t, useT } from "../i18n";
 
 const APP_VERSION = formatVersion(__APP_VERSION__);
 
@@ -81,17 +87,37 @@ function describeInstall(install: InstallStage, version: string): string {
   switch (install.stage) {
     case "downloading": {
       const percent = percentDownloaded(install.received, install.total);
-      return `Downloading ${version}${percent === null ? "" : `, ${percent}%`}`;
+      return percent === null
+        ? t("updates.downloadingVersion", { version })
+        : t("updates.downloadingVersionPercent", { version, percent: formatPercent(percent) });
     }
     case "installing":
-      return `Installing ${version}`;
+      return t("updates.installingVersion", { version });
     case "ready":
-      return `Restart to use ${version}`;
+      return t("updates.restartToUse", { version });
     case "restarting":
-      return "Restarting";
+      return t("updates.restarting");
     case "failed":
-      return `Could not install ${version}`;
+      return t("updates.couldNotInstallVersion", { version });
   }
+}
+
+/** `3 transfers left, 1.2 GB, about 4m 10s`, with `(paused)` after it while the queue waits. */
+function queueStatus(
+  pending: number,
+  remainingBytes: number,
+  remainingSeconds: number | null,
+  paused: boolean,
+): string {
+  const facts = [
+    t("workspace.transfersLeft", { count: pending }),
+    remainingBytes > 0 ? formatSize(remainingBytes) : null,
+    remainingSeconds !== null
+      ? t("workspace.aboutDuration", { duration: formatDuration(remainingSeconds) })
+      : null,
+  ].filter((fact) => fact !== null);
+  const status = facts.join(t("common.listSeparator"));
+  return paused ? t("workspace.queueStatusPaused", { status }) : status;
 }
 
 export function StatusBar() {
@@ -111,10 +137,7 @@ export function StatusBar() {
         <ExternalEditsStatus />
         {pending > 0 && (
           <span className="status-item status-queue">
-            {t("workspace.transfers", { count: pending })} left
-            {stats.remainingBytes > 0 && `, ${formatSize(stats.remainingBytes)}`}
-            {remaining !== null && `, about ${formatDuration(remaining)}`}
-            {showsPaused(stats) && " (paused)"}
+            {queueStatus(pending, stats.remainingBytes, remaining, showsPaused(stats))}
           </span>
         )}
         <LimitScheduleStatus />

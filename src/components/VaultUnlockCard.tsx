@@ -70,7 +70,7 @@ export function VaultUnlockCard({
         </span>
         <p className="pane-empty-title">{t("vault.encryptedVault")}</p>
         <p className="vault-card-detail">
-          <strong>{name}</strong> {t("vault.isACryptomatorVaultEnter")}
+          {t.rich("vault.isACryptomatorVaultEnter", { name: <strong>{name}</strong> })}
         </p>
         <div className="vault-card-unlock">
           <input

@@ -19,6 +19,13 @@ export const sync = {
     one: "Comparing contents: {compared} of {count} file",
     other: "Comparing contents: {compared} of {count} files",
   },
+  startingFromTheDefaultsIn:
+    "Starting from the defaults in Settings, with the rsync arguments saved for {siteName}. Changes here apply to this synchronization only.",
+  startingFromTheDefaultsInSettings:
+    "Starting from the defaults in Settings. Changes here apply to this synchronization only.",
+  compareDryRun: "Compare (dry run)",
+  compare: "Compare",
+  listingFoldersLocalAndServer: "Listing folders: {local} local and {remote} server entries",
 
   // components/SyncPlanList
   rsync: "rsync {arguments}",
@@ -29,10 +36,6 @@ export const sync = {
     one: "{count} unchanged source file will be removed as well.",
     other: "{count} unchanged source files will be removed as well.",
   },
-  unchangedSourceFiles: {
-    one: "{count} unchanged source file",
-    other: "{count} unchanged source files",
-  },
   includeAll: "Include all",
   action: "Action",
   why: "Why",
@@ -41,13 +44,20 @@ export const sync = {
     other:
       "{count} entries passed over: broken or looping links, special files and folders that could not be read",
   },
-  entries: { one: "{count} entry", other: "{count} entries" },
   include: "Include {path}",
   settle: "Settle {path}",
   leaveAsIs: "Leave as is",
   uploadLocalCopy: "Upload local copy",
   downloadServerCopy: "Download server copy",
   files: { one: "{count} file", other: "{count} files" },
+  all: "All",
+  conflicts: "Conflicts",
+  noFilesToCopy: "No files to copy.",
+  everythingIsInSync: "Everything is in sync.",
+  starting: "Starting...",
+  settleByHand: "Settle by hand",
+  dryRun: "Dry run",
+  synchronize: "Synchronize",
 
   // components/SyncSettings
   rsync2: "rsync",
@@ -97,18 +107,6 @@ export const sync = {
     one: "removed {count} unchanged source file",
     other: "removed {count} unchanged source files",
   },
-  changesFailedTheLogHas: {
-    one: ". {count} change failed; the log has the details",
-    other: ". {count} changes failed; the log has the details",
-  },
-  // components/SyncPlanList
-  all: "All",
-  conflicts: "Conflicts",
-  willBeRemovedAsWell: "{t} will be removed as well.",
-  passedOverBrokenOrLooping:
-    "{t} passed over: broken or looping links, special files and folders that could not be read",
-
-  // lib/sync
   localToServer: "Local to server",
   makesTheServerFolderMatch: "Makes the server folder match the local one.",
   serverToLocal: "Server to local",
@@ -119,22 +117,6 @@ export const sync = {
   deleteLocal: "Delete local",
   deleteOnServer: "Delete on server",
   conflict: "Conflict",
-  // components/SyncDialog
-  startingFromTheDefaultsIn:
-    "Starting from the defaults in Settings, with the rsync arguments saved for {siteName}. Changes here apply to this synchronization only.",
-  startingFromTheDefaultsInSettings:
-    "Starting from the defaults in Settings. Changes here apply to this synchronization only.",
-  compareDryRun: "Compare (dry run)",
-  compare: "Compare",
-  listingFoldersLocalAndServer: "Listing folders: {value} local and {value2} server entries",
-
-  // components/SyncPlanList
-  noFilesToCopy: "No files to copy.",
-  everythingIsInSync: "Everything is in sync.",
-  starting: "Starting...",
-  settleByHand: "Settle by hand",
-
-  // lib/sync: what the chosen items will do, as sentences
   plannedUpload: "Upload {total}",
   plannedDownload: "Download {total}",
   conflictsLeft: {
@@ -144,4 +126,52 @@ export const sync = {
   plannedSentences: "{parts}.",
   plannedSeparator: ". ",
   nothingSelected: "Nothing selected.",
+  onlyInTheLocalFolder: "Only in the local folder",
+  onlyOnTheServer: "Only on the server",
+  sizeOrTimeDiffers: "Size or time differs",
+  contentsDiffer: "Contents differ",
+  copiedWithoutComparing: "Copied without comparing",
+  newerInTheLocalFolder: "Newer in the local folder",
+  newerOnTheServer: "Newer on the server",
+  notInTheLocalFolder: "Not in the local folder",
+  notOnTheServer: "Not on the server",
+  typeDiffers: "{here} here, {there} on the server",
+  differsWithTheSameTimeOnBothSides: "Differs, with the same time on both sides",
+  shorterOnTheTarget: "Shorter on the target; only the rest is sent",
+  sameContentsOnlyTheTimeOrPermissions: "Same contents; only the time or permissions are set",
+  nothingHere: "Nothing",
+  folderHere: "Folder",
+  linkHere: "Link",
+  fileHere: "File",
+  nothingThere: "nothing",
+  folderThere: "folder",
+  linkThere: "link",
+  fileThere: "file",
+  countUnchanged: { one: "{count} unchanged", other: "{count} unchanged" },
+  countKeptAsTheyAre: { one: "{count} kept as they are", other: "{count} kept as they are" },
+  countOnlyInTheLocalFolderNotDeleted: {
+    one: "{count} only in the local folder, not deleted",
+    other: "{count} only in the local folder, not deleted",
+  },
+  countOnlyOnTheServerNotDeleted: {
+    one: "{count} only on the server, not deleted",
+    other: "{count} only on the server, not deleted",
+  },
+  countProtectedFromDeletion: {
+    one: "{count} protected from deletion",
+    other: "{count} protected from deletion",
+  },
+  countNewNotCreated: { one: "{count} new, not created", other: "{count} new, not created" },
+  countOutsideTheSizeLimits: {
+    one: "{count} outside the size limits",
+    other: "{count} outside the size limits",
+  },
+  countExcluded: { one: "{count} excluded", other: "{count} excluded" },
+  countPassedOver: { one: "{count} passed over", other: "{count} passed over" },
+  dryRunSummary: "Dry run: {parts}. Nothing was changed; the log has the details.",
+  runSummary: "{done}.",
+  runSummaryWithFailures: {
+    one: "{done}. {count} change failed; the log has the details.",
+    other: "{done}. {count} changes failed; the log has the details.",
+  },
 } as const satisfies MessageArea;

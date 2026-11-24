@@ -25,7 +25,6 @@ export function SaveConnectionDialog({
   const [error, setError] = useState<string | null>(null);
   const profile = entry?.profile;
   const secret = profile ? profileSecret(profile) : "";
-  const secretLabel = profile?.auth.type === "publicKey" ? "passphrase" : "password";
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -65,7 +64,9 @@ export function SaveConnectionDialog({
               checked={saveSecret}
               onChange={(event) => setSaveSecret(event.target.checked)}
             />
-            {t("connect.rememberTheInTheSystem", { secretLabel })}
+            {profile?.auth.type === "publicKey"
+              ? t("connect.rememberThePassphrase")
+              : t("connect.rememberThePassword")}
           </label>
         )}
         {error && <p className="form-error">{error}</p>}

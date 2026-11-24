@@ -3,8 +3,8 @@ import { t } from "../i18n";
 
 export interface ImportSourceText {
   label: string;
-  /** What to choose when the app's sites are not found on this computer, after "Choose". */
-  files: string;
+  /** What to choose when the app's sites are not found on this computer, as a sentence. */
+  choose: string;
 }
 
 export const IMPORT_SOURCES: Record<ImportSource, ImportSourceText> = {
@@ -12,55 +12,73 @@ export const IMPORT_SOURCES: Record<ImportSource, ImportSourceText> = {
     get label() {
       return t("connect.filezilla");
     },
-    files: "sitemanager.xml, or a file exported from the Site Manager (File > Export).",
+    get choose() {
+      return t("connect.chooseFileZillaFiles");
+    },
   },
   winScp: {
     get label() {
       return t("connect.winscp");
     },
-    files: "WinSCP.ini, or a file from Tools > Export/Backup Configuration.",
+    get choose() {
+      return t("connect.chooseWinScpFiles");
+    },
   },
   smartFtp: {
     get label() {
       return t("connect.smartftp");
     },
-    files: "the list from Favorites > Tools > Export, or .xml favorites from older versions.",
+    get choose() {
+      return t("connect.chooseSmartFtpFiles");
+    },
   },
   cyberduck: {
     get label() {
       return t("connect.cyberduckAndMountainDuck");
     },
-    files: "their bookmark files (.duck).",
+    get choose() {
+      return t("connect.chooseCyberduckFiles");
+    },
   },
   putty: {
     get label() {
       return t("connect.puttyAndKitty");
     },
-    files: "a .reg export of their Sessions registry key, or PuTTY's session files.",
+    get choose() {
+      return t("connect.choosePuttyFiles");
+    },
   },
   mobaXterm: {
     get label() {
       return t("connect.mobaxterm");
     },
-    files: "MobaXterm.ini, or a .mxtsessions file from Sessions > Export.",
+    get choose() {
+      return t("connect.chooseMobaXtermFiles");
+    },
   },
   openSsh: {
     get label() {
       return t("connect.opensshConfig");
     },
-    files: "an ssh config file, such as ~/.ssh/config.",
+    get choose() {
+      return t("connect.chooseOpenSshFiles");
+    },
   },
   fileManager: {
     get label() {
       return t("connect.gnomeFilesAndKdeDolphin");
     },
-    files: "gtk-3.0/bookmarks or user-places.xbel.",
+    get choose() {
+      return t("connect.chooseFileManagerFiles");
+    },
   },
   urlList: {
     get label() {
       return t("connect.listOfAddresses");
     },
-    files: "a text file with one sftp:// or ftp:// address per line.",
+    get choose() {
+      return t("connect.chooseUrlListFiles");
+    },
   },
 };
 

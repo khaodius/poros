@@ -11,7 +11,7 @@ import {
   useUpdateStore,
   type InstallStage,
 } from "../state/updateStore";
-import { useT } from "../i18n";
+import { t, useT } from "../i18n";
 
 /** Shows how installing an update goes, in the window's bottom-right corner, then offers to restart. */
 export function UpdateNotice() {
@@ -56,15 +56,15 @@ export function UpdateNotice() {
 function title(install: InstallStage, version: string): string {
   switch (install.stage) {
     case "downloading":
-      return `Downloading Poros ${version}`;
+      return t("updates.downloadingPoros", { version });
     case "installing":
-      return `Installing Poros ${version}`;
+      return t("updates.installingPoros", { version });
     case "ready":
-      return `Poros ${version} is ready`;
+      return t("updates.porosIsReady", { version });
     case "restarting":
-      return "Restarting Poros";
+      return t("updates.restartingPoros");
     case "failed":
-      return `Could not install Poros ${version}`;
+      return t("updates.couldNotInstallPoros", { version });
   }
 }
 
@@ -79,8 +79,8 @@ function NoticeBody({ install, onRetry }: { install: InstallStage; onRetry: () =
           <span className="update-notice-text">
             {install.total
               ? t("updates.of", {
-                  size: formatSize(install.received),
-                  size2: formatSize(install.total),
+                  received: formatSize(install.received),
+                  total: formatSize(install.total),
                 })
               : formatSize(install.received)}
             {percent !== null && <span>{percent}%</span>}

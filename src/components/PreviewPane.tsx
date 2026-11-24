@@ -58,7 +58,7 @@ import { useSettingsStore } from "../state/settingsStore";
 import { FileIcon } from "./FileIcon";
 import { PreviewImage, type PictureSize } from "./PreviewImage";
 import { PreviewThumbnails } from "./PreviewThumbnails";
-import { t, useT } from "../i18n";
+import { formatNumber, t, useT } from "../i18n";
 
 // Loaded on first use, with the editor's highlighting.
 const PreviewText = lazy(() => import("./PreviewText"));
@@ -297,48 +297,61 @@ function sizeInText(bytes: number): string {
 }
 
 function dimensionsText({ width, height }: { width: number; height: number }): string {
-  return `${width} × ${height}`;
+  return `${formatNumber(width)} × ${formatNumber(height)}`;
 }
 
 /** Why a picture is not shown: its file's size, or the pixels its header says it has. */
 function tooLargeText(view: Extract<FileView, { view: "tooLarge" }>, caps: Caps): string {
   if (view.dimensions) {
-    const pixels = `${dimensionsText(view.dimensions).replace(/ /g, "\u00a0")}\u00a0pixels`;
+    const dimensions = dimensionsText(view.dimensions).replace(/ /g, "\u00a0");
     return view.canLoad
-      ? `This picture is ${pixels}. Pictures up to ${MAX_SHOWN_PIXELS / 1_000_000}\u00a0megapixels show by themselves.`
-      : `This picture is ${pixels}, more than a preview can show.`;
+      ? t("preview.pictureHasPixelsShowsUpTo", {
+          dimensions,
+          megapixels: MAX_SHOWN_PIXELS / 1_000_000,
+        })
+      : t("preview.pictureHasPixelsMoreThanShown", { dimensions });
   }
   return view.canLoad
-    ? `This picture is ${sizeInText(view.size)}. Pictures up to ${sizeInText(caps.imageBytes)} load by themselves.`
-    : `This picture is ${sizeInText(view.size)}, more than a preview can load.`;
+    ? t("preview.pictureIsSizeLoadsUpTo", {
+        size: sizeInText(view.size),
+        limit: sizeInText(caps.imageBytes),
+      })
+    : t("preview.pictureIsSizeMoreThanLoaded", { size: sizeInText(view.size) });
 }
 
 function sizeText(bytes: number): string {
   const size = formatSize(bytes);
-  return bytes < 1024 ? size : `${size} (${bytes.toLocaleString()} bytes)`;
+  return bytes < 1024 ? size : t("preview.sizeWithBytes", { size, count: bytes });
 }
 
 /** The details the file list has for an entry. `type` stands in for the list's own. */
 function entryRows(entry: FileEntry, dateFormat: DateFormat, type?: string): Row[] {
   const isFolder = entry.kind === "dir" || entry.linkTarget === "dir";
-  const rows: Row[] = [["Type", type ?? typeLabel(entry)]];
-  if (entry.kind === "symlink") rows.push(["Link", isFolder ? "To a folder" : "To a file"]);
-  if (entry.kind === "file") rows.push(["Size", sizeText(entry.size)]);
-  if (entry.modified !== null) rows.push(["Modified", formatDate(entry.modified, dateFormat)]);
-  if (entry.permissions !== null) rows.push(["Permissions", formatPermissions(entry)]);
+  const rows: Row[] = [[t("preview.type"), type ?? typeLabel(entry)]];
+  if (entry.kind === "symlink") {
+    rows.push([t("preview.link"), isFolder ? t("preview.toAFolder") : t("preview.toAFile")]);
+  }
+  if (entry.kind === "file") rows.push([t("common.size"), sizeText(entry.size)]);
+  if (entry.modified !== null) {
+    rows.push([t("preview.modified"), formatDate(entry.modified, dateFormat)]);
+  }
+  if (entry.permissions !== null) rows.push([t("preview.permissions"), formatPermissions(entry)]);
   if (entry.owner !== null || entry.group !== null) {
-    rows.push(["Owner", [entry.owner, entry.group].filter(Boolean).join(":")]);
+    rows.push([t("preview.owner"), [entry.owner, entry.group].filter(Boolean).join(":")]);
   }
   return rows;
 }
 
 function contentsText({ folders, files, bytes }: Summary): string {
-  if (folders + files === 0) return "Nothing";
+  if (folders + files === 0) return t("common.nothing");
   const parts = [
     folders > 0 ? t("preview.folders", { count: folders }) : "",
     files > 0 ? t("preview.files", { count: files }) : "",
   ].filter(Boolean);
-  return bytes > 0 ? `${parts.join(", ")} (${formatSize(bytes)})` : parts.join(", ");
+  const counted = parts.join(t("common.listSeparator"));
+  return bytes > 0
+    ? t("preview.contentsWithSize", { contents: counted, size: formatSize(bytes) })
+    : counted;
 }
 
 /** What to say, and what to offer, when something could not be read. */
@@ -435,8 +448,12 @@ interface SharedProps {
 
 /** What a file's type row says once its bytes have told what it is. */
 function kindOf(view: FileView | null): string | undefined {
-  if (view?.view === "image") return `${IMAGE_FORMAT_LABELS[view.format]} image`;
-  if (view?.view === "text") return `Text, ${TEXT_ENCODING_LABELS[view.encoding]}`;
+  if (view?.view === "image") {
+    return t("preview.imageOfFormat", { format: IMAGE_FORMAT_LABELS[view.format] });
+  }
+  if (view?.view === "text") {
+    return t("preview.textInEncoding", { encoding: TEXT_ENCODING_LABELS[view.encoding] });
+  }
   if (view?.view === "binary" && view.description) return view.description;
   return undefined;
 }
@@ -482,9 +499,9 @@ function FilePreview({
 
   const rows = entryRows(entry, dateFormat, kindOf(view));
   if (view?.view === "image" && pictureSize && pictureSize.width > 0 && broken !== view.bytes) {
-    rows.splice(1, 0, ["Dimensions", dimensionsText(pictureSize)]);
+    rows.splice(1, 0, [t("preview.dimensions"), dimensionsText(pictureSize)]);
   } else if (view?.view === "tooLarge" && view.dimensions) {
-    rows.splice(1, 0, ["Dimensions", dimensionsText(view.dimensions)]);
+    rows.splice(1, 0, [t("preview.dimensions"), dimensionsText(view.dimensions)]);
   }
 
   return (
@@ -527,8 +544,8 @@ function FilePreview({
         <p className="preview-note">
           <span>
             {t("preview.onlyTheBeginningIsShown", {
-              sizeInText: sizeInText(caps.textBytes),
-              sizeInText2: sizeInText(view.size),
+              shown: sizeInText(caps.textBytes),
+              size: sizeInText(view.size),
             })}
           </span>
           <button type="button" className="link-button" onClick={() => onOpenInEditor(entry)}>
@@ -653,9 +670,7 @@ function FileBody({
               {view.description ?? t("preview.notTextOrAPicture")}
             </p>
             <p className="preview-notice-detail">
-              {t("preview.theFirst", {
-                t: t("preview.bytes", { count: Math.min(HEX_BYTES, view.head.length) }),
-              })}
+              {t("preview.theFirstBytes", { count: Math.min(HEX_BYTES, view.head.length) })}
             </p>
           </div>
           <HexView bytes={view.head} />
@@ -704,7 +719,7 @@ function FolderPreview({
   // A server shows a vault's folder as the encrypted files it is kept in.
   const isVault = listing !== null && !place.inVault && vaultSign(listing.entries) !== "none";
   const rows = entryRows(entry, dateFormat);
-  if (summary && !isVault) rows.splice(1, 0, ["Contains", contentsText(summary)]);
+  if (summary && !isVault) rows.splice(1, 0, [t("preview.contains"), contentsText(summary)]);
 
   let body: ReactNode;
   if (state.status === "resting") {
@@ -799,9 +814,9 @@ function SelectionPreview({
   /** The selection whose thumbnails the user asked for, where they do not load by themselves. */
   const [asked, setAsked] = useState("");
   const waitsForClick = mode === "click" && asked !== selection;
-  const rows: Row[] = [["Selected", contentsText({ ...summary, bytes: 0 })]];
-  if (summary.files > 0) rows.push(["Total size", sizeText(summary.bytes)]);
-  if (summary.folders > 0) rows.push(["Folders", "Not counted in the size"]);
+  const rows: Row[] = [[t("preview.selected"), contentsText({ ...summary, bytes: 0 })]];
+  if (summary.files > 0) rows.push([t("preview.totalSize"), sizeText(summary.bytes)]);
+  if (summary.folders > 0) rows.push([t("preview.foldersRow"), t("preview.notCountedInTheSize")]);
 
   let body: ReactNode;
   if (summary.pictures.length === 0) {

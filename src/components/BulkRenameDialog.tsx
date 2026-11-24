@@ -716,22 +716,22 @@ export function BulkRenameDialog({
 
 /** How many items get a new name, or that none does yet. */
 function renamedSummary(preview: RenamePreview): string {
-  if (preview.ready === 0) return "No names change yet.";
-  const unchanged = preview.unchanged > 0 ? `, ${preview.unchanged} unchanged` : "";
-  return t("rename.ofItemsWillBeRenamed", {
+  if (preview.ready === 0) return t("rename.noNamesChangeYet");
+  if (preview.unchanged === 0) {
+    return t("rename.ofItemsWillBeRenamed", { ready: preview.ready, count: preview.rows.length });
+  }
+  return t("rename.ofItemsWillBeRenamedSomeUnchanged", {
     ready: preview.ready,
     count: preview.rows.length,
-    unchanged,
+    unchanged: preview.unchanged,
   });
 }
 
 /** Says which picked items the folder no longer lists, or null when it lists them all. */
 function goneNote(gone: number, left: number): string | null {
   if (gone === 0) return null;
-  if (left === 0) return "These items are no longer in the folder.";
-  return gone === 1
-    ? "1 selected item is no longer in the folder and is left out."
-    : `${gone} selected items are no longer in the folder and are left out.`;
+  if (left === 0) return t("rename.theseItemsAreNoLongerInTheFolder");
+  return t("rename.selectedItemsLeftOut", { count: gone });
 }
 
 interface RuleSectionProps {

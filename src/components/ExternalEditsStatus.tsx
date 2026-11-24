@@ -116,8 +116,12 @@ function EditsPopover({ edits, leftovers, onClose }: EditsPopoverProps) {
       confirmLabel: t("openWith.stopAndDiscard"),
       body: (
         <p>
-          Changes saved in {edit.program || "the program"} have not reached {edit.server}. Stopping
-          deletes the working copy with them.
+          {edit.program
+            ? t("openWith.changesSavedInProgramNotReached", {
+                program: edit.program,
+                server: edit.server,
+              })
+            : t("openWith.changesSavedInTheProgramNotReached", { server: edit.server })}
         </p>
       ),
       action: () => external.stop(edit.id),
@@ -232,8 +236,8 @@ function EditRow({ edit, onStop }: { edit: ExternalEdit; onStop: () => void }) {
               label={
                 edit.detail ??
                 t("openWith.of", {
-                  size: formatSize(edit.transferred),
-                  size2: formatSize(edit.size),
+                  transferred: formatSize(edit.transferred),
+                  total: formatSize(edit.size),
                 })
               }
               labelKind="bytes"
@@ -361,8 +365,9 @@ export function LeftoverList({ leftovers, onConfirm }: LeftoverListProps) {
                 )}
                 {!session && (
                   <p className="edit-detail">
-                    Connect to {server}
-                    {leftover.vaultRoot ? " and unlock its vault" : ""} to upload it.
+                    {leftover.vaultRoot
+                      ? t("openWith.connectAndUnlockToUpload", { server })
+                      : t("openWith.connectToUpload", { server })}
                   </p>
                 )}
               </div>
@@ -398,8 +403,11 @@ export function LeftoverList({ leftovers, onConfirm }: LeftoverListProps) {
                       confirmLabel: t("common.discard"),
                       body: (
                         <p>
-                          The changes saved to it never reached {leftover.server}. Discarding
-                          {leftover.vaultRoot ? " wipes" : " deletes"} them.
+                          {leftover.vaultRoot
+                            ? t("openWith.neverReachedDiscardingWipes", { server: leftover.server })
+                            : t("openWith.neverReachedDiscardingDeletes", {
+                                server: leftover.server,
+                              })}
                         </p>
                       ),
                       action: async () => {

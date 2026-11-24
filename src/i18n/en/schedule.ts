@@ -5,13 +5,10 @@ export const schedule = {
   scheduledTasks: "Scheduled tasks",
   tasks: "Tasks",
   newTask: "New task",
-  tasksRunWhilePorosIs: "Tasks run while Poros is open. Ones you save appear here.",
   shownInTheListOf: "Shown in the list of tasks",
   turnedOn: "Turned on",
   task: "Task",
   savedConnection: "Saved connection",
-  thisConnectionsPasswordIsNot:
-    "This connection's password is not saved in the system keychain, so the task cannot log in. Save it in the connection's settings.",
   ifPorosIsClosedAt: "If Poros is closed at the time, run when it next starts",
   nextRun: "Next run",
   runningNow: "Running now",
@@ -27,7 +24,6 @@ export const schedule = {
   typedAsOnRsyncsCommand:
     "Typed as on rsync's command line; they apply over the options above each time the task runs.",
   command: "Command",
-  backupSh: "./backup.sh",
   inFolderOptional: "In folder (optional)",
   theLoginFolder: "The login folder",
   when: "When",
@@ -40,11 +36,9 @@ export const schedule = {
   at: "at",
   timeOfDay: "Time of day",
   daysOfTheWeek: "Days of the week",
-  // components/SchedulerDialog
   onDays: "On days",
   repeat: "Repeat",
   once: "Once",
-  // components/SchedulerDialog
   synchronizeFolders: "Synchronize folders",
   transferFiles: "Transfer files",
   runACommand: "Run a command",
@@ -53,26 +47,6 @@ export const schedule = {
   copyTo: "Copy to",
   tasksRunWhilePorosIsOpen:
     "Tasks run while Poros is open, or from poros-cli with cron or a timer. Ones you save appear here.",
-
-  // lib/scheduleDraft
-  porosNoLongerKnowsThe:
-    "Poros no longer knows the server of these transfers. Schedule the files from a tab instead.",
-  filesInAnUnlockedVault:
-    "Files in an unlocked vault cannot be scheduled: a task could not unlock the vault.",
-  saveTheConnectionToFirst:
-    "Save the connection to {label} first: a scheduled task signs in with a saved connection.",
-  selectTheTransfersToSchedule: "Select the transfers to schedule.",
-  selectTransfersThatGoThe:
-    "Select transfers that go the same way between the same places to schedule them.",
-  theSelectedTransfersGoTo:
-    "The selected transfers go to different folders. Select ones that go into one folder.",
-  selectTheFilesToSchedule: "Select the files to schedule.",
-
-  // lib/schedule
-  overwriteIfTheSourceIs: "Overwrite if the source is newer",
-  overwriteIfSizeOrDate: "Overwrite if size or date differ",
-  keepBoth: "Keep both",
-  // components/SchedulerDialog
   turnedOff: "Turned off",
   chooseAConnection: "Choose a connection",
   noSavedConnections: "No saved connections",
@@ -93,6 +67,7 @@ export const schedule = {
     "The passwords of {names} are not saved in the system keychain, so the task cannot log in.",
   saveItInTheConnections: "Save it in the connection's settings.",
   saveThemInTheConnections: "Save them in the connections' settings.",
+  noneTheTimeHasPassed: "None, the time has passed",
 
   // components/TransferTaskFields
   aFullPathOnThe: "A full path on the server; end a folder with /",
@@ -120,8 +95,12 @@ export const schedule = {
   serverPathToAdd: "Server path to add",
   theFolderToDownloadInto: "The folder to download into",
   whenAFileIsAlready: "When a file is already there",
+  eachRunCanGetAFolder: "Each run can get a folder named from its time: {placeholders}.",
 
-  // lib/schedule: when a task runs
+  // lib/schedule
+  overwriteIfTheSourceIs: "Overwrite if the source is newer",
+  overwriteIfSizeOrDate: "Overwrite if size or date differ",
+  keepBoth: "Keep both",
   everyDay: "Every day",
   weekdays: "Weekdays",
   weekends: "Weekends",
@@ -133,14 +112,6 @@ export const schedule = {
   unitMinutes: "minutes",
   unitHours: "hours",
   unitDays: "days",
-
-  // lib/scheduleDraft: why files cannot be scheduled, in brackets after the menu entry
-  blockedNoServer: "no server",
-  blockedInVault: "not in a vault",
-  blockedUnsaved: "save the connection first",
-  blockedNoTab: "no tab",
-
-  // lib/schedule: the name offered for a task that has none
   nameRun: "Run {program}",
   nameUploadOne: "Upload {name}",
   nameDownloadOne: "Download {name}",
@@ -149,8 +120,6 @@ export const schedule = {
   nameDownloadItems: { one: "Download {count} item", other: "Download {count} items" },
   nameCopyItems: { one: "Copy {count} item", other: "Copy {count} items" },
   nameSync: "Sync {name}",
-
-  // lib/schedule: problems with a folder pattern
   patternTooLong: {
     one: "The folder pattern is longer than {count} character",
     other: "The folder pattern is longer than {count} characters",
@@ -159,8 +128,24 @@ export const schedule = {
     "The folder pattern has a brace without its partner; write placeholders as {example}",
   patternUnknown: "The folder pattern has {found}, which is not a placeholder; use {known}",
   patternBadName: 'The folder pattern names "{name}", which cannot be a folder name',
-  noneTheTimeHasPassed: "None, the time has passed",
 
-  // components/TransferTaskFields
-  eachRunCanGetAFolder: "Each run can get a folder named from its time: {placeholders}.",
+  // lib/scheduleDraft
+  porosNoLongerKnowsThe:
+    "Poros no longer knows the server of these transfers. Schedule the files from a tab instead.",
+  filesInAnUnlockedVault:
+    "Files in an unlocked vault cannot be scheduled: a task could not unlock the vault.",
+  saveTheConnectionToFirst:
+    "Save the connection to {label} first: a scheduled task signs in with a saved connection.",
+  selectTheTransfersToSchedule: "Select the transfers to schedule.",
+  selectTransfersThatGoThe:
+    "Select transfers that go the same way between the same places to schedule them.",
+  theSelectedTransfersGoTo:
+    "The selected transfers go to different folders. Select ones that go into one folder.",
+  selectTheFilesToSchedule: "Select the files to schedule.",
+  blockedNoServer: "no server",
+  blockedInVault: "not in a vault",
+  blockedUnsaved: "save the connection first",
+
+  // state/scheduleActions
+  blockedNoTab: "no tab",
 } as const satisfies MessageArea;

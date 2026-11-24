@@ -143,6 +143,12 @@ export const t: Translate = Object.defineProperty(
   { get: () => active().locale },
 ) as unknown as Translate;
 
+/** A label as it reads inside a sentence or a list, in the active language. */
+export function midSentence(label: string): string {
+  const { translation } = useLanguageStore.getState();
+  return translation.lowercaseMidSentence ? label.toLocaleLowerCase(translation.locale) : label;
+}
+
 /** The tag numbers, dates and plurals follow, such as `de`. */
 export function activeLocale(): string {
   return useLanguageStore.getState().translation.locale;

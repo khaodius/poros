@@ -5,6 +5,7 @@ import {
   deriveColors,
   parseTheme,
   serializeTheme,
+  themeName,
   withColor,
   COLOR_TOKENS,
   type Theme,
@@ -14,6 +15,7 @@ import { quoteFamily, type FontKind } from "../lib/fonts";
 import { progressBarStyle } from "../lib/progressBars";
 import { sanitizeSettings, type AppearanceSettings } from "../lib/settings";
 import { saveSettingsSection, useSettingsStore } from "./settingsStore";
+import { t } from "../i18n";
 
 const SAVE_DELAY_MILLIS = 300;
 const REMEMBERED_THEME_KEY = "poros.appliedTheme";
@@ -92,7 +94,10 @@ export async function editActiveTheme(change: (theme: Theme) => Theme): Promise<
     replaceFile(active.id, change(active.theme));
     return;
   }
-  const copy = change({ ...active.theme, name: `${active.theme.name} (custom)` });
+  const copy = change({
+    ...active.theme,
+    name: t("appearance.customThemeName", { name: themeName(active) }),
+  });
   copying = (async () => {
     const id = await themeFiles.save(null, serializeTheme(copy));
     await load();

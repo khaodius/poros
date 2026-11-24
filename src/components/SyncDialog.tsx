@@ -498,8 +498,8 @@ function ComparingView({
               count: progress.toCompare,
             })
           : t("sync.listingFoldersLocalAndServer", {
-              value: progress?.localEntries ?? 0,
-              value2: progress?.remoteEntries ?? 0,
+              local: progress?.localEntries ?? 0,
+              remote: progress?.remoteEntries ?? 0,
             })}
       </p>
       {comparing && (

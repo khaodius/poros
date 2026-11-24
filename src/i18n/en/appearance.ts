@@ -43,6 +43,18 @@ export const appearance = {
   value: "{label} value",
   useTheBaseColor: "Use the base color",
   hasProblems: "(has problems)",
+  dark: "Dark",
+  light: "Light",
+  followTheSystem: "Follow the system",
+  resetColor: "Reset {label}",
+  systemIconsHintWindows: "File lists show the icons Windows Explorer uses for each type of file.",
+  systemIconsHintLinux: "File lists show your desktop's icon theme, as your file manager does.",
+  recommendedFontMissing: "{font} is free and made for screens; install it to see it here.",
+  themeFileType: "Poros theme",
+  resetColorsToLight: "Reset colors to Light",
+  resetColorsToDark: "Reset colors to Dark",
+  followingTheTheme: "Following the theme.",
+  followingTheThemeRadius: "Following the theme ({radius} px).",
 
   // components/FontPicker
   searchFonts: { one: "Search {count} font", other: "Search {count} fonts" },
@@ -50,6 +62,10 @@ export const appearance = {
   search: "Search {label}",
   readingInstalledFonts: "Reading installed fonts...",
   noInstalledFontMatches: "No installed font matches",
+  fontsRecommended: "Recommended",
+  fontsFixedWidth: "Fixed width",
+  fontsOther: "Other fonts",
+  fontsAll: "All fonts",
 
   // components/TransferLookSettings
   preview: "Preview",
@@ -83,12 +99,6 @@ export const appearance = {
   server: "Server",
   theSystemAsksAppsFor:
     "The system asks apps for less motion, as Windows does while its animation effects are off. Files fly anyway while this is on.",
-  // components/AppearanceSettings
-  dark: "Dark",
-  light: "Light",
-  followTheSystem: "Follow the system",
-
-  // components/TransferLookSettings
   solid: "Solid",
   oneFlatColor: "One flat color.",
   gradient: "Gradient",
@@ -137,8 +147,23 @@ export const appearance = {
   transferredAndSize: "Transferred and size",
   timeLeft: "Time left",
   noText: "No text",
+  fillKeepsItsShape: "{fill} keeps its own shape.",
+  thisFillKeepsItsShape: "This fill keeps its own shape.",
+  sampleUnpacking: "Unpacking {name}",
 
-  // lib/theme: color groups and colors, as Settings > Appearance > All colors lists them
+  // lib/progressBars
+  presetClassic: "Classic",
+  presetGradient: "Gradient",
+  presetCandyCane: "Candy cane",
+  presetNeon: "Neon",
+  presetComet: "Comet",
+  presetTide: "Tide",
+  presetAurora: "Aurora",
+  presetConveyor: "Conveyor",
+  presetArcade: "Arcade",
+  presetBeads: "Beads",
+
+  // lib/theme
   colorGroupAccent: "Accent",
   colorGroupSurfaces: "Surfaces",
   colorGroupWindow: "Window",
@@ -209,15 +234,11 @@ export const appearance = {
   colorCompareDifferent: "Different",
   colorCompareIdentical: "Identical",
   colorBackdrop: "Dialog backdrop",
-
-  // lib/theme: problems in a theme file
   themeUnknownBase: 'Unknown base "{base}"',
   themeUnknownColor: 'Unknown color "{key}"',
   themeNotAColor: '"{key}" is not a color',
   themeColorsNotAnObject: '"colors" must be an object',
   themeRadiusOutOfRange: '"radius" must be a number from 0 to 16',
-
-  // lib/theme: built-in theme names
   themeSystem: "System",
   themeDark: "Dark",
   themeLight: "Light",
@@ -229,40 +250,6 @@ export const appearance = {
   themeGraphite: "Graphite",
   themeHighContrast: "High contrast",
 
-  // state/themeStore: the copy a change to a built-in theme makes
+  // state/themeStore
   customThemeName: "{name} (custom)",
-  resetColor: "Reset {label}",
-  systemIconsHintWindows: "File lists show the icons Windows Explorer uses for each type of file.",
-  systemIconsHintLinux: "File lists show your desktop's icon theme, as your file manager does.",
-  recommendedFontMissing: "{font} is free and made for screens; install it to see it here.",
-  themeFileType: "Poros theme",
-  resetColorsToLight: "Reset colors to Light",
-  resetColorsToDark: "Reset colors to Dark",
-  followingTheTheme: "Following the theme.",
-  followingTheThemeRadius: "Following the theme ({radius} px).",
-
-  // components/FontPicker
-  fontsRecommended: "Recommended",
-  fontsFixedWidth: "Fixed width",
-  fontsOther: "Other fonts",
-  fontsAll: "All fonts",
-
-  // components/TransferLookSettings
-  fillKeepsItsShape: "{fill} keeps its own shape.",
-  thisFillKeepsItsShape: "This fill keeps its own shape.",
-
-  // lib/progressBars: presets
-  presetClassic: "Classic",
-  presetGradient: "Gradient",
-  presetCandyCane: "Candy cane",
-  presetNeon: "Neon",
-  presetComet: "Comet",
-  presetTide: "Tide",
-  presetAurora: "Aurora",
-  presetConveyor: "Conveyor",
-  presetArcade: "Arcade",
-  presetBeads: "Beads",
-
-  // components/TransferLookSettings: a sample transfer in the preview
-  sampleUnpacking: "Unpacking {name}",
 } as const satisfies MessageArea;

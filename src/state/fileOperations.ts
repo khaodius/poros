@@ -132,6 +132,18 @@ function howItWasDone(methods: OperationMethod[]): string {
   return notes.length > 0 ? ` (${notes.join(", ")})` : "";
 }
 
+/** The progress line of a move or copy, in the interface's language. */
+function placingTitle(mode: PlaceMode, name: string | null, count: number, folder: string): string {
+  if (name === null) {
+    return mode === "move"
+      ? t("pane.movingItemsTo", { count, folder })
+      : t("pane.copyingItemsTo", { count, folder });
+  }
+  return mode === "move"
+    ? t("pane.movingNameTo", { name, folder })
+    : t("pane.copyingNameTo", { name, folder });
+}
+
 function report(mode: PlaceMode, summary: OperationSummary, folder: string, sessionId?: string) {
   const write = useLogStore.getState().write;
   const verb = mode === "move" ? "Moved" : "Copied";
@@ -252,8 +264,10 @@ export async function placeEntries(request: PlaceRequest): Promise<boolean> {
     return false;
   }
 
-  const what = entries.length === 1 ? entries[0].name : t("pane.items", { count: entries.length });
-  const title = `${mode === "move" ? "Moving" : "Copying"} ${what} to ${baseName(targetFolder)}`;
+  const single = entries.length === 1 ? entries[0].name : null;
+  // The log stays in English; the progress line follows the interface.
+  const title = `${mode === "move" ? "Moving" : "Copying"} ${single ?? englishCount(entries.length, "item")} to ${baseName(targetFolder)}`;
+  const shownTitle = placingTitle(mode, single, entries.length, baseName(targetFolder));
   const side = { kind: origin.kind, sessionId: origin.sessionId };
   // Moved files' rows go away, so where they were is measured before they leave.
   const points = measureRows(sourceTabId, side, entries);
@@ -261,7 +275,7 @@ export async function placeEntries(request: PlaceRequest): Promise<boolean> {
   // What a name clash has written over is not what it was, whether or not the rest went through.
   const written = entries.map((entry) => childPath(targetFolder, entry.name, style));
   try {
-    const summary = await track(title, (operationId) =>
+    const summary = await track(shownTitle, (operationId) =>
       fileOperations.moveOrCopy({
         operationId,
         location,
@@ -322,11 +336,16 @@ export async function deleteOnServer(request: DeleteOnServer): Promise<void> {
   if (!sessionId || entries.length === 0) return;
   const write = useLogStore.getState().write;
   const showToast = useToastStore.getState().show;
-  const what = entries.length === 1 ? entries[0].name : t("pane.items", { count: entries.length });
-  const title = `Deleting ${what} from ${baseName(folder) || folder}`;
+  const single = entries.length === 1 ? entries[0].name : null;
+  const from = baseName(folder) || folder;
+  const title = `Deleting ${single ?? englishCount(entries.length, "item")} from ${from}`;
+  const shownTitle =
+    single === null
+      ? t("pane.deletingItemsFrom", { count: entries.length, folder: from })
+      : t("pane.deletingNameFrom", { name: single, folder: from });
   try {
     const summary = await track(
-      title,
+      shownTitle,
       (operationId) =>
         fileOperations.delete({
           operationId,
@@ -339,7 +358,7 @@ export async function deleteOnServer(request: DeleteOnServer): Promise<void> {
       summary.deleted > entries.length ? `, ${formatCount(summary.deleted)} entries` : "";
     write(
       "info",
-      `Deleted ${what} in ${folder}${inside}${howItWasDone(summary.methods)}`,
+      `Deleted ${single ?? englishCount(entries.length, "item")} in ${folder}${inside}${howItWasDone(summary.methods)}`,
       sessionId,
     );
     for (const failure of summary.failures) {

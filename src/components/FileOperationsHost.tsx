@@ -67,10 +67,7 @@ function OperationTray() {
               <RenameDetail operation={operation} />
             ) : (
               <span className="operation-detail">
-                {t("pane.done", {
-                  t: t("pane.files", { count: operation.files }),
-                  size: formatSize(operation.bytes),
-                })}
+                {t("pane.filesDone", { count: operation.files, size: formatSize(operation.bytes) })}
               </span>
             )}
           </div>
@@ -142,8 +139,12 @@ function DeleteDetail({ operation }: { operation: RunningOperation }) {
   return (
     <>
       <span className="operation-detail">
-        {deleteProgressText(operation)}
-        {failed ? t("pane.failed", { count: failed }) : ""}
+        {failed
+          ? t("pane.progressWithFailures", {
+              progress: deleteProgressText(operation),
+              count: failed,
+            })
+          : deleteProgressText(operation)}
       </span>
       <span
         className={`progress-track ${fraction === null ? "is-indeterminate" : ""}`}
@@ -200,16 +201,24 @@ function NameClashDialog({ question }: { question: NameClashQuestion }) {
       <div className="confirm-body">
         {names.length === 1 ? (
           <p>
-            <strong>{names[0]}</strong> {t("pane.isAlreadyIn")} <strong>{folder}</strong>.
+            {t.rich("pane.isAlreadyIn", {
+              name: <strong>{names[0]}</strong>,
+              folder: <strong>{folder}</strong>,
+            })}
           </p>
         ) : (
           <>
             <p>
-              {names.length === total
-                ? `All ${total} items`
-                : `${names.length} of the ${total} items`}{" "}
-              {mode === "move" ? "being moved" : "being copied"} have names already in{" "}
-              <strong>{folder}</strong>.
+              {t.rich(
+                names.length === total
+                  ? mode === "move"
+                    ? "pane.allItemsBeingMovedHaveNamesIn"
+                    : "pane.allItemsBeingCopiedHaveNamesIn"
+                  : mode === "move"
+                    ? "pane.someItemsBeingMovedHaveNamesIn"
+                    : "pane.someItemsBeingCopiedHaveNamesIn",
+                { count: names.length, total, folder: <strong>{folder}</strong> },
+              )}
             </p>
             <ul className="delete-preview">
               {preview.map((name) => (
@@ -222,8 +231,10 @@ function NameClashDialog({ question }: { question: NameClashQuestion }) {
           </>
         )}
         <p>
-          Replace overwrites files and merges folders. Keep both gives the new{" "}
-          {names.length === 1 ? "item a name" : "items names"} like <em>{t("pane.name2")}</em>.
+          {t.rich("pane.replaceOrKeepBoth", {
+            count: names.length,
+            example: <em>{t("pane.name2")}</em>,
+          })}
         </p>
       </div>
       <div className="dialog-actions">

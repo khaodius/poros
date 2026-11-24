@@ -682,7 +682,7 @@ function CommandFields({ action, onChange }: CommandFieldsProps) {
         <input
           className="mono"
           value={action.command}
-          placeholder={t("schedule.backupSh")}
+          placeholder="./backup.sh"
           spellCheck={false}
           autoCapitalize="off"
           onChange={(event) => onChange({ command: event.target.value })}

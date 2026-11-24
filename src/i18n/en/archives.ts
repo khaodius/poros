@@ -24,12 +24,12 @@ export const archives = {
   onServers: "On servers",
   archivesOnAnSftpServer:
     "Archives on an SFTP server are extracted on the server, with the programs it has. Poros looks for {programs} the first time, and uses the one that opens each format best. Servers that allow SFTP alone cannot extract; download the archive to extract it here.",
+  programsFileType: "Programs",
+
+  // lib/archives
+  zstandard: "Zstandard",
 
   // state/archiveActions
   nameTheProgramThatExtracts: "Name the program that extracts archives in Settings > Archives.",
-  // lib/archives
-  zstandard: "Zstandard",
-  programsFileType: "Programs",
   extracting: "Extracting {name}",
-  // components/ArchiveSettings
 } as const satisfies MessageArea;

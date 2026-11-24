@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useLatest } from "../hooks/useLatest";
-import { formatDate, formatSize } from "../lib/format";
+import { englishCount, formatDate, formatSize } from "../lib/format";
 import { fileOperations, toAppError } from "../lib/ipc";
 import { baseName } from "../lib/path";
 import {
@@ -18,7 +18,7 @@ import {
   type BitState,
   type BitStates,
 } from "../lib/permissions";
-import { typeLabel } from "../lib/sort";
+import { extensionLabel } from "../lib/sort";
 import type {
   FileDetails,
   FileEntry,
@@ -32,7 +32,7 @@ import { useLogStore } from "../state/logStore";
 import { track, useOperationStore } from "../state/operationStore";
 import { useSettingsStore } from "../state/settingsStore";
 import { Dialog } from "./Dialog";
-import { t, useT } from "../i18n";
+import { midSentence, t, useT } from "../i18n";
 
 interface PropertiesDialogProps {
   sessionId: string;
@@ -61,14 +61,14 @@ function modesOf(entries: FileEntry[]): number[] {
 
 function kindLabel(entry: FileEntry): string {
   if (entry.kind === "symlink") {
-    if (entry.linkTarget === "dir") return "Link to a folder";
-    if (entry.linkTarget === "file") return "Link to a file";
-    return "Broken link";
+    if (entry.linkTarget === "dir") return t("dialogs.linkToAFolder");
+    if (entry.linkTarget === "file") return t("dialogs.linkToAFile");
+    return t("fileList.brokenLink");
   }
-  if (entry.kind === "other") return "Special file";
-  if (entry.kind === "dir") return "Folder";
-  const type = typeLabel(entry);
-  return type === "File" ? type : `${type} file`;
+  if (entry.kind === "other") return t("dialogs.specialFile");
+  if (entry.kind === "dir") return t("fileList.folder");
+  const extension = extensionLabel(entry);
+  return extension ? t("dialogs.extensionFile", { extension }) : t("fileList.file");
 }
 
 /** For the log: `Changed permissions of 3 items, group to staff in /srv/www`. */
@@ -79,13 +79,13 @@ function describeChange(
   folder: string,
 ): string {
   const parts = [
-    summary.changed > 0 && t("dialogs.permissionsOfItems", { count: summary.changed }),
+    summary.changed > 0 && `permissions of ${englishCount(summary.changed, "item")}`,
     owner && `owner to ${owner}`,
     group && `group to ${group}`,
   ].filter(Boolean);
   const links =
     summary.skippedLinks > 0
-      ? t("dialogs.linksKeptTheirOwnPermissions", { count: summary.skippedLinks })
+      ? `; ${englishCount(summary.skippedLinks, "link")} kept their own permissions`
       : "";
   return `Changed ${parts.join(", ") || "nothing"} in ${folder}${links}`;
 }
@@ -187,7 +187,7 @@ export function PropertiesDialog({
   const calculate = async () => {
     setError(null);
     try {
-      const counted = await measuring.run("Measuring folder size", (operationId) =>
+      const counted = await measuring.run(t("dialogs.measuringFolderSize"), (operationId) =>
         fileOperations.measure(
           operationId,
           sessionId,
@@ -217,17 +217,19 @@ export function PropertiesDialog({
     setFailures([]);
     const what = single ? single.name : t("dialogs.items", { count: entries.length });
     try {
-      const summary = await applying.run(`Changing permissions of ${what}`, (operationId) =>
-        fileOperations.setPermissions({
-          operationId,
-          sessionId,
-          paths: entries.map((entry) => entry.path),
-          files: modeChange("files"),
-          folders: modeChange("folders"),
-          recursive,
-          owner: newOwner,
-          group: newGroup,
-        }),
+      const summary = await applying.run(
+        t("dialogs.changingPermissionsOf", { what }),
+        (operationId) =>
+          fileOperations.setPermissions({
+            operationId,
+            sessionId,
+            paths: entries.map((entry) => entry.path),
+            files: modeChange("files"),
+            folders: modeChange("folders"),
+            recursive,
+            owner: newOwner,
+            group: newGroup,
+          }),
       );
       const write = useLogStore.getState().write;
       write("info", describeChange(summary, newOwner, newGroup, folder), sessionId);
@@ -266,8 +268,11 @@ export function PropertiesDialog({
     return null;
   };
   const size = sizeText();
-  const id = (value: number | null | undefined) =>
-    value === null || value === undefined ? "" : ` (${value})`;
+  /** A field's name, with the user or group number of a single item after it. */
+  const withId = (name: string, value: number | null | undefined) =>
+    !single || value === null || value === undefined
+      ? name
+      : t("dialogs.nameWithId", { name, id: String(value) });
 
   return (
     <Dialog
@@ -339,7 +344,7 @@ export function PropertiesDialog({
 
         <div className="form-row">
           <label className="field grow">
-            <span>Owner{single ? id(details?.uid) : ""}</span>
+            <span>{withId(t("dialogs.owner"), details?.uid)}</span>
             <input
               value={owner}
               placeholder={originals.owner ? undefined : t("dialogs.mixedUnchanged")}
@@ -348,7 +353,7 @@ export function PropertiesDialog({
             />
           </label>
           <label className="field grow">
-            <span>Group{single ? id(details?.gid) : ""}</span>
+            <span>{withId(t("dialogs.group"), details?.gid)}</span>
             <input
               value={group}
               placeholder={originals.group ? undefined : t("dialogs.mixedUnchanged")}
@@ -388,7 +393,7 @@ export function PropertiesDialog({
               checked={recursive}
               onChange={(event) => setRecursive(event.target.checked)}
             />
-            Apply to everything inside the {folders.length === 1 ? "folder" : "folders"}
+            {t("dialogs.applyToEverythingInside", { count: folders.length })}
           </label>
         )}
         {links > 0 && hasPermissions && (
@@ -411,7 +416,7 @@ export function PropertiesDialog({
               ))}
               {failures.length > SHOWN_FAILURES && (
                 <li>
-                  {t("dialogs.andMoreListedInThe", { value: failures.length - SHOWN_FAILURES })}
+                  {t("dialogs.andMoreListedInThe", { count: failures.length - SHOWN_FAILURES })}
                 </li>
               )}
             </ul>
@@ -515,7 +520,10 @@ function PermissionGrid({ states, onChange }: PermissionGridProps) {
                   <td key={kind.label}>
                     <TriStateBox
                       state={states[bit]}
-                      label={`${permissionClass.label} ${kind.label.toLowerCase()}`}
+                      label={t("dialogs.permissionOfClass", {
+                        who: permissionClass.label,
+                        permission: midSentence(kind.label),
+                      })}
                       onToggle={() => toggle(bit)}
                     />
                   </td>

@@ -19,23 +19,32 @@ export const common = {
   start: "Start",
   tryAgain: "Try again",
   cancel: "Cancel",
+  rename: "Rename",
+  remove: "Remove",
+  keep: "Keep",
+  no: "No",
 
   // components/CommandOutputDialog
   stop: "Stop",
   close: "Close",
 
+  // components/ConfirmDialog
+  working: "Working...",
+
   // components/ConflictDialog
   size: "Size",
   skip: "Skip",
+  overwrite: "Overwrite",
+  resume: "Resume",
 
   // components/ConnectDialog
   connect: "Connect",
+  save: "Save",
 
   // components/EditorPane
   dismiss: "Dismiss",
 
   // components/ExternalEditDialogs
-  overwrite: "Overwrite",
   upload: "Upload",
 
   // components/ExternalEditsStatus
@@ -44,6 +53,9 @@ export const common = {
   // components/FileList
   folder: "Folder",
 
+  // components/FileOperationsHost
+  replace: "Replace",
+
   // components/FilePane
   none: "None",
   cut: "Cut",
@@ -51,21 +63,30 @@ export const common = {
   paste: "Paste",
   open: "Open",
   edit: "Edit",
-  rename: "Rename",
   loading: "Loading...",
+  listSeparator: ", ",
+
+  // components/FontPicker
+  default: "Default",
 
   // components/ImportConnectionsDialog
   back: "Back",
 
   // components/LimitScheduleSettings
   download: "Download",
+  pause: "Pause",
 
-  // components/SaveConnectionDialog
-  save: "Save",
+  // components/PreviewPane
+  nothing: "Nothing",
+
+  // components/PropertiesDialog
+  apply: "Apply",
 
   // components/SearchBar
   search: "Search",
-  apply: "Apply",
+
+  // components/SettingsDialog
+  askMe: "Ask me",
 
   // components/SyncPlanList
   path: "Path",
@@ -74,36 +95,13 @@ export const common = {
   clear: "Clear",
 
   // components/TransferView
-  remove: "Remove",
   retry: "Retry",
-  pause: "Pause",
-  resume: "Resume",
 
   // components/UpdateNotice
   hide: "Hide",
-  // components/BulkRenameDialog
-  keep: "Keep",
-  no: "No",
 
-  // components/FileOperationsHost
-  replace: "Replace",
-
-  // components/SettingsDialog
-  askMe: "Ask me",
-
-  // components/TransferLookSettings
-  nothing: "Nothing",
-
-  // lib/format: durations, such as the time a transfer has left
+  // lib/format
   durationSeconds: "{seconds}s",
   durationMinutes: "{minutes}m {seconds}s",
   durationHours: "{hours}h {minutes}m",
-
-  // Between the parts of a list that reads as one line, such as totals
-  listSeparator: ", ",
-  // components/ConfirmDialog
-  working: "Working...",
-
-  // components/FontPicker
-  default: "Default",
 } as const satisfies MessageArea;

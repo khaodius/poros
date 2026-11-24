@@ -41,7 +41,7 @@ export function LimitScheduleStatus() {
   const limits = useLimitStatus();
   const now = new Date(useMinute());
   if (limits.rule === null) return null;
-  const until = limits.until === null ? "" : ` until ${clockTime(limits.until, now)}`;
+  const until = limits.until === null ? null : clockTime(limits.until, now);
   const override = overrideText(limits);
   const OverrideIcon = limits.ignored ? CalendarClock : CalendarOff;
   return (
@@ -55,7 +55,11 @@ export function LimitScheduleStatus() {
         onClick={openScheduleSettings}
       >
         {limits.ignored ? (
-          t("limits.scheduleIgnored", { until })
+          until === null ? (
+            t("limits.scheduleIgnoredShort")
+          ) : (
+            t("limits.scheduleIgnoredShortUntil", { time: until })
+          )
         ) : (
           <>
             {shownLimits(limits).map(({ direction, mode, text }) => {
@@ -67,7 +71,7 @@ export function LimitScheduleStatus() {
                 </span>
               );
             })}
-            {until}
+            {until !== null && ` ${t("limits.untilTime", { time: until })}`}
           </>
         )}
       </button>

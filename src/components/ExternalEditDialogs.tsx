@@ -31,7 +31,7 @@ import { CompareDialog } from "./CompareDialog";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Dialog } from "./Dialog";
 import { LeftoverList, type Confirmation } from "./ExternalEditsStatus";
-import { useT } from "../i18n";
+import { midSentence, t, useT } from "../i18n";
 
 /** Keeps the list of files open in other programs, and asks what the window in use has to ask. */
 export function ExternalEditsHost() {
@@ -96,14 +96,14 @@ function tell(notice: ExternalEditNotice): void {
       toast(
         "info",
         notice.renamedTo
-          ? `Uploaded ${notice.name} as ${notice.renamedTo}`
-          : `Uploaded ${notice.name}`,
+          ? t("openWith.uploadedAs", { name: notice.name, renamedTo: notice.renamedTo })
+          : t("openWith.uploadedName", { name: notice.name }),
       );
       return;
     case "uploadFailed":
       toast(
         "error",
-        `Could not upload ${notice.name}: ${notice.message}. The saved file is kept; try again from the status bar.`,
+        t("openWith.couldNotUploadKept", { name: notice.name, message: notice.message }),
       );
       return;
     case "conflict":
@@ -134,7 +134,7 @@ function tell(notice: ExternalEditNotice): void {
       return;
     }
     case "openFailed":
-      toast("error", `Could not open ${notice.name}: ${notice.message}`);
+      toast("error", t("openWith.couldNotOpen", { name: notice.name, message: notice.message }));
       return;
     case "ended":
       toast("error", notice.message);
@@ -171,9 +171,8 @@ function ConflictPrompt({ edit }: { edit: ExternalEdit }) {
       <div className="confirm-body">
         <p>
           {deleted
-            ? `Someone deleted it from ${edit.server} since you opened it.`
-            : `Someone changed it on ${edit.server} since you opened it.`}{" "}
-          Your save has not been uploaded yet.
+            ? t("openWith.someoneDeletedIt", { server: edit.server })
+            : t("openWith.someoneChangedIt", { server: edit.server })}
         </p>
         {conflict && (
           <table className="conflict-table">
@@ -252,13 +251,13 @@ function ConflictPrompt({ edit }: { edit: ExternalEdit }) {
             location: { kind: "remote", sessionId: edit.sessionId },
             path: edit.remotePath,
             name: edit.name,
-            where: `${edit.server}, changed there`,
+            where: t("openWith.serverChangedThere", { server: edit.server }),
           }}
           right={{
             location: { kind: "local" },
             path: edit.localPath,
             name: edit.name,
-            where: "Your saved copy",
+            where: t("openWith.yourSavedCopy"),
           }}
           onClose={() => setComparing(false)}
         />
@@ -284,8 +283,13 @@ function UploadPrompt({ edit }: { edit: ExternalEdit }) {
     <Dialog title={t("openWith.upload", { name: edit.name })} onClose={done}>
       <div className="confirm-body">
         <p>
-          {edit.name} was saved{edit.program ? ` in ${edit.program}` : ""}. Upload it to{" "}
-          {edit.server} now?
+          {edit.program
+            ? t("openWith.savedInProgramUploadNow", {
+                name: edit.name,
+                program: edit.program,
+                server: edit.server,
+              })
+            : t("openWith.savedUploadNow", { name: edit.name, server: edit.server })}
         </p>
         <label className="check">
           <input
@@ -338,7 +342,9 @@ function OpenQuestion({ prompt }: { prompt: OpenPrompt }) {
             label: preferred ? programLabel(preferred) : t("openWith.defaultProgram"),
             detail: preferred
               ? t("openWith.setUpForFilesLike")
-              : `The program this system opens ${extension ?? "such"} files with`,
+              : extension
+                ? t("openWith.theProgramThisSystemOpensFilesWith", { extension })
+                : t("openWith.theProgramThisSystemOpensSuchFilesWith"),
             choice: preferred
               ? ({ kind: "program", id: preferred.id } as const)
               : ({ kind: "default" } as const),
@@ -402,9 +408,8 @@ function OpenQuestion({ prompt }: { prompt: OpenPrompt }) {
         {executable && (
           <p>
             {prompt.editId
-              ? `${target.name} holds a program or a script, so it was not opened.`
-              : `${target.name} is a program or a script.`}{" "}
-            Poros does not run files it opens: pick an editor to look at it in.
+              ? t("openWith.holdsAProgramNotOpened", { name: target.name })
+              : t("openWith.isAProgramOrAScript", { name: target.name })}
           </p>
         )}
         <div className="open-choices" role="group" aria-label={t("openWith.programs")}>
@@ -444,11 +449,9 @@ function LeftoversDialog() {
     <Dialog title={t("openWith.filesNotUploadedLastTime")} onClose={close} width={560}>
       <div className="confirm-body">
         <p>
-          When Poros last closed, {leftovers.length === 1 ? "this file was" : "these files were"}{" "}
-          saved in another program but not uploaded. Upload once its server is connected, or discard
-          the changes. The status bar keeps the list.
+          {t("openWith.whenPorosLastClosed", { count: leftovers.length })}
           {leftovers.some((leftover) => leftover.vaultRoot) &&
-            " Copies of files from vaults stay unencrypted on this computer until then."}
+            ` ${t("openWith.copiesFromVaultsStayUnencrypted")}`}
         </p>
         <div className="edits-dialog-list">
           <LeftoverList leftovers={leftovers} onConfirm={setConfirming} />
@@ -479,7 +482,7 @@ function EditNames({ edits }: { edits: ExternalEdit[] }) {
     <ul className="unsaved-files">
       {edits.map((edit) => (
         <li key={edit.id}>
-          {edit.name} <span className="edit-names-state">{editStateLabel(edit).toLowerCase()}</span>
+          {edit.name} <span className="edit-names-state">{midSentence(editStateLabel(edit))}</span>
           {edit.detail && <span className="edit-names-state">: {edit.detail}</span>}
         </li>
       ))}
@@ -519,7 +522,6 @@ function CloseTabPrompt({ closing }: { closing: ClosePrompt }) {
     else close();
   };
 
-  const files = inVault.length === 1 ? "the file" : "the files";
   return (
     <Dialog
       title={
@@ -532,27 +534,27 @@ function CloseTabPrompt({ closing }: { closing: ClosePrompt }) {
     >
       <div className="confirm-body">
         <p>
-          {t("openWith.files", { count: edits.length })} from this {locking ? "vault" : "server"}{" "}
-          {edits.length === 1 ? "is" : "are"} open in other programs:
+          {locking
+            ? t("openWith.filesFromThisVaultOpen", { count: edits.length })
+            : t("openWith.filesFromThisServerOpen", { count: edits.length })}
         </p>
         <EditNames edits={stuck ?? edits} />
         {stuck ? (
           <p className="warning-text">
-            {stuck.length === 1 ? "This one" : "These"} could not be uploaded.{" "}
             {locking
-              ? `Locking anyway wipes the changes in ${stuck.length === 1 ? "it" : "them"}.`
+              ? t("openWith.couldNotBeUploadedLockingWipes", { count: stuck.length })
               : stuck.some((edit) => edit.inVault)
-                ? "Closing anyway wipes the changes in vault files."
-                : "Closing anyway leaves them in the status bar's list, to upload later."}
+                ? t("openWith.couldNotBeUploadedClosingWipes", { count: stuck.length })
+                : t("openWith.couldNotBeUploadedClosingLeaves", { count: stuck.length })}
           </p>
         ) : (
           <>
             {inVault.length < edits.length && <p>{t("openWith.theirSavesKeepBeingUploaded")}</p>}
             {inVault.length > 0 && (
               <p>
-                {locking ? "Locking the vault" : "Closing the tab locks its vault, which"} ends
-                editing {files} from it and wipes the working copies. What was saved is uploaded
-                first.
+                {locking
+                  ? t("openWith.lockingEndsEditing", { count: inVault.length })
+                  : t("openWith.closingLocksVaultEndsEditing", { count: inVault.length })}
               </p>
             )}
           </>
@@ -628,16 +630,12 @@ function ExitPrompt({ editIds }: { editIds: string[] }) {
   return (
     <Dialog title={t("openWith.uploadSavedFilesBeforeQuitting")} onClose={cancel} width={500}>
       <div className="confirm-body">
-        <p>
-          {unsaved.length === 1 ? "This file was" : "These files were"} saved in other programs but{" "}
-          {unsaved.length === 1 ? "has" : "have"} not reached the server:
-        </p>
+        <p>{t("openWith.savedButNotReachedTheServer", { count: unsaved.length })}</p>
         <EditNames edits={unsaved} />
         {failed && <p className="warning-text">{t("openWith.someCouldNotBeUploaded")}</p>}
         <p>
-          Quitting without uploading keeps them, and Poros offers to upload them when it starts
-          again.
-          {inVault && " Working copies of vault files are wiped."}
+          {t("openWith.quittingWithoutUploadingKeepsThem")}
+          {inVault && ` ${t("openWith.workingCopiesOfVaultFilesAreWiped")}`}
         </p>
       </div>
       <div className="dialog-actions">

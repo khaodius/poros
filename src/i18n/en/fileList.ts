@@ -7,6 +7,15 @@ export const fileList = {
   newNameFor: "New name for {name}",
   resize: "Resize {label}",
   dragToResizeDoubleClick: "Drag to resize, double-click to fit",
+  nothingMatchesTheFilter: "Nothing matches the filter",
+  onlyHiddenItemsHere: "Only hidden items here",
+  thisFolderIsEmpty: "This folder is empty",
+
+  // components/PropertiesDialog
+  folder: "Folder",
+  brokenLink: "Broken link",
+  file: "File",
+
   // lib/columns
   type: "Type",
   modified: "Modified",

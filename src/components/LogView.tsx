@@ -97,7 +97,7 @@ export function LogView() {
     const path = await saveFileDialog({
       title: t("log.saveLog"),
       defaultPath: "poros.log",
-      filters: [{ name: "Log files", extensions: ["log", "txt"] }],
+      filters: [{ name: t("log.logFiles"), extensions: ["log", "txt"] }],
     });
     if (!path) return;
     try {
@@ -132,7 +132,7 @@ export function LogView() {
           <option value={ALL_SESSIONS}>{t("log.allSessions")}</option>
           {loggedSessions.map((id) => (
             <option key={id} value={id}>
-              {sessions[id]?.info.label ?? t("log.closedSession", { slice: id.slice(0, 8) })}
+              {sessions[id]?.info.label ?? t("log.closedSession", { id: id.slice(0, 8) })}
             </option>
           ))}
         </select>

@@ -1,6 +1,16 @@
 import type { MessageArea } from "../catalog";
 
 export const search = {
+  // components/FilePane
+  searching: "Searching...",
+  stoppedBeforeAnythingWasFound: "Stopped before anything was found",
+  nothingWasFound: "Nothing was found",
+  noResultsWithTheseFilters: "No results with these filters.",
+  noResults: "No results.",
+  noResultsWithTheseFiltersHiddenNotSearched:
+    "No results with these filters. Hidden folders were not searched.",
+  noResultsHiddenNotSearched: "No results. Hidden folders were not searched.",
+
   // components/SearchBar
   customSize: "Custom size...",
   customDates: "Custom dates...",
@@ -32,16 +42,22 @@ export const search = {
   },
   leaveABoxEmptyTo: "Leave a box empty to leave that end open.",
   foldersThatCouldNotBe: "Folders that could not be read",
-  theSearchWentPastFolders: {
+  andMore: "and {count} more",
+  theSearchWentPastIt: {
     one: "The search went past {count} folder it could not read. What is inside them is not in the results.",
     other:
       "The search went past {count} folders it could not read. What is inside them is not in the results.",
   },
-  andMore: "and {count} more",
-  // components/SearchBar
-  couldNotBeRead: "{t} could not be read",
-  theSearchWentPastIt:
-    "The search went past {t} it could not read. What is inside them is not in the results.",
+  searchIn: "Search in {folder}",
+  pressEnterToSearch: "Press Enter to search {folder} and the folders inside it",
+  searchingFoundIn: "Searching: {found} found in {folders}",
+  foundInFoldersSearched: "{found} in {folders} searched",
+  searchedByTheServer: "Searched by the server",
+  stoppedAfterSoFar: "Stopped after {folders}: {found} so far",
+  firstResultsShown: "First {limit} results shown. Narrow the search to see the rest.",
+  connectionLostDuringTheSearch:
+    "The connection was lost during the search. {found} found before that.",
+  theSearchFailed: "The search failed",
 
   // lib/search
   anySize: "Any size",
@@ -65,4 +81,21 @@ export const search = {
   filesAndFolders: "Files and folders",
   filesOnly: "Files only",
   foldersOnly: "Folders only",
+  isNotASize: "{text} is not a size",
+  theSmallestSizeIsLargerThanTheLargest: "The smallest size is larger than the largest",
+  isNotADate: "{text} is not a date",
+  theFirstDayIsAfterTheLast: "The first day is after the last",
+  sizeFromTo: "{atLeast} to {atMost}",
+  atLeastSize: "At least {size}",
+  atMostSize: "At most {size}",
+  onDay: "On {day}",
+  daysFromTo: "{from} to {to}",
+  sinceDay: "Since {day}",
+  untilDay: "Until {day}",
+  levelsDown: { one: "{count} level down", other: "{count} levels down" },
+  everything: "Everything",
+  regularExpressionInAList: "regular expression",
+  matchCaseInAList: "match case",
+  hiddenFoldersInAList: "hidden folders",
+  followingLinksInAList: "following links",
 } as const satisfies MessageArea;

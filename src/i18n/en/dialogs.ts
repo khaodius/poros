@@ -3,22 +3,27 @@ import type { MessageArea } from "../catalog";
 export const dialogs = {
   // components/ConflictDialog
   fileAlreadyExists: "File already exists",
-  alreadyExistsIn: "already exists in {targetDirectory}.",
+  alreadyExistsIn: "{name} already exists in {folder}.",
   modified: "Modified",
   existingFile: "Existing file",
+  overwriteIfNewer: "Overwrite if newer",
+  keepBoth: "Keep both",
+  localFile: "Local file",
+  serverFile: "Server file",
+  doTheSameForAny: "Do the same for any further conflicts in these transfers",
+  doTheSameForOthers: {
+    one: "Do the same for the {count} other conflict and any that follow",
+    other: "Do the same for the {count} other conflicts and any that follow",
+  },
 
   // components/DeleteDialog
   nothingToDelete: "Nothing to delete",
   deleteItem: "Delete item",
   deleteItems: "Delete {count} items",
   checkingTheFolder: "Checking the folder...",
+  theseItemsAreNoLonger: "These items are no longer in the folder.",
 
   // components/PropertiesDialog
-  permissionsOfItems: { one: "permissions of {count} item", other: "permissions of {count} items" },
-  linksKeptTheirOwnPermissions: {
-    one: "; {count} link kept their own permissions",
-    other: "; {count} links kept their own permissions",
-  },
   items: { one: "{count} item", other: "{count} items" },
   files: { one: "{count} file", other: "{count} files" },
   folders: { one: "{count} folder", other: "{count} folders" },
@@ -39,14 +44,36 @@ export const dialogs = {
   permissions: "Permissions",
   linksHaveNoPermissionsOf:
     "Links have no permissions of their own, so they keep theirs. Owner and group changes apply to the links themselves.",
-  andMoreListedInThe: "and {value} more, listed in the log",
+  andMoreListedInThe: "and {count} more, listed in the log",
   changedItems: { one: "Changed {count} item", other: "Changed {count} items" },
   octal: "Octal",
   mixed: "Mixed",
   questionMarksAreLeftAs: "Question marks are left as each item has them",
-  // components/ConflictDialog
-  overwriteIfNewer: "Overwrite if newer",
-  keepBoth: "Keep both",
+  owner: "Owner",
+  group: "Group",
+  folders2: "Folders",
+  files2: "Files",
+  oneItemCouldNotBe: "One item could not be changed:",
+  itemsCouldNotBeChanged: "{count} items could not be changed:",
+  applying: "Applying...",
+  linkToAFolder: "Link to a folder",
+  linkToAFile: "Link to a file",
+  specialFile: "Special file",
+  extensionFile: "{extension} file",
+  nameWithId: "{name} ({id})",
+  measuringFolderSize: "Measuring folder size",
+  changingPermissionsOf: "Changing permissions of {what}",
+  applyToEverythingInside: {
+    one: "Apply to everything inside the folder",
+    other: "Apply to everything inside the folders",
+  },
+  permissionOfClass: "{who} {permission}",
+
+  // lib/deletion
+  deletedCount: "{count} deleted",
+  countingToDelete: "Counting what to delete...",
+  deletedFoundSoFar: "{count} deleted, {found} found so far",
+  deletedOfTotal: "{count} of {total} deleted",
 
   // lib/permissions
   setUserId: "Set user ID",
@@ -55,30 +82,8 @@ export const dialogs = {
   runsAsTheGroupNew: "Runs as the group; new files inherit it",
   sticky: "Sticky",
   onlyOwnersMayDeleteOr: "Only owners may delete or rename entries",
-  owner: "Owner",
-  group: "Group",
   others: "Others",
   read: "Read",
   write: "Write",
   execute: "Execute",
-  // components/ConflictDialog
-  localFile: "Local file",
-  serverFile: "Server file",
-  doTheSameForAny: "Do the same for any further conflicts in these transfers",
-
-  // components/DeleteDialog
-  theseItemsAreNoLonger: "These items are no longer in the folder.",
-
-  // components/PropertiesDialog
-  folders2: "Folders",
-  files2: "Files",
-  oneItemCouldNotBe: "One item could not be changed:",
-  itemsCouldNotBeChanged: "{count} items could not be changed:",
-  applying: "Applying...",
-
-  // lib/deletion: how a delete on a server goes
-  deletedCount: "{count} deleted",
-  countingToDelete: "Counting what to delete...",
-  deletedFoundSoFar: "{count} deleted, {found} found so far",
-  deletedOfTotal: "{count} of {total} deleted",
 } as const satisfies MessageArea;

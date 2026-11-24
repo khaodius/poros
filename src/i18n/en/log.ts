@@ -14,13 +14,12 @@ export const log = {
   copyShownLines: "Copy shown lines",
   saveShownLinesToA: "Save shown lines to a file",
   clearLog: "Clear log",
-  // components/LogView
   info: "Info",
   warnings: "Warnings",
   errors: "Errors",
   server: "Server",
-  // components/LogView
-  closedSession: "Closed session {slice}",
+  closedSession: "Closed session {id}",
   connectionAndTransferActivityAppears: "Connection and transfer activity appears here.",
   noLinesMatchTheFilters: "No lines match the filters.",
+  logFiles: "Log files",
 } as const satisfies MessageArea;

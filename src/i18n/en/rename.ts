@@ -47,40 +47,13 @@ export const rename = {
   couldNotRefreshThisFolder: "Could not refresh this folder. This listing may be out of date.",
   resetRules: "Reset rules",
   ofItemsWillBeRenamed: {
-    one: "{ready} of {count} item will be renamed{unchanged}.",
-    other: "{ready} of {count} items will be renamed{unchanged}.",
+    one: "{ready} of {count} item will be renamed.",
+    other: "{ready} of {count} items will be renamed.",
   },
-
-  // components/RenameReportDialog
-  renamingStopped: "Renaming stopped",
-  ofItemsIn: {
-    one: "{renamedCount} of {count} item in",
-    other: "{renamedCount} of {count} items in",
+  ofItemsWillBeRenamedSomeUnchanged: {
+    one: "{ready} of {count} item will be renamed, {unchanged} unchanged.",
+    other: "{ready} of {count} items will be renamed, {unchanged} unchanged.",
   },
-  items: { one: "{count} item", other: "{count} items" },
-  couldNotBeRenamedTo: "could not be renamed to",
-  isNowNamed: "is now named",
-  becauseItCouldNotBe:
-    ", because it could not be given its name back: {message}. Rename it by hand.",
-  whatBecameOfEachRename: "What became of each rename",
-  noItems: "No items.",
-
-  // components/RenameTable
-  newName: "New name",
-  status: "Status",
-  noName: "No name",
-
-  // lib/bulkRename
-  theNameIsEmpty: "The name is empty",
-  theNameIsTooLong: "The name is too long: {length} of {maxLength} {lengthUnit}",
-  nowNamed: "Now named {temporary}: {message}",
-
-  // state/bulkRename
-  renamingCancelledRenamed: {
-    one: "Renaming cancelled. {renamed} of {count} item renamed.",
-    other: "Renaming cancelled. {renamed} of {count} items renamed.",
-  },
-  // components/BulkRenameDialog
   text: "Text",
   regex: "Regex",
   both: "Both",
@@ -92,23 +65,95 @@ export const rename = {
   all: "All",
   changed: "Changed",
   problems: "Problems",
+  checkingTheFolder: "Checking the folder...",
+  theseItemsAreNoLongerInTheFolder: "These items are no longer in the folder.",
+  selectedItemsLeftOut: {
+    one: "{count} selected item is no longer in the folder and is left out.",
+    other: "{count} selected items are no longer in the folder and are left out.",
+  },
 
   // components/RenameReportDialog
+  renamingStopped: "Renaming stopped",
+  renamedOfItemsIn: {
+    one: "{count} of {total} in {folder} has its new name.",
+    other: "{count} of {total} in {folder} have their new name.",
+  },
+  theOthersKeepTheirOldNamesButOne: "The others keep their old names, but for the one below.",
+  theOthersKeepTheirOldNames: "The others keep their old names.",
+  items: { one: "{count} item", other: "{count} items" },
+  couldNotBeRenamedTo: "{from} could not be renamed to {to}: {message}",
+  isNowNamedBecause:
+    "{from} is now named {temporary}, because it could not be given its name back: {message}. Rename it by hand.",
+  whatBecameOfEachRename: "What became of each rename",
+  noItems: "No items.",
   renamed: "Renamed",
   notRenamed: "Not renamed",
   failed: "Failed",
   leftUnderAnotherName: "Left under another name",
-  ofIn: "{renamedCount} of {t} in",
+
+  // components/RenameTable
+  newName: "New name",
+  status: "Status",
+  noName: "No name",
 
   // lib/bulkRename
+  theNameIsEmpty: "The name is empty",
+  theNameIsTooLong: "The name is too long: {length} of {maxLength} {lengthUnit}",
+  nowNamed: "Now named {temporary}: {message}",
   nameWithoutTheExtension: "Name without the extension",
   dateModified: "Date modified",
   timeModified: "Time modified",
   nameOfTheFolder: "Name of the folder",
-  // components/BulkRenameDialog
-  checkingTheFolder: "Checking the folder...",
+  isNotAName: '"{name}" is not a name',
+  namesCannotContainControlCharacters: "Names cannot contain control characters",
+  namesCannotContain: "Names cannot contain {character}",
+  namesCannotEndWithASpaceOrADot: "Names cannot end with a space or a dot",
+  isAReservedNameOnWindows: "{name} is a reserved name on Windows",
+  keepsThisName: "{name} keeps this name",
+  keepsANameDifferingInCase: "{name} keeps a name, which differs only in case",
+  keepsANameDifferingInAccents:
+    "{name} keeps a name, which differs only in how its accents are stored",
+  getsTheSameName: "{name} gets the same name",
+  getsANameDifferingInCase: "{name} gets a name, which differs only in case",
+  getsANameDifferingInAccents:
+    "{name} gets a name, which differs only in how its accents are stored",
+  anotherSelectedItemHasTheSameName:
+    "Another selected item has the same name; rename these one at a time",
+  isSelectedTooAndCountsAsTheSameName:
+    "{name} is selected too and counts as the same name here; rename these one at a time",
+  noModifiedTimeFor: "The item has no modified time for {date} or {time}",
+  anItemThatIsNotSelectedHasThisName: "An item that is not selected has this name",
+  notSelectedAndHasANameDifferingInCase:
+    "{name} is not selected and has a name, which differs only in case",
+  notSelectedAndHasANameDifferingInAccents:
+    "{name} is not selected and has a name, which differs only in how its accents are stored",
+  problemSharedName: {
+    one: "{count} item has the same name as another selected item",
+    other: "{count} items have the same name as another selected item",
+  },
+  problemEmpty: { one: "{count} name is empty", other: "{count} names are empty" },
+  problemInvalid: {
+    one: "{count} name cannot be used here",
+    other: "{count} names cannot be used here",
+  },
+  problemTooLong: { one: "{count} name is too long", other: "{count} names are too long" },
+  problemUndated: {
+    one: "{count} item has no modified time",
+    other: "{count} items have no modified time",
+  },
+  problemDuplicate: {
+    one: "{count} item would share a name",
+    other: "{count} items would share a name",
+  },
+  problemTaken: { one: "{count} name is already taken", other: "{count} names are already taken" },
+  theRegularExpressionIsNotValid: "The regular expression is not valid: {error}",
+  problemsSentence: "{problems}.",
 
   // state/bulkRename
+  renamingCancelledRenamed: {
+    one: "Renaming cancelled. {renamed} of {count} item renamed.",
+    other: "Renaming cancelled. {renamed} of {count} items renamed.",
+  },
   renamingItemsIn: {
     one: "Renaming {count} item in {folder}",
     other: "Renaming {count} items in {folder}",

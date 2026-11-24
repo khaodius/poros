@@ -64,7 +64,7 @@ export function NewVaultDialog({ folder, onCreate, onClose }: NewVaultDialogProp
             onChange={(event) => setPassword(event.target.value)}
           />
           <small className={`field-hint ${password !== "" && tooShort ? "is-error" : ""}`}>
-            {t("vault.atLeastCharacters", { value: MIN_VAULT_PASSWORD_LENGTH })}
+            {t("vault.atLeastCharacters", { count: MIN_VAULT_PASSWORD_LENGTH })}
           </small>
         </label>
         <label className="field">

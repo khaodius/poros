@@ -141,7 +141,7 @@ export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [conflict, setConflict] = useState<{ removed: boolean } | null>(null);
   const [cursor, setCursor] = useState<Cursor>({ line: 1, column: 1, selected: 0 });
-  const [languageName, setLanguageName] = useState("Plain text");
+  const [languageName, setLanguageName] = useState<string | null>(null);
   const [wrap, setWrap] = useState(rememberedWrap);
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const [confirmReload, setConfirmReload] = useState(false);
@@ -278,7 +278,7 @@ export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
         setPhase("ready");
 
         const description = languageFor(name);
-        setLanguageName(description?.name ?? "Plain text");
+        setLanguageName(description?.name ?? null);
         void description
           ?.load()
           .then((support) => {
@@ -365,7 +365,7 @@ export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
             <Search size={15} />
           </EditorButton>
           <EditorButton
-            label={`Reload from ${tab.sessionId ? "the server" : "disk"}`}
+            label={tab.sessionId ? t("editor.reloadFromTheServer") : t("editor.reloadFromDisk")}
             disabled={phase === "loading"}
             onClick={reload}
           >
@@ -468,10 +468,15 @@ export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
         {ready && (
           <div className="editor-status">
             <span>
-              Ln {cursor.line}, Col {cursor.column}
-              {cursor.selected > 0 && ` (${cursor.selected} selected)`}
+              {cursor.selected > 0
+                ? t("editor.lineColumnSelected", {
+                    line: cursor.line,
+                    column: cursor.column,
+                    selected: cursor.selected,
+                  })
+                : t("editor.lineColumn", { line: cursor.line, column: cursor.column })}
             </span>
-            <span>{languageName}</span>
+            <span>{languageName ?? t("editor.plainText")}</span>
             <button
               type="button"
               className="editor-status-button"

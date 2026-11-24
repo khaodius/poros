@@ -152,7 +152,7 @@ import { ShareDialog } from "./ShareDialog";
 import { VaultUnlockCard } from "./VaultUnlockCard";
 import { serverCommandsMenu } from "./commandMenu";
 import { shareMenuItem } from "./shareMenu";
-import { useT } from "../i18n";
+import { t, useT } from "../i18n";
 
 type PaneDialog =
   | { type: "newFolder" }
@@ -253,11 +253,11 @@ const NO_SEARCHES: SearchForm[] = [];
 function searchEmptyMessage(view: SearchView): string {
   switch (view.status) {
     case "searching":
-      return "Searching...";
+      return t("search.searching");
     case "stopped":
-      return "Stopped before anything was found";
+      return t("search.stoppedBeforeAnythingWasFound");
     case "failed":
-      return "Nothing was found";
+      return t("search.nothingWasFound");
     default: {
       const { form } = view;
       const narrowed =
@@ -265,8 +265,11 @@ function searchEmptyMessage(view: SearchView): string {
         sizeNarrows(form.size) ||
         dateNarrows(form.date) ||
         form.depth !== null;
-      const found = narrowed ? "No results with these filters." : "No results.";
-      return form.hidden ? found : `${found} Hidden folders were not searched.`;
+      if (form.hidden)
+        return narrowed ? t("search.noResultsWithTheseFilters") : t("search.noResults");
+      return narrowed
+        ? t("search.noResultsWithTheseFiltersHiddenNotSearched")
+        : t("search.noResultsHiddenNotSearched");
     }
   }
 }
@@ -800,7 +803,7 @@ export function FilePane({
           if (done && target.folder === null && shown) {
             sayWhereResultsDropWent(
               shown,
-              action.mode === "move" ? "Moved" : "Copied",
+              action.mode === "move" ? "moved" : "copied",
               action.folder,
             );
           }
@@ -871,11 +874,19 @@ export function FilePane({
   const transferMenuItem = (targets: FileEntry[]): MenuItem => {
     const upload = source.kind === "local";
     const destination = lastActivePane(upload ? "remote" : "local");
-    const verb = upload ? "Upload" : "Download";
+    const place = destination
+      ? upload
+        ? destination.label
+        : (destination.path() ?? t("pane.localFolder"))
+      : null;
     return {
-      label: destination
-        ? `${verb} to ${upload ? destination.label : (destination.path() ?? "local folder")}`
-        : `${verb} (${upload ? "no server open" : "no local tab open"})`,
+      label: upload
+        ? place === null
+          ? t("pane.uploadNoServerOpen")
+          : t("pane.uploadTo", { place })
+        : place === null
+          ? t("pane.downloadNoLocalTabOpen")
+          : t("pane.downloadTo", { place }),
       icon: upload ? <Upload size={14} /> : <Download size={14} />,
       disabled: !destination || targets.length === 0,
       onSelect: () => transferToOtherSide(tabId, targets),
@@ -1462,7 +1473,7 @@ export function FilePane({
             <FolderSearch size={15} />
           </ToolbarButton>
           <ToolbarButton
-            label={t("pane.compareFolders", { value: COMPARE_FOLDERS_SHORTCUT })}
+            label={t("pane.compareFolders", { shortcut: COMPARE_FOLDERS_SHORTCUT })}
             onClick={folderCompare.toggle}
             pressed={folderCompare.comparing}
             disabled={!pane.listing && !folderCompare.comparing}
@@ -1470,7 +1481,7 @@ export function FilePane({
             <GitCompareArrows size={15} />
           </ToolbarButton>
           <ToolbarButton
-            label={t("pane.previewF3FocusIt", { value: FOCUS_PREVIEW_SHORTCUT })}
+            label={t("pane.previewF3FocusIt", { shortcut: FOCUS_PREVIEW_SHORTCUT })}
             onClick={switchPreview}
             pressed={previewOpen}
           >
@@ -1693,13 +1704,17 @@ export function FilePane({
         <span>
           {lockedCard
             ? t("pane.lockedVault")
-            : inResults
-              ? t("pane.results", { count: pane.entryCount })
-              : t("pane.items", { count: pane.entryCount })}
-          {!lockedCard && pane.hiddenCount > 0 && t("pane.hidden", { count: pane.hiddenCount })}
-          {!lockedCard &&
-            identicalHidden > 0 &&
-            t("pane.identicalNotShown", { count: identicalHidden })}
+            : [
+                inResults
+                  ? t("pane.results", { count: pane.entryCount })
+                  : t("pane.items", { count: pane.entryCount }),
+                pane.hiddenCount > 0 ? t("pane.hidden", { count: pane.hiddenCount }) : null,
+                identicalHidden > 0
+                  ? t("pane.identicalNotShown", { count: identicalHidden })
+                  : null,
+              ]
+                .filter((fact) => fact !== null)
+                .join(t("common.listSeparator"))}
         </span>
         {selected.length > 0 && (
           <span>
@@ -1753,11 +1768,18 @@ export function FilePane({
       {dialog?.type === "placeTo" && pane.listing && (
         <PromptDialog
           title={dialog.mode === "move" ? t("pane.moveTo3") : t("pane.copyTo3")}
-          label={`Folder to ${dialog.mode} ${
+          label={
             dialog.entries.length === 1
-              ? dialog.entries[0].name
-              : t("pane.items", { count: dialog.entries.length })
-          } into`}
+              ? t(dialog.mode === "move" ? "pane.folderToMoveInto" : "pane.folderToCopyInto", {
+                  name: dialog.entries[0].name,
+                })
+              : t(
+                  dialog.mode === "move"
+                    ? "pane.folderToMoveItemsInto"
+                    : "pane.folderToCopyItemsInto",
+                  { count: dialog.entries.length },
+                )
+          }
           initialValue={pane.listing.path}
           confirmLabel={dialog.mode === "move" ? t("pane.move") : t("common.copy")}
           onClose={closeDialog(dialog)}

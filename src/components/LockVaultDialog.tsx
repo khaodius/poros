@@ -30,12 +30,7 @@ export function LockVaultDialog({
   return (
     <Dialog title={t("vault.lock", { name })} onClose={onClose}>
       <div className="confirm-body">
-        <p>
-          {t("vault.transfers", { count: pendingTransfers })} for this vault{" "}
-          {pendingTransfers === 1 ? "is" : "are"} still in the queue. Nothing can be copied into or
-          out of a locked vault, so {pendingTransfers === 1 ? "it waits" : "they wait"} paused until
-          you unlock the vault again and resume {pendingTransfers === 1 ? "it" : "them"}.
-        </p>
+        <p>{t("vault.transfersForThisVaultStillQueued", { count: pendingTransfers })}</p>
       </div>
       <div className="dialog-actions">
         <button type="button" className="button" onClick={onClose}>

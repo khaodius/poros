@@ -19,7 +19,6 @@ import {
   X,
 } from "lucide-react";
 import { isConnectionLost, type SearchView } from "../hooks/useSearch";
-import { formatCount } from "../lib/deletion";
 import { baseName } from "../lib/path";
 import {
   DATE_PRESETS,
@@ -187,7 +186,7 @@ export function SearchBar({
           <input
             ref={inputRef}
             value={form.pattern}
-            placeholder={`Search in ${baseName(root) || root}`}
+            placeholder={t("search.searchIn", { folder: baseName(root) || root })}
             aria-label={t("search.nameToSearchFor")}
             spellCheck={false}
             autoComplete="off"
@@ -400,33 +399,33 @@ function SearchStatus({
     tone = "danger";
     text = problem;
   } else if (!view) {
-    text = `Press Enter to search ${baseName(root) || root} and the folders inside it`;
+    text = t("search.pressEnterToSearch", { folder: baseName(root) || root });
   } else {
     const found = t("search.results", { count: view.entries.length });
     const folders = t("search.folders", { count: view.folders });
     switch (view.status) {
       case "searching":
         icon = <LoaderCircle size={13} className="spin" aria-hidden />;
-        text = `Searching: ${formatCount(view.entries.length)} found in ${folders}`;
+        text = t("search.searchingFoundIn", { found: view.entries.length, folders });
         detail = view.current;
         break;
       case "finished":
-        text = `${found} in ${folders} searched`;
-        if (view.engine === "find") detail = "Searched by the server";
+        text = t("search.foundInFoldersSearched", { found, folders });
+        if (view.engine === "find") detail = t("search.searchedByTheServer");
         break;
       case "stopped":
         tone = "warning";
-        text = `Stopped after ${folders}: ${found} so far`;
+        text = t("search.stoppedAfterSoFar", { folders, found });
         break;
       case "capped":
         tone = "warning";
-        text = `First ${formatCount(SEARCH_LIMIT)} results shown. Narrow the search to see the rest.`;
+        text = t("search.firstResultsShown", { limit: SEARCH_LIMIT });
         break;
       case "failed":
         tone = "danger";
         text = isConnectionLost(view.error)
-          ? `The connection was lost during the search. ${found} found before that.`
-          : (view.error?.message ?? "The search failed");
+          ? t("search.connectionLostDuringTheSearch", { found })
+          : (view.error?.message ?? t("search.theSearchFailed"));
         break;
     }
   }
@@ -445,7 +444,7 @@ function SearchStatus({
       {unreadable > 0 && (
         <button type="button" className="link-button search-unreadable" onClick={onShowProblems}>
           <TriangleAlert size={12} aria-hidden />
-          {t("search.couldNotBeRead", { t: t("search.folders", { count: unreadable }) })}
+          {t("search.foldersCouldNotBeRead", { count: unreadable })}
         </button>
       )}
     </div>
@@ -535,7 +534,7 @@ function UnreadableDialog({
   const unlisted = count - failures.length;
   return (
     <Dialog title={t("search.foldersThatCouldNotBe")} onClose={onClose} width={520}>
-      <p>{t("search.theSearchWentPastIt", { t: t("search.folders", { count }) })}</p>
+      <p>{t("search.theSearchWentPastIt", { count })}</p>
       <ul className="search-failures">
         {/* find can name one folder twice, so the place in the list tells them apart. */}
         {failures.map((failure, index) => (

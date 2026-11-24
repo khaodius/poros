@@ -10,7 +10,6 @@ import { compare } from "./compare";
 import { connect } from "./connect";
 import { dialogs } from "./dialogs";
 import { editor } from "./editor";
-import { errors } from "./errors";
 import { fileList } from "./fileList";
 import { limits } from "./limits";
 import { log } from "./log";
@@ -40,7 +39,6 @@ export const english = {
   connect,
   dialogs,
   editor,
-  errors,
   fileList,
   limits,
   log,
@@ -61,4 +59,9 @@ export const english = {
   workspace,
 };
 
-export default defineTranslation({ locale: "en", name: "English", messages: english });
+export default defineTranslation({
+  locale: "en",
+  name: "English",
+  lowercaseMidSentence: true,
+  messages: english,
+});

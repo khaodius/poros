@@ -2,7 +2,7 @@
 // pane. A name alone decides nothing: a picture is one by its signature, text by its bytes.
 
 import type { TextEncoding } from "./types";
-import { t } from "../i18n";
+import { t, type PlainMessageKey } from "../i18n";
 
 /** The pictures the web view decodes. */
 export type ImageFormat = "png" | "jpeg" | "gif" | "webp" | "bmp" | "ico" | "avif" | "svg";
@@ -152,71 +152,72 @@ function imageBySignature(bytes: Uint8Array): ImageFormat | null {
 }
 
 /** Zip files that are something more particular, by their extension. */
-const ZIP_KINDS: Record<string, string> = {
-  docx: "Office document",
-  xlsx: "Office document",
-  pptx: "Office document",
-  odt: "Office document",
-  ods: "Office document",
-  odp: "Office document",
-  epub: "EPUB book",
-  jar: "Java archive",
-  war: "Java archive",
-  apk: "Android package",
+const ZIP_KINDS: Record<string, PlainMessageKey> = {
+  docx: "preview.officeDocument",
+  xlsx: "preview.officeDocument",
+  pptx: "preview.officeDocument",
+  odt: "preview.officeDocument",
+  ods: "preview.officeDocument",
+  odp: "preview.officeDocument",
+  epub: "preview.epubBook",
+  jar: "preview.javaArchive",
+  war: "preview.javaArchive",
+  apk: "preview.androidPackage",
 };
 
 /** Signatures long or odd enough that no text starts with them. */
 function describeBySignature(bytes: Uint8Array, name: string): string | null {
-  if (hasAscii(bytes, "%PDF-")) return "PDF document";
+  if (hasAscii(bytes, "%PDF-")) return t("preview.pdfDocument");
   if (startsWith(bytes, [0x50, 0x4b, 0x03, 0x04]) || startsWith(bytes, [0x50, 0x4b, 0x05, 0x06])) {
-    return ZIP_KINDS[extensionOf(name)] ?? "ZIP archive";
+    const kind = ZIP_KINDS[extensionOf(name)];
+    return kind ? t(kind) : t("preview.zipArchive");
   }
-  if (startsWith(bytes, [0x1f, 0x8b, 0x08])) return "gzip archive";
-  if (startsWith(bytes, [0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00])) return "xz archive";
-  if (startsWith(bytes, [0x28, 0xb5, 0x2f, 0xfd])) return "Zstandard archive";
-  if (startsWith(bytes, [0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c])) return "7-Zip archive";
-  if (startsWith(bytes, [0x52, 0x61, 0x72, 0x21, 0x1a, 0x07])) return "RAR archive";
-  if (hasAscii(bytes, "ustar", 257)) return "tar archive";
-  if (startsWith(bytes, [0x7f, 0x45, 0x4c, 0x46])) return "ELF program";
-  if (hasAscii(bytes, "SQLite format 3\0")) return "SQLite database";
+  if (startsWith(bytes, [0x1f, 0x8b, 0x08])) return t("preview.gzipArchive");
+  if (startsWith(bytes, [0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00])) return t("preview.xzArchive");
+  if (startsWith(bytes, [0x28, 0xb5, 0x2f, 0xfd])) return t("preview.zstandardArchive");
+  if (startsWith(bytes, [0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c])) return t("preview.sevenZipArchive");
+  if (startsWith(bytes, [0x52, 0x61, 0x72, 0x21, 0x1a, 0x07])) return t("preview.rarArchive");
+  if (hasAscii(bytes, "ustar", 257)) return t("preview.tarArchive");
+  if (startsWith(bytes, [0x7f, 0x45, 0x4c, 0x46])) return t("preview.elfProgram");
+  if (hasAscii(bytes, "SQLite format 3\0")) return t("preview.sqliteDatabase");
   if (startsWith(bytes, [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1])) {
-    return "Office document";
+    return t("preview.officeDocument");
   }
-  if (hasAscii(bytes, "OggS")) return "Ogg media";
-  if (hasAscii(bytes, "fLaC")) return "FLAC audio";
-  if (hasAscii(bytes, "RIFF") && hasAscii(bytes, "WAVE", 8)) return "WAV audio";
-  if (hasAscii(bytes, "RIFF") && hasAscii(bytes, "AVI ", 8)) return "AVI video";
-  if (startsWith(bytes, [0x1a, 0x45, 0xdf, 0xa3])) return "Matroska or WebM video";
-  if (hasAscii(bytes, "wOFF") || hasAscii(bytes, "wOF2")) return "Web font";
-  if (hasAscii(bytes, "\0asm")) return "WebAssembly module";
+  if (hasAscii(bytes, "OggS")) return t("preview.oggMedia");
+  if (hasAscii(bytes, "fLaC")) return t("preview.flacAudio");
+  if (hasAscii(bytes, "RIFF") && hasAscii(bytes, "WAVE", 8)) return t("preview.wavAudio");
+  if (hasAscii(bytes, "RIFF") && hasAscii(bytes, "AVI ", 8)) return t("preview.aviVideo");
+  if (startsWith(bytes, [0x1a, 0x45, 0xdf, 0xa3])) return t("preview.matroskaOrWebmVideo");
+  if (hasAscii(bytes, "wOFF") || hasAscii(bytes, "wOF2")) return t("preview.webFont");
+  if (hasAscii(bytes, "\0asm")) return t("preview.webassemblyModule");
   if (startsWith(bytes, [0x49, 0x49, 0x2a, 0x00]) || startsWith(bytes, [0x4d, 0x4d, 0x00, 0x2a])) {
-    return "TIFF image";
+    return t("preview.tiffImage");
   }
-  if (hasAscii(bytes, "8BPS")) return "Photoshop image";
-  if (startsWith(bytes, [0xed, 0xab, 0xee, 0xdb])) return "RPM package";
+  if (hasAscii(bytes, "8BPS")) return t("preview.photoshopImage");
+  if (startsWith(bytes, [0xed, 0xab, 0xee, 0xdb])) return t("preview.rpmPackage");
   const brands = mediaBrands(bytes);
   if (brands) {
-    if (brands.some((brand) => HEIF_BRANDS.has(brand))) return "HEIF image";
-    if (brands[0] === "M4A ") return "MPEG-4 audio";
-    return brands[0] === "qt  " ? "QuickTime video" : "MPEG-4 video";
+    if (brands.some((brand) => HEIF_BRANDS.has(brand))) return t("preview.heifImage");
+    if (brands[0] === "M4A ") return t("preview.mpeg4Audio");
+    return brands[0] === "qt  " ? t("preview.quicktimeVideo") : t("preview.mpeg4Video");
   }
   return null;
 }
 
 /** Signatures too short to trust unless the bytes are not text anyway. */
 function describeBinary(bytes: Uint8Array): string | null {
-  if (hasAscii(bytes, "MZ")) return "Windows program";
-  if (hasAscii(bytes, "BZh")) return "bzip2 archive";
-  if (hasAscii(bytes, "ID3")) return "MP3 audio";
-  if (hasAscii(bytes, "!<arch>\n")) return "ar archive";
-  if (startsWith(bytes, [0xca, 0xfe, 0xba, 0xbe])) return "Java class";
+  if (hasAscii(bytes, "MZ")) return t("preview.windowsProgram");
+  if (hasAscii(bytes, "BZh")) return t("preview.bzip2Archive");
+  if (hasAscii(bytes, "ID3")) return t("preview.mp3Audio");
+  if (hasAscii(bytes, "!<arch>\n")) return t("preview.arArchive");
+  if (startsWith(bytes, [0xca, 0xfe, 0xba, 0xbe])) return t("preview.javaClass");
   const machO = [
     [0xfe, 0xed, 0xfa, 0xce],
     [0xfe, 0xed, 0xfa, 0xcf],
     [0xce, 0xfa, 0xed, 0xfe],
     [0xcf, 0xfa, 0xed, 0xfe],
   ];
-  if (machO.some((signature) => startsWith(bytes, signature))) return "Mach-O program";
+  if (machO.some((signature) => startsWith(bytes, signature))) return t("preview.machOProgram");
   return null;
 }
 

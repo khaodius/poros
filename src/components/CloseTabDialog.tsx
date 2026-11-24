@@ -36,11 +36,7 @@ export function CloseTabDialog({
   return (
     <Dialog title={t("workspace.close", { label })} onClose={onClose}>
       <div className="confirm-body">
-        <p>
-          {t("workspace.transfers", { count: pendingTransfers })} for this server{" "}
-          {pendingTransfers === 1 ? "is" : "are"} still in the queue. They can keep running on their
-          own connections after the tab closes, or wait paused until you resume them.
-        </p>
+        <p>{t("workspace.transfersForThisServerStillQueued", { count: pendingTransfers })}</p>
         {vaultTransfers > 0 && <p>{t("workspace.transfersIntoOrOutOf")}</p>}
       </div>
       <div className="dialog-actions">

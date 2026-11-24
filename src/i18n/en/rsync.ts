@@ -4,6 +4,10 @@ export const rsync = {
   // components/RsyncOptionsEditor
   changed: "{changed} changed",
   noLimit: "No limit",
+  extraRsyncArguments: "Extra rsync arguments",
+  typedAsOnRsyncsCommandLine:
+    "Typed as on rsync's command line; they apply over the options above.",
+
   // lib/rsyncOptions
   sizeAndModificationTime: "Size and modification time",
   sizeOnlySizeOnly: "Size only (--size-only)",

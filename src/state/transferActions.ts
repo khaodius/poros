@@ -9,6 +9,7 @@ import { useLogStore } from "./logStore";
 import { getPane, lastActivePane, type PaneHandle } from "./paneRegistry";
 import { useSessionStore } from "./sessionStore";
 import { useToastStore } from "./toastStore";
+import { englishCount } from "../lib/format";
 import { t } from "../i18n";
 
 /** The entries that can be copied: files and folders, not devices or broken links. */
@@ -45,11 +46,7 @@ async function enqueue(
       targetDirectory: folder,
       items,
     });
-    const summary = t("transfers.queuedOfItemsTo", {
-      VERBS: VERBS[direction],
-      count: items.length,
-      where,
-    });
+    const summary = `Queued ${VERBS[direction]} of ${englishCount(items.length, "item")} to ${where}`;
     useLogStore.getState().write("info", summary, sessionId);
     return true;
   } catch (caught) {
@@ -170,16 +167,26 @@ export async function transferBetween(
     forget();
     return;
   }
-  if (folder === null) sayWhereResultsDropWent(target, "Copying", targetFolder);
+  if (folder === null) sayWhereResultsDropWent(target, "copying", targetFolder);
 }
 
 /**
  * Says where files went that were let go of on the blank space of a pane showing search
  * results: into the folder the search started in, where the results do not show them.
  */
-export function sayWhereResultsDropWent(target: PaneHandle, verb: string, folder: string) {
+const WHERE_RESULTS_WENT = {
+  copying: "transfers.copyingTo",
+  moved: "transfers.movedTo",
+  copied: "transfers.copiedTo",
+} as const;
+
+export function sayWhereResultsDropWent(
+  target: PaneHandle,
+  what: keyof typeof WHERE_RESULTS_WENT,
+  folder: string,
+) {
   if (target.showsResults?.())
-    useToastStore.getState().show("info", t("transfers.to2", { verb, folder }));
+    useToastStore.getState().show("info", t(WHERE_RESULTS_WENT[what], { folder }));
 }
 
 export function transferFromPane(

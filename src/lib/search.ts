@@ -13,7 +13,7 @@ import type {
   SearchReport,
   SearchRequest,
 } from "./types";
-import { t } from "../i18n";
+import { midSentence, t } from "../i18n";
 
 /** As many results as a search brings before it stops; the backend allows more. */
 export const SEARCH_LIMIT = 10_000;
@@ -264,10 +264,11 @@ export function sizeRange(filter: SizeFilter): Range {
   }
   const start = parseSizeText(filter.atLeast);
   const end = parseSizeText(filter.atMost);
-  if (start === undefined) return { error: `${filter.atLeast.trim()} is not a size` };
-  if (end === undefined) return { error: `${filter.atMost.trim()} is not a size` };
+  if (start === undefined)
+    return { error: t("search.isNotASize", { text: filter.atLeast.trim() }) };
+  if (end === undefined) return { error: t("search.isNotASize", { text: filter.atMost.trim() }) };
   if (start !== null && end !== null && start > end) {
-    return { error: "The smallest size is larger than the largest" };
+    return { error: t("search.theSmallestSizeIsLargerThanTheLargest") };
   }
   return { start, end };
 }
@@ -310,12 +311,12 @@ export function dateRange(filter: DateFilter, now: Date, weekStartsOn: number): 
       const to = filter.to.trim();
       const start = from === "" ? null : startOfDay(from);
       const lastDay = to === "" ? null : startOfDay(to);
-      if (start === undefined) return { error: `${from} is not a date` };
-      if (lastDay === undefined) return { error: `${to} is not a date` };
+      if (start === undefined) return { error: t("search.isNotADate", { text: from }) };
+      if (lastDay === undefined) return { error: t("search.isNotADate", { text: to }) };
       // The whole of the last day counts: up to the second before the next one starts.
       const end = lastDay === null ? null : endOfDay(to);
       if (start !== null && end !== null && start > end) {
-        return { error: "The first day is after the last" };
+        return { error: t("search.theFirstDayIsAfterTheLast") };
       }
       return { start, end };
     }
@@ -366,54 +367,59 @@ export function buildSearchRequest(
 /** What the size button says: the preset, or the custom range in short. */
 export function describeSize(filter: SizeFilter): string {
   if (filter.preset !== "custom") {
-    return SIZE_PRESETS.find((preset) => preset.id === filter.preset)?.label ?? "Any size";
+    return SIZE_PRESETS.find((preset) => preset.id === filter.preset)?.label ?? t("search.anySize");
   }
   const atLeast = filter.atLeast.trim();
   const atMost = filter.atMost.trim();
-  if (atLeast && atMost) return `${atLeast} to ${atMost}`;
-  if (atLeast) return `At least ${atLeast}`;
-  if (atMost) return `At most ${atMost}`;
-  return "Any size";
+  if (atLeast && atMost) return t("search.sizeFromTo", { atLeast, atMost });
+  if (atLeast) return t("search.atLeastSize", { size: atLeast });
+  if (atMost) return t("search.atMostSize", { size: atMost });
+  return t("search.anySize");
 }
 
 export function describeDate(filter: DateFilter): string {
   if (filter.preset !== "custom") {
-    return DATE_PRESETS.find((preset) => preset.id === filter.preset)?.label ?? "Any time";
+    return DATE_PRESETS.find((preset) => preset.id === filter.preset)?.label ?? t("search.anyTime");
   }
   const from = filter.from.trim();
   const to = filter.to.trim();
-  if (from && to) return from === to ? `On ${from}` : `${from} to ${to}`;
-  if (from) return `Since ${from}`;
-  if (to) return `Until ${to}`;
-  return "Any time";
+  if (from && to)
+    return from === to ? t("search.onDay", { day: from }) : t("search.daysFromTo", { from, to });
+  if (from) return t("search.sinceDay", { day: from });
+  if (to) return t("search.untilDay", { day: to });
+  return t("search.anyTime");
 }
 
 export function describeDepth(depth: number | null): string {
   const preset = DEPTH_PRESETS.find((candidate) => candidate.depth === depth);
   if (preset) return preset.label;
-  return depth === null ? "All folders inside" : `${depth - 1} levels down`;
+  return depth === null
+    ? t("search.allFoldersInside")
+    : t("search.levelsDown", { count: depth - 1 });
 }
 
 /** One line for a remembered search: what it looked for, then each filter that narrows it. */
 export function describeSearch(form: SearchForm): string {
-  const parts = [form.pattern === "" ? "Everything" : form.pattern];
-  if (form.patternKind === "regex") parts.push("regular expression");
-  if (form.caseSensitive) parts.push("match case");
-  if (form.kind !== "any") parts.push(KIND_LABELS[form.kind].toLowerCase());
-  if (sizeNarrows(form.size)) parts.push(describeSize(form.size).toLowerCase());
-  if (dateNarrows(form.date)) parts.push(describeDate(form.date).toLowerCase());
-  if (form.depth !== null) parts.push(describeDepth(form.depth).toLowerCase());
-  if (form.hidden) parts.push("hidden folders");
-  if (form.followLinks) parts.push("following links");
-  return parts.join(", ");
+  const parts = [form.pattern === "" ? t("search.everything") : form.pattern];
+  if (form.patternKind === "regex") parts.push(t("search.regularExpressionInAList"));
+  if (form.caseSensitive) parts.push(t("search.matchCaseInAList"));
+  if (form.kind !== "any") parts.push(midSentence(KIND_LABELS[form.kind]));
+  if (sizeNarrows(form.size)) parts.push(midSentence(describeSize(form.size)));
+  if (dateNarrows(form.date)) parts.push(midSentence(describeDate(form.date)));
+  if (form.depth !== null) parts.push(midSentence(describeDepth(form.depth)));
+  if (form.hidden) parts.push(t("search.hiddenFoldersInAList"));
+  if (form.followLinks) parts.push(t("search.followingLinksInAList"));
+  return parts.join(t("common.listSeparator"));
 }
 
 export function sizeNarrows(filter: SizeFilter): boolean {
-  return describeSize(filter) !== "Any size";
+  if (filter.preset !== "custom") return filter.preset !== "any";
+  return filter.atLeast.trim() !== "" || filter.atMost.trim() !== "";
 }
 
 export function dateNarrows(filter: DateFilter): boolean {
-  return describeDate(filter) !== "Any time";
+  if (filter.preset !== "custom") return filter.preset !== "any";
+  return filter.from.trim() !== "" || filter.to.trim() !== "";
 }
 
 function sameSearch(first: SearchForm, second: SearchForm): boolean {

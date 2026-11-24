@@ -32,7 +32,7 @@ import { TabBar } from "./TabBar";
 import { TabContent } from "./TabContent";
 import { TAB_ICONS } from "./tabIcons";
 import { WindowSketch } from "./WindowSketch";
-import { useT } from "../i18n";
+import { t, useT } from "../i18n";
 
 const cssLength = ({ share, pixels }: Extent) => `calc(${share * 100}% + ${pixels}px)`;
 
@@ -362,8 +362,10 @@ interface FloatingFrameProps {
 }
 
 function leavingHint(target: DropTarget): string {
-  if (target.kind !== "window") return "New window";
-  return target.label === MAIN_WINDOW ? "Move to main window" : "Move to that window";
+  if (target.kind !== "window") return t("workspace.newWindow");
+  return target.label === MAIN_WINDOW
+    ? t("workspace.moveToMainWindow")
+    : t("workspace.moveToThatWindow");
 }
 
 function FloatingFrame({ tab, label, leavingTo, drop, titleOpacity, style }: FloatingFrameProps) {

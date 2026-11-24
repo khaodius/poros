@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Check, Copy, ExternalLink, Files } from "lucide-react";
+import { useLatest } from "../hooks/useLatest";
 import type { PathStyle } from "../lib/fileSource";
 import { clipboard, share, toAppError } from "../lib/ipc";
 import { relativeFolder } from "../lib/search";
@@ -138,6 +139,8 @@ export function ShareDialog({
     setItems((current) => replaceAt(current, index, change));
 
   // The links made earlier, on the services that keep them, so they can be copied or removed.
+  // A change of language does not read them again; a failure is said in the language of then.
+  const latestT = useLatest(t);
   useEffect(() => {
     let current = true;
     void forEachLimited(entries, PARALLEL_REQUESTS, async (entry, index) => {
@@ -152,7 +155,9 @@ export function ShareDialog({
           })),
         );
       } catch (caught) {
-        const message = `Could not read the links it has: ${toAppError(caught).message}`;
+        const message = latestT.current("share.couldNotReadTheLinksItHas", {
+          message: toAppError(caught).message,
+        });
         if (!current) return;
         setItems((items) =>
           replaceAt(items, index, (item) => ({ ...item, loading: false, error: message })),
@@ -162,7 +167,7 @@ export function ShareDialog({
     return () => {
       current = false;
     };
-  }, [sessionId, entries]);
+  }, [sessionId, entries, latestT]);
 
   const change = (patch: Partial<ShareDraft>) => setDraft((current) => ({ ...current, ...patch }));
   const options = draftOptions(draft, sharing);
@@ -249,9 +254,9 @@ export function ShareDialog({
   const changesLink = sharing.singleLink && items.some((item) => item.links.length > 0);
   const createLabel = single
     ? changesLink
-      ? "Change link"
-      : "Create link"
-    : `Create ${entries.length} links`;
+      ? t("share.changeLink")
+      : t("share.createLink")
+    : t("share.createLinks", { count: entries.length });
 
   return (
     <Dialog
@@ -527,14 +532,7 @@ interface CopyButtonProps {
 }
 
 /** Copies through the app's own clipboard command, and says so for a moment. */
-function CopyButton({
-  text,
-  label = "Copy",
-  className = "",
-  disabled,
-  compact,
-  onError,
-}: CopyButtonProps) {
+function CopyButton({ text, label, className = "", disabled, compact, onError }: CopyButtonProps) {
   const t = useT();
   const [copied, setCopied] = useState(false);
   useEffect(() => {
@@ -553,7 +551,7 @@ function CopyButton({
   };
   const icon = copied ? <Check size={14} /> : <Copy size={14} />;
   if (compact) {
-    const title = copied ? "Copied" : "Copy link";
+    const title = copied ? t("share.copied") : t("share.copyLink");
     return (
       <button
         type="button"
@@ -575,7 +573,7 @@ function CopyButton({
       onClick={() => void copy()}
     >
       {icon}
-      {copied ? t("share.copied") : label}
+      {copied ? t("share.copied") : (label ?? t("common.copy"))}
     </button>
   );
 }
@@ -703,8 +701,13 @@ interface BatchRowProps {
  * what that link does when it is not what the statement above says, and the service's notes.
  */
 function BatchRow({ item, busy, fresh, label, place, onError }: BatchRowProps) {
+  const t = useT();
   const link = item.links[0];
-  const status = item.loading ? "Checking..." : busy ? "Making the link..." : "No link yet";
+  const status = item.loading
+    ? t("share.checking")
+    : busy
+      ? t("share.makingTheLink")
+      : t("share.noLinkYet");
   return (
     <li className={`share-batch-row ${fresh ? "is-new" : ""}`}>
       <span className="share-batch-name" title={item.entry.path}>

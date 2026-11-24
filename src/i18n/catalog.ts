@@ -37,6 +37,12 @@ export interface Translation {
   readonly locale: string;
   /** The language's name in itself, as the Language list shows it. */
   readonly name: string;
+  /**
+   * Whether a label such as "Files" or "Upload failed" is written in lower case when it stands
+   * inside a sentence or a list, as in English, French and Spanish. German leaves it as it is,
+   * as its nouns keep their capitals.
+   */
+  readonly lowercaseMidSentence?: boolean;
   readonly messages: TranslatedMessages;
 }
 

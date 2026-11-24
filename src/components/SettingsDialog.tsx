@@ -13,7 +13,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { COLUMN_LABELS, DETAIL_COLUMNS } from "../lib/columns";
-import { formatDate, formatTime, formatVersion } from "../lib/format";
+import { formatDate, formatPercent, formatTime, formatVersion } from "../lib/format";
 import { settingsStore, toAppError, updates } from "../lib/ipc";
 import {
   DATE_FORMATS,
@@ -624,7 +624,7 @@ function ProxySettingsGroup({ proxy }: { proxy: ProxySettings }) {
       <TextSetting
         label={t("settings.host")}
         value={proxy.host}
-        placeholder={t("settings.proxyExampleCom")}
+        placeholder="proxy.example.com"
         disabled={off}
         onCommit={(host) => set({ host })}
       />
@@ -859,7 +859,7 @@ function UpdateSettingsPage({ settings }: { settings: Settings }) {
   const restartWarnings = useRestartWarnings();
 
   const status = checking
-    ? "Checking for updates"
+    ? t("updates.checkingForUpdates")
     : target && install
       ? [
           describeInstall(install, formatVersion(target.version)),
@@ -867,10 +867,10 @@ function UpdateSettingsPage({ settings }: { settings: Settings }) {
         ].join(" ")
       : (checkError ??
         (update
-          ? `${formatVersion(update.version)} is available`
+          ? t("updates.versionIsAvailable", { version: formatVersion(update.version) })
           : checkedAt !== null
-            ? `Up to date, checked at ${formatTime(checkedAt)}`
-            : "The version you are running"));
+            ? t("updates.upToDateCheckedAt", { time: formatTime(checkedAt) })
+            : t("updates.theVersionYouAreRunning")));
 
   return (
     <SettingGroup title={t("settings.updates")}>
@@ -965,10 +965,11 @@ function OtherVersionSetting() {
 
   const hint =
     list.status === "failed"
-      ? `Could not list the releases: ${list.message}`
+      ? t("updates.couldNotListTheReleases", { message: list.message })
       : list.status === "listed" && list.versions.length === 0
-        ? `No other release from ${formatVersion(OLDEST_INSTALLABLE)} on to install.`
-        : (findError ?? `Switch to another release from ${formatVersion(OLDEST_INSTALLABLE)} on.`);
+        ? t("updates.noOtherReleaseToInstall", { version: formatVersion(OLDEST_INSTALLABLE) })
+        : (findError ??
+          t("updates.switchToAnotherRelease", { version: formatVersion(OLDEST_INSTALLABLE) }));
 
   return (
     <SettingRow label={t("settings.installAnotherVersion")} hint={hint}>
@@ -1014,15 +1015,17 @@ function describeInstall(install: InstallStage, version: string): string {
   switch (install.stage) {
     case "downloading": {
       const percent = percentDownloaded(install.received, install.total);
-      return `Downloading ${version}${percent === null ? "" : `, ${percent}%`}`;
+      return percent === null
+        ? t("updates.downloadingVersion", { version })
+        : t("updates.downloadingVersionPercent", { version, percent: formatPercent(percent) });
     }
     case "installing":
-      return `Installing ${version}`;
+      return t("updates.installingVersion", { version });
     case "ready":
-      return `${version} is ready. Restart Poros to switch to it.`;
+      return t("updates.versionIsReadyRestart", { version });
     case "restarting":
-      return `Restarting into ${version}`;
+      return t("updates.restartingInto", { version });
     case "failed":
-      return `Could not install ${version}: ${install.message}`;
+      return t("updates.couldNotInstallVersionBecause", { version, message: install.message });
   }
 }

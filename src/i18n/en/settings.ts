@@ -103,7 +103,6 @@ export const settings = {
     "New SFTP connections reach their server through this proxy, unless a connection is set to connect without it. With a jump host, only the connection to the jump host uses the proxy. FTP and cloud connections do not use it.",
   type: "Type",
   host: "Host",
-  proxyExampleCom: "proxy.example.com",
   port: "Port",
   username: "Username",
   usernameHint: "Leave empty for a proxy without a login. SOCKS4 sends only the username.",
@@ -165,11 +164,6 @@ export const settings = {
   installAnotherVersion: "Install another version",
   version: "Version",
   install: "Install",
-
-  // components/Stepper
-  decrease: "Decrease {label}",
-  increase: "Increase {label}",
-  // components/SettingsDialog
   transfers: "Transfers",
   sync: "Sync",
   connection: "Connection",
@@ -181,9 +175,12 @@ export const settings = {
   overwriteIfTheSourceIs: "Overwrite if the source is newer",
   overwriteIfSizeOrDate: "Overwrite if size or date differ",
   keepBoth: "Keep both",
-  // components/SettingsDialog
   checking: "Checking...",
   checkForUpdates: "Check for updates",
   listing: "Listing...",
   showVersions: "Show versions",
+
+  // components/Stepper
+  decrease: "Decrease {label}",
+  increase: "Increase {label}",
 } as const satisfies MessageArea;

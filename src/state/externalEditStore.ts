@@ -139,7 +139,9 @@ export async function pickProgram(): Promise<string | null> {
     multiple: false,
     directory: false,
     title: t("openWith.chooseAProgram2"),
-    filters: windows ? [{ name: "Programs", extensions: ["exe", "cmd", "bat", "com"] }] : undefined,
+    filters: windows
+      ? [{ name: t("openWith.programs"), extensions: ["exe", "cmd", "bat", "com"] }]
+      : undefined,
   }).catch((caught: unknown) => {
     showError(caught);
     return null;

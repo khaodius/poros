@@ -290,14 +290,15 @@ interface ArgumentsProps {
 /** rsync arguments typed as on its command line. */
 export function RsyncArgumentsField({
   value,
-  label = "Extra rsync arguments",
-  hint = "Typed as on rsync's command line; they apply over the options above.",
+  label,
+  hint,
   placeholder = "--delete-after --chmod=D755,F644 --exclude=*.log",
   onChange,
 }: ArgumentsProps) {
+  const t = useT();
   return (
     <label className="field">
-      <span>{label}</span>
+      <span>{label ?? t("rsync.extraRsyncArguments")}</span>
       <input
         className="mono"
         value={value}
@@ -307,7 +308,7 @@ export function RsyncArgumentsField({
         autoCorrect="off"
         onChange={(event) => onChange(event.target.value)}
       />
-      <small className="field-hint">{hint}</small>
+      <small className="field-hint">{hint ?? t("rsync.typedAsOnRsyncsCommandLine")}</small>
     </label>
   );
 }

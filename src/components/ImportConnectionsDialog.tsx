@@ -14,7 +14,10 @@ import type { ImportScan, ImportSource, ImportSourceInfo } from "../lib/types";
 import { useToastStore } from "../state/toastStore";
 import { ConnectionIcon } from "./ConnectionIcon";
 import { Dialog } from "./Dialog";
-import { useT } from "../i18n";
+import { formatList, useT } from "../i18n";
+
+/** Names listed the way the English separates them with commas, without "and". */
+const LIST_OF_NAMES: Intl.ListFormatOptions = { type: "unit", style: "short" };
 
 /** What is being read or saved, to show on its button. */
 type Busy = { kind: "scan"; source: ImportSource | null } | { kind: "import" } | null;
@@ -64,7 +67,11 @@ export function ImportConnectionsDialog({ onClose }: { onClose: () => void }) {
       }
       pendingScan.current = found.scanId;
       if (found.entries.length === 0 && found.skipped.length === 0) {
-        setError(`There are no saved sites in ${found.origins.join(", ") || "that file"}.`);
+        setError(
+          found.origins.length > 0
+            ? t("connect.noSavedSitesIn", { origins: formatList(found.origins, LIST_OF_NAMES) })
+            : t("connect.noSavedSitesInThatFile"),
+        );
       } else {
         setScan(found);
         setSelected(defaultSelection(found.entries));
@@ -115,26 +122,27 @@ export function ImportConnectionsDialog({ onClose }: { onClose: () => void }) {
       const passwords =
         outcome.withoutPasswords > 0
           ? t("connect.passwordsLeftOut", { count: outcome.withoutPasswords })
-          : "";
+          : null;
+      const sentences = (...texts: (string | null)[]) =>
+        texts.filter((text) => text !== null).join(" ");
       if (outcome.failures.length === 0) {
         showToast(
           "info",
-          t("connect.importedFrom", {
-            imported,
-            label: IMPORT_SOURCES[scan.source].label,
+          sentences(
+            t("connect.importedFrom", { imported, label: IMPORT_SOURCES[scan.source].label }),
             passwords,
-          }),
+          ),
         );
         latestOnClose.current();
         return;
       }
       setScan(null);
       setError(
-        t("connect.importedTheseCouldNotBe", {
-          imported,
+        sentences(
+          t("connect.imported", { imported }),
           passwords,
-          failures: outcome.failures.join("; "),
-        }),
+          t("connect.theseCouldNotBeSaved", { failures: outcome.failures.join("; ") }),
+        ),
       );
     } catch (caught) {
       setError(toAppError(caught).message);
@@ -202,7 +210,7 @@ export function ImportConnectionsDialog({ onClose }: { onClose: () => void }) {
           >
             {busy?.kind === "import"
               ? t("connect.importing")
-              : `Import ${planned.size} connection${planned.size === 1 ? "" : "s"}`}
+              : t("connect.importCountConnections", { count: planned.size })}
           </button>
         )}
       </div>
@@ -236,10 +244,13 @@ function SourceList({ sources, busy, onRead, onChoose }: SourceListProps) {
           const found = info.found.length > 0;
           const reading = busy?.kind === "scan" && busy.source === info.source;
           const where = found
-            ? `Found ${info.found.join(", ")}`
+            ? t("connect.foundFiles", { files: formatList(info.found, LIST_OF_NAMES) })
             : info.places.length > 0
-              ? `Not found in ${info.places.join(" or ")}. Choose ${text.files}`
-              : `Choose ${text.files}`;
+              ? t("connect.notFoundInChoose", {
+                  places: formatList(info.places, { type: "disjunction" }),
+                  choose: text.choose,
+                })
+              : text.choose;
           return (
             <li key={info.source} className="import-source">
               <span className="import-source-text">
@@ -326,11 +337,13 @@ function ImportReview({
               onSelect(allSelected ? new Set() : new Set(entries.map((_, index) => index)))
             }
           />
-          {entries.length} site{entries.length === 1 ? "" : "s"} from{" "}
-          {IMPORT_SOURCES[scan.source].label}
+          {t("connect.sitesFrom", {
+            count: entries.length,
+            source: IMPORT_SOURCES[scan.source].label,
+          })}
         </label>
         <span className="import-origin" title={scan.origins.join("\n")}>
-          {scan.origins.join(", ")}
+          {formatList(scan.origins, LIST_OF_NAMES)}
         </span>
       </div>
 
@@ -430,7 +443,7 @@ function ImportReview({
                 checked={savePasswords}
                 onChange={(event) => onSavePasswords(event.target.checked)}
               />
-              Keep the {passwords} password{passwords === 1 ? "" : "s"} in the system keychain
+              {t("connect.keepThePasswordsInTheKeychain", { count: passwords })}
             </label>
           )}
           {inFolders && (

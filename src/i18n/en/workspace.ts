@@ -2,10 +2,6 @@ import type { MessageArea } from "../catalog";
 
 export const workspace = {
   // App
-  couldNotReadSavedConnections: "Could not read saved connections",
-  couldNotReadScheduledTasks: "Could not read scheduled tasks",
-  couldNotReadTheStart: "Could not read the start-up log",
-  couldNotStart: "Could not start",
   connectToServer: "Connect to server",
   synchronizeFolders: "Synchronize folders",
   scheduledTasks: "Scheduled tasks",
@@ -30,17 +26,25 @@ export const workspace = {
   clearFinishedTransfers: "Clear finished transfers",
   simultaneousTransfers: "Simultaneous transfers",
   workers: "Workers",
+  log: "Log",
 
   // components/CloseTabDialog
   close: "Close {label}?",
-  transfers: { one: "{count} transfer", other: "{count} transfers" },
   transfersIntoOrOutOf:
     "Transfers into or out of an unlocked vault are paused either way: closing the tab locks the vault. Resume them once the vault is unlocked again.",
   pauseTransfersAndClose: "Pause transfers and close",
   keepTransferring: "Keep transferring",
+  transfersForThisServerStillQueued: {
+    one: "{count} transfer for this server is still in the queue. They can keep running on their own connections after the tab closes, or wait paused until you resume them.",
+    other:
+      "{count} transfers for this server are still in the queue. They can keep running on their own connections after the tab closes, or wait paused until you resume them.",
+  },
 
   // components/DockArea
   dragToResizeDoubleClick: "Drag to resize, double-click to even out",
+  moveToMainWindow: "Move to main window",
+  newWindow: "New window",
+  moveToThatWindow: "Move to that window",
 
   // components/DragGhost
   uploadTo: "Upload to {folder}",
@@ -49,9 +53,25 @@ export const workspace = {
   copyTo2: "Copy to {baseName}",
   moveTo: "Move to {baseName}",
 
+  // components/DropMarker
+  splitRight: "Split right",
+  splitDown: "Split down",
+  mergeAsTab: "Merge as tab",
+  splitLeft: "Split left",
+  splitUp: "Split up",
+
   // components/RestoringPane
   signIn: "Sign in",
   closeTab: "Close tab",
+  reopensNameOnceConnected: "Reopens {name} once connected.",
+  opensANewShellOnceConnected: "Opens a new shell once connected.",
+  reopensOnceConnected: "Reopens once connected.",
+  openingName: "Opening {name}...",
+  openingFile: "Opening file...",
+  reconnectingTo: "Reconnecting to {label}...",
+  signInTo: "Sign in to {label}",
+  couldNotReconnectTo: "Could not reconnect to {label}",
+  porosKeepsNoPasswordForThisServer: "Poros keeps no password for this server.",
 
   // components/SplashScreen
   loadingPoros: "Loading Poros",
@@ -65,13 +85,13 @@ export const workspace = {
   uploadSpeed: "Upload speed",
   downloadSpeed: "Download speed",
   appVersion: "Poros {version}",
+  transfersLeft: { one: "{count} transfer left", other: "{count} transfers left" },
+  aboutDuration: "about {duration}",
+  queueStatusPaused: "{status} (paused)",
 
   // components/TabBar
   openTerminal: "Open terminal",
-  splitRight: "Split right",
-  splitDown: "Split down",
   moveToNewWindow: "Move to new window",
-  moveToMainWindow: "Move to main window",
   closeOtherTabs: "Close other tabs",
   newTabCtrlT: "New tab (Ctrl+T)",
   newTab: "New tab",
@@ -84,6 +104,12 @@ export const workspace = {
   local: "Local",
   thisSessionHasEnded: "This session has ended",
   connectionLost: "Connection lost",
+  reconnectingInS: "Reconnecting in {secondsLeft} s",
+  reconnecting: "Reconnecting...",
+  reconnectingInSecondsAttempt: "Reconnecting in {seconds} s (attempt {attempt})",
+  reconnectingAttempt: "Reconnecting... (attempt {attempt})",
+  reconnectNow: "Reconnect now",
+  reconnect: "Reconnect",
 
   // components/WelcomePanel
   localFiles: "Local files",
@@ -99,27 +125,13 @@ export const workspace = {
   restore: "Restore",
   maximize: "Maximize",
 
-  // components/WindowSketch
-  newWindow: "New window",
-  log: "Log",
-
   // components/Workspace
   dragToResizeDoubleClickTo: "Drag to resize, double-click to reset",
+
+  // hooks/useTabLabel
+  closedSession: "Closed session",
 
   // state/restoreActions
   couldNotReopen: "Could not reopen {name}: {message}",
   porosNoLongerKnowsHow: "Poros no longer knows how to reach it.",
-  // components/DropMarker
-  mergeAsTab: "Merge as tab",
-  splitLeft: "Split left",
-  splitUp: "Split up",
-  // components/TransferTaskFields
-  // components/TabContent
-  reconnectingInS: "Reconnecting in {secondsLeft} s",
-  reconnecting: "Reconnecting...",
-  attempt: " (attempt {value})",
-  reconnectNow: "Reconnect now",
-  reconnect: "Reconnect",
-
-  // components/TransferTaskFields
 } as const satisfies MessageArea;

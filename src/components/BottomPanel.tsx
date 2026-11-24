@@ -88,7 +88,7 @@ export function BottomPanel() {
     queue: <TabLabel text={t("workspace.queue")} count={queued} />,
     failed: <TabLabel text={t("workspace.failed")} count={counts.failed} tone="danger" />,
     completed: <TabLabel text={t("workspace.completed")} count={counts.done + counts.skipped} />,
-    log: "Log",
+    log: t("workspace.log"),
   };
 
   return (

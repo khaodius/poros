@@ -161,31 +161,54 @@ export const ACTION_LABELS: Record<SyncAction, string> = {
 export function describeReason(item: SyncItem): string {
   switch (item.reason) {
     case "new":
-      return item.action === "upload" ? "Only in the local folder" : "Only on the server";
+      return item.action === "upload" ? t("sync.onlyInTheLocalFolder") : t("sync.onlyOnTheServer");
     case "changed":
-      return "Size or time differs";
+      return t("sync.sizeOrTimeDiffers");
     case "contentDiffers":
-      return "Contents differ";
+      return t("sync.contentsDiffer");
     case "always":
-      return "Copied without comparing";
+      return t("sync.copiedWithoutComparing");
     case "newer":
-      return item.action === "upload" ? "Newer in the local folder" : "Newer on the server";
+      return item.action === "upload"
+        ? t("sync.newerInTheLocalFolder")
+        : t("sync.newerOnTheServer");
     case "extraneous":
-      return item.action === "deleteRemote" ? "Not in the local folder" : "Not on the server";
-    case "typeDiffers": {
-      const here = kindOf(item.local);
-      return `${here.charAt(0).toUpperCase()}${here.slice(1)} here, ${kindOf(item.remote)} on the server`;
-    }
+      return item.action === "deleteRemote"
+        ? t("sync.notInTheLocalFolder")
+        : t("sync.notOnTheServer");
+    case "typeDiffers":
+      return t("sync.typeDiffers", {
+        here: t(KIND_HERE[kindOf(item.local)]),
+        there: t(KIND_THERE[kindOf(item.remote)]),
+      });
     case "bothChanged":
-      return "Differs, with the same time on both sides";
+      return t("sync.differsWithTheSameTimeOnBothSides");
     case "append":
-      return "Shorter on the target; only the rest is sent";
+      return t("sync.shorterOnTheTarget");
     case "attributes":
-      return "Same contents; only the time or permissions are set";
+      return t("sync.sameContentsOnlyTheTimeOrPermissions");
   }
 }
 
-function kindOf(facts: SyncFacts | undefined): string {
+type ItemKind = "nothing" | "folder" | "link" | "file";
+
+/** What is on this side, to start a sentence. */
+const KIND_HERE = {
+  nothing: "sync.nothingHere",
+  folder: "sync.folderHere",
+  link: "sync.linkHere",
+  file: "sync.fileHere",
+} as const satisfies Record<ItemKind, string>;
+
+/** What is on the other side, inside a sentence. */
+const KIND_THERE = {
+  nothing: "sync.nothingThere",
+  folder: "sync.folderThere",
+  link: "sync.linkThere",
+  file: "sync.fileThere",
+} as const satisfies Record<ItemKind, string>;
+
+function kindOf(facts: SyncFacts | undefined): ItemKind {
   if (!facts) return "nothing";
   if (facts.isDir) return "folder";
   return facts.isLink ? "link" : "file";
@@ -194,22 +217,29 @@ function kindOf(facts: SyncFacts | undefined): string {
 /** What was left alone, for the line under the list. */
 export function describeCounts(counts: SyncCounts, direction: SyncDirection): string {
   const parts: string[] = [];
-  if (counts.unchanged > 0) parts.push(`${counts.unchanged} unchanged`);
-  if (counts.kept > 0) parts.push(`${counts.kept} kept as they are`);
+  if (counts.unchanged > 0) parts.push(t("sync.countUnchanged", { count: counts.unchanged }));
+  if (counts.kept > 0) parts.push(t("sync.countKeptAsTheyAre", { count: counts.kept }));
   if (counts.extraOnTarget > 0) {
-    const where = direction === "download" ? "only in the local folder" : "only on the server";
-    parts.push(`${counts.extraOnTarget} ${where}, not deleted`);
+    parts.push(
+      direction === "download"
+        ? t("sync.countOnlyInTheLocalFolderNotDeleted", { count: counts.extraOnTarget })
+        : t("sync.countOnlyOnTheServerNotDeleted", { count: counts.extraOnTarget }),
+    );
   }
-  if (counts.protected > 0) parts.push(`${counts.protected} protected from deletion`);
+  if (counts.protected > 0) {
+    parts.push(t("sync.countProtectedFromDeletion", { count: counts.protected }));
+  }
   if (counts.heldBack > 0) {
     parts.push(t("sync.deletionsHeldBackByThe", { count: counts.heldBack }));
   }
-  if (counts.notCreated > 0) parts.push(`${counts.notCreated} new, not created`);
-  if (counts.sizeLimited > 0) parts.push(`${counts.sizeLimited} outside the size limits`);
+  if (counts.notCreated > 0) parts.push(t("sync.countNewNotCreated", { count: counts.notCreated }));
+  if (counts.sizeLimited > 0) {
+    parts.push(t("sync.countOutsideTheSizeLimits", { count: counts.sizeLimited }));
+  }
   if (counts.pruned > 0) parts.push(t("sync.emptyFoldersLeftOut", { count: counts.pruned }));
-  if (counts.excluded > 0) parts.push(`${counts.excluded} excluded`);
-  if (counts.passedOver > 0) parts.push(`${counts.passedOver} passed over`);
-  return parts.join(", ");
+  if (counts.excluded > 0) parts.push(t("sync.countExcluded", { count: counts.excluded }));
+  if (counts.passedOver > 0) parts.push(t("sync.countPassedOver", { count: counts.passedOver }));
+  return parts.join(t("common.listSeparator"));
 }
 
 export function describeRun(summary: SyncRunSummary): string {
@@ -224,7 +254,7 @@ export function describeRun(summary: SyncRunSummary): string {
     if (summary.createdFolders > 0) {
       parts.push(t("sync.createFolders", { count: summary.createdFolders }));
     }
-    return `Dry run: ${parts.join(", ")}. Nothing was changed; the log has the details.`;
+    return t("sync.dryRunSummary", { parts: parts.join(t("common.listSeparator")) });
   }
   const parts = [
     t("sync.queuedFiles", { count: summary.queuedFiles, size: formatSize(summary.queuedBytes) }),
@@ -241,11 +271,10 @@ export function describeRun(summary: SyncRunSummary): string {
   if (summary.removedSources > 0) {
     parts.push(t("sync.removedUnchangedSourceFiles", { count: summary.removedSources }));
   }
-  let text = parts.join(", ");
-  if (summary.failures.length > 0) {
-    text += t("sync.changesFailedTheLogHas", { count: summary.failures.length });
-  }
-  return `${text}.`;
+  const done = parts.join(t("common.listSeparator"));
+  return summary.failures.length > 0
+    ? t("sync.runSummaryWithFailures", { done, count: summary.failures.length })
+    : t("sync.runSummary", { done });
 }
 
 /** Whether `path` is `root` or inside it. */

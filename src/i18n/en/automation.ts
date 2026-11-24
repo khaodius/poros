@@ -33,6 +33,9 @@ export const automation = {
   earlierOutputWasDropped: "Earlier output was dropped.",
   theCommandPrintedNothing: "The command printed nothing.",
   running: "Running",
+  commandIn: "{command} in {folder}",
+  commandsIn: { one: "{count} command in {folder}", other: "{count} commands in {folder}" },
+  theLoginFolder: "the login folder",
 
   // components/RunCommandDialog
   runACommand: "Run a command",
@@ -61,13 +64,6 @@ export const automation = {
     one: "{count} file transferred ({size}) in {duration}",
     other: "{count} files transferred ({size}) in {duration}",
   },
-
-  // state/commandStore
-  stopped: "Stopped",
-  nothingToRun: "Nothing to run",
-  allCommandsFinished: "All {finished} commands finished",
-  ofCommandsFailed: "{failed} of {finished} commands failed",
-  // lib/automation
   doNothing: "Do nothing",
   closePoros: "Close Poros",
   lockTheComputer: "Lock the computer",
@@ -81,6 +77,16 @@ export const automation = {
   hibernatingTheComputer: "Hibernating the computer",
   loggingOff: "Logging off",
   shuttingDownTheComputer: "Shutting down the computer",
+  confirmCloseNow: "Close now",
+  confirmLockNow: "Lock now",
+  confirmSleepNow: "Sleep now",
+  confirmHibernateNow: "Hibernate now",
+  confirmLogOffNow: "Log off now",
+  confirmShutDownNow: "Shut down now",
+  transfersFinishedWithErrors: "Transfers finished with errors",
+  transfersFinished: "Transfers finished",
+  failedCount: "{count} failed",
+  skippedCount: "{count} skipped",
 
   // lib/commands
   eachSelectedItemsFullPath: "each selected item's full path, running once per item",
@@ -88,35 +94,19 @@ export const automation = {
   theFullPathsOfAll: "the full paths of all selected items",
   theNamesOfAllSelected: "the names of all selected items",
   theFolderShown: "the folder shown",
-
-  // lib/automation: the countdown's button
-  confirmCloseNow: "Close now",
-  confirmLockNow: "Lock now",
-  confirmSleepNow: "Sleep now",
-  confirmHibernateNow: "Hibernate now",
-  confirmLogOffNow: "Log off now",
-  confirmShutDownNow: "Shut down now",
-
-  // lib/automation: the notification when the queue finishes
-  transfersFinishedWithErrors: "Transfers finished with errors",
-  transfersFinished: "Transfers finished",
-  failedCount: "{count} failed",
-  skippedCount: "{count} skipped",
-
-  // lib/commands: how a server command ended
   stoppedAfter: "Stopped after {elapsed}",
   endedBySignal: "Ended by signal {signal} after {elapsed}",
   endedWithoutStatus: "Ended without an exit status after {elapsed}",
   exitedWithStatus: "Exited with status {status} after {elapsed}",
   finishedIn: "Finished in {elapsed}",
 
-  // components/CommandOutputDialog
-  commandIn: "{command} in {folder}",
-  commandsIn: { one: "{count} command in {folder}", other: "{count} commands in {folder}" },
-  theLoginFolder: "the login folder",
+  // state/commandStore
+  stopped: "Stopped",
+  nothingToRun: "Nothing to run",
+  allCommandsFinished: "All {finished} commands finished",
+  ofCommandsFailed: "{failed} of {finished} commands failed",
 
-  // state/whenDone: what failed, before the reason
+  // state/whenDone
   whenTheQueueFinished: "When the queue finished",
   theCommandAfterTheQueue: "The command after the queue finished",
-  // components/AutomationSettings
 } as const satisfies MessageArea;

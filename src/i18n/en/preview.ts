@@ -27,7 +27,7 @@ export const preview = {
   openInEditorF4: "Open in editor (F4)",
   openInEditor: "Open in editor",
   thisFileChangedAfterIt: "This file changed after it was listed.",
-  onlyTheBeginningIsShown: "Only the beginning is shown: {sizeInText} of {sizeInText2}.",
+  onlyTheBeginningIsShown: "Only the beginning is shown: {shown} of {size}.",
   listedAs0Bytes: "Listed as 0 bytes",
   listedAs0BytesDetail:
     "Some servers list no size for a file they make themselves, so it may not be empty. Reading it shows what is in it.",
@@ -35,7 +35,6 @@ export const preview = {
   previewNotLoaded: "Preview not loaded",
   previewNotLoadedDetail:
     "Reading from this storage may be charged for, so the file is read only when asked.",
-  file: "file",
   emptyFile: "Empty file",
   theServerSaysThereIs: "The server says there is nothing in it.",
   thereIsNothingInIt2: "There is nothing in it.",
@@ -44,11 +43,9 @@ export const preview = {
   thisPictureCannotBeShown: "This picture cannot be shown",
   thisPictureCannotBeShownDetail: "It may be damaged, or of a kind this system does not decode.",
   theFirstBytes: { one: "The first {count} byte:", other: "The first {count} bytes:" },
-  bytes: { one: "{count} byte", other: "{count} bytes" },
   folderNotListed: "Folder not listed",
   folderNotListedDetail:
     "Listing on this storage may be charged for, so the folder is listed only when asked.",
-  folder: "folder",
   cryptomatorVault: "Cryptomator vault",
   cryptomatorVaultDetail: "Open the folder to unlock it and see its files.",
   emptyFolder: "Empty folder",
@@ -57,6 +54,34 @@ export const preview = {
   thumbnailsNotLoadedDetail:
     "Reading from this storage may be charged for, so pictures are read only when asked.",
   itemsSelected: "{count} items selected",
+  notTextOrAPicture: "Not text or a picture",
+  noPermissionToReadFile: "No permission to read this file",
+  noPermissionToReadFolder: "No permission to read this folder",
+  fileNoLongerThere: "This file is no longer there",
+  folderNoLongerThere: "This folder is no longer there",
+  pictureHasPixelsShowsUpTo:
+    "This picture is {dimensions}\u00a0pixels. Pictures up to {megapixels}\u00a0megapixels show by themselves.",
+  pictureHasPixelsMoreThanShown:
+    "This picture is {dimensions}\u00a0pixels, more than a preview can show.",
+  pictureIsSizeLoadsUpTo: "This picture is {size}. Pictures up to {limit} load by themselves.",
+  pictureIsSizeMoreThanLoaded: "This picture is {size}, more than a preview can load.",
+  sizeWithBytes: { one: "{size} ({count} byte)", other: "{size} ({count} bytes)" },
+  type: "Type",
+  link: "Link",
+  toAFolder: "To a folder",
+  toAFile: "To a file",
+  modified: "Modified",
+  permissions: "Permissions",
+  owner: "Owner",
+  contentsWithSize: "{contents} ({size})",
+  imageOfFormat: "{format} image",
+  textInEncoding: "Text, {encoding}",
+  dimensions: "Dimensions",
+  contains: "Contains",
+  selected: "Selected",
+  totalSize: "Total size",
+  foldersRow: "Folders",
+  notCountedInTheSize: "Not counted in the size",
 
   // components/PreviewSettings
   largestPictureLoaded: "Largest picture loaded",
@@ -64,20 +89,6 @@ export const preview = {
   textReadFromAFile: "Text read from a file",
   textReadFromAFileHint: "A longer file shows its beginning.",
   thumbnailSize: "Thumbnail size",
-
-  // components/PreviewSplit
-  resizePreview: "Resize preview",
-  dragToResizeDoubleClick: "Drag to resize, double-click to reset",
-
-  // components/PreviewThumbnails
-  andMore: "and {value} more",
-
-  // lib/previewLoad
-  theFileChangesAsIt: "The file changes as it is read",
-  // components/PreviewPane
-  theFirst: "The first {t}:",
-
-  // components/PreviewSettings
   whenTheCursorRestsOn: "When the cursor rests on a file",
   onAClickOfShow: "On a click of Show preview",
   filesOnThisComputerLoad: "Files on this computer load",
@@ -87,18 +98,54 @@ export const preview = {
   s3BackblazeB2GoogleDrive:
     "S3, Backblaze B2, Google Drive, OneDrive and Box, and vaults kept on them.",
 
+  // components/PreviewSplit
+  resizePreview: "Resize preview",
+  dragToResizeDoubleClick: "Drag to resize, double-click to reset",
+
+  // components/PreviewThumbnails
+  andMore: "and {count} more",
+
+  // lib/previewLoad
+  theFileChangesAsIt: "The file changes as it is read",
+
   // lib/previewSniff
   webp: "WebP",
+  pdfDocument: "PDF document",
+  gzipArchive: "gzip archive",
+  xzArchive: "xz archive",
+  zstandardArchive: "Zstandard archive",
+  sevenZipArchive: "7-Zip archive",
+  rarArchive: "RAR archive",
+  tarArchive: "tar archive",
+  elfProgram: "ELF program",
+  sqliteDatabase: "SQLite database",
+  officeDocument: "Office document",
+  oggMedia: "Ogg media",
+  flacAudio: "FLAC audio",
+  wavAudio: "WAV audio",
+  aviVideo: "AVI video",
+  matroskaOrWebmVideo: "Matroska or WebM video",
+  webFont: "Web font",
+  webassemblyModule: "WebAssembly module",
+  tiffImage: "TIFF image",
+  photoshopImage: "Photoshop image",
+  rpmPackage: "RPM package",
+  heifImage: "HEIF image",
+  mpeg4Audio: "MPEG-4 audio",
+  windowsProgram: "Windows program",
+  bzip2Archive: "bzip2 archive",
+  mp3Audio: "MP3 audio",
+  arArchive: "ar archive",
+  javaClass: "Java class",
+  machOProgram: "Mach-O program",
+  zipArchive: "ZIP archive",
+  quicktimeVideo: "QuickTime video",
+  mpeg4Video: "MPEG-4 video",
+  epubBook: "EPUB book",
+  javaArchive: "Java archive",
+  androidPackage: "Android package",
 
   // lib/previewText
   utf8WithBom: "UTF-8 with BOM",
   latin1: "Latin-1",
-  // components/PreviewPane
-  notTextOrAPicture: "Not text or a picture",
-
-  // components/PreviewPane: when the preview cannot read
-  noPermissionToReadFile: "No permission to read this file",
-  noPermissionToReadFolder: "No permission to read this folder",
-  fileNoLongerThere: "This file is no longer there",
-  folderNoLongerThere: "This folder is no longer there",
 } as const satisfies MessageArea;

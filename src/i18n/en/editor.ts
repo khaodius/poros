@@ -18,21 +18,27 @@ export const editor = {
   reload: "Reload {name}?",
   discardAndReload: "Discard and reload",
   yourUnsavedChangesWillBe: "Your unsaved changes will be lost.",
-
-  // components/UnsavedChangesDialog
-  someFilesCouldNotBe: "Some files could not be saved. Their tabs say why.",
-  changesYouDontSaveAre: "Changes you don't save are lost.",
-  dontSave: "Don't save",
-  // components/EditorPane
   utf8WithBom: "UTF-8 with BOM",
   latin1: "Latin-1",
-  // components/EditorPane
   wasDeletedAfterYouOpened: "{name} was deleted {where} after you opened it.",
   changedSinceYouOpenedIt: "{name} changed {where} since you opened it.",
   saveItAgain: "Save it again",
   saving: "Saving...",
   saved: "Saved",
+  plainText: "Plain text",
+  reloadFromTheServer: "Reload from the server",
+  reloadFromDisk: "Reload from disk",
+  lineColumn: "Ln {line}, Col {column}",
+  lineColumnSelected: "Ln {line}, Col {column} ({selected} selected)",
 
   // components/UnsavedChangesDialog
+  someFilesCouldNotBe: "Some files could not be saved. Their tabs say why.",
+  changesYouDontSaveAre: "Changes you don't save are lost.",
+  dontSave: "Don't save",
   saveAll: "Save all",
+  saveChangesTo: "Save changes to {name}?",
+  saveChangesToFiles: {
+    one: "Save changes to {count} file?",
+    other: "Save changes to {count} files?",
+  },
 } as const satisfies MessageArea;

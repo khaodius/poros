@@ -685,9 +685,9 @@ export function FileList({
     Math.floor((scrollRef.current?.clientHeight ?? 400) / rowHeight) - 1,
   );
   const emptyMessage = pane.filter
-    ? "Nothing matches the filter"
+    ? t("fileList.nothingMatchesTheFilter")
     : (givenEmptyMessage ??
-      (pane.hiddenCount > 0 ? "Only hidden items here" : "This folder is empty"));
+      (pane.hiddenCount > 0 ? t("fileList.onlyHiddenItemsHere") : t("fileList.thisFolderIsEmpty")));
   const cursorIndex = entries.findIndex((entry) => entry.path === pane.cursorPath);
   const cursorEntry = cursorIndex >= 0 ? entries[cursorIndex] : undefined;
 
