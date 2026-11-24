@@ -3,6 +3,340 @@
 Installers for every version are attached to its
 [release](https://github.com/khaodius/poros/releases), with SHA-256 checksums.
 
+## 0.8.0 - 2026-11-24
+
+- **Poros in German, Spanish, French, Japanese and Simplified Chinese.** Settings > Interface >
+  Language offers Deutsch, English, Español, Français, 日本語 and 简体中文, each named in its own
+  language, and System, which follows the computer's language and falls back to English for one
+  Poros does not ship. The whole window switches at once, open dialogs and the transfer queue
+  included, without a restart, and the page a cloud sign-in leaves in the browser speaks the same
+  language. Dates, times and numbers are written for the computer's region in the interface's
+  language, so an en-GB computer keeps the formats it had. Japanese and Chinese use the system's own
+  fonts for their characters. Messages from the backend, the log and `poros-cli` stay in English,
+  key names such as Ctrl and Shift are not translated, and the date and time fields in the scheduler
+  and the speed limit rules follow the operating system's format.
+- **Folders opened before show at once.** A server folder opened earlier shows its last listing the
+  moment you open it again, while Poros lists it once more behind it. The refresh button spins and a
+  thin line runs under the path bar until the fresh listing takes its place, keeping the scroll
+  position, the cursor and the selection. Every change Poros makes on a server updates that folder
+  in every pane and window. A folder that could not be refreshed stays on show, dimmed, with the
+  reason and Try again. Listings are kept in memory only, for up to 300 folders, and F5 always asks
+  the server. When the cursor rests, the parent folder and the folder under the cursor are listed
+  ahead, except on cloud storage unless you turn that on. Settings > Interface > Server folders has
+  the switches.
+- **Preview the file under the cursor.** The Preview button on a pane's toolbar, or F3, opens a
+  panel beside the file list, or under it in a narrow pane. It shows pictures (PNG, JPEG, GIF, WebP,
+  BMP, ICO, AVIF and SVG, whose scripts never run) with their dimensions, the start of text and
+  source files highlighted as in the editor, a count, a size and thumbnails for folders and
+  selections, and the first bytes in hex for anything else. A file is read only once the cursor
+  rests on it, and only as far as needed. Pictures too large to decode safely ask first or are left
+  out, and files on cloud storage wait for Show preview unless Settings > Interface > Preview says
+  otherwise. On FTP a preview waits briefly for the one connection and gives way to transfers.
+  Ctrl+Shift+P moves the keyboard into the panel. Audio, video and PDF files get the details view.
+- **Search a folder and every folder inside it.** The search button on a pane's toolbar,
+  Ctrl+Shift+F or Search in this folder finds items by name (text, `*` and `?` patterns or regular
+  expressions, with Match case), kind, size, date and depth, on every kind of connection, inside
+  vaults and on this computer. Results stream into the pane with a Folder column and act like files
+  in a folder: open, transfer, drag, rename and delete them, or use Go to folder. On SFTP servers
+  with GNU `find` the search runs on the server, S3 and B2 list a whole tree in one paged call, and
+  elsewhere Poros reads folders several at a time; on Google Drive, OneDrive and Box that is one
+  folder per request, so large trees take a while. Searches stop at 10,000 results, and
+  `poros-cli find` does the same from the command line. Hidden files are always found; only hidden
+  folders are optional.
+- **Compare two panes' folders.** Compare folders, on a pane's toolbar, by Ctrl+Shift+D or in the
+  pane's menu, marks the rows of two panes as newer, older, only here, different or identical, each
+  with its own tint, stripe and symbol, and counts them in a bar over each pane. It works between
+  this computer and any server, between two servers, inside vaults and across windows, with folder
+  sync's rules for times and sizes. Compare contents of subfolders walks both trees in the
+  background and marks the folders whose contents differ. Options hide identical items, compare by
+  size alone, ignore time zone offsets of whole hours, include hidden files and browse both panes
+  together. Select newer and only here, Select different and Synchronize these folders act on the
+  result; the last opens folder sync for a local and an SFTP folder only, with the rules in
+  Settings > Sync. File compare's menu entries now read Compare files.
+- **Rename many items at once.** With several items selected, F2 or Rename opens Rename N items:
+  find and replace with text or regular expressions, a template built from the name, extension,
+  number, date, time and parent folder, a counter, letter case, extension and tidying rules, applied
+  in order, with a live preview of every new name. Names that would clash, are already taken, are
+  too long, or hold characters or reserved names the server or this computer refuses are flagged on
+  their row, and Rename stays off until none are left. The renames run in a safe order as one
+  operation that can be cancelled, and a swap cut short by a failure is undone. Each item takes its
+  own rename, two round trips on a server, and on an FTP server that ignores case, a clash of case
+  alone is refused only when it runs.
+- **Open files in any program.** Open, in every pane's menu, opens a file in the program set up for
+  its type, or else the system's default program, and Open with lists those programs, the default
+  program, the built-in editor and Choose a program. Ctrl+Enter opens a file the same way. A file on
+  a server, on any protocol and in vaults, is downloaded to a private working copy, and each save
+  the program makes is uploaded through the transfer queue. If the server's copy changed meanwhile,
+  Poros asks first, with Keep both, Overwrite, Don't upload and Compare. The status bar lists the
+  files being edited and their uploads, and closing a server tab, locking a vault or quitting asks
+  first while saves have not reached their server. Settings > Interface > Open with holds the
+  programs and the file patterns each opens, Upload each save without asking, and how long copies
+  are kept after the program closes; double-clicking a file can also open it in its program or ask.
+  A file of a type that runs, such as a script, an installer or a document with macros, judged by
+  its name and its contents, is never handed to the system's default program, only to a program you
+  choose or set up for its type. On Windows each working copy carries the mark of a download from
+  the internet, so Office opens documents from a server in Protected View.
+- **Mount a server or vault as a drive on Linux.** Mount as drive..., in a server pane's menu on
+  empty space and in its tab's menu, shows the connection, or an unlocked vault on it, as a folder
+  on this computer, `~/Poros/<connection>` unless you choose another, so any program can open and
+  save its files. Reads come from a cache filled by ranged reads. Saves are kept on this computer
+  and uploaded and checked when the program closes the file, and on SFTP and FTP the upload is
+  written beside the file and moved over it, so a save cut short leaves the server's file whole. A
+  save that cannot reach the server stays on this computer and is offered again. Mounted drives show
+  in the status bar with Open, Retry, Unmount and Force unmount, and closing the tab, disconnecting,
+  locking the vault or quitting asks first while programs have files open or uploads are pending.
+  `poros-cli mount MOUNTPOINT [PATH]` mounts from the command line until Ctrl+C. Drives need
+  `/dev/fuse` and `fusermount3`, and Poros explains how to install the latter when it is missing.
+- **Share links to files on cloud storage.** Share link..., in the menu of a file on S3 or Backblaze
+  B2, or of a file or folder on Google Drive, OneDrive or Box, makes a link that opens it for people
+  without an account. The dialog offers what the service allows (view, edit or download, who can
+  open it, how long it works, a password) and says in one sentence what the link allows and until
+  when, with Copy and Open in browser. S3 links are signed for up to seven days. B2 gives the plain
+  address of a file in a public bucket, and in a private one a download authorization that also
+  opens files whose names start with the file's name, as the dialog says. Drive, OneDrive and Box
+  links last until removed, and the item's existing links are listed with Stop sharing beside each.
+  Several items get one link each. S3 and B2 links cannot be taken back before they end, and shared
+  drives on Google Drive are not listed. `poros-cli share` does the same from the command line, and
+  the log never records a link or its password.
+- **Older versions and deleted files on S3 and B2.** Versions..., in the menu of a file in an S3
+  bucket that keeps versions or on Backblaze B2, lists every version and delete marker. Restore
+  copies a version on top, so the current one stays in the history, Download saves it under its name
+  with its date added, Open shows it in the editor, read only, Compare sets it beside the current
+  file, and a version or a delete marker can be deleted for good after a question. Show deleted
+  files, in a pane's menu inside a bucket, shows deleted files and folders in place, struck through,
+  to restore or delete for good, a folder with everything deleted under it. `poros-cli versions` and
+  `ls --deleted` do the same from the command line. Showing deleted files reads every version under
+  the folder, which can be slow in buckets with long histories.
+- **Speed limits by time of day.** Settings > Transfers > Speed limit schedule holds a list of
+  rules, each for some weekdays between two times, with an upload and a download limit, Unlimited or
+  Pause. Where two rules overlap the later one wins, and a week view shows what they add up to.
+  While a rule applies, the status bar shows the limits and until when, and Ignore schedule, there
+  or in the queue's toolbar, sets the schedule aside until its next change. Running transfers follow
+  each change without restarting. Pause holds that direction's transfers as queued, with "Waiting
+  for the speed limit schedule until 11:30" on their rows, and they continue from where they
+  stopped. A server-to-server copy waits while either direction is paused, and the action for when
+  the queue finishes waits for held transfers. Folder sync, scheduled tasks and `poros-cli` keep to
+  the schedule too, except for a direction given `--limit-up` or `--limit-down`.
+- **Scheduled transfers.** Transfer files is a third kind of scheduled task, beside synchronizing
+  and running a command: an upload, a download or a copy between two saved connections, on any
+  protocol, of a list of files and folders. Each run can go into a folder of its own, such as
+  `backup-{date}`, and the task says what to do with a file that is already there. Schedule this...
+  and Schedule these... in the queue's menu, and Schedule upload... and Schedule download... in a
+  pane's menu, fill a new task from transfers you ran or the files you selected. Runs go through the
+  transfer queue, with its workers, speed limits, integrity checks and retries, and their transfers
+  carry the task's name. Files inside a vault cannot be scheduled, since a task cannot unlock the
+  vault. A run that falls due while you have paused the queue is skipped and recorded as failed,
+  saying why, and if you pause during a run its remaining files wait for Resume.
+- **Scheduled tasks from the command line.** `poros-cli schedule` lists the tasks saved in Poros,
+  runs them by name, runs every task that is due (`run --due`, for cron or a systemd timer), keeps
+  running them as they fall due (`daemon`), and turns them on and off. The app and the command line
+  never run one task twice at once: a task still running is skipped, with exit status 13 on the
+  command line. Each run is on record from its start, so a run stopped by a crash or a kill shows as
+  failed rather than keeping the result of the run before. `poros-cli help schedule` covers cron,
+  systemd and the keychain on machines without a screen. The daemon reads the settings once, when it
+  starts. With `schedule`, `--host-key` needs `--connection` and pins that connection's server
+  alone.
+- **More progress bar looks.** Settings > Appearance > Progress bars adds eight fills (candy
+  stripes, chevrons, aurora, neon, wave, line, dots and blocks), five motions (scan, ripple, comet,
+  sparkle and a breathing glow), four kinds of ends (round, soft, square and slanted, in place of
+  the Rounded ends switch) and ten presets shown as live cards. Work of unknown length, such as an
+  extraction, shows a bar that roams instead of an empty one, playing the chosen motion as it goes.
+- **English reads a little differently.** Numbers in messages are grouped, as in "1,234 items", a
+  unit after 1 is singular, as in "every 1 minute", and a label inside a sentence keeps the capitals
+  of an abbreviation, as in "smaller than 1 MB" where 0.7.0 wrote "1 mb". A share link's end is one
+  date in the region's format: "until May 14 at 18:30" on en-US and "until 14 May at 18:30" on
+  en-GB.
+- **Typed rsync rules keep their order.** Filter rules typed as rsync arguments, in Settings > Sync,
+  saved with a site or typed for one run, are checked in the order given and the first match
+  decides, as rsync does, before the dialog's Include and Exclude fields. So a site saved with
+  `--exclude='*.log'` now leaves `keep.log` out even when Include names it, where 0.7.0 copied it,
+  and with `--delete-excluded` deletes it from the target. This can change which files a saved task
+  picks. Typed rules saved by 0.7.0 now show in the Filter rules field as `- x` and `+ x`, `-F`
+  counts across the defaults, the site and the dialog as on one command line, and `a/**/b` needs at
+  least one folder between `a` and `b`. `poros-cli sync` checks a connection's saved arguments
+  before its `--include` and `--exclude` flags, `poros-cli verify` checks its `--exclude` flags
+  before the rules given with `--rsync`, and a line of an `--exclude-from` list that starts with
+  `+ ` or `- ` is read as an include or an exclude rule.
+- **Server commands get the selected names as arguments.** The placeholders `{path}`, `{name}`,
+  `{paths}` and `{names}` now become `"${1}"`, `"${2}"` and so on, and the names are sent apart from
+  the command, so no shell reads a name as part of it. A command that uses selected names runs under
+  `sh` when the account's login shell is not a POSIX shell, such as fish, csh, nushell, xonsh or
+  PowerShell, so there it must be written in `sh` syntax: `for f in "$@"`, not `for f in $argv`.
+  Commands without names still run in the login shell, and `{folder}` alone stands for `"$PWD"`,
+  which nushell does not expand (write `$env.PWD` there). For a command Poros cannot read for sure,
+  one with a here-document, `$'...'` or an unclosed quote, the dialog and the saved commands warn
+  that placeholders stay one word only outside quotes: one inside double quotes is split into words
+  and expanded as a pattern, but never run.
+- **Operations on a server go through `sh`.** Delete, copy, move across disks, owner and group
+  changes, extraction, checksums and rsync now ask the login shell for `sh -s` alone and send their
+  work to it. Accounts limited to fixed commands, such as an `rrsync` forced command or `rssh`,
+  therefore no longer get rsync: transfers to them send whole files over SFTP, and the log says so.
+  A server without `sh`, such as Windows OpenSSH with cmd.exe or PowerShell, deletes, copies and
+  changes permissions over SFTP, and server commands from the app, which run in the pane's folder,
+  fail there with the shell's own error. Servers such as SFTPGo, which run a hashing program without
+  a shell, keep whole-file checks for names made of plain characters, and other names are read back.
+  Text a login script prints no longer fails rsync.
+- **`poros-cli` exits differently in a few cases.** SIGTERM, as `systemctl stop` or a shutdown
+  sends, now stops every command the way Ctrl+C does and exits 130 instead of 143. `mv` or `cp` of
+  one item that cannot be placed exits with that error's own status, such as 8 for a rename the
+  server refuses, instead of 1 with a list of failures. An empty path, as from an unset variable, no
+  longer stands for the connection's folder where a command changes, copies or hashes something:
+  `rm`, `mv`, `cp`, `get`, `put`, `mkdir`, `write`, `chmod`, `chown`, `checksum`, `sync` and
+  `exec --cwd` refuse it with exit 2, while `ls`, `stat`, `du`, `cat` and `find` still read that
+  folder. `rm` and `mv` refuse a path that ends in `.` or `..` and, however they are spelled, the
+  home folder and the folder the connection starts in, and `rm` refuses a pattern at the top of the
+  server such as `/*`, so `rm -rf "$UNSET/*"` touches nothing. `verify` exits 10 when part of a tree
+  could not be read and names what it did not compare. `--conflict fail` never gives an item another
+  name, replacing a file with itself exits 2, two sources with one name exit 9 before anything
+  moves, and a source named twice is placed once. `--host-key` is refused with exit 2 on a
+  connection whose server key Poros cannot check, such as plain FTP, B2, Google Drive, OneDrive or
+  Box.
+- **Deleting an S3 bucket in the app takes its history with it.** When the service refuses because
+  older versions or delete markers remain, Poros removes them first, and the delete dialog says so
+  beforehand: "Every older version and deleted file kept in the bucket goes too." `poros-cli rm`
+  still refuses such a bucket unless given `--all-versions`.
+- **Tabs with unsaved work ask before they close.** Closing a server tab of any kind, or locking a
+  vault, while a file only it can save has unsaved changes now shows the unsaved-changes question,
+  and Close other tabs asks about each tab in turn and stops at the first one you keep. Closing the
+  last editor or terminal tab on a session with no file tab disconnects that session. Files dropped
+  on a folder that cannot be listed to check for a vault are refused with a notice.
+- **Security: server file names never reach a login shell that is not POSIX.** Poros quoted file
+  names for a POSIX shell and put them on the SSH command line, which the server hands to the
+  account's login shell. A login shell such as fish, csh, nushell, xonsh or PowerShell reads those
+  quotes its own way, so a file someone else named on the server could break out of them and run a
+  command as you when you deleted, copied, moved, extracted, hashed, synchronized or rsynced it.
+  With fish, a file named `x\';touch poros-pwned;echo \'` ran `touch`. Now no name, path or pattern
+  goes on that line, for every operation Poros runs on a server, the drive's upload checks and
+  `poros-cli checksum` included.
+- **Security: host keys and certificates are checked for the server that shows them.** Approving a
+  new jump host's key also let that jump host answer for the server behind it with its own key,
+  which Remember then saved as the server's. An approval now holds for the host and port it was
+  asked about alone, and the same goes for FTPS, WebDAV and S3 certificates. A key marked `@revoked`
+  in any known_hosts file is refused, and is never asked about or saved, where before the mark
+  counted only above every line trusting the key in the same file. `poros-cli --host-key` now pins
+  the server for the whole run: any other key or certificate is refused, even one the system trusts,
+  so a stale pin for a renewed certificate exits 5 or 6. Saving a host key keeps every `@revoked`
+  and `@cert-authority` line of the file, and a line that is not valid UTF-8 no longer hides the
+  lines around it.
+- **Security: cloud names and server answers.** An S3 or B2 key such as `reports/../x`, or a Google
+  Drive item named `..`, was listed as a folder whose delete or rename acted on the folder above it,
+  and on S3 and B2 on every object in the bucket and the bucket itself. Names that are not file
+  names are now left out of listings on every kind of server, and delete and rename refuse any path
+  with a `.` or `..` part. A typed `https://`, `davs://` or `webdavs://` address is always reached
+  over HTTPS, where with the type left on WebDAV (HTTP) it went in the clear, password included. A
+  WebDAV or S3 server that sends an answer without end is cut off at 64 MiB instead of filling
+  memory, and an S3 or B2 service that lists keys outside a folder can no longer make renaming or
+  deleting that folder reach them.
+- **Security: hostile key files, import files and FTP servers.** A private key file with extreme
+  unlock settings could freeze Poros for minutes or make it try to allocate a petabyte. Key files
+  are now capped at 1 MiB and their unlock costs checked before anything is derived, far above what
+  PuTTYgen, ssh-keygen and openssl produce. Import files nested too deeply, OpenSSH `Include` lines
+  that fan out to thousands of files, and files larger than the system says, such as `/dev/zero`,
+  are capped too. An FTP server's passive reply is followed into this computer or the local network
+  only when the server itself is there, so a server can no longer point a data connection at
+  `127.0.0.1` or another machine on your network; on a private network whose server names another
+  internal host, such as a load balancer, Poros connects to the server's own address and names the
+  other one if that fails.
+- **Fixed: interrupted transfers continue where they stopped.** The check of the part of an SFTP
+  file already transferred hashed nothing, so every paused or reconnected transfer began again at
+  the first byte. FTP servers that forget where to resume on any other command began again too,
+  since Poros told them before opening the data connection rather than right before the transfer.
+- **Fixed: transfers clean up after themselves.** The temporary file of a transfer that failed an
+  integrity check is deleted when the transfer leaves the queue unfinished, and a download that
+  fails its published checksum is no longer left under its real name. Removing several unfinished
+  uploads deletes every one of their temporary files on the server, where only the first one or two
+  went. A large upload to a slow server no longer fails at its final flush, which has its own limit
+  of 10 minutes. Files download from folders that can be entered but not listed, and pausing a
+  folder while it is listed pauses what it holds. A file the server's hash command cannot read is
+  checked by reading it back, where that check is on, instead of going unchecked.
+- **Fixed: the queue and its saved files.** A transfer could fail the moment it started with
+  "Session is no longer open" when it was queued as the idle queue tidied up. Two saves of the
+  queue, or of another file Poros keeps, made at the same moment no longer damage or roll back the
+  saved file, and two host keys approved at once are both kept. Files queued by scheduled tasks
+  start on their own, where with Start transfers automatically off they waited for a Start nobody
+  pressed; transfers queued by hand still wait. A synchronization counts only the files it copied,
+  raising or removing a speed limit takes effect at once, on Windows two names that differ only by a
+  trailing dot or space no longer write one file at once, and SSH connections Poros closed on
+  purpose are no longer reported as lost.
+- **Fixed: FTP connections stay in step.** A connection that a failed or cancelled request left one
+  reply behind could read that reply for the next request, showing a file as a folder or with the
+  wrong size; it is now replaced. A server-to-server copy whose target never connects to the source
+  is relayed through this computer instead of waiting for good, and the address the source names is
+  kept for the target, as two servers in one private network need.
+- **Fixed: large uploads to S3 and B2 survive a busy moment.** The start and the completion of an
+  upload in parts were sent once, so a server error, a dropped connection or an error S3 reports
+  inside a 200 answer failed the whole upload after its last part. Both are now retried like the
+  parts, up to five times. A completion retried after its answer was lost is confirmed from the
+  stored object's size, time and part count before it counts as done, and one that cannot be
+  confirmed fails saying the file may already be there. Google Drive, OneDrive and Box upload
+  sessions are opened again after a server error, and two sessions on one Box account no longer sign
+  each other out about an hour later.
+- **Fixed: lists, renames and dialogs while things change underneath.** A row being renamed no
+  longer scrolls back into view or selects its name again on every reload, so typing is not mixed
+  with the old name. Shift+click counts from the cursor when the row clicked before is gone, F2 and
+  a slow click rename only the selected rows on show, and quick changes to a setting, such as
+  Ctrl+wheel steps, apply in order. A dialog that finishes after it was dismissed closes only
+  itself, never another one, and an import dialog closed during its scan discards what it read,
+  passwords included.
+- **Fixed: tabs, editors and terminals across reconnects.** After a reconnect, an upload could go to
+  a hidden tab or into a locked vault, and files edited on FTP, WebDAV and cloud servers or in
+  vaults could not be saved. Editors and terminals now follow their server to the new session, and
+  save only through a session to the same account, route and host key, keeping the changes and
+  saying so when there is none. A reconnect finished after its tab closed disconnects again, and a
+  terminal resized while its shell opened takes the new size.
+- **Fixed: sync, terminals, commands and vaults.** Remove source files deleted sources that had
+  changed since the comparison or while rsync read them; they now stay, with a note. A backup folder
+  inside the target is kept from deletion whatever the rules say. A terminal on the browsing
+  connection ends its shell on the server when it closes, a vault rename cut off part way undoes
+  itself instead of hiding the entry, and a command cut off by a lost connection reads "ended
+  without an exit status" rather than finished.
+- **Fixed: the command line keeps files on edge cases.** `mv` and `cp --conflict replace` keep the
+  old file until the new one is in place, and moving a folder onto a file exits 9 and keeps the
+  file. Two items placed with one name no longer take the same numbered name and replace each other.
+  `rm -f` with a pattern that matches nothing skips only that pattern, and a folder cannot be copied
+  into itself through a link. On a server other than SFTP, `cp` renamed the source instead of
+  copying it; it now exits 12. `mv --conflict keep-both` is no longer reported as skipped, and a
+  failed replace on a server other than SFTP says where the old file was left.
+- **Mount as a drive is Linux only in this release.** Windows says it is not available yet. On SFTP
+  and FTP a drive saves a file by moving the upload over it, so the file's owner becomes the login
+  user, hard links to it break, its ACLs are lost, the folder needs room for a second copy, and a
+  file the login may not write is still replaced when its folder may be written. Requests that
+  change files on a drive have no time limit, so none is ever made twice: a program waiting on a
+  server that stops answering waits until it answers, the connection is found dead, or the drive is
+  unmounted by force. Vault drives over SFTP and FTP still write in place, changing part of a large
+  file fetches and uploads all of it, changes made elsewhere show on the drive within 10 seconds,
+  links inside vaults cannot be opened, and mounts are not remembered. A link that leads outside the
+  drive's folder is refused, an upload gives up when one of its steps takes over 120 seconds, and a
+  crash during an upload can leave a hidden `.<name>.poros-<8 hex>` file beside the original, which
+  stays whole.
+- **Other limits.** Transfers held by the speed limit schedule when Poros closes come back Paused,
+  like every unfinished transfer, and wait for Start. A scheduled run reloads only the panes opened
+  through its saved connection, and a run that falls due while the computer sleeps runs once on
+  wake. A copy of a vault file open in another program is unencrypted, and after a crash one holding
+  a save not uploaded stays on this computer until you upload or discard it. A program that hands
+  its file to a window already open and exits counts as closed, so if its first save comes after the
+  time copies are kept, 10 minutes unless set otherwise, that save is not uploaded. A file opened in
+  the system's default program cannot be followed, so its copy is kept until you stop editing it or
+  Poros quits, and comparing a changed server copy works over SFTP only. An editor in another window
+  is not asked about when its server's tab closes; saving it then asks you to connect again and
+  keeps the changes. A WebDAV folder of about 150,000 items or more, which arrives in one answer,
+  now fails with "The server sent an answer larger than 64 MiB". Closing an SFTP upload waits up to
+  10 minutes for a slow server, so a connection that dies at that moment is noticed late. Backblaze
+  B2, Google Drive, OneDrive and Box are built against their documentation and stub servers, without
+  live accounts. In German, a label that is not a noun keeps its capital inside a sentence.
+- **Going back to 0.7.0.** Settings > Updates > Install another version still offers it, except on
+  an install from the `.rpm`, which is offered newer versions only. 0.7.0 sets aside a
+  `schedules.json` that holds a transfer task as not valid, keeping it as
+  `schedules.json.corrupt-<time>` and starting with no scheduled tasks, so delete transfer tasks
+  before going back to keep the others. It shows Slanted and Soft progress bar ends as Square and
+  Round, and the new fills and motions as Solid and Nothing, and a theme saved with the new compare
+  or schedule colors shows as having problems there, with those colors ignored. The first settings
+  change it saves drops the settings new in 0.8.0, such as the language, the speed limit schedule
+  and the programs under Open with, and a download of an older S3 or B2 version still in the queue
+  fetches the current file instead. Saves made in other programs or on a drive that have not been
+  uploaded stay in the `editing` and `drives` cache folders, where 0.7.0 does not look, so upload
+  them first.
+
 ## 0.7.0 - 2026-11-23
 
 - **Encrypted vaults on any server.** A folder on a server can now hold a

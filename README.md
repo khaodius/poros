@@ -22,6 +22,13 @@
   and Box.
 - **Server-to-server copies** by dragging files from one server tab onto another. Two FTP servers
   send files straight to each other (FXP) when both allow it.
+- **Share links** to files on S3 and Backblaze B2, and to files and folders on Google Drive,
+  OneDrive and Box, that open them for people without an account: view, edit or download, who can
+  open them and for how long, as each service allows, with an item's existing links listed and Stop
+  sharing beside each.
+- **Older versions and deleted files** on S3 buckets that keep versions and on Backblaze B2: list a
+  file's versions to restore, download, open or compare one, and show deleted files and folders in
+  place to bring them back or delete them for good.
 - **Encrypted vaults**: a folder on any server can hold a [Cryptomator](https://cryptomator.org)
   vault, whose file names, folder names and contents are encrypted before they leave this
   computer. Poros makes vaults, unlocks them with their password right in the pane, and encrypts
@@ -30,17 +37,32 @@
 - **Drag files out** of any tab into Windows Explorer, the desktop, GNOME Files, Dolphin or any
   other file manager. Files on a server download as you drag, and files dropped on Dolphin or the
   KDE desktop download straight into the folder they were dropped in.
+- **Mount as a drive** on Linux: a connected server, or an unlocked vault on one, shows as a folder
+  on this computer, so editors, image tools, rsync and your file manager work on its files. Reads
+  are cached and streamed, saves are uploaded and checked when the program closes the file, and a
+  save that cannot reach the server is kept until it can. See [Notes](#notes).
 - **Tabs and docking**: local folders, server sessions, editors and terminals are tabs that can be
   merged, split, resized, detached into their own windows and dragged from one window into another.
   Poros reopens them as they were on the next start, windows where they were, panes at the folders
   they showed, reconnected to their servers.
+- **Folders at once**: a server folder opened before shows its last listing straight away while it
+  is listed again, and the folders around the cursor are listed ahead, so browsing does not wait on
+  the server. Every change Poros makes on a server shows at once in every pane.
 - **Parallel transfers**: each worker uses its own connection, large files are split across
   idle connections, and the worker count can change while transfers run.
+- **Speed limits by time of day**: rules by weekday and hour set upload and download limits or
+  pause a direction, shown in a week view. Running transfers follow each rule as it starts and ends,
+  and Ignore schedule in the status bar sets the schedule aside until its next change.
 - **File operations**: new files and folders on any server or this computer. Cut, copy and
   paste, Move to and Copy to, and dragging onto a folder (hold Ctrl to copy) move and copy files
   within a server or this computer without a transfer. Properties changes permissions, owner and
   group. Deleting on an SFTP server runs `rm` on the server when its shell allows it, and shows
   how many entries are gone, the one being deleted and any that could not be.
+- **Rename many items at once** with find and replace, regular expressions, a template, a counter
+  and letter case, with a preview of every new name and clashes refused before anything is renamed.
+- **Search** a folder and every folder inside it by name, pattern or regular expression, size, date
+  and depth, on any connection, inside vaults and on this computer. Results stream into the pane and
+  act like files in a folder. SFTP servers with GNU `find` search on the server.
 - **Archives**: Extract here, or into a folder named after the archive, from the right-click
   menu for ZIP, 7z, RAR, tar and compressed tar, gzip, bzip2, xz, zstd, ISO and CAB files,
   without replacing anything already there: what comes out gets a numbered name where its own is
@@ -49,9 +71,19 @@
   On this computer, Settings > Archives lists the extractors installed on Windows or Linux and
   picks the best for each format, or uses the one you choose, or any other program with your own
   arguments.
-- **File compare** of any two files, side by side with changed words highlighted.
+- **Compare** two files side by side with changed words highlighted, or the folders of two panes,
+  whose rows are marked newer, older, only here, different or identical, between this computer and
+  any server, between two servers and inside vaults. A deep compare marks the folders whose contents
+  differ.
+- **Preview** the file under the cursor beside the list: pictures, highlighted text and source code,
+  a folder's pictures as thumbnails and a hex view of anything else, read only once the cursor rests
+  and only as far as needed.
 - **Built-in editor** for text files up to 16 MiB, local or on any server, with syntax highlighting
   and find and replace. Each save uploads the file and warns first if it changed on the server.
+- **Open in any program**: a file opens in the program set up for its type, or one you choose, and
+  a file on a server, in a vault too, is uploaded each time that program saves it, with a question
+  when the server's copy changed meanwhile. Files that run are never handed to the system's default
+  program.
 - **SSH terminal** in a tab for any SFTP connection. Programs on the server that copy through the
   terminal (OSC 52), such as tmux, copy to this computer's clipboard.
 - **Folder sync** one way or both ways with rsync's options, set as defaults, per site and per
@@ -69,20 +101,23 @@
 - **Automatic recovery**: transfers wait out a dropped connection for up to 10 minutes and resume
   where they stopped, ones that waited longer try again once Poros reaches the server again, server
   tabs reconnect on their own, and unfinished transfers come back paused after a restart.
-- **Scheduled tasks** synchronize folders or run a server command once, every few minutes, hours
-  or days, or at a time of day on chosen weekdays. Tasks run while Poros is open, and a run missed
-  while it was closed happens once at the next start.
+- **Scheduled tasks** synchronize folders, run a server command, or upload, download or copy files
+  between saved connections on any protocol, once, every few minutes, hours or days, or at a time
+  of day on chosen weekdays. Tasks run while Poros is open, a run missed while it was closed happens
+  once at the next start, and `poros-cli schedule` runs them from cron, a systemd timer or a daemon
+  without the app.
 - **When the queue finishes**, Poros can close, lock, sleep, hibernate, log off or shut down after a
   countdown, run a local command, show a notification or play a sound.
-- **Server commands** from the right-click menu, with the selected files filled in and the output
-  streamed into a window.
+- **Server commands** from the right-click menu, with the selected files passed to the command as
+  arguments, never pasted into its text, and the output streamed into a window.
 - **Proxies and jump hosts**: SOCKS5, SOCKS4/4a and HTTP CONNECT proxies, and chains of saved
   connections used as jump hosts, like `ProxyJump` in OpenSSH.
 - **Authentication** with OpenSSH, PEM, PKCS#8 and PuTTY `.ppk` (v2, v3) keys, SSH agents,
   Pageant, password and keyboard-interactive login.
 - **Host key verification** against your existing `~/.ssh/known_hosts`, which Poros never modifies.
   FTPS, WebDAV and S3 certificates the system does not trust get the same approval prompt, by
-  fingerprint.
+  fingerprint. An approval holds only for the host and port it was given for, and a key revoked in
+  any known_hosts file is refused.
 - **Saved connections**, with passwords and cloud sign-ins stored only on request and only in the
   system keychain. Sites saved in FileZilla, WinSCP, SmartFTP, Cyberduck, PuTTY, KiTTY,
   MobaXterm, the OpenSSH config, and GNOME Files or KDE Dolphin bookmarks can be imported, with
@@ -90,23 +125,30 @@
 - **Themes** as shareable JSON files, ten built in, with every color editable in settings. File
   lists can show the system's own file icons, Windows Explorer's or your Linux icon theme's, and
   scrolling with the mouse wheel can glide.
-- **Progress bars** to taste: solid, gradient, striped, segmented or glowing fills, the theme's
-  color, upload and download colors or your own, any thickness, moving stripes, a shimmer or a
-  pulse while work runs, and the percent, size or time left beside or on each transfer's bar.
+- **Progress bars** to taste: thirteen fills, from solid and gradient to candy stripes, chevrons,
+  aurora, wave, dots and blocks, the theme's color, upload and download colors or your own, any
+  thickness, round, soft, square or slanted ends, eight motions such as moving stripes, a shimmer
+  or a comet while work runs, ten presets, and the percent, size or time left beside or on each
+  transfer's bar.
 - **Flying files**, off until you want them: each file you send, move or copy hops out of its pane
   with its own system icon as it finishes and lands on the row where it went, which appears as
   the file lands in it, or on the folder it went into, with piles for files that finish together.
 - **Date groups** like Windows Explorer's: local files sit under Today, Yesterday, Earlier this
   week and so on, each group collapsible, with a switch in Settings > Appearance for local and
   server lists.
-- **Command line**: `poros-cli` browses, transfers, verifies and synchronizes files without a
-  window, for scripts, CI jobs and AI agents, with JSON output and exit statuses to branch on. See
+- **Six languages**: English, German, Spanish, French, Japanese and Simplified Chinese, chosen
+  under Settings > Interface > Language or following the computer's language, with dates, times and
+  numbers written for the computer's region. Messages from the backend, the log and `poros-cli`
+  stay in English.
+- **Command line**: `poros-cli` browses, searches, transfers, verifies and synchronizes files
+  without a window, makes share links, restores versions, mounts drives and runs scheduled tasks,
+  for scripts, CI jobs and AI agents, with JSON output and exit statuses to branch on. See
   [Command line](#command-line).
 - **Signed updates**: Poros checks for a new release at start-up, downloads it in the background
   and installs it only after verifying its signature, then lets you choose when to restart.
   Settings > Updates turns the check off, and can install an earlier release the same way.
 
-![Poros with a local folder grouped by date, two server tabs, a file open in the editor and transfers running in the queue](.github/assets/screenshot.png)
+![Poros with a local folder grouped by date, two server tabs, a picture open in the preview pane and transfers running in the queue](.github/assets/screenshot.png)
 
 ## Folder synchronization
 
@@ -137,6 +179,12 @@ such as `-av --delete --exclude=.git/`; combined short flags, `--no-` forms and 
 flag `-a` work as they do in rsync. A scheduled synchronization keeps the options it was saved
 with.
 
+Filter rules keep the order they are typed in, across the defaults, the site and the dialog, and
+the first rule that matches decides, as in rsync. So
+`--exclude=node_modules/ --include='*/' --include='*.js' --exclude='*'` copies the JavaScript files
+and leaves `node_modules` alone. Typed rules are checked before the dialog's Include and Exclude
+fields. A backup folder inside the target is never deleted, whatever the rules say.
+
 Arguments that make no sense over Poros's own SSH connection are noted and passed over, such as
 `-e`, `--partial-dir`, `--sparse`, `-H`, `-A` and `-X`. A few are refused with the reason:
 `-R`, `--compare-dest`, `--copy-dest`, `--link-dest`, batch files and time limits.
@@ -156,9 +204,10 @@ macOS, Linux, Android and iOS, and a vault made there opens in Poros.
   the tab is named after the vault. Show encrypted files on the card lists what the server
   stores instead.
 - **Everything goes through the vault**: uploads, downloads, copies to and from other servers
-  and the vault's own, the editor, new files and folders, renaming and deleting. Each transfer
-  worker encrypts and decrypts on its own connection, so transfers into and out of a vault run
-  in parallel like any others.
+  and the vault's own, the editor, new files and folders, renaming and deleting, search, the
+  preview, folder compare, renaming many items at once, opening files in other programs and, on
+  Linux, mounting the vault as a drive. Each transfer worker encrypts and decrypts on its own
+  connection, so transfers into and out of a vault run in parallel like any others.
 - **Locking**: Lock on the pane's toolbar forgets the vault's keys, and so does closing the
   server's tab or disconnecting. The password is never saved, the keys are only ever in memory,
   and a tab that showed a vault reopens on its locked folder after a restart. Files dropped or
@@ -179,8 +228,13 @@ What vaults leave out:
   the password. Transfers still in the queue when a vault is locked run again once it is
   unlocked and they are resumed.
 - Files pasted or dragged from one folder of a vault to another are copied through the transfer
-  queue, as on an FTP server. Folder sync, Properties, comparing, extracting on the server and
-  the terminal work on a server's own files, not inside a vault.
+  queue, as on an FTP server. Folder sync, Properties, comparing two files, extracting on the
+  server, the terminal, share links, versions and scheduled tasks work on a server's own files,
+  not inside a vault.
+- A copy of a vault file open in another program, and a file being saved on a vault's drive, is
+  held unencrypted on this computer until it is uploaded. A vault's drive on an SFTP or FTP server
+  writes its files in place, so an upload cut short leaves a partial encrypted file until it is
+  sent again.
 - Symbolic links stored in a vault are listed but not followed.
 - A vault in an older format is opened once in Cryptomator 1.6 or later, which upgrades it. A
   vault whose key Cryptomator Hub keeps cannot be opened, and a vault's password is changed in
@@ -189,10 +243,12 @@ What vaults leave out:
 
 ## Command line
 
-`poros-cli` does what the app does with servers, without a window. Each run connects once, does
-one thing and disconnects, and it never prompts: sign-in comes from flags, environment variables
-or saved connections, and an unknown host key stops the run until it is accepted. Transfers use
-the app's parallel workers, segmented large files, delta copies and checksum verification.
+`poros-cli` does what the app does with servers, without a window. Most commands connect once, do
+one thing and disconnect; `mount` stays until it is interrupted, and `schedule` opens the
+connections its tasks were saved with. It never prompts: sign-in comes from flags, environment
+variables or saved connections, and an unknown host key stops the run until it is accepted.
+Transfers use the app's parallel workers, segmented large files, delta copies and checksum
+verification.
 
 ```sh
 export POROS_CONNECTION=deploy@example.com      # a saved connection, user@host or sftp://user@host:2222/srv
@@ -203,12 +259,14 @@ poros-cli put -w 8 ./site /srv/www
 poros-cli sync -d up --delete --exclude '*.tmp' ./site /srv/www/site
 poros-cli verify ./site /srv/www/site           # exit status 11 when anything differs
 poros-cli exec -- systemctl reload nginx        # exits with the command's own status
+poros-cli find --newer 7d '*.log' /var/log      # search a folder and the folders inside it
 ```
 
 | Command                   | Does                                                          |
 | ------------------------- | ------------------------------------------------------------- |
 | `info`, `connections`     | Show the session; list the connections saved in Poros         |
 | `ls`, `stat`, `du`        | List folders (`-l`, `-R`, `-a`), show paths, count contents   |
+| `find`                    | Search a folder and those inside it by name, size and date    |
 | `cat`, `write`            | Print files (`--offset`, `--length`); write standard input    |
 | `get`, `put`              | Download and upload files and folders, `cp`-style placement   |
 | `mkdir`, `rm`, `mv`, `cp` | Change files on the server, with globs in the last component  |
@@ -216,6 +274,10 @@ poros-cli exec -- systemctl reload nginx        # exits with the command's own s
 | `checksum`, `verify`      | Hash on the server; compare a local and a server copy         |
 | `sync`                    | rsync-style synchronization, `-d up`, `down` or `both`        |
 | `exec`                    | Run a command through the server's shell                      |
+| `versions`                | List versions; restore (`--restore`) or get (`--get`) one     |
+| `share`                   | Links for people without an account; `--revoke` removes       |
+| `mount`                   | Show a server folder as a folder here (Linux)                 |
+| `schedule`                | List, run, enable and disable scheduled tasks; `daemon`       |
 | `batch`                   | Many commands over one connection, one JSON line each         |
 
 `poros-cli help COMMAND` lists each command's options. Transfers take `-w` workers, `--exists
@@ -238,9 +300,12 @@ the system keychain unless `--no-keychain` is given. Otherwise the password come
 
 **Host keys.** Keys are checked against the ones Poros trusts and `~/.ssh/known_hosts`. An
 unknown key exits with status 5 and a changed one with 6, both with the fingerprint.
-`--host-key SHA256:...` (`POROS_HOST_KEY`) accepts that key for the run, `--trust-new-host`
-accepts a host seen for the first time but never a changed key, and `--save-host-key` remembers
-what was accepted. Certificates of FTPS, WebDAV and S3 servers work the same way.
+`--host-key SHA256:...` (`POROS_HOST_KEY`) pins the server to that key for the run: any other key
+is refused, even one already trusted, and the option is refused with status 2 where there is no
+key to check, such as plain FTP, B2, Google Drive, OneDrive or Box. `--trust-new-host` accepts a
+host seen for the first time but never a changed key, and `--save-host-key` remembers what was
+accepted. Certificates of FTPS, WebDAV and S3 servers work the same way. With `schedule`,
+`--host-key` needs `--connection` and pins that connection's server alone.
 
 **JSON.** `--json` (`POROS_JSON=1`) prints one JSON document on standard output, errors included:
 `{"error": {"kind", "message", "path", "hostKey", "exitCode", "hint"}}`. A command given one path
@@ -256,6 +321,27 @@ printf '%s\n' '["mkdir", "-p", "/srv/app"]' \
   '{"id": "env", "args": ["write", "/srv/app/.env"], "input": "MODE=production\n"}' \
   '["stat", "/srv/app/.env"]' | poros-cli batch
 ```
+
+**Scheduled tasks.** `schedule list` shows the tasks made in Poros with their next and last run,
+`schedule run NAME...` runs them now, `schedule run --due` runs each enabled task whose time has
+come, and `schedule daemon` keeps running them as they fall due. `enable` and `disable` turn them
+on and off. A task never runs twice at once, whether Poros, a daemon or a run from cron holds it:
+the others skip it, with exit status 13. Each run is written to the task, where Poros shows it.
+Ctrl+C and SIGTERM stop a run and record it as stopped. `poros-cli help schedule` shows a systemd
+timer as well as this crontab line:
+
+```sh
+*/5 * * * * poros-cli schedule run --due --quiet
+```
+
+**Drives.** `poros-cli mount ~/www /srv/www` shows the server's `/srv/www` in `~/www` until Ctrl+C,
+which waits for the uploads under way; a second Ctrl+C unmounts at once and keeps on this computer
+what was not uploaded. `--read-only` refuses every change. Drives are Linux only, as in the app.
+
+**Versions and links.** `versions PATH` lists the versions an S3 bucket or B2 keeps of a file,
+`ls --deleted` lists what was deleted, and `rm -r --all-versions` deletes an S3 bucket with its
+history. `share PATH...` makes one link per path, with `--expires`, `--kind view|edit|download`
+and `--audience`, and takes no password, so none shows in a process list.
 
 **Exit status.**
 
@@ -274,13 +360,14 @@ printf '%s\n' '["mkdir", "-p", "/srv/app"]' \
 |     10 | Some items failed (transfers, deletes, synchronization)  |
 |     11 | Contents differ, or a file failed an integrity check     |
 |     12 | Not supported by the connection's protocol               |
-|    130 | Interrupted                                              |
+|     13 | A scheduled task is already running elsewhere            |
+|    130 | Interrupted by Ctrl+C or SIGTERM                         |
 
 `exec` exits with the status of the command it ran, 128 plus the signal's number for one ended by
 a signal. `poros-cli` reads the app's settings, saved connections and trusted host keys from its
 config folder (`--config-dir` or `POROS_CONFIG_DIR` picks another, `--default-settings` ignores
-the saved settings) and writes nothing there except a host key it is told to remember and a cloud
-sign-in the provider renewed.
+the saved settings) and writes nothing there except a host key it is told to remember, a cloud
+sign-in the provider renewed, and the results, switches and lock files of scheduled tasks.
 
 **Without the app.** In `src-tauri`, `cargo build --release --no-default-features --features cli
 --bin poros-cli` builds it without the web view, GTK or the Windows shell, for servers and
@@ -464,10 +551,23 @@ The Windows installers are not code-signed yet, so SmartScreen may warn about an
 
 ## Notes
 
-- **SFTP only**: folder sync, rsync, scheduled tasks, server commands, the terminal, moving and
-  copying on the server, extracting archives on the server, Properties, comparing server files,
-  repairing damaged parts, proxies and jump hosts. Files pasted or dragged within an FTP or cloud server are copied through the transfer
-  queue, and FTP uploads are written in place rather than under a temporary name.
+- **SFTP only**: folder sync, rsync, scheduled synchronizations and commands, server commands, the
+  terminal, moving and copying on the server, extracting archives on the server, Properties,
+  comparing server files, repairing damaged parts, proxies and jump hosts. Files pasted or dragged
+  within an FTP or cloud server are copied through the transfer queue, and FTP uploads are written
+  in place rather than under a temporary name.
+- **Drives** are Linux only in this release and need `/dev/fuse` and `fusermount3`, from the
+  `fuse3` package of most distributions; Windows says it cannot mount yet. On SFTP and FTP a drive
+  saves a file by moving the upload over it, so the file's owner becomes the login user, hard
+  links to it break, its ACLs are lost and the folder needs room for a second copy. Requests that
+  change a file have no time limit, so none is made twice: a program waits for a server that stops
+  answering until it answers, the connection is found dead or the drive is unmounted by force.
+- **Server shells**: Poros asks a server's login shell only for `sh -s` and sends its work to `sh`,
+  so a login shell that is not POSIX, such as fish, csh, nushell or PowerShell, never reads a file
+  name. Server commands that use the selected names run under `sh` on such servers and need `sh`
+  syntax; the others run in the login shell. Accounts limited to fixed commands, such as an
+  `rrsync` forced command, copy whole files instead of using rsync, and servers without `sh`
+  delete, copy and change permissions over SFTP.
 - **Google Drive, OneDrive and Box** sign in through the system browser. Builds without app
   credentials ask for your own under Settings > Cloud accounts; see
   [Registering the cloud apps](#registering-the-cloud-apps).
@@ -475,14 +575,17 @@ The Windows installers are not code-signed yet, so SmartScreen may warn about an
   and application key. Leave the S3 endpoint empty for Amazon S3, or enter another service's,
   such as `s3.eu-central-003.backblazeb2.com` or `http://localhost:9000`. Buckets show as
   folders at the top level; a key restricted to one bucket opens in it. Renaming copies and then
-  deletes, and deleting on B2 hides the file, so earlier versions stay until the bucket's
-  lifecycle rules remove them.
+  deletes, and deleting on B2 hides the file, so earlier versions stay until you delete them for
+  good under Versions or Show deleted files, or the bucket's lifecycle rules remove them.
 - **rsync** runs over SSH only and needs rsync 2.6.4 or newer on the server. rsync daemons
   (`rsync://`, port 873) are not supported. Servers without rsync fall back to SFTP.
 - **Data** is stored in `~/.config/io.github.khaodius.poros/` on Linux and
   `%APPDATA%\io.github.khaodius.poros\` on Windows. Themes live in its `themes/` folder,
   unfinished transfers in `transfers.json`, scheduled tasks in `schedules.json` and the windows
-  and tabs to reopen in `workspace.json`. None of these files holds passwords or sign-ins.
+  and tabs to reopen in `workspace.json`. None of these files holds passwords or sign-ins. Copies
+  of server files open in other programs, and drive saves not uploaded yet, wait in the `editing`
+  and `drives` folders of `~/.cache/io.github.khaodius.poros/` on Linux and
+  `%LOCALAPPDATA%\io.github.khaodius.poros\` on Windows.
 - **Wayland**: Poros sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` and `__NV_DISABLE_EXPLICIT_SYNC=1`
   at startup to avoid blank windows on some compositors and NVIDIA drivers. Set either variable
   to override.
@@ -493,6 +596,10 @@ The Windows installers are not code-signed yet, so SmartScreen may warn about an
 | ---------------------------------- | --------------------------------------------- |
 | Ctrl + L                           | Type a path                                   |
 | Ctrl + F                           | Filter                                        |
+| Ctrl + Shift + F                   | Search this folder and the folders inside it  |
+| Ctrl + Shift + D                   | Compare the folders of two panes              |
+| F3                                 | Show or hide the preview                      |
+| Ctrl + Shift + P                   | Move the keyboard into the preview            |
 | Tab                                | Switch pane                                   |
 | Backspace, Alt + Up                | Parent folder                                 |
 | Alt + Home                         | Home folder                                   |
@@ -506,10 +613,11 @@ The Windows installers are not code-signed yet, so SmartScreen may warn about an
 | Drag across transfers              | Select them, Ctrl or Shift adds               |
 | Ctrl + H                           | Show hidden files                             |
 | Menu key, Shift + F10              | Menu for the selection                        |
-| F2, click a selected name again    | Rename                                        |
+| F2, click a selected name again    | Rename, one item or several                   |
 | Ctrl + X, Ctrl + C, Ctrl + V       | Cut, copy, paste                              |
 | Alt + Enter                        | Properties                                    |
 | F4                                 | Edit                                          |
+| Ctrl + Enter                       | Open in its program                           |
 | Ctrl + S                           | Save in the editor                            |
 | Ctrl + Shift + C, Ctrl + Shift + V | Copy, paste in the terminal                   |
 | Shift + drag in the terminal       | Select when a program has taken the mouse     |
@@ -546,7 +654,9 @@ cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings &
 End-to-end tests in `src-tauri/tests/` run against a real SSH server when `POROS_TEST_SSH_PORT`
 is set, against FTP servers when the `POROS_TEST_FTP*` variables listed in `ftp_server.rs` are
 set, and against WebDAV and S3 servers when the variables listed in `http_storage.rs` are set. The
-CI workflow shows how to start them.
+CI workflow shows how to start them. `remote_shell.rs` signs in as an account whose login shell is
+fish when `POROS_TEST_FISH_USER` names one, and `mount_drive.rs` runs where `/dev/fuse` and
+`fusermount3` are available.
 
 The vault tests in `vault.rs` read vaults made by Cryptomator's own libraries. With
 `POROS_TEST_CRYPTOMATOR_JAR` naming the harness in `src-tauri/tests/cryptomator-harness`, built
