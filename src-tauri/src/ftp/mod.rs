@@ -422,6 +422,41 @@ impl RemoteFileSystem for FtpFs {
         .await
     }
 
+    /// Where the link leads as its folder's listing says, the one place FTP tells it.
+    async fn read_link(&self, path: &str) -> AppResult<String> {
+        let path = self.resolve(path);
+        let parent = remote_path::parent(&path)
+            .ok_or_else(|| AppError::invalid("The root folder is not a link"))?;
+        let name = remote_path::file_name(&path).to_string();
+        self.with_control(move |control| {
+            Box::pin(async move {
+                let listed = control
+                    .list(&parent)
+                    .await?
+                    .into_iter()
+                    .find(|entry| entry.name == name);
+                match listed {
+                    None => Err(AppError::new(
+                        ErrorKind::NotFound,
+                        format!("{name} no longer exists"),
+                    )
+                    .with_path(path)),
+                    Some(entry) if entry.kind != EntryKind::Symlink => {
+                        Err(AppError::invalid(format!("{name} is not a link")).with_path(path))
+                    }
+                    Some(RawEntry {
+                        link_target: Some(target),
+                        ..
+                    }) => Ok(target),
+                    Some(_) => Err(AppError::unsupported(format!(
+                        "The server does not say where the link {name} leads"
+                    ))),
+                }
+            })
+        })
+        .await
+    }
+
     async fn delete(&self, paths: &[String]) -> AppResult<()> {
         let resolved: Vec<String> = paths.iter().map(|path| self.resolve(path)).collect();
         let targets = protocol::outermost(&resolved)?;

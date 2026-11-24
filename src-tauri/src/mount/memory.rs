@@ -2,7 +2,7 @@
 //! requests, can fail them on demand, and can stand in for servers that lack ranged reads
 //! or moves between folders.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::ops::Range;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -60,6 +60,11 @@ pub struct MemoryFs {
     pub upload_delay_millis: AtomicU64,
     /// A pause before every piece of an upload, in milliseconds.
     pub write_delay_millis: AtomicU64,
+    /// No new file may be written while set, as in a folder that takes no new files; the
+    /// files there may still be.
+    pub refused_new_files: AtomicBool,
+    /// Paths nothing may be moved or renamed onto.
+    refused_move_targets: Mutex<HashSet<String>>,
     clock: AtomicU64,
 }
 
@@ -78,6 +83,8 @@ impl MemoryFs {
             read_delay_millis: AtomicU64::new(0),
             upload_delay_millis: AtomicU64::new(0),
             write_delay_millis: AtomicU64::new(0),
+            refused_new_files: AtomicBool::new(false),
+            refused_move_targets: Mutex::new(HashSet::new()),
             clock: AtomicU64::new(1_700_000_000),
         })
     }
@@ -104,6 +111,18 @@ impl MemoryFs {
             current = format!("{current}/{part}");
             items.entry(current.clone()).or_insert(Item::Folder);
         }
+    }
+
+    /// Refuses, from now on, every move or rename onto `path`.
+    pub fn refuse_moves_onto(&self, path: &str) {
+        self.refused_move_targets
+            .lock()
+            .unwrap()
+            .insert(path.to_string());
+    }
+
+    pub fn allow_every_move(&self) {
+        self.refused_move_targets.lock().unwrap().clear();
     }
 
     /// Stores a file as another client of the server would, behind the drive's back.
@@ -425,6 +444,12 @@ impl RemoteFileSystem for MemoryFs {
             let mut items = self.items.lock().unwrap();
             let kept_permissions = match items.get(&request.path) {
                 Some(Item::File { permissions, .. }) => *permissions,
+                None if self.refused_new_files.load(Ordering::Relaxed) => {
+                    return Err(AppError::new(
+                        ErrorKind::PermissionDenied,
+                        format!("No new file may be written as {}", request.path),
+                    ));
+                }
                 _ => None,
             };
             items.insert(
@@ -446,6 +471,12 @@ impl RemoteFileSystem for MemoryFs {
 
 impl MemoryFs {
     fn relocate(&self, path: &str, target: &str) -> AppResult<()> {
+        if self.refused_move_targets.lock().unwrap().contains(target) {
+            return Err(AppError::new(
+                ErrorKind::PermissionDenied,
+                format!("Nothing may be moved onto {target}"),
+            ));
+        }
         let mut items = self.items.lock().unwrap();
         if !items.contains_key(path) {
             return Err(not_found(path));

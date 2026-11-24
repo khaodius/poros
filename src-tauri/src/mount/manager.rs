@@ -45,6 +45,9 @@ const CHANGES_GATHERED: Duration = Duration::from_millis(250);
 /// How long a drive that goes waits for its stopped uploads to clear up after themselves on
 /// the server before its connections close.
 const UPLOADS_STOPPING: Duration = Duration::from_secs(3);
+/// How long a drive that goes may take to remove what failed uploads left beside their files,
+/// where its connection still answers.
+const STAGED_TIDYING: Duration = Duration::from_secs(3);
 
 /// What the dialog asks for. Mirrored in `src/lib/types.ts`.
 #[derive(Debug, Clone, Deserialize)]
@@ -548,6 +551,7 @@ impl MountManager {
             return;
         }
         drive.core.uploads_ended(UPLOADS_STOPPING).await;
+        drive.core.tidy_staged(STAGED_TIDYING).await;
         drive.backend.close().await;
         let session_id = drive.backend.session_id();
         self.events.log(

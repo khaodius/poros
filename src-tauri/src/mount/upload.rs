@@ -8,11 +8,14 @@
 //!
 //! On SFTP and FTP servers the file is written under a name of its own beside the original
 //! and moved into its place once checked, so an upload cut short leaves the original whole.
-//! Object stores and WebDAV servers replace a file only once all of it arrived anyway.
+//! One that cannot be removed when it fails, because the connection went, is remembered and
+//! removed later. Object stores and WebDAV servers replace a file only once all of it arrived
+//! anyway.
 
+use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -43,6 +46,66 @@ pub struct UploadRequest {
     /// Cancelled when the drive goes: the upload stops between two pieces, so what it left
     /// beside the file can still be removed.
     pub stop: CancellationToken,
+    /// Shared by the uploads of one drive.
+    pub staging: Arc<Staging>,
+}
+
+/// What the uploads of one drive remember from one attempt to the next.
+#[derive(Debug, Default)]
+pub struct Staging {
+    /// Uploads written beside their files that could not be removed when they failed, because
+    /// the connection was lost or the server stopped answering, with the file each was for.
+    left: Mutex<BTreeMap<String, String>>,
+    /// Files written in place because their folder takes no new files, so it is said once.
+    in_place: Mutex<HashSet<String>>,
+}
+
+impl Staging {
+    fn remember(&self, staged: &str, target: &str) {
+        self.left
+            .lock()
+            .unwrap()
+            .insert(staged.to_string(), target.to_string());
+    }
+
+    /// The uploads left beside their files, by the path each was written under.
+    pub fn left_beside(&self) -> Vec<String> {
+        self.left.lock().unwrap().keys().cloned().collect()
+    }
+
+    /// Removes what earlier uploads left beside their files. What cannot be reached now stays
+    /// remembered for the next time.
+    pub async fn tidy(&self, files: &Arc<dyn RemoteFileSystem>) {
+        let left = std::mem::take(&mut *self.left.lock().unwrap());
+        let mut entries = left.into_iter();
+        for (staged, target) in entries.by_ref() {
+            match step(files.delete(std::slice::from_ref(&staged))).await {
+                Err(error) if error.is_connection_lost() => {
+                    self.remember(&staged, &target);
+                    break;
+                }
+                Err(error) if error.kind != ErrorKind::NotFound => {
+                    log::warn!(
+                        "Could not remove {staged}, an unfinished upload of {target}: {}",
+                        error.message
+                    );
+                }
+                _ => {}
+            }
+        }
+        for (staged, target) in entries {
+            self.remember(&staged, &target);
+        }
+    }
+
+    fn note_in_place(&self, target: &str) {
+        if self.in_place.lock().unwrap().insert(target.to_string()) {
+            log::warn!(
+                "{target} is written in place: its folder on the server takes no new files, so \
+                 an upload cut short leaves it partial"
+            );
+        }
+    }
 }
 
 /// How a finished upload is checked.
@@ -130,6 +193,8 @@ pub async fn upload(
     let lease = backend.lease(Purpose::Upload).await?;
     let files = lease.files.clone();
     let target = &request.remote_path;
+    // A file that failed again and again leaves one upload beside it at most.
+    request.staging.tidy(&files).await;
     let Some(staged) = staged_path(files.as_ref(), target) else {
         return send_and_check(
             backend,
@@ -177,6 +242,7 @@ pub async fn upload(
         Err(error) if error.kind == ErrorKind::PermissionDenied => {
             // A folder that takes no new files may still let its files be written.
             let _ = step(files.delete(std::slice::from_ref(&staged))).await;
+            request.staging.note_in_place(target);
             sent.store(0, Ordering::Relaxed);
             return send_and_check(
                 backend,
@@ -189,16 +255,43 @@ pub async fn upload(
             )
             .await;
         }
-        Err(error) => Err(error),
+        Err(error) => Err(NotPlaced::Failed(error)),
     };
-    if let Err(error) = placed {
-        if !error.is_connection_lost() {
-            let _ = step(files.delete(std::slice::from_ref(&staged))).await;
+    match placed {
+        Ok(()) => {
+            set_time(&files, request, target).await;
+            Ok(())
         }
-        return Err(error.with_path(target.clone()));
+        // Both copies stay on the server, under the names the error gives.
+        Err(NotPlaced::Stranded(error)) => Err(error.with_path(target.clone())),
+        Err(NotPlaced::Failed(error)) => {
+            // Without a connection it is removed later: before the next attempt, after a
+            // reconnect, or when the drive goes.
+            let unreachable = error.is_connection_lost()
+                || step(files.delete(std::slice::from_ref(&staged)))
+                    .await
+                    .is_err_and(|failure| failure.is_connection_lost());
+            if unreachable {
+                request.staging.remember(&staged, target);
+            }
+            Err(error.with_path(target.clone()))
+        }
     }
-    set_time(&files, request, target).await;
-    Ok(())
+}
+
+/// Why a checked upload did not take its file's place.
+enum NotPlaced {
+    /// The server holds the file as before, and the upload beside it can go.
+    Failed(AppError),
+    /// The old file stepped aside and could not come back: the server holds both copies under
+    /// the names the error gives.
+    Stranded(AppError),
+}
+
+impl From<AppError> for NotPlaced {
+    fn from(error: AppError) -> Self {
+        NotPlaced::Failed(error)
+    }
 }
 
 /// Moves `from` to `to` in the same folder, by renaming where the server cannot move.
@@ -218,11 +311,11 @@ async fn put_in_place(
     files: &Arc<dyn RemoteFileSystem>,
     staged: &str,
     target: &str,
-) -> AppResult<()> {
+) -> Result<(), NotPlaced> {
     let refused = match relocate(files, staged, target).await {
         Ok(()) => return Ok(()),
         Err(error) if error.is_connection_lost() || error.kind == ErrorKind::Timeout => {
-            return Err(error)
+            return Err(error.into())
         }
         Err(error) => error,
     };
@@ -230,18 +323,30 @@ async fn put_in_place(
     // back again if the new one still cannot take its place.
     let aside = format!("{staged}.old");
     if relocate(files, target, &aside).await.is_err() {
-        return Err(refused);
+        return Err(refused.into());
     }
-    match relocate(files, staged, target).await {
+    let error = match relocate(files, staged, target).await {
         Ok(()) => {
             let _ = step(files.delete(&[aside])).await;
-            Ok(())
+            return Ok(());
         }
-        Err(error) => {
-            let _ = relocate(files, &aside, target).await;
-            Err(error)
-        }
+        Err(error) => error,
+    };
+    if relocate(files, &aside, target).await.is_ok() {
+        return Err(error.into());
     }
+    Err(NotPlaced::Stranded(AppError::new(
+        error.kind,
+        format!(
+            "The server would not put the new {name} in its place, nor the old one back: the \
+             old {name} is now {old} and the new one {new}, in the same folder. The new \
+             contents also stay on this computer. ({reason})",
+            name = remote_path::file_name(target),
+            old = remote_path::file_name(&aside),
+            new = remote_path::file_name(staged),
+            reason = error.message,
+        ),
+    )))
 }
 
 /// Writes the spool to `path` on the server and checks what arrived there.

@@ -80,6 +80,10 @@ fn sftp_server() -> Option<Server> {
     server("POROS_TEST_SSH_PORT", Protocol::Sftp)
 }
 
+fn ftp_server() -> Option<Server> {
+    server("POROS_TEST_FTP_PORT", Protocol::Ftp)
+}
+
 fn profile(server: &Server) -> ConnectProfile {
     let host = match server.protocol {
         Protocol::S3 => format!("http://127.0.0.1:{}", server.port),
@@ -800,6 +804,44 @@ async fn removing_a_folder_with_links_in_it_removes_only_the_links() {
             .await
             .unwrap();
     }
+    // The FTP server shows the same account's files, and says in its listing where the
+    // links lead.
+    if let Some(ftp) = ftp_server() {
+        let ftp_session = connect(&setup.sessions, &ftp).await;
+        let at = setup.mount_point("ftp");
+        let Some(drive) = setup.mount(&ftp_session.id, &tree, &at, false).await else {
+            setup.finish().await;
+            return;
+        };
+        program(move || {
+            let dir = at.join("dir");
+            assert!(
+                std::fs::symlink_metadata(dir.join("loop"))
+                    .unwrap()
+                    .file_type()
+                    .is_symlink(),
+                "FTP"
+            );
+            assert_eq!(
+                std::fs::read_link(dir.join("note")).unwrap(),
+                Path::new("../docs/a.txt"),
+                "FTP"
+            );
+            assert_eq!(
+                std::fs::read_to_string(dir.join("note")).unwrap(),
+                "alpha",
+                "FTP"
+            );
+            let refused = std::fs::read_link(dir.join("link")).unwrap_err();
+            assert_eq!(errno(&refused), libc::EACCES, "FTP: {refused}");
+            let found = run("find", &[&dir]);
+            assert_eq!(found.lines().count(), 4, "FTP: {found}");
+        })
+        .await;
+        setup.mounts.unmount(&drive.id, false).await.unwrap();
+        setup.sessions.disconnect(&ftp_session.id).await.unwrap();
+    }
+
     let at = setup.mount_point("drive");
     let Some(_drive) = setup.mount(&setup.session.id, &tree, &at, false).await else {
         setup.finish().await;

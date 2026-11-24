@@ -1509,6 +1509,118 @@ async fn a_drive_that_goes_stops_its_uploads_and_leaves_nothing_beside_the_file(
 }
 
 #[tokio::test]
+async fn an_upload_cut_off_with_the_connection_is_removed_before_the_next_attempt() {
+    let drive = drive();
+    drive.server.put_file("/video.mp4", "the original");
+    let id = node(&drive, "/video.mp4").await;
+    let handle = drive.fs.open(id, OpenMode::WRITE_TRUNCATE).await.unwrap();
+    let contents = pattern(2 * 1024 * 1024, 11);
+    drive.fs.write(handle, 0, &contents).await.unwrap();
+    drive.server.write_delay_millis.store(20, Ordering::Relaxed);
+
+    // Twice the connection goes halfway through: what was sent stays beside the file, as
+    // nothing can remove it then, but one attempt's leftover at most.
+    for _ in 0..2 {
+        let flushing = {
+            let fs = drive.fs.clone();
+            tokio::spawn(async move { fs.flush(handle).await })
+        };
+        until("a piece of this attempt is on the server", || {
+            drive
+                .fs
+                .pending_uploads()
+                .iter()
+                .any(|pending| pending.uploading && pending.sent > 0)
+        })
+        .await;
+        drive.server.offline.store(true, Ordering::Relaxed);
+        assert!(flushing.await.unwrap().is_err());
+        drive.server.offline.store(false, Ordering::Relaxed);
+        assert_eq!(drive.fs.left_beside().len(), 1);
+        assert_eq!(server_names(&drive.server, "/").await.len(), 2);
+        assert_eq!(
+            drive.server.file("/video.mp4").unwrap()[..],
+            b"the original"[..]
+        );
+    }
+
+    // Without a connection it stays remembered; with one, a reconnect or the drive going
+    // removes it, and so does the next attempt.
+    drive.server.offline.store(true, Ordering::Relaxed);
+    drive.fs.tidy_staged(Duration::from_secs(5)).await;
+    assert_eq!(drive.fs.left_beside().len(), 1);
+    drive.server.offline.store(false, Ordering::Relaxed);
+    drive.fs.tidy_staged(Duration::from_secs(5)).await;
+    assert!(drive.fs.left_beside().is_empty());
+    assert_eq!(server_names(&drive.server, "/").await, ["video.mp4"]);
+
+    drive.server.write_delay_millis.store(0, Ordering::Relaxed);
+    drive.fs.flush(handle).await.unwrap();
+    drive.fs.release(handle);
+    assert_eq!(server_names(&drive.server, "/").await, ["video.mp4"]);
+    assert!(drive.server.file("/video.mp4").unwrap()[..] == contents[..]);
+}
+
+#[tokio::test]
+async fn an_original_that_cannot_be_put_back_is_named_and_both_copies_stay() {
+    let drive = drive();
+    drive.server.put_file("/docs/log.txt", "the original");
+    let id = node(&drive, "/docs/log.txt").await;
+    let handle = drive.fs.open(id, OpenMode::WRITE_TRUNCATE).await.unwrap();
+    drive.fs.write(handle, 0, b"the new log").await.unwrap();
+    // The upload may not take the file's place, so the old file steps aside, and then may
+    // not come back either.
+    drive.server.refuse_moves_onto("/docs/log.txt");
+    let Err(VfsError::Io(reason)) = drive.fs.flush(handle).await else {
+        panic!("the upload must fail");
+    };
+    let names = server_names(&drive.server, "/docs").await;
+    assert_eq!(names.len(), 2, "{names:?}");
+    let old = names.iter().find(|name| name.ends_with(".old")).unwrap();
+    let new = names.iter().find(|name| !name.ends_with(".old")).unwrap();
+    assert!(reason.contains(old.as_str()), "{reason}");
+    assert!(reason.contains(new.as_str()), "{reason}");
+    assert_eq!(
+        drive.server.file(&format!("/docs/{old}")).unwrap()[..],
+        b"the original"[..]
+    );
+    assert_eq!(
+        drive.server.file(&format!("/docs/{new}")).unwrap()[..],
+        b"the new log"[..]
+    );
+    assert!(drive.fs.left_beside().is_empty(), "neither copy is removed");
+
+    drive.server.allow_every_move();
+    drive.fs.flush(handle).await.unwrap();
+    drive.fs.release(handle);
+    assert_eq!(
+        drive.server.file("/docs/log.txt").unwrap()[..],
+        b"the new log"[..]
+    );
+    assert!(drive.server.exists(&format!("/docs/{old}")));
+}
+
+#[tokio::test]
+async fn a_folder_that_takes_no_new_files_has_its_files_written_in_place() {
+    let drive = drive();
+    drive.server.put_file("/drop/form.txt", "blank");
+    drive
+        .server
+        .refused_new_files
+        .store(true, Ordering::Relaxed);
+    let id = node(&drive, "/drop/form.txt").await;
+    let handle = drive.fs.open(id, OpenMode::WRITE_TRUNCATE).await.unwrap();
+    drive.fs.write(handle, 0, b"filled in").await.unwrap();
+    drive.fs.flush(handle).await.unwrap();
+    drive.fs.release(handle);
+    assert_eq!(
+        drive.server.file("/drop/form.txt").unwrap()[..],
+        b"filled in"[..]
+    );
+    assert_eq!(server_names(&drive.server, "/drop").await, ["form.txt"]);
+}
+
+#[tokio::test]
 async fn a_rename_sends_what_is_unsent_first_and_fails_if_it_cannot() {
     let drive = drive();
     drive.server.put_file("/report.docx", "the good report");

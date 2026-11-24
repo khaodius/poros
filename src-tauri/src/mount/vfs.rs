@@ -30,7 +30,7 @@ use super::backend::{Backend, Purpose};
 use super::blocks::{BlockCache, BlockKey, BLOCK_SIZE};
 use super::names::{self, FolderNames, NameStyle};
 use super::spool::{Spool, UnsentNote};
-use super::upload::{self, ChooseCheck, UploadCheck, UploadRequest};
+use super::upload::{self, ChooseCheck, Staging, UploadCheck, UploadRequest};
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::model::{DirListing, EntryKind, FileEntry};
 use crate::protocol::{self, ReadStream, RemoteFileSystem};
@@ -46,6 +46,8 @@ const READ_STEP_LIMIT: Duration = Duration::from_secs(45);
 const STREAM_IDLE: Duration = Duration::from_secs(4);
 /// How often an upload is tried again by itself when the file changed while it was sent.
 const SUPERSEDED_RETRIES: u32 = 3;
+/// How long removing what failed uploads left beside their files may take on a retry.
+const TIDYING_ON_RETRY: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VfsError {
@@ -436,6 +438,7 @@ pub struct MountFs {
     on_change: Mutex<Option<ChangeReport>>,
     /// Cancelled when the drive goes regardless of what is still being sent.
     stopping: CancellationToken,
+    staging: Arc<Staging>,
 }
 
 impl Drop for MountFs {
@@ -511,6 +514,7 @@ impl MountFs {
             on_upload_failure: Mutex::new(None),
             on_change: Mutex::new(None),
             stopping: CancellationToken::new(),
+            staging: Arc::default(),
         })
     }
 
@@ -1396,6 +1400,7 @@ impl MountFs {
                     modified: state.modified,
                     permissions: state.permissions,
                     stop: self.stopping.clone(),
+                    staging: self.staging.clone(),
                 };
                 (generation, request)
             };
@@ -1515,8 +1520,11 @@ impl MountFs {
     /// Tries again every upload that failed or never ran. An attempt under way may have
     /// started before whatever made trying again worth it, so it is waited for and the file
     /// sent again if it is still not on the server. A file a program has open is sent only
-    /// once an attempt for it was made: until then the program is still writing it.
+    /// once an attempt for it was made: until then the program is still writing it. What
+    /// uploads that failed without a connection left beside their files is removed too.
     pub fn retry_unsent(self: &Arc<Self>) {
+        let tidying = self.clone();
+        tokio::spawn(async move { tidying.tidy_staged(TIDYING_ON_RETRY).await });
         let waiting: Vec<NodeId> = {
             let nodes = self.nodes.lock().unwrap();
             nodes
@@ -2291,6 +2299,28 @@ impl MountFs {
     /// they wrote beside their files is removed, and their files stay kept here.
     pub fn stop_uploads(&self) {
         self.stopping.cancel();
+    }
+
+    /// Removes, taking up to `limit`, what uploads that failed without a connection left
+    /// beside their files on the server. What cannot be removed now stays remembered.
+    pub async fn tidy_staged(&self, limit: Duration) {
+        if self.staging.left_beside().is_empty() {
+            return;
+        }
+        let tidying = async {
+            match self.backend.lease(Purpose::Request).await {
+                Ok(lease) => self.staging.tidy(&lease.files).await,
+                Err(error) => log::debug!("Unfinished uploads stay for now: {}", error.message),
+            }
+        };
+        if tokio::time::timeout(limit, tidying).await.is_err() {
+            log::debug!("Unfinished uploads stay for now: the server did not answer in time");
+        }
+    }
+
+    /// The paths of uploads left beside their files, still to be removed.
+    pub fn left_beside(&self) -> Vec<String> {
+        self.staging.left_beside()
     }
 
     /// Waits, up to `limit`, until no upload runs any more.
