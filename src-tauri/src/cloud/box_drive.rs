@@ -3,6 +3,8 @@
 //! lookups for a few seconds, so a transfer of many files into one folder lists it once
 //! rather than once per file.
 
+mod sharing;
+
 use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::{Arc, Mutex};
@@ -398,6 +400,10 @@ impl RemoteFileSystem for BoxFs {
             ranged_reads: true,
             resumable_writes: false,
         }
+    }
+
+    fn link_sharing(&self) -> Option<&dyn crate::share::LinkSharing> {
+        Some(self)
     }
 
     async fn canonicalize(&self, path: &str) -> AppResult<String> {

@@ -2,6 +2,8 @@
 //! several files of the same name, so paths are resolved one folder at a time (with recent
 //! folders cached) and the most recently changed file wins a name clash, folders first.
 
+mod sharing;
+
 use std::collections::HashSet;
 use std::ops::Range;
 use std::sync::Arc;
@@ -123,6 +125,9 @@ fn exactly_named(files: Vec<DriveFile>, name: &str) -> Option<DriveFile> {
 pub struct DriveFs {
     api: Api,
     root: DriveFile,
+    /// The Google Workspace domain of the account, which links can be limited to; none for
+    /// a personal account.
+    organization: Option<String>,
     folders: FolderCache,
     /// Parallel uploads would otherwise each create a missing folder, and Drive would keep
     /// every copy.
@@ -131,15 +136,20 @@ pub struct DriveFs {
 
 impl DriveFs {
     pub async fn connect(api: Api) -> AppResult<Self> {
-        let root: DriveFile = api
-            .json(&|http| {
+        let (root, account) = tokio::join!(
+            api.json::<DriveFile>(&|http| {
                 http.get(format!("{FILES_URL}/root"))
                     .query(&[("fields", FILE_FIELDS)])
-            })
-            .await?;
+            }),
+            api.json::<sharing::Account>(&|http| http.get(sharing::USERINFO_URL)),
+        );
+        let root = root?;
+        // Without it, links are offered for anyone only.
+        let organization = account.ok().as_ref().and_then(sharing::organization_of);
         Ok(Self {
             api,
             root,
+            organization,
             folders: FolderCache::default(),
             folder_creation: tokio::sync::Mutex::new(()),
         })
@@ -256,6 +266,10 @@ impl RemoteFileSystem for DriveFs {
             ranged_reads: true,
             resumable_writes: false,
         }
+    }
+
+    fn link_sharing(&self) -> Option<&dyn crate::share::LinkSharing> {
+        Some(self)
     }
 
     async fn canonicalize(&self, path: &str) -> AppResult<String> {

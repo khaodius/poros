@@ -1,8 +1,9 @@
 //! End-to-end tests of `poros-cli`, run as a program the way scripts and agents run it. The
 //! tests that need a server are skipped unless `POROS_TEST_SSH_PORT` is set; the server is the
-//! one `sftp_server.rs` describes.
+//! one `sftp_server.rs` describes. Share links are tested against the S3 server of
+//! `http_storage.rs`, with `POROS_TEST_S3_PORT`.
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
@@ -64,6 +65,8 @@ struct Run {
     connection: String,
     password: String,
     remote: String,
+    /// Connection options every command of the run takes.
+    options: Vec<&'static str>,
 }
 
 impl Run {
@@ -74,7 +77,23 @@ impl Run {
             connection,
             password,
             remote,
+            options: Vec::new(),
         }
+    }
+
+    /// A run against the S3 server, with a bucket of its own as the scratch folder.
+    fn object_storage(name: &str) -> Option<Self> {
+        let port: u16 = std::env::var("POROS_TEST_S3_PORT").ok()?.parse().ok()?;
+        let mut run = Self::new(
+            format!("s3+http://poros-access-key@127.0.0.1:{port}"),
+            "poros-secret-key".into(),
+            format!("/poros-cli-{name}-{}", std::process::id()),
+        );
+        run.options = vec!["--s3-path-style"];
+        run.run(&["rm", "-rf", &run.remote]);
+        let made = run.run(&["mkdir", &run.remote]);
+        assert_eq!(status(&made), 0, "{made:?}");
+        Some(run)
     }
 
     fn offline() -> Self {
@@ -123,6 +142,7 @@ impl Run {
             command.env_remove(name);
         }
         command
+            .args(&self.options)
             .args(arguments)
             .current_dir(self.local.path())
             .env("POROS_CONFIG_DIR", self.config.path())
@@ -712,6 +732,136 @@ fn batch_answers_every_line_in_order() {
     assert_eq!(answers[4]["exitCode"], 7);
     assert_eq!(answers[5]["exitCode"], 2);
     assert_eq!(answers[6]["error"]["kind"], "invalidInput");
+}
+
+/// A bare HTTP/1.1 `GET` over a socket: nothing but the address and the `Host` header go
+/// out, so what comes back is what anyone holding the address gets. Returns the status, the
+/// headers in lower case, and the body.
+fn plain_get(address: &str) -> (u16, String, Vec<u8>) {
+    let rest = address
+        .strip_prefix("http://")
+        .expect("a plain HTTP address");
+    let (authority, target) = rest.split_once('/').unwrap();
+    let mut stream = std::net::TcpStream::connect(authority).unwrap();
+    write!(
+        stream,
+        "GET /{target} HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\n\r\n"
+    )
+    .unwrap();
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).unwrap();
+    let head_end = response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .expect("an HTTP response");
+    let head = String::from_utf8_lossy(&response[..head_end]).to_ascii_lowercase();
+    let status = head.split_whitespace().nth(1).unwrap().parse().unwrap();
+    (status, head, response[head_end + 4..].to_vec())
+}
+
+#[test]
+fn share_prints_links_that_open_without_credentials() {
+    let Some(run) = Run::object_storage("share") else {
+        return;
+    };
+    let contents = b"quarterly numbers\n".repeat(2000);
+    let report = run.remote("reports/q3 report+final \u{e9}.txt");
+    let notes = run.remote("notes.txt");
+    let written = run.with_input(&["write", "-p", &report], &contents);
+    assert_eq!(status(&written), 0, "{written:?}");
+    let written = run.with_input(&["write", &notes], b"notes\n");
+    assert_eq!(status(&written), 0, "{written:?}");
+
+    // Plain output is the link and nothing else, ready for a pipe. Nothing on standard
+    // error holds it, however much is logged.
+    let output = run.run(&["-vv", "share", &report]);
+    assert_eq!(status(&output), 0, "{output:?}");
+    let link = String::from_utf8(output.stdout).unwrap();
+    let link = link.strip_suffix('\n').expect("one line");
+    assert!(!link.contains('\n') && link.starts_with("http://127.0.0.1:"));
+    assert!(link.contains("/reports/q3%20report%2Bfinal%20%C3%A9.txt?X-Amz-Algorithm="));
+    assert!(link.contains("&X-Amz-Expires=3600&"), "an hour by default");
+    let logged = String::from_utf8_lossy(&output.stderr);
+    assert!(logged.contains("Made a view link to"), "{logged}");
+    assert!(!logged.contains("X-Amz-Signature") && !logged.contains("X-Amz-Credential"));
+    let (code, _, body) = plain_get(link);
+    assert_eq!(code, 200);
+    assert_eq!(digest(&body), digest(&contents));
+
+    let (code, value) = run.json(&["share", &report, "--expires", "2h", "--kind", "download"]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(value["path"], report.as_str());
+    assert_eq!(value["kind"], "download");
+    assert_eq!(value["audience"], "anyone");
+    assert_eq!(value["revocable"], false);
+    assert_eq!(value["hasPassword"], false);
+    assert_eq!(value["notes"], serde_json::json!([]));
+    let expires_at = value["expiresAt"].as_str().unwrap();
+    assert!(
+        expires_at.ends_with('Z') && expires_at.len() == 20,
+        "{expires_at}"
+    );
+    let address = value["url"].as_str().unwrap();
+    assert!(address.contains("&X-Amz-Expires=7200&"));
+    let (code, head, body) = plain_get(address);
+    assert_eq!(code, 200);
+    assert_eq!(digest(&body), digest(&contents));
+    assert!(
+        head.contains("content-disposition: attachment; filename="),
+        "{head}"
+    );
+
+    // Several paths give one link each, and a failure does not hide the others.
+    let missing = run.remote("missing.txt");
+    let (code, value) = run.json(&["share", &notes, &missing, &report]);
+    assert_eq!(code, 10, "{value}");
+    let answers = value.as_array().unwrap();
+    assert_eq!(answers.len(), 3);
+    assert_eq!(plain_get(answers[0]["url"].as_str().unwrap()).2, b"notes\n");
+    assert_eq!(answers[1]["error"]["kind"], "notFound");
+    assert_eq!(answers[2]["path"], report.as_str());
+    let output = run.run(&["share", &run.remote("*.txt")]);
+    assert_eq!(status(&output), 0, "{output:?}");
+    assert_eq!(String::from_utf8_lossy(&output.stdout).lines().count(), 1);
+
+    // A lifetime past the service's limit is cut to it, with a warning.
+    let output = run.run(&["share", &notes, "--expires", "30d"]);
+    assert_eq!(status(&output), 0, "{output:?}");
+    assert!(String::from_utf8_lossy(&output.stdout).contains("&X-Amz-Expires=604800&"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("at most 7 days"));
+
+    // What the service cannot do says so, with the status scripts check.
+    let (code, value) = run.json(&["share", &notes, "--kind", "edit"]);
+    assert_eq!(code, 2, "{value}");
+    assert_eq!(
+        value["error"]["message"],
+        "S3 cannot make edit links; choose view or download"
+    );
+    let (code, value) = run.json(&["share", &run.remote("reports")]);
+    assert_eq!(code, 12, "{value}");
+    assert_eq!(value["error"]["kind"], "unsupported");
+    let (code, value) = run.json(&["share", &notes, "--revoke"]);
+    assert_eq!(code, 12, "{value}");
+    assert!(value["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("cannot be removed"));
+    let (code, value) = run.json(&["share", &notes, "--expires", "soon"]);
+    assert_eq!(code, 2, "{value}");
+}
+
+#[test]
+fn share_is_refused_where_the_protocol_has_no_links() {
+    let Some(run) = Run::online("share") else {
+        return;
+    };
+    let note = run.remote("note.txt");
+    let written = run.with_input(&["write", &note], b"hi\n");
+    assert_eq!(status(&written), 0, "{written:?}");
+    let (code, value) = run.json(&["share", &note]);
+    assert_eq!(code, 12, "{value}");
+    assert_eq!(value["error"]["kind"], "unsupported");
+    assert_eq!(value["error"]["message"], "SFTP has no share links");
 }
 
 #[test]
