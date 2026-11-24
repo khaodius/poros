@@ -60,6 +60,7 @@ import {
   TextSetting,
 } from "./settingsFields";
 import { useT, t } from "../i18n";
+import { LanguagePicker } from "./LanguagePicker";
 
 const SECTIONS: { id: SettingsSection; label: string; icon: LucideIcon }[] = [
   {
@@ -702,6 +703,15 @@ function InterfaceSettingsPage({ settings }: { settings: Settings }) {
     void saveSettingsSection("interface", change);
   return (
     <>
+      <SettingGroup title={t("settings.language")}>
+        <SettingRow label={t("settings.language")} hint={t("settings.languageHint")}>
+          <LanguagePicker
+            label={t("settings.language")}
+            value={options.language}
+            onChange={(language) => set({ language })}
+          />
+        </SettingRow>
+      </SettingGroup>
       <SettingGroup title={t("settings.files")}>
         <SelectSetting
           label={t("settings.doubleClickingAFile")}

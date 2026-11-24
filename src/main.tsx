@@ -4,12 +4,16 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { App } from "./App";
 import { DragPreview } from "./components/DragPreview";
 import { DRAG_PREVIEW_WINDOW } from "./lib/ipc";
+import { applyRememberedLanguage } from "./i18n";
+import { followLanguageSetting } from "./state/languageSetting";
 import { applyRememberedTheme } from "./state/themeStore";
 import "./styles/tokens.css";
 import "./styles/app.css";
 
 // Windows open hidden until the first render; this makes that render match the app's look.
 applyRememberedTheme();
+applyRememberedLanguage();
+followLanguageSetting();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

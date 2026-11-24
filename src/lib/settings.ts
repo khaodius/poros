@@ -2,6 +2,7 @@
 // cloud sections; the interface, appearance, log, sync, updates and automation sections are
 // stored as given, so they are checked here.
 
+import { sanitizeLanguage, SYSTEM_LANGUAGE, type LanguageChoice } from "../i18n";
 import { CUSTOM_ARGUMENTS_EXAMPLE, type ExtractorSettings } from "./archives";
 import { sanitizeFindHistory, type FindHistoryEntry } from "./bulkRename";
 import {
@@ -159,6 +160,8 @@ export interface FolderCompareSettings {
 }
 
 export interface InterfaceSettings {
+  /** `system`, which follows the computer's language, or a shipped language's tag. */
+  language: LanguageChoice;
   doubleClickFile: DoubleClickAction;
   showHiddenFiles: boolean;
   confirmCloseWithTransfers: boolean;
@@ -386,6 +389,7 @@ export const DEFAULT_SETTINGS: Settings = {
     keepMinutes: 10,
   },
   interface: {
+    language: SYSTEM_LANGUAGE,
     doubleClickFile: "transfer",
     showHiddenFiles: false,
     confirmCloseWithTransfers: true,
@@ -509,6 +513,7 @@ export function sanitizeSettings(stored: unknown): Settings {
     automation: mergeSection(DEFAULT_SETTINGS.automation, source.automation),
   };
   const options = settings.interface;
+  options.language = sanitizeLanguage(asSection(source.interface).language);
   if (!DOUBLE_CLICK_ACTIONS.includes(options.doubleClickFile)) {
     options.doubleClickFile = DEFAULT_SETTINGS.interface.doubleClickFile;
   }

@@ -25,9 +25,12 @@ export type LanguageChoice = string;
 
 const REMEMBERED_LANGUAGE_KEY = "poros.language";
 
-export function findTranslation(locale: string): Translation | undefined {
+export function findTranslation(
+  locale: string,
+  translations: readonly Translation[] = TRANSLATIONS,
+): Translation | undefined {
   const wanted = locale.toLowerCase();
-  return TRANSLATIONS.find((translation) => translation.locale.toLowerCase() === wanted);
+  return translations.find((translation) => translation.locale.toLowerCase() === wanted);
 }
 
 /** Language and script, so that `zh-CN` finds `zh-Hans` but `zh-TW`, which is `zh-Hant`, does not. */
@@ -41,13 +44,16 @@ function languageAndScript(locale: string): string | null {
 }
 
 /** The shipped language for a system locale such as `de-AT`, or English when there is none. */
-export function translationForSystem(systemLocale: string | undefined): Translation {
+export function translationForSystem(
+  systemLocale: string | undefined,
+  translations: readonly Translation[] = TRANSLATIONS,
+): Translation {
   if (!systemLocale) return ENGLISH;
-  const exact = findTranslation(systemLocale);
+  const exact = findTranslation(systemLocale, translations);
   if (exact) return exact;
   const wanted = languageAndScript(systemLocale);
   return (
-    TRANSLATIONS.find(
+    translations.find(
       (translation) => wanted !== null && languageAndScript(translation.locale) === wanted,
     ) ?? ENGLISH
   );

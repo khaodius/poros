@@ -183,4 +183,8 @@ export const settings = {
   // components/Stepper
   decrease: "Decrease {label}",
   increase: "Increase {label}",
+  language: "Language",
+  languageHint:
+    "System follows the computer's language. Messages from servers and the log stay in English.",
+  languageSystem: "System ({language})",
 } as const satisfies MessageArea;
