@@ -298,6 +298,8 @@ pub struct Control {
     /// Cleared once the server refuses to set a time with `MDTM`.
     sets_time_with_mdtm: bool,
     last_used: Instant,
+    /// Commands sent whose closing reply has not been read yet.
+    replies_owed: u32,
 }
 
 impl Control {
@@ -351,6 +353,7 @@ impl Control {
             extended_passive: true,
             sets_time_with_mdtm: true,
             last_used: Instant::now(),
+            replies_owed: 0,
         };
 
         let mut welcome = control.read_reply().await?;
@@ -463,6 +466,15 @@ impl Control {
         self.timeout
     }
 
+    /// Whether a reply to an earlier command is still to come. Between requests that means
+    /// one stopped partway: on an error after the server began a transfer, on a reply that
+    /// could not be read, or because it was cancelled. The next command would be answered
+    /// with what belongs to the earlier one, and every command after it likewise, so the
+    /// connection must not be used again.
+    pub fn is_out_of_step(&self) -> bool {
+        self.replies_owed > 0
+    }
+
     async fn read_line(&mut self) -> AppResult<String> {
         let mut bytes = Vec::new();
         let read = (&mut self.stream)
@@ -512,7 +524,13 @@ impl Control {
                 }
             }
         }
-        Ok(Reply { code, lines })
+        let reply = Reply { code, lines };
+        // A 1xx reply only announces the one that closes its command. The greeting answers
+        // no command at all.
+        if reply.class() != 1 {
+            self.replies_owed = self.replies_owed.saturating_sub(1);
+        }
+        Ok(reply)
     }
 
     pub async fn read_reply(&mut self) -> AppResult<Reply> {
@@ -531,6 +549,7 @@ impl Control {
 
     pub async fn send(&mut self, line: &str) -> AppResult<()> {
         self.last_used = Instant::now();
+        self.replies_owed += 1;
         let stream = self.stream.get_mut();
         stream
             .write_all(format!("{line}\r\n").as_bytes())
@@ -604,10 +623,19 @@ impl Control {
             _ => return Err(reply_error(&reply)),
         };
         let ip = passive_ip(*offered.ip(), self.peer.ip());
-        Ok(PreparedData::Passive(
-            self.connect_data(SocketAddr::new(ip, offered.port()))
-                .await?,
-        ))
+        let mut connected = self.connect_data(SocketAddr::new(ip, offered.port())).await;
+        if ip != IpAddr::V4(*offered.ip()) {
+            // The address the server named may be the one that works, so the error says it.
+            connected = connected.map_err(|mut error| {
+                error.message = format!(
+                    "{}; the server named {} for the data connection, and Poros used the server's own address",
+                    error.message,
+                    offered.ip()
+                );
+                error
+            });
+        }
+        Ok(PreparedData::Passive(connected?))
     }
 
     async fn connect_data(&self, address: SocketAddr) -> AppResult<TcpStream> {
@@ -638,9 +666,16 @@ impl Control {
         Ok(PreparedData::Active(listener))
     }
 
-    /// Sends a command that moves data and returns the open data connection.
-    pub async fn open_transfer(&mut self, command: &str) -> AppResult<DataStart> {
+    /// Sends a command that moves data and returns the open data connection. A file transfer
+    /// that starts partway names its `offset`.
+    pub async fn open_transfer(&mut self, command: &str, offset: u64) -> AppResult<DataStart> {
         let prepared = self.prepare_data().await?;
+        if offset > 0 {
+            // Right before the transfer, not before the data connection is set up: RFC 959
+            // lets a server forget the position at any other command, and some do, sending
+            // or replacing the file from its start.
+            self.expect(&format!("REST {offset}"), 3).await?;
+        }
         let reply = self.command(command).await?;
         match reply.class() {
             1 => {}
@@ -696,15 +731,11 @@ impl Control {
         }
     }
 
-    /// The reply that ends a transfer between two servers. It comes once the whole file has
-    /// moved, however long that takes, so only cancelling the transfer stops the wait.
-    pub async fn finish_direct_transfer(&mut self) -> AppResult<()> {
-        let reply = self.read_reply_untimed().await?;
-        if reply.class() == 2 {
-            Ok(())
-        } else {
-            Err(reply_error(&reply))
-        }
+    /// The reply that ends a transfer between two servers, whatever it says. It comes once the
+    /// whole file has moved, however long that takes, so only cancelling the transfer stops
+    /// the wait.
+    pub async fn direct_transfer_end(&mut self) -> AppResult<Reply> {
+        self.read_reply_untimed().await
     }
 
     /// Stops a transfer early. Servers answer an abort in different ways (426 then 226, or
@@ -726,6 +757,8 @@ impl Control {
         for _ in 0..6 {
             let reply = self.read_reply().await?;
             if reply.code == 200 {
+                // However many replies the abort drew, none is left once `NOOP` is answered.
+                self.replies_owed = 0;
                 return Ok(());
             }
             if reply.code == 421 {
@@ -768,7 +801,7 @@ impl Control {
     pub async fn list(&mut self, directory: &str) -> AppResult<Vec<RawEntry>> {
         check_argument(directory)?;
         if self.features.mlsd {
-            match self.open_transfer(&format!("MLSD {directory}")).await {
+            match self.open_transfer(&format!("MLSD {directory}"), 0).await {
                 Ok(start) => {
                     let text = self.read_listing(start).await?;
                     return Ok(listing::parse_mlsd(&text));
@@ -780,8 +813,10 @@ impl Control {
         // LIST output is meant for people and its path argument is not always honored, so list
         // the working folder instead.
         self.change_directory(directory).await?;
-        let start = match self.open_transfer("LIST -a").await {
-            Err(error) if error.kind == ErrorKind::Unsupported => self.open_transfer("LIST").await,
+        let start = match self.open_transfer("LIST -a", 0).await {
+            Err(error) if error.kind == ErrorKind::Unsupported => {
+                self.open_transfer("LIST", 0).await
+            }
             other => other,
         }
         .map_err(|error| error.with_path(directory))?;
@@ -955,10 +990,7 @@ impl Control {
     /// Starts sending a file from `offset`.
     pub async fn retrieve(&mut self, path: &str, offset: u64) -> AppResult<DataStart> {
         check_argument(path)?;
-        if offset > 0 {
-            self.expect(&format!("REST {offset}"), 3).await?;
-        }
-        self.open_transfer(&format!("RETR {path}"))
+        self.open_transfer(&format!("RETR {path}"), offset)
             .await
             .map_err(|error| error.with_path(path))
     }
@@ -966,10 +998,7 @@ impl Control {
     /// Starts receiving a file, replacing it from `offset` on.
     pub async fn store(&mut self, path: &str, offset: u64) -> AppResult<DataStart> {
         check_argument(path)?;
-        if offset > 0 {
-            self.expect(&format!("REST {offset}"), 3).await?;
-        }
-        self.open_transfer(&format!("STOR {path}"))
+        self.open_transfer(&format!("STOR {path}"), offset)
             .await
             .map_err(|error| error.with_path(path))
     }
@@ -983,7 +1012,7 @@ impl Control {
             _ => return Err(reply_error(&reply)),
         };
         Ok(SocketAddr::new(
-            passive_ip(*offered.ip(), self.peer.ip()),
+            direct_copy_ip(*offered.ip(), self.peer.ip()),
             offered.port(),
         ))
     }
@@ -1099,24 +1128,60 @@ fn parse_pasv_address(text: &str) -> Option<std::net::SocketAddrV4> {
     ))
 }
 
-fn is_unroutable(ip: Ipv4Addr) -> bool {
-    let [first, second, ..] = ip.octets();
-    ip.is_private()
+/// Whether `ip` is a host on the public internet: not this computer, not on a private or
+/// link-local network, and not an address no host has.
+fn is_public(ip: Ipv4Addr) -> bool {
+    let [first, ..] = ip.octets();
+    !(ip.is_private()
         || ip.is_loopback()
         || ip.is_link_local()
-        || ip.is_unspecified()
-        || (first == 100 && (64..128).contains(&second))
+        || first == 0
+        || first >= 224
+        || is_carrier_grade_nat(ip))
 }
 
-/// Servers behind NAT often offer their private address for passive mode; the address Poros
-/// reached them at works instead.
+/// `100.64.0.0/10`, which internet providers and VPNs such as Tailscale use as private space.
+fn is_carrier_grade_nat(ip: Ipv4Addr) -> bool {
+    let [first, second, ..] = ip.octets();
+    first == 100 && (64..128).contains(&second)
+}
+
+/// Where a passive data connection goes: to the server Poros is already talking to, as with
+/// `EPSV`, unless that server and the address in its `PASV` reply are both on the public
+/// internet.
+///
+/// Servers behind NAT often name their private address, and servers in containers one that
+/// exists only inside the container; the address Poros reached them at works instead. A
+/// hostile server can name this computer or a machine on the local network, to have Poros
+/// connect there and write an upload to it, so such an address is never followed. A server on
+/// the public internet may name another public address, as load-balanced servers do for the
+/// machine that holds the data: following it reaches nothing the server could not reach by
+/// itself.
 fn passive_ip(offered: Ipv4Addr, peer: IpAddr) -> IpAddr {
-    let peer_unroutable = match peer {
-        IpAddr::V4(peer) => is_unroutable(peer),
-        IpAddr::V6(peer) => peer.is_loopback(),
-    };
-    if offered.is_unspecified() || (is_unroutable(offered) && !peer_unroutable) {
-        peer
+    match peer {
+        IpAddr::V4(server) if is_public(server) && is_public(offered) => IpAddr::V4(offered),
+        _ => peer,
+    }
+}
+
+/// What a server-to-server copy tells the target to connect to, for a source that Poros
+/// reaches at `server` and that named `offered` in its `PASV` reply.
+///
+/// Poros opens no data connection here: the target does, from where it stands, so the rule
+/// for Poros's own connections does not apply. Two servers in one Docker or private network,
+/// reached through published ports, reach each other only at the address the source names.
+/// That address is replaced only when it cannot lead the target to the source: the source's
+/// own machine, a link-local, multicast or reserved address, `0.0.0.0/8`, or a private address
+/// named by a server on the public internet, which sits behind NAT and named its address
+/// inside it.
+fn direct_copy_ip(offered: Ipv4Addr, server: IpAddr) -> IpAddr {
+    let [first, ..] = offered.octets();
+    let leads_nowhere =
+        offered.is_loopback() || offered.is_link_local() || first == 0 || first >= 224;
+    let behind_nat = (offered.is_private() || is_carrier_grade_nat(offered))
+        && matches!(server, IpAddr::V4(server) if is_public(server));
+    if leads_nowhere || behind_nat {
+        server
     } else {
         IpAddr::V4(offered)
     }
@@ -1124,6 +1189,7 @@ fn passive_ip(offered: Ipv4Addr, peer: IpAddr) -> IpAddr {
 
 #[cfg(test)]
 mod tests {
+    use super::super::fake_server::{Behavior, FakeServer};
     use super::*;
 
     const STALL_LIMIT: Duration = Duration::from_millis(300);
@@ -1190,6 +1256,29 @@ mod tests {
         }
         sending.await.unwrap();
         assert_eq!(received.len(), 80);
+    }
+
+    /// From the reply that announces a transfer to the one that ends it, any error returns
+    /// with a reply still to come, whatever its kind: a listing over the size limit, or a
+    /// data connection whose certificate is refused.
+    #[tokio::test]
+    async fn a_transfer_is_out_of_step_until_its_closing_reply_is_read() {
+        let server = FakeServer::start(Behavior::default()).await;
+        server.put_file("/notes.txt", b"abc");
+        let (mut control, _) =
+            Control::connect(&server.profile(), None, "fake", &Events::default())
+                .await
+                .unwrap();
+        assert!(!control.is_out_of_step());
+        let DataStart::Opened(mut data) = control.retrieve("/notes.txt", 0).await.unwrap() else {
+            panic!("the server opened no data connection");
+        };
+        assert!(control.is_out_of_step());
+        let mut buffer = [0u8; 16];
+        while data.read_some(&mut buffer).await.unwrap() > 0 {}
+        drop(data);
+        control.finish_transfer().await.unwrap();
+        assert!(!control.is_out_of_step());
     }
 
     #[test]
@@ -1272,19 +1361,113 @@ mod tests {
     }
 
     #[test]
-    fn replaces_private_passive_addresses() {
-        let public: IpAddr = "203.0.113.5".parse().unwrap();
-        assert_eq!(passive_ip(Ipv4Addr::new(192, 168, 1, 2), public), public);
-        assert_eq!(passive_ip(Ipv4Addr::UNSPECIFIED, public), public);
-        assert_eq!(
-            passive_ip(Ipv4Addr::new(198, 51, 100, 7), public),
-            IpAddr::V4(Ipv4Addr::new(198, 51, 100, 7))
-        );
-        let private: IpAddr = "192.168.1.9".parse().unwrap();
-        assert_eq!(
-            passive_ip(Ipv4Addr::new(192, 168, 1, 2), private),
-            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2))
-        );
+    fn passive_connections_go_to_the_server_unless_both_addresses_are_public() {
+        let address = |text: &str| text.parse::<Ipv4Addr>().unwrap();
+        let peer = |text: &str| text.parse::<IpAddr>().unwrap();
+        // (the address the reply names, the server's address, where the connection goes)
+        for (offered, server, expected) in [
+            // A server behind NAT that names its public address, or its private one.
+            ("203.0.113.5", "203.0.113.5", "203.0.113.5"),
+            ("192.168.1.2", "203.0.113.5", "203.0.113.5"),
+            ("100.64.3.2", "203.0.113.5", "203.0.113.5"),
+            ("0.0.0.0", "203.0.113.5", "203.0.113.5"),
+            // A load-balanced server that names the machine holding the data.
+            ("198.51.100.7", "203.0.113.5", "198.51.100.7"),
+            // This computer, a link-local address or a multicast one, named by any server.
+            ("127.0.0.1", "203.0.113.5", "203.0.113.5"),
+            ("127.0.0.1", "192.168.1.10", "192.168.1.10"),
+            ("169.254.169.254", "192.168.1.10", "192.168.1.10"),
+            ("224.0.0.1", "203.0.113.5", "203.0.113.5"),
+            // A server on the local network that names a container's address, another machine
+            // on the network, or a public address.
+            ("172.17.0.2", "192.168.1.10", "192.168.1.10"),
+            ("192.168.1.2", "192.168.1.10", "192.168.1.10"),
+            ("198.51.100.7", "192.168.1.10", "192.168.1.10"),
+            // A server on this computer, or reached through a tunnel that ends on it.
+            ("10.0.0.5", "127.0.0.1", "127.0.0.1"),
+            ("198.51.100.7", "127.0.0.1", "127.0.0.1"),
+            // A server reached over IPv6 has no IPv4 address to compare with.
+            ("198.51.100.7", "2001:db8::5", "2001:db8::5"),
+        ] {
+            assert_eq!(
+                passive_ip(address(offered), peer(server)),
+                peer(expected),
+                "{offered} named by {server}"
+            );
+        }
+    }
+
+    /// The address a server names but Poros does not follow may be the one that works, so a
+    /// data connection that fails says which it was.
+    #[tokio::test]
+    async fn a_failed_data_connection_names_the_passive_address_not_followed() {
+        for (named, mentioned) in [(Some(Ipv4Addr::new(10, 0, 0, 7)), true), (None, false)] {
+            let server = FakeServer::start(Behavior {
+                refuses_extended_passive: true,
+                passive_address: named,
+                closes_passive_port: true,
+                ..Behavior::default()
+            })
+            .await;
+            server.put_file("/notes.txt", b"abc");
+            let (mut control, _) =
+                Control::connect(&server.profile(), None, "fake", &Events::default())
+                    .await
+                    .unwrap();
+            let Err(error) = control.retrieve("/notes.txt", 0).await else {
+                panic!("a data connection opened to a port nothing listens on");
+            };
+            let message = &error.message;
+            assert_eq!(error.kind, ErrorKind::Connection, "{message}");
+            assert!(
+                message.starts_with("Could not open a data connection to 127.0.0.1:"),
+                "{message}"
+            );
+            assert_eq!(
+                message.contains("the server named 10.0.0.7 for the data connection"),
+                mentioned,
+                "{message}"
+            );
+        }
+    }
+
+    #[test]
+    fn direct_copies_pass_on_the_address_the_source_names_unless_it_leads_nowhere() {
+        let address = |text: &str| text.parse::<Ipv4Addr>().unwrap();
+        let peer = |text: &str| text.parse::<IpAddr>().unwrap();
+        // (the address the source names, the source's address, what the target is told)
+        for (offered, server, expected) in [
+            // Two servers in one Docker network, reached through published ports.
+            ("172.18.0.2", "127.0.0.1", "172.18.0.2"),
+            ("172.18.0.2", "192.168.1.10", "172.18.0.2"),
+            // A source on the local network or a VPN that names itself or another host there.
+            ("192.168.1.10", "192.168.1.10", "192.168.1.10"),
+            ("192.168.1.20", "192.168.1.10", "192.168.1.20"),
+            ("100.64.3.2", "10.8.0.1", "100.64.3.2"),
+            // A source behind NAT that names its address inside it.
+            ("192.168.1.2", "203.0.113.5", "203.0.113.5"),
+            ("10.0.0.5", "203.0.113.5", "203.0.113.5"),
+            ("100.64.3.2", "203.0.113.5", "203.0.113.5"),
+            // A public address, named by any source.
+            ("198.51.100.7", "203.0.113.5", "198.51.100.7"),
+            ("198.51.100.7", "192.168.1.10", "198.51.100.7"),
+            // The source's own machine, a link-local, multicast or empty address.
+            ("127.0.0.1", "192.168.1.10", "192.168.1.10"),
+            ("127.0.0.1", "203.0.113.5", "203.0.113.5"),
+            ("169.254.10.1", "192.168.1.10", "192.168.1.10"),
+            ("224.0.0.1", "192.168.1.10", "192.168.1.10"),
+            ("0.0.0.0", "127.0.0.1", "127.0.0.1"),
+            ("0.0.0.0", "203.0.113.5", "203.0.113.5"),
+            // A source reached over IPv6 has no IPv4 address to compare with.
+            ("172.18.0.2", "2001:db8::5", "172.18.0.2"),
+            ("127.0.0.1", "2001:db8::5", "2001:db8::5"),
+        ] {
+            assert_eq!(
+                direct_copy_ip(address(offered), peer(server)),
+                peer(expected),
+                "{offered} named by {server}"
+            );
+        }
     }
 
     #[test]
