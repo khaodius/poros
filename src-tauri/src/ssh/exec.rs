@@ -351,27 +351,62 @@ pub(crate) mod tests {
         }
     }
 
-    /// No code starts a command on a server except through this module, so none can put a name
-    /// on the line a login shell reads.
-    #[test]
-    fn only_this_module_sends_exec_requests() {
-        fn visit(folder: &std::path::Path, found: &mut Vec<String>) {
-            for entry in std::fs::read_dir(folder).unwrap() {
-                let path = entry.unwrap().path();
-                if path.is_dir() {
-                    visit(&path, found);
-                } else if path.extension().is_some_and(|extension| extension == "rs") {
-                    let text = std::fs::read_to_string(&path).unwrap();
-                    if text.contains(".exec(true") || text.contains(".exec(false") {
-                        found.push(path.to_string_lossy().replace('\\', "/"));
+    /// Each file below `folder`, by its path from `root`, that holds any of `needles` once white
+    /// space is taken out, as rustfmt may break a call anywhere.
+    fn sources_holding(
+        root: &std::path::Path,
+        folder: &std::path::Path,
+        needles: &[&'static str],
+        found: &mut Vec<(String, &'static str)>,
+    ) {
+        for entry in std::fs::read_dir(folder).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                sources_holding(root, &path, needles, found);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                let text: String = std::fs::read_to_string(&path)
+                    .unwrap()
+                    .chars()
+                    .filter(|character| !character.is_whitespace())
+                    .collect();
+                let relative = path
+                    .strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                for needle in needles {
+                    if text.contains(needle) {
+                        found.push((relative.clone(), *needle));
                     }
                 }
             }
         }
+    }
+
+    /// No code starts a command or a shell on a server except through this module, so none can
+    /// put a name on the line a login shell reads: the only others are the user's own commands,
+    /// which alone may send text as it was written, and the terminal, which asks for a shell.
+    #[test]
+    fn only_this_module_sends_exec_requests() {
         let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         let mut found = Vec::new();
-        visit(&source, &mut found);
-        assert_eq!(found.len(), 1, "{found:?}");
-        assert!(found[0].ends_with("src/ssh/exec.rs"), "{found:?}");
+        sources_holding(
+            &source,
+            &source,
+            &[".exec(", "::exec(", "written_by_user", "request_shell"],
+            &mut found,
+        );
+        found.retain(|(path, _)| path != "ssh/exec.rs");
+        found.sort();
+        assert_eq!(
+            found,
+            [
+                (
+                    "automation/remote_command.rs".to_string(),
+                    "written_by_user"
+                ),
+                ("terminal.rs".to_string(), "request_shell"),
+            ]
+        );
     }
 }
