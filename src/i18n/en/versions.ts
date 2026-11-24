@@ -36,10 +36,11 @@ export const versions = {
   deletedItems: { one: "{count} deleted item", other: "{count} deleted items" },
   everythingDeletedUnderAFolder:
     "Everything deleted under a folder goes too. Files still in it are not touched.",
-  andMore: "and {count} more",
+  andMore: { one: "and {count} more", other: "and {count} more" },
   removeThisDeleteMarker: "Remove this delete marker",
   deleteThisVersionForGood: "Delete this version for good",
   versionFrom: "Version from {when}",
+  versionFromUnknownTime: "Version from an unknown time",
   currentVersion: "Current version",
   isNoLongerDeleted: "{name} is no longer deleted.",
   theseItemsAreNoLongerDeleted: "These items are no longer deleted.",

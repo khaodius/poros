@@ -42,7 +42,7 @@ export const search = {
   },
   leaveABoxEmptyTo: "Leave a box empty to leave that end open.",
   foldersThatCouldNotBe: "Folders that could not be read",
-  andMore: "and {count} more",
+  andMore: { one: "and {count} more", other: "and {count} more" },
   theSearchWentPastIt: {
     one: "The search went past {count} folder it could not read. What is inside them is not in the results.",
     other:
@@ -50,7 +50,10 @@ export const search = {
   },
   searchIn: "Search in {folder}",
   pressEnterToSearch: "Press Enter to search {folder} and the folders inside it",
-  searchingFoundIn: "Searching: {found} found in {folders}",
+  searchingFoundIn: {
+    one: "Searching: {count} found in {folders}",
+    other: "Searching: {count} found in {folders}",
+  },
   foundInFoldersSearched: "{found} in {folders} searched",
   searchedByTheServer: "Searched by the server",
   stoppedAfterSoFar: "Stopped after {folders}: {found} so far",

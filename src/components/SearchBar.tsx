@@ -406,7 +406,7 @@ function SearchStatus({
     switch (view.status) {
       case "searching":
         icon = <LoaderCircle size={13} className="spin" aria-hidden />;
-        text = t("search.searchingFoundIn", { found: view.entries.length, folders });
+        text = t("search.searchingFoundIn", { count: view.entries.length, folders });
         detail = view.current;
         break;
       case "finished":

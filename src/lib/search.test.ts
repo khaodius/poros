@@ -215,6 +215,21 @@ describe("descriptions", () => {
       }),
     ).toBe("report, folders only, this week, this folder only, hidden folders");
   });
+
+  it("keeps the units' capitals when a label goes inside the summary", () => {
+    expect(
+      describeSearch({
+        ...defaultSearchForm(),
+        size: { preset: "small", atLeast: "", atMost: "" },
+      }),
+    ).toBe("Everything, smaller than 1 MB");
+    expect(
+      describeSearch({
+        ...defaultSearchForm(),
+        size: { preset: "custom", atLeast: "500 KB", atMost: "2 GB" },
+      }),
+    ).toBe("Everything, 500 KB to 2 GB");
+  });
 });
 
 describe("rememberSearch", () => {

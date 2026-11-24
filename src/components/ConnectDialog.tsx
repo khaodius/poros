@@ -255,10 +255,13 @@ export function ConnectDialog({
           </div>
           {connections.length === 0 ? (
             <p className="site-list-empty">
-              {t("connect.connectionsYouSaveAppearHere")}{" "}
-              <button type="button" className="link-button" onClick={importConnections}>
-                {t("connect.importThemFromAnotherApp")}
-              </button>
+              {t.rich("connect.emptyConnectionList", {
+                importLink: (
+                  <button type="button" className="link-button" onClick={importConnections}>
+                    {t("connect.importThemFromAnotherApp")}
+                  </button>
+                ),
+              })}
             </p>
           ) : (
             <ul>
