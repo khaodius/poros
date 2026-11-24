@@ -60,7 +60,7 @@ export const dialogs = {
   extensionFile: "{extension} 文件",
   nameWithId: "{name} ({id})",
   measuringFolderSize: "正在计算文件夹大小",
-  changingPermissionsOf: "正在更改 {what} 的权限",
+  changingPermissionsOf: "正在更改权限：{what}",
   applyToEverythingInside: {
     other: "应用于文件夹中的所有内容",
   },

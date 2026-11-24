@@ -38,7 +38,7 @@ export const versions = {
   currentVersion: "当前版本",
   isNoLongerDeleted: "{name} 已不再处于删除状态。",
   theseItemsAreNoLongerDeleted: "这些项目已不再处于删除状态。",
-  removeWithEveryVersion: "要永久移除 {what} 及其保留的所有版本吗？此操作无法撤销。",
+  removeWithEveryVersion: "确定要永久移除 {what}，连同其保留的所有版本？此操作无法撤销。",
 
   // components/versionMenu
   versions: "版本...",
