@@ -1288,6 +1288,7 @@ mod tests {
     }
 
     /// A WebDAV server on which every folder is empty, and nothing else can be done.
+    #[derive(Default)]
     struct EmptyFolders;
 
     fn refused() -> AppError {
@@ -1365,6 +1366,94 @@ mod tests {
         }
     }
 
+    fn runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+    }
+
+    /// A transfer manager without retries, and the id of a session open over `server`.
+    fn manager_over(temp_dir: &Path, server: Arc<EmptyFolders>) -> (Arc<TransferManager>, String) {
+        let sessions = Arc::new(SessionManager::new(
+            temp_dir.join("known_hosts"),
+            Events::default(),
+        ));
+        let session = runtime().block_on(sessions.open_over(profile(Protocol::WebDav), server));
+        let settings = TransferSettings {
+            retry_attempts: 0,
+            ..TransferSettings::default()
+        };
+        let manager = TransferManager::new(sessions, Events::default(), settings);
+        (Arc::new(manager), session.id)
+    }
+
+    /// Runs `queue_jobs` on another thread while holding the idle queue, as a tick of the
+    /// progress loop does, then forgets the servers no job involves, as the tick does.
+    /// `queue_jobs` waits for the queue meanwhile. Should it keep a server before it adds the
+    /// jobs, the tick waits for that, and so comes between the two.
+    fn tick_while<T: Send + 'static>(
+        manager: &Arc<TransferManager>,
+        queue_jobs: impl FnOnce(Arc<TransferManager>) -> T + Send + 'static,
+    ) -> T {
+        let tick = manager.shared.queue.lock().unwrap();
+        let queuing = {
+            let manager = manager.clone();
+            std::thread::spawn(move || queue_jobs(manager))
+        };
+        let deadline = Instant::now() + Duration::from_millis(500);
+        while manager.shared.targets.lock().unwrap().is_empty() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        manager.shared.forget_unused_targets(&tick);
+        drop(tick);
+        queuing.join().unwrap()
+    }
+
+    /// Saves, as the app does when it closes, paused uploads to the server `manager_over`
+    /// opens a session to, each with part of its file in a temporary file there. Returns the
+    /// paths of those files.
+    fn save_uploads(file: &Path, count: usize) -> Vec<String> {
+        let partials: Vec<String> = (0..count)
+            .map(|index| format!("/upload/.{index}.bin.poros-part"))
+            .collect();
+        let jobs: Vec<serde_json::Value> = partials
+            .iter()
+            .enumerate()
+            .map(|(index, partial)| {
+                serde_json::json!({
+                    "server": 0,
+                    "direction": "upload",
+                    "kind": "file",
+                    "name": format!("{index}.bin"),
+                    "source": format!("/local/{index}.bin"),
+                    "target": format!("/upload/{index}.bin"),
+                    "targetDirectory": "/upload",
+                    "size": 1000,
+                    "resume": {
+                        "offset": 500,
+                        "partial": partial,
+                        "sourceSize": 1000,
+                        "sourceModified": null,
+                    },
+                })
+            })
+            .collect();
+        let saved = serde_json::json!({
+            "servers": [{
+                "protocol": "webDav",
+                "host": "example.com",
+                "port": 80,
+                "username": "me",
+                "auth": { "type": "agent" },
+                "compression": false,
+            }],
+            "jobs": jobs,
+        });
+        std::fs::write(file, saved.to_string()).unwrap();
+        partials
+    }
+
     /// Once the queue is idle, each tick of the progress loop forgets, with the queue locked,
     /// the servers of sessions no job involves. Jobs queued for a server meanwhile still find
     /// it when they run. A copy out of a vault to a server no transfer had used yet once failed
@@ -1372,25 +1461,9 @@ mod tests {
     #[test]
     fn jobs_queued_while_unused_servers_are_forgotten_keep_their_server() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let sessions = Arc::new(SessionManager::new(
-            temp_dir.path().join("known_hosts"),
-            Events::default(),
-        ));
-        let runtime = || {
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap()
-        };
-        let files: Arc<dyn RemoteFileSystem> = Arc::new(EmptyFolders);
-        let session = runtime().block_on(sessions.open_over(profile(Protocol::WebDav), files));
-        let settings = TransferSettings {
-            retry_attempts: 0,
-            ..TransferSettings::default()
-        };
-        let manager = Arc::new(TransferManager::new(sessions, Events::default(), settings));
+        let (manager, session_id) = manager_over(temp_dir.path(), Arc::default());
         let request = EnqueueRequest {
-            session_id: session.id.clone(),
+            session_id,
             source_session_id: None,
             direction: Direction::Download,
             target_directory: temp_dir.path().to_string_lossy().into_owned(),
@@ -1402,21 +1475,9 @@ mod tests {
             }],
         };
 
-        // A tick holds the idle queue while the jobs are being queued on another thread, which
-        // waits for it to let go. Should their server be kept before the jobs go in, the tick
-        // forgets it after that.
-        let tick = manager.shared.queue.lock().unwrap();
-        let queuing = {
-            let manager = manager.clone();
-            std::thread::spawn(move || runtime().block_on(manager.enqueue(request)))
-        };
-        let deadline = Instant::now() + Duration::from_millis(500);
-        while manager.shared.target(&session.id).is_err() && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        manager.shared.forget_unused_targets(&tick);
-        drop(tick);
-        queuing.join().unwrap().unwrap();
+        tick_while(&manager, |manager| {
+            runtime().block_on(manager.enqueue(request)).unwrap()
+        });
 
         let deadline = Instant::now() + Duration::from_secs(10);
         let list = loop {
@@ -1434,5 +1495,27 @@ mod tests {
             .collect();
         assert!(failed.is_empty(), "{failed:#?}");
         assert!(temp_dir.path().join("folder").is_dir());
+    }
+
+    /// The same for the transfers saved by the last run: the servers they are restored with are
+    /// still there for them after a tick, so they can run once resumed.
+    #[test]
+    fn transfers_restored_while_unused_servers_are_forgotten_keep_their_server() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file = temp_dir.path().join("transfers.json");
+        save_uploads(&file, 2);
+        let (manager, _) = manager_over(temp_dir.path(), Arc::default());
+
+        tick_while(&manager, move |manager| manager.keep_queue_in(file));
+
+        let jobs = manager.list().jobs;
+        assert_eq!(jobs.len(), 2);
+        for job in jobs {
+            assert!(
+                manager.shared.target(&job.session_id).is_ok(),
+                "{} lost its server",
+                job.name
+            );
+        }
     }
 }
