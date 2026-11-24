@@ -35,7 +35,7 @@ import {
 import type { SyncAction, SyncDirection, SyncFacts, SyncItem, SyncPlanView } from "../lib/types";
 import { useSettingsStore } from "../state/settingsStore";
 import { FileIcon } from "./FileIcon";
-import { useT, t } from "../i18n";
+import { t, useT, type Translate } from "../i18n";
 
 const ROW_HEIGHT = 28;
 
@@ -285,15 +285,33 @@ export function SyncPlanList({
   );
 }
 
-function sideDetail(label: string, facts: SyncFacts | undefined, dateFormat: DateFormat): string {
-  if (!facts) return `${label}: missing`;
+/** One side of a plan row's tooltip: `Local: 1.5 KB, 2026-03-07 14:05, 0644`. */
+function sideDetail(
+  t: Translate,
+  side: string,
+  facts: SyncFacts | undefined,
+  dateFormat: DateFormat,
+): string {
+  if (!facts) return t("sync.sideMissing", { side });
   const permissions =
     facts.permissions === undefined
-      ? ""
-      : `, ${(facts.permissions & 0o7777).toString(8).padStart(4, "0")}`;
-  if (facts.isDir) return `${label}: folder${permissions}`;
-  const kind = facts.isLink ? "link, " : "";
-  return `${label}: ${kind}${formatSize(facts.size)}, ${formatDate(facts.modified, dateFormat)}${permissions}`;
+      ? null
+      : (facts.permissions & 0o7777).toString(8).padStart(4, "0");
+  if (facts.isDir) {
+    return permissions === null
+      ? t("sync.sideFolder", { side })
+      : t("sync.sideFolderWithPermissions", { side, permissions });
+  }
+  const size = formatSize(facts.size);
+  const modified = formatDate(facts.modified, dateFormat);
+  if (facts.isLink) {
+    return permissions === null
+      ? t("sync.sideLink", { side, size, modified })
+      : t("sync.sideLinkWithPermissions", { side, size, modified, permissions });
+  }
+  return permissions === null
+    ? t("sync.sideFile", { side, size, modified })
+    : t("sync.sideFileWithPermissions", { side, size, modified, permissions });
 }
 
 const ACTION_ICONS: Partial<Record<SyncAction, typeof ArrowUp>> = {
@@ -335,8 +353,8 @@ const PlanRow = memo(function PlanRow({
     : item.bytes;
   const detail = [
     item.itemized ? `${item.itemized} ${item.path}` : item.path,
-    sideDetail("Local", item.local, dateFormat),
-    sideDetail("Server", item.remote, dateFormat),
+    sideDetail(t, t("sync.localSide"), item.local, dateFormat),
+    sideDetail(t, t("sync.serverSide"), item.remote, dateFormat),
   ].join("\n");
 
   return (

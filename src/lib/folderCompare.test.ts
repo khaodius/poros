@@ -389,7 +389,7 @@ describe("folders compared below the ones on show", () => {
 
   it("says in words what a folder holds", () => {
     expect(describeSummary(summary("a", { identical: 1200, onlyLeft: 1 }), "right")).toBe(
-      `1 only in the other pane, ${(1200).toLocaleString()} identical`,
+      "1 only in the other pane, 1,200 identical",
     );
     expect(
       rowMarks(new Map([["a", "both"]] as const), "left", {

@@ -471,7 +471,11 @@ impl UploadTarget for OneDriveUpload {
         }
         let body = json!({ "item": item });
         let url = item_url(&self.path, "/createUploadSession");
-        let session: UploadSession = self.api.json(&|http| http.post(&url).json(&body)).await?;
+        let response = self
+            .api
+            .send_repeatable(&|http| http.post(&url).json(&body), &[])
+            .await?;
+        let session: UploadSession = api::decode(response).await?;
         self.upload_url = Some(session.upload_url);
         Ok(())
     }

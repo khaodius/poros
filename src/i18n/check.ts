@@ -10,8 +10,24 @@ type Messages = Readonly<Record<string, Readonly<Record<string, Message>>>>;
 /** A brace that opens no `{name}` placeholder, which the runtime would show as written. */
 const STRAY_BRACE = /\{(?![A-Za-z][A-Za-z0-9]*\})|(?<!\{[A-Za-z][A-Za-z0-9]*)\}/;
 
+/**
+ * The plural forms of the languages Poros is translated into, as CLDR 42 and later have them.
+ * Written down, so that a catalog passes or fails alike under any Node: an older ICU has no
+ * "many" for Spanish and French, and would turn down a correct catalog.
+ */
+export const KNOWN_PLURAL_CATEGORIES: Readonly<Record<string, readonly PluralCategory[]>> = {
+  en: ["one", "other"],
+  de: ["one", "other"],
+  es: ["one", "many", "other"],
+  fr: ["one", "many", "other"],
+  ja: ["other"],
+  "zh-Hans": ["other"],
+};
+
 /** The plural forms `locale` picks from, in CLDR's order. */
 export function pluralCategoriesOf(locale: string): PluralCategory[] {
+  const known = KNOWN_PLURAL_CATEGORIES[locale];
+  if (known) return [...known];
   const used = new Intl.PluralRules(locale).resolvedOptions().pluralCategories;
   return PLURAL_CATEGORIES.filter((category) => used.includes(category));
 }
