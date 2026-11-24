@@ -117,6 +117,11 @@ export const automation = {
   theFullPathsOfAll: "les chemins complets de tous les éléments sélectionnés",
   theNamesOfAllSelected: "les noms de tous les éléments sélectionnés",
   theFolderShown: "le dossier affiché",
+  keepPlaceholdersOutOfAnotherShell:
+    "Ne placez pas de variables dans une chaîne de commande lue par un autre shell, comme {bashExample} ou {sshExample}\u00a0: ce shell lirait un nom comme une partie de sa commande.",
+  cannotTellHowTheShellReads:
+    "Poros ne peut pas savoir avec certitude comment le shell lit cette commande\u00a0: elle contient un here-document, {ansiQuoted}, ou un guillemet ou une parenthèse sans fermeture. Chaque variable est insérée sous la forme {parameter} et ainsi de suite, ce qui ne garde un nom en un seul mot qu’en dehors des guillemets.",
+  commandWithParameters: "{command} avec {parameters}",
   stoppedAfter: "Arrêtée après {elapsed}",
   endedBySignal: "Terminée par le signal {signal} après {elapsed}",
   endedWithoutStatus: "Terminée sans code de sortie après {elapsed}",
