@@ -284,7 +284,7 @@ impl TerminalManager {
         };
         let session = self
             .sessions
-            .get(&target.session_id)
+            .reach(target)
             .await
             .map_err(|_| refusal.clone())?;
         self.events.log(
