@@ -66,7 +66,10 @@ export async function extractArchives(
         write("info", `Cancelled: ${title}`, pane.sessionId);
         return;
       }
-      showToast("error", `${baseName(archive.path)}: ${error.message}`);
+      showToast(
+        "error",
+        t("common.labelWithMessage", { label: baseName(archive.path), message: error.message }),
+      );
       write("error", `${title}: ${error.message}`, pane.sessionId);
     }
   }

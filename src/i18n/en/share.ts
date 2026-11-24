@@ -29,7 +29,7 @@ export const share = {
   hours2: "Hours",
   days2: "Days",
   link: "Link",
-  links2: "{count} links",
+  links2: { one: "{count} links", other: "{count} links" },
   keepsOneLinkPerItem:
     "{service} keeps one link per item, so this changes the link above for everyone who has it.",
   keepsOneLinkPerItemSo:
@@ -68,21 +68,50 @@ export const share = {
   enterHowLongTheLinkShouldWork: "Enter how long the link should work, as a whole number.",
   chooseHowLongTheLinkShouldWork: "Choose how long the link should work.",
   linksHereLastAtMost: "Links here last at most {lifetime}.",
-  deadline: "{day} {month}, {time}",
-  deadlineWithYear: "{day} {month} {year}, {time}",
-  statementDownload: "{who} can download {what} {until}.",
-  statementEdit: "{who} can open and change {what} {until}.",
-  statementView: "{who} can open {what} {until}.",
+  anyoneWithThisLinkCanDownload: "Anyone with this link can download {what} {until}.",
+  anyoneWithThisLinkCanEdit: "Anyone with this link can open and change {what} {until}.",
+  anyoneWithThisLinkCanView: "Anyone with this link can open {what} {until}.",
+  anyoneWithOneOfTheseLinksCanDownload:
+    "Anyone with one of these links can download {what} {until}.",
+  anyoneWithOneOfTheseLinksCanEdit:
+    "Anyone with one of these links can open and change {what} {until}.",
+  anyoneWithOneOfTheseLinksCanView: "Anyone with one of these links can open {what} {until}.",
+  peopleInWithThisLinkCanDownload:
+    "People in {organization} with this link can download {what} {until}.",
+  peopleInWithThisLinkCanEdit:
+    "People in {organization} with this link can open and change {what} {until}.",
+  peopleInWithThisLinkCanView: "People in {organization} with this link can open {what} {until}.",
+  peopleInWithOneOfTheseLinksCanDownload:
+    "People in {organization} with one of these links can download {what} {until}.",
+  peopleInWithOneOfTheseLinksCanEdit:
+    "People in {organization} with one of these links can open and change {what} {until}.",
+  peopleInWithOneOfTheseLinksCanView:
+    "People in {organization} with one of these links can open {what} {until}.",
+  peopleInYourOrganizationWithThisLinkCanDownload:
+    "People in your organization with this link can download {what} {until}.",
+  peopleInYourOrganizationWithThisLinkCanEdit:
+    "People in your organization with this link can open and change {what} {until}.",
+  peopleInYourOrganizationWithThisLinkCanView:
+    "People in your organization with this link can open {what} {until}.",
+  peopleInYourOrganizationWithOneOfTheseLinksCanDownload:
+    "People in your organization with one of these links can download {what} {until}.",
+  peopleInYourOrganizationWithOneOfTheseLinksCanEdit:
+    "People in your organization with one of these links can open and change {what} {until}.",
+  peopleInYourOrganizationWithOneOfTheseLinksCanView:
+    "People in your organization with one of these links can open {what} {until}.",
+  peopleAlreadyInvitedWhoHaveThisLinkCanDownload:
+    "People already invited who have this link can download {what} {until}.",
+  peopleAlreadyInvitedWhoHaveThisLinkCanEdit:
+    "People already invited who have this link can open and change {what} {until}.",
+  peopleAlreadyInvitedWhoHaveThisLinkCanView:
+    "People already invited who have this link can open {what} {until}.",
+  peopleAlreadyInvitedWhoHaveOneOfTheseLinksCanDownload:
+    "People already invited who have one of these links can download {what} {until}.",
+  peopleAlreadyInvitedWhoHaveOneOfTheseLinksCanEdit:
+    "People already invited who have one of these links can open and change {what} {until}.",
+  peopleAlreadyInvitedWhoHaveOneOfTheseLinksCanView:
+    "People already invited who have one of these links can open {what} {until}.",
   statementWithPassword: "{statement} It asks for the password first.",
-  anyoneWithThisLink: "Anyone with this link",
-  anyoneWithOneOfTheseLinks: "Anyone with one of these links",
-  peopleInWithThisLink: "People in {organization} with this link",
-  peopleInWithOneOfTheseLinks: "People in {organization} with one of these links",
-  peopleInYourOrganizationWithThisLink: "People in your organization with this link",
-  peopleInYourOrganizationWithOneOfTheseLinks:
-    "People in your organization with one of these links",
-  peopleAlreadyInvitedWhoHaveThisLink: "People already invited who have this link",
-  peopleAlreadyInvitedWhoHaveOneOfTheseLinks: "People already invited who have one of these links",
   theItemItIsFor: "the item it is for",
   theFileItIsFor: "the file it is for",
   theFolderAndEverythingInIt: "the folder and everything in it",

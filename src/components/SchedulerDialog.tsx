@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { Children, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import {
   CalendarClock,
@@ -45,7 +45,7 @@ import { Dialog } from "./Dialog";
 import { OptionCheckView, RsyncArgumentsField, RsyncOptionsEditor } from "./RsyncOptionsEditor";
 import { Stepper } from "./Stepper";
 import { TransferTaskFields } from "./TransferTaskFields";
-import { t, useT } from "../i18n";
+import { formatList, t, useT } from "../i18n";
 
 type SyncTaskAction = Extract<TaskAction, { type: "sync" }>;
 type CommandTaskAction = Extract<TaskAction, { type: "command" }>;
@@ -509,14 +509,15 @@ function UnsavedPasswords({ connections }: { connections: SavedConnection[] }) {
     (connection) => connection.authType === "password" && !connection.saveSecret,
   );
   if (unsaved.length === 0) return null;
-  const names = unsaved.map((connection) => connection.name).join(" and ");
+  const names = formatList(unsaved.map((connection) => connection.name));
   return (
     <p className="warning-text">
       {connections.length === 1
         ? t("schedule.thisConnectionsPasswordIsNotSaved")
         : unsaved.length === 1
           ? t("schedule.thePasswordOfIsNot", { names })
-          : t("schedule.thePasswordsOfAreNot", { names })}{" "}
+          : t("schedule.thePasswordsOfAreNot", { names })}
+      {t("common.sentenceSeparator")}
       {unsaved.length === 1
         ? t("schedule.saveItInTheConnections")
         : t("schedule.saveThemInTheConnections")}
@@ -706,7 +707,7 @@ interface TriggerFieldsProps {
   onChange: (trigger: Trigger) => void;
 }
 
-function TriggerFields({ trigger, onChange }: TriggerFieldsProps) {
+export function TriggerFields({ trigger, onChange }: TriggerFieldsProps) {
   const t = useT();
   return (
     <div className="field">
@@ -777,35 +778,51 @@ function IntervalFields({
       ...trigger,
       minutes: Math.min(MAX_INTERVAL_MINUTES, intervalMinutes(nextAmount, nextUnit)),
     });
-  return (
-    <>
-      <span className="trigger-label">{t("schedule.every")}</span>
-      <Stepper
-        value={amount}
-        min={1}
-        max={Math.floor(MAX_INTERVAL_MINUTES / perUnit)}
-        label={t("schedule.repeatEvery")}
-        onChange={(next) => changeInterval(next, unit)}
-      />
-      <select
-        value={unit}
-        aria-label={t("schedule.unit")}
-        onChange={(event) => changeInterval(amount, event.target.value as IntervalUnit)}
-      >
-        {INTERVAL_UNITS.map((option) => (
-          <option key={option.value} value={option.value}>
-            {t(option.label)}
-          </option>
-        ))}
-      </select>
-      <span className="trigger-label">{t("schedule.from")}</span>
-      <DateTimeInput
-        label={t("schedule.starting")}
-        value={trigger.start}
-        onChange={(start) => onChange({ ...trigger, start })}
-      />
-    </>
+  return labelledFields(
+    t.rich("schedule.everyAmountUnitFromStart", {
+      amount: (
+        <Stepper
+          value={amount}
+          min={1}
+          max={Math.floor(MAX_INTERVAL_MINUTES / perUnit)}
+          label={t("schedule.repeatEvery")}
+          onChange={(next) => changeInterval(next, unit)}
+        />
+      ),
+      unit: (
+        <select
+          value={unit}
+          aria-label={t("schedule.unit")}
+          onChange={(event) => changeInterval(amount, event.target.value as IntervalUnit)}
+        >
+          {INTERVAL_UNITS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {t(option.label, { count: amount })}
+            </option>
+          ))}
+        </select>
+      ),
+      start: (
+        <DateTimeInput
+          label={t("schedule.starting")}
+          value={trigger.start}
+          onChange={(start) => onChange({ ...trigger, start })}
+        />
+      ),
+    }),
   );
+}
+
+/**
+ * The words of a message whose placeholders are fields, each shown as a label between them, so
+ * that a language can put the fields in its own order.
+ */
+function labelledFields(message: ReactNode): ReactNode {
+  return Children.map(message, (part) => {
+    if (typeof part !== "string") return part;
+    const words = part.trim();
+    return words === "" ? null : <span className="trigger-label">{words}</span>;
+  });
 }
 
 function DailyFields({
@@ -827,35 +844,49 @@ function DailyFields({
         : [...trigger.weekdays, day].sort((first, second) => first - second),
     });
   };
+  return labelledFields(
+    t.rich("schedule.atTimeOnDays", {
+      time: (
+        <input
+          type="time"
+          aria-label={t("schedule.timeOfDay")}
+          value={timeInputValue(trigger.minuteOfDay)}
+          onChange={(event) => {
+            const minuteOfDay = minuteOfDayFrom(event.target.value);
+            if (minuteOfDay !== null) onChange({ ...trigger, minuteOfDay });
+          }}
+        />
+      ),
+      days: <WeekdayToggles weekdays={trigger.weekdays} onToggle={toggleDay} />,
+    }),
+  );
+}
+
+function WeekdayToggles({
+  weekdays,
+  onToggle,
+}: {
+  weekdays: number[];
+  onToggle: (day: number) => void;
+}) {
+  const t = useT();
   return (
-    <>
-      <span className="trigger-label">{t("schedule.at")}</span>
-      <input
-        type="time"
-        aria-label={t("schedule.timeOfDay")}
-        value={timeInputValue(trigger.minuteOfDay)}
-        onChange={(event) => {
-          const minuteOfDay = minuteOfDayFrom(event.target.value);
-          if (minuteOfDay !== null) onChange({ ...trigger, minuteOfDay });
-        }}
-      />
-      <div className="toggle-group" role="group" aria-label={t("schedule.daysOfTheWeek")}>
-        {WEEKDAYS.map((day) => {
-          const name = weekdayName(day);
-          const chosen = trigger.weekdays.includes(day);
-          return (
-            <button
-              key={name}
-              type="button"
-              className={`toggle ${chosen ? "is-on" : ""}`}
-              aria-pressed={chosen}
-              onClick={() => toggleDay(day)}
-            >
-              {name}
-            </button>
-          );
-        })}
-      </div>
-    </>
+    <div className="toggle-group" role="group" aria-label={t("schedule.daysOfTheWeek")}>
+      {WEEKDAYS.map((day) => {
+        const name = weekdayName(day);
+        const chosen = weekdays.includes(day);
+        return (
+          <button
+            key={name}
+            type="button"
+            className={`toggle ${chosen ? "is-on" : ""}`}
+            aria-pressed={chosen}
+            onClick={() => onToggle(day)}
+          >
+            {name}
+          </button>
+        );
+      })}
+    </div>
   );
 }

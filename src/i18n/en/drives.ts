@@ -94,7 +94,7 @@ export const drives = {
   uploadFailed: "Failed: {error}",
   uploadWaiting: "Waiting",
   uploading: "Uploading",
-  uploadingPercent: "Uploading, {percent}%",
+  uploadingPercent: "Uploading, {percent}",
   chooseADriveLetter: "Choose a drive letter.",
   chooseAFolder: "Choose a folder.",
   driveLetterSuchAs: "A drive letter, such as {example}",

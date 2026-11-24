@@ -26,7 +26,7 @@ import { useSettingsStore } from "../state/settingsStore";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { FileIcon } from "./FileIcon";
 import { ProgressBar } from "./ProgressBar";
-import { useT } from "../i18n";
+import { useT, type Translate } from "../i18n";
 
 /** The status bar's word on files open in other programs, opening the list of them. */
 export function ExternalEditsStatus() {
@@ -222,11 +222,7 @@ function EditRow({ edit, onStop }: { edit: ExternalEdit; onStop: () => void }) {
           {edit.inVault && <ShieldCheck size={11} aria-label={t("openWith.inAVault")} />}
           <span>{where}</span>
           {edit.lastUpload !== undefined && (
-            <span className="edit-uploaded">
-              {t("openWith.uploaded", {
-                uploadTime: formatUploadTime(edit.lastUpload, dateFormat),
-              })}
-            </span>
+            <span className="edit-uploaded">{uploadedText(t, edit.lastUpload, dateFormat)}</span>
           )}
         </div>
         {fraction !== null && (
@@ -310,11 +306,12 @@ function EditRow({ edit, onStop }: { edit: ExternalEdit; onStop: () => void }) {
   );
 }
 
-/** Today's uploads by the minute, older ones by the date. */
-function formatUploadTime(epochMillis: number, dateFormat: DateFormat): string {
+/** When the last save went up: today's by the minute, older ones by the date. */
+function uploadedText(t: Translate, epochMillis: number, dateFormat: DateFormat): string {
   const today = new Date().toDateString() === new Date(epochMillis).toDateString();
-  const minute = formatTime(epochMillis).slice(0, "hh:mm".length);
-  return today ? `at ${minute}` : formatDate(epochMillis / 1000, dateFormat);
+  return today
+    ? t("openWith.uploadedAtTime", { time: formatTime(epochMillis).slice(0, "hh:mm".length) })
+    : t("openWith.uploadedOnDate", { date: formatDate(epochMillis / 1000, dateFormat) });
 }
 
 interface LeftoverListProps {

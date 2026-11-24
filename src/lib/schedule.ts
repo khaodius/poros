@@ -14,7 +14,7 @@ import type {
   TaskView,
   Trigger,
 } from "./types";
-import { dateWordFormat, t, type MessageKey, type PlainMessageKey } from "../i18n";
+import { dateWordFormat, t, type MessageKey } from "../i18n";
 
 export type TransferTaskAction = Extract<TaskAction, { type: "transfer" }>;
 
@@ -38,7 +38,8 @@ const MINUTES_PER_DAY = 24 * MINUTES_PER_HOUR;
 export const MAX_INTERVAL_MINUTES = 28 * MINUTES_PER_DAY;
 
 export type IntervalUnit = "minutes" | "hours" | "days";
-export const INTERVAL_UNITS: { value: IntervalUnit; label: PlainMessageKey; minutes: number }[] = [
+type UnitLabel = "schedule.unitMinutes" | "schedule.unitHours" | "schedule.unitDays";
+export const INTERVAL_UNITS: { value: IntervalUnit; label: UnitLabel; minutes: number }[] = [
   { value: "minutes", label: "schedule.unitMinutes", minutes: 1 },
   { value: "hours", label: "schedule.unitHours", minutes: MINUTES_PER_HOUR },
   { value: "days", label: "schedule.unitDays", minutes: MINUTES_PER_DAY },
@@ -463,7 +464,9 @@ export function expandFolderPattern(
     const name = after.slice(0, close);
     const value = placeholderValue(name, now);
     if (value === null) {
-      const known = PATTERN_PLACEHOLDERS.map((placeholder) => `{${placeholder}}`).join(", ");
+      const known = PATTERN_PLACEHOLDERS.map((placeholder) => `{${placeholder}}`).join(
+        t("common.listSeparator"),
+      );
       return { error: t("schedule.patternUnknown", { found: `{${name}}`, known }) };
     }
     expanded += value;

@@ -104,6 +104,16 @@ describe("checkTranslation", () => {
     ]);
   });
 
+  it("finds an empty text, but lets a separator that is only a space be nothing", () => {
+    const { translation, messages } = copyOfEnglish("en-GB");
+    messages.pane.items = { one: "{count} item", other: " " };
+    messages.common.sentenceSeparator = "";
+    expect(checkTranslation(translation, ENGLISH)).toEqual([
+      'pane.items: the "other" form must show {count}',
+      "pane.items: empty",
+    ]);
+  });
+
   it("refuses a tag Intl does not know", () => {
     expect(checkTranslation(copyOfEnglish("not a tag").translation, ENGLISH)).toEqual([
       "not a tag: not a language tag Intl knows",
