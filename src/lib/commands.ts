@@ -63,8 +63,9 @@ export function expandCommand(template: string, target: CommandTarget): string[]
   return PER_ITEM_PATTERN.test(template) ? target.items.map(fill) : [fill()];
 }
 
+/** A command with no exit status, as after a dropped connection, is not known to have worked. */
 export function commandSucceeded(result: CommandResult): boolean {
-  return !result.stopped && result.signal === null && (result.exitStatus ?? 0) === 0;
+  return !result.stopped && result.signal === null && result.exitStatus === 0;
 }
 
 /** How a command ended, as the backend logs it. */
@@ -72,7 +73,7 @@ export function describeResult(result: CommandResult): string {
   const elapsed = formatDuration(result.elapsedMillis / 1000);
   if (result.stopped) return `Stopped after ${elapsed}`;
   if (result.signal !== null) return `Ended by signal ${result.signal} after ${elapsed}`;
-  if ((result.exitStatus ?? 0) !== 0)
-    return `Exited with status ${result.exitStatus} after ${elapsed}`;
+  if (result.exitStatus === null) return `Ended without an exit status after ${elapsed}`;
+  if (result.exitStatus !== 0) return `Exited with status ${result.exitStatus} after ${elapsed}`;
   return `Finished in ${elapsed}`;
 }

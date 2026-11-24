@@ -323,6 +323,6 @@ mod tests {
         );
         assert!(checked.errors.is_empty(), "{:?}", checked.errors);
         assert!(checked.options.dry_run);
-        assert_eq!(checked.options.excludes, ["*.log"]);
+        assert_eq!(checked.options.filter_rules, ["- *.log"]);
     }
 }

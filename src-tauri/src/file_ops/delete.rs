@@ -454,8 +454,12 @@ async fn run_streaming(
             Some(ChannelMsg::ExitStatus {
                 exit_status: status,
             }) => exit_status = Some(status),
-            // The server refused to run it.
-            Some(ChannelMsg::Failure) | Some(ChannelMsg::Close) | None => break,
+            // The server refused to run it; the channel stays open on the server until closed.
+            Some(ChannelMsg::Failure) => {
+                let _ = channel.close().await;
+                break;
+            }
+            Some(ChannelMsg::Close) | None => break,
             Some(_) => {}
         }
     }

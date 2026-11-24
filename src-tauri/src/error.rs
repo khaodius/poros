@@ -35,6 +35,11 @@ pub enum ErrorKind {
     Update,
     /// The password does not open the vault.
     WrongPassword,
+    /// Another request kept the connection for longer than what was asked would wait for it.
+    /// Asking again soon will do.
+    Busy,
+    /// What was asked would have to wait for a transfer that is using the connection.
+    Lent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

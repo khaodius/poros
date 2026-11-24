@@ -3,10 +3,12 @@
 //! `POROS_TEST_SSH_PORT` is set, the FTP tests unless `POROS_TEST_FTP_PORT` is, and WebDAV is
 //! left out of the tests that take it unless `POROS_TEST_WEBDAV_PORT` is.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
+use poros_lib::automation::remote_command;
 use poros_lib::editor::{EditorManager, FileLocation, SaveOutcome, SaveRequest};
 use poros_lib::error::ErrorKind;
 use poros_lib::events::Events;
@@ -513,4 +515,108 @@ async fn terminals_run_a_shell_that_outlives_the_session() {
     assert!(terminals
         .write(&info.id, b"echo closed\n".to_vec())
         .is_err());
+}
+
+/// A port that relays to the server until `closed` is set, then turns every new connection
+/// away, as a server that allows one connection per client does.
+async fn relay_until(server_port: u16, closed: Arc<AtomicBool>) -> u16 {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        while let Ok((mut client, _)) = listener.accept().await {
+            if closed.load(Ordering::SeqCst) {
+                continue;
+            }
+            tokio::spawn(async move {
+                let address = ("127.0.0.1", server_port);
+                if let Ok(mut server) = tokio::net::TcpStream::connect(address).await {
+                    let _ = tokio::io::copy_bidirectional(&mut client, &mut server).await;
+                }
+            });
+        }
+    });
+    port
+}
+
+/// Whether a process with exactly this command line runs on the server.
+async fn runs_on_server(sessions: &SessionManager, session_id: &str, command_line: &str) -> bool {
+    let session = sessions.get(session_id).await.unwrap();
+    let check = format!("pgrep -f -x '{command_line}'");
+    let result = remote_command::run_on(
+        &session,
+        &check,
+        None,
+        &tokio_util::sync::CancellationToken::new(),
+        |_, _| {},
+    )
+    .await
+    .unwrap();
+    result.exit_status == Some(0)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_terminal_on_the_browsing_connection_ends_its_shell_when_closed() {
+    let Some(profile) = profile() else { return };
+    let closed = Arc::new(AtomicBool::new(false));
+    let relayed = ConnectProfile {
+        port: relay_until(profile.port, closed.clone()).await,
+        ..profile
+    };
+    let (_temp_dir, sessions, session_id) = connect(&relayed).await;
+    closed.store(true, Ordering::SeqCst);
+    let events = Events::keeping_startup_log();
+    let terminals = TerminalManager::new(sessions.clone(), events.clone());
+    let screen = Screen::default();
+    let info = terminals
+        .open(&session_id, 80, 24, screen.sink(), OWNER)
+        .await
+        .unwrap();
+
+    // A process name no other test run shares, which ends by itself should a run fail.
+    let sleeper = format!("sleep 300.{:06}", std::process::id() % 1_000_000);
+    terminals
+        .write(
+            &info.id,
+            format!("echo sleeping-$((6*7)); {sleeper}\n").into_bytes(),
+        )
+        .unwrap();
+    screen.wait_for_text("sleeping-42").await;
+    assert!(runs_on_server(&sessions, &session_id, &sleeper).await);
+
+    terminals.close(&info.id).await;
+    let deadline = Instant::now() + WAIT;
+    while runs_on_server(&sessions, &session_id, &sleeper).await {
+        if Instant::now() > deadline {
+            let session = sessions.get(&session_id).await.unwrap();
+            let _ = remote_command::run_on(
+                &session,
+                &format!("pkill -f -x '{sleeper}'"),
+                None,
+                &tokio_util::sync::CancellationToken::new(),
+                |_, _| {},
+            )
+            .await;
+            panic!("the shell and {sleeper} still run on the server after the tab closed");
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    // The browsing connection is still there for everything else.
+    assert!(!runs_on_server(&sessions, &session_id, &sleeper).await);
+    // The shell's output is no longer read, although the browsing connection stays.
+    let log: Vec<String> = events
+        .take_startup_log()
+        .into_iter()
+        .map(|record| record.message)
+        .collect();
+    assert!(
+        log.iter()
+            .any(|message| message.contains("shares the browsing connection")),
+        "the terminal got a connection of its own: {log:?}"
+    );
+    let closing_line = format!("Terminal on {} closed", info.label);
+    assert!(
+        log.contains(&closing_line),
+        "the shell's output is still read: {log:?}"
+    );
+    sessions.disconnect_all().await;
 }
