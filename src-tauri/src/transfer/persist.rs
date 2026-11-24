@@ -300,6 +300,9 @@ pub(super) fn restore(shared: &Shared, file: &Path) -> usize {
         .iter()
         .map(|_| format!("restored-{}", uuid::Uuid::new_v4()))
         .collect();
+    // The servers and their jobs go in under one lock of the queue, under which servers no job
+    // involves are forgotten.
+    let mut queue = shared.queue.lock().unwrap();
     let mut targets = shared.targets.lock().unwrap();
     for (server, session_id) in saved.servers.iter().zip(&session_ids) {
         let login = Login {
@@ -316,7 +319,6 @@ pub(super) fn restore(shared: &Shared, file: &Path) -> usize {
     }
     drop(targets);
 
-    let mut queue = shared.queue.lock().unwrap();
     let mut restored = 0;
     for job in saved.jobs {
         let Some(session_id) = session_ids.get(job.server) else {
