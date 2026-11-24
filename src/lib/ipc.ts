@@ -26,6 +26,8 @@ import type {
   FileDetails,
   FileEntry,
   FileLocation,
+  FolderCompareRequest,
+  FolderComparison,
   InstalledArchiveTool,
   FolderUsage,
   FontFamily,
@@ -104,6 +106,8 @@ export const DRAG_PREVIEW_SHOWN_EVENT = "poros://drag-preview-shown";
 export const DRAG_PREVIEW_RELEASED_EVENT = "poros://drag-preview-released";
 /** Sent to every window by the window the user turns to, with its label. */
 export const WINDOW_USED_EVENT = "poros://window-used";
+/** Sent between windows whose panes are compared with each other (Compare folders). */
+export const FOLDER_COMPARE_EVENT = "poros://folder-compare";
 /** Sent between windows to share the folder listings they remember; see lib/listingShare.ts. */
 export const LISTING_CACHE_EVENT = "poros://listing-cache";
 /** Mirrored in src-tauri/src/drag_out/mod.rs. Says whether files are dragged out of Poros. */
@@ -220,6 +224,12 @@ export const transfers = {
 
 export const sync = {
   compare: (request: SyncRequest) => call<SyncPlanView>("sync_compare", { request }),
+  /**
+   * Compares what two folders hold below them, each on this computer or any server. Progress
+   * comes as `SyncProgress`, with the left side counted as the local one; `cancel` stops it.
+   */
+  compareFolders: (request: FolderCompareRequest) =>
+    call<FolderComparison>("sync_compare_folders", { request }),
   cancel: (requestId: string) => call<void>("sync_cancel", { requestId }),
   /** Forgets a comparison that will not be run. */
   discard: (planId: string) => call<void>("sync_discard", { planId }),

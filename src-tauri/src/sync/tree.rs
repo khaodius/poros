@@ -13,9 +13,13 @@ use super::options::LinkMode;
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::local;
 use crate::model::{DirListing, EntryKind, FileEntry, LinkTarget};
+use crate::protocol::RemoteFileSystem;
 use crate::sftp::RemoteFs;
 
 const PARALLEL_LISTINGS: usize = 8;
+/// Folders nested deeper than this are passed over by `walk_files`, which cannot tell a link
+/// that leads back up from a folder on servers whose listings do not resolve links.
+const MAX_LISTED_DEPTH: usize = 64;
 /// Larger rule files are refused rather than read into memory.
 const MAX_RULE_FILE_BYTES: u64 = 1024 * 1024;
 
@@ -105,6 +109,8 @@ pub struct Walk {
     pub owners: bool,
     /// A missing folder lists as empty instead of failing.
     pub allow_missing: bool,
+    /// Leaves out what listings mark as hidden, with everything inside hidden folders.
+    pub skip_hidden: bool,
 }
 
 impl Walk {
@@ -121,6 +127,7 @@ impl Walk {
             keep_dirlinks: false,
             owners: false,
             allow_missing: false,
+            skip_hidden: false,
         }
     }
 
@@ -279,6 +286,9 @@ impl Collector<'_> {
         link_text: Option<String>,
         owner: Option<(u32, u32)>,
     ) -> Option<Child> {
+        if self.walk.skip_hidden && entry.hidden {
+            return None;
+        }
         let relative = if folder.relative.is_empty() {
             entry.name.clone()
         } else {
@@ -551,6 +561,85 @@ pub async fn walk_remote(
     Ok(collector.tree)
 }
 
+/// Lists everything under a folder on a server of any kind, from the listings every protocol
+/// gives. Links are what those listings show them to lead to, and nothing else is read, so
+/// `walk` must ask for neither link texts, rule files nor owners, which take SFTP.
+pub async fn walk_files(
+    files: &dyn RemoteFileSystem,
+    root: &str,
+    walk: &Walk,
+    counter: &Counter,
+    cancel: &CancellationToken,
+) -> AppResult<Tree> {
+    let top = match files.list_dir(root).await {
+        Ok(top) => top,
+        Err(error) if walk.allow_missing && is_missing(&error) => {
+            return Ok(Tree {
+                root: files.resolve(root),
+                missing: true,
+                ..Tree::default()
+            })
+        }
+        Err(error) => return Err(error),
+    };
+    let mut collector = Collector {
+        walk,
+        tree: Tree {
+            root: top.path.clone(),
+            ..Tree::default()
+        },
+    };
+    let root_folder = Folder {
+        relative: String::new(),
+        chain: Arc::from([]),
+        protected: false,
+        rules: FolderRules::default(),
+    };
+    let mut ready = vec![(root_folder, top)];
+    let mut listing = FuturesUnordered::new();
+    loop {
+        while let Some((mut folder, contents)) = ready.pop() {
+            let mut chain = folder.chain.to_vec();
+            chain.push(contents.path.clone());
+            folder.chain = chain.into();
+            folder.rules = walk
+                .filter
+                .enter(&folder.rules, &folder.relative, &HashMap::new())?;
+            for entry in &contents.entries {
+                if local::validate_name(&entry.name).is_err() {
+                    continue;
+                }
+                counter.fetch_add(1, Ordering::Relaxed);
+                let Some(child) = collector.add(&folder, entry, None, None) else {
+                    continue;
+                };
+                if folder.chain.len() >= MAX_LISTED_DEPTH {
+                    collector.unlisted(child.relative, None);
+                    continue;
+                }
+                let inner = folder.child(child.relative, child.protected);
+                listing.push(list_files(files, inner, child.path));
+            }
+            while listing.len() >= PARALLEL_LISTINGS {
+                take_listing(
+                    &mut collector,
+                    &mut ready,
+                    next(&mut listing, cancel).await?,
+                );
+            }
+        }
+        if listing.is_empty() {
+            break;
+        }
+        take_listing(
+            &mut collector,
+            &mut ready,
+            next(&mut listing, cancel).await?,
+        );
+    }
+    Ok(collector.tree)
+}
+
 async fn read_remote_rule_files(
     fs: &RemoteFs,
     walk: &Walk,
@@ -590,6 +679,11 @@ type Listed = (Folder, AppResult<DirListing>);
 
 async fn list(fs: &RemoteFs, folder: Folder, path: String) -> Listed {
     let listing = fs.list_dir(&path).await;
+    (folder, listing)
+}
+
+async fn list_files(files: &dyn RemoteFileSystem, folder: Folder, path: String) -> Listed {
+    let listing = files.list_dir(&path).await;
     (folder, listing)
 }
 

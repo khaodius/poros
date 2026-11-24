@@ -1,3 +1,4 @@
+import { useLatest } from "../hooks/useLatest";
 import { pluralize } from "../lib/format";
 import { transfers } from "../lib/ipc";
 import { lockVault } from "../state/vaultActions";
@@ -18,10 +19,11 @@ export function LockVaultDialog({
   pendingTransfers,
   onClose,
 }: LockVaultDialogProps) {
+  const latestOnClose = useLatest(onClose);
   const lock = async () => {
     await transfers.pauseSession(sessionId).catch(() => 0);
     await lockVault(sessionId);
-    onClose();
+    latestOnClose.current();
   };
 
   return (
