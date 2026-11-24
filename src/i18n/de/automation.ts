@@ -52,7 +52,6 @@ export const automation = {
   whenTheQueueFinishes: "Wenn die Warteschlange fertig ist",
 
   // components/WhenDoneCountdown
-  theTransferQueueHasFinished: "Die Warteschlange ist fertig. {title} in {seconds}.",
   seconds: { one: "{count} Sekunde", other: "{count} Sekunden" },
 
   // components/commandMenu
@@ -61,6 +60,15 @@ export const automation = {
   editCommands: "Befehle bearbeiten...",
 
   // lib/automation
+  queueFinishedClosingPorosIn: "Die Warteschlange ist fertig. Poros wird in {seconds} geschlossen.",
+  queueFinishedLockingIn: "Die Warteschlange ist fertig. Der Computer wird in {seconds} gesperrt.",
+  queueFinishedSleepingIn:
+    "Die Warteschlange ist fertig. Der Computer wechselt in {seconds} in den Energiesparmodus.",
+  queueFinishedHibernatingIn:
+    "Die Warteschlange ist fertig. Der Computer wechselt in {seconds} in den Ruhezustand.",
+  queueFinishedLoggingOffIn: "Die Warteschlange ist fertig. Sie werden in {seconds} abgemeldet.",
+  queueFinishedShuttingDownIn:
+    "Die Warteschlange ist fertig. Der Computer wird in {seconds} heruntergefahren.",
   filesTransferredIn: {
     one: "{count} Datei ({size}) in {duration} übertragen",
     other: "{count} Dateien ({size}) in {duration} übertragen",
@@ -86,8 +94,8 @@ export const automation = {
   confirmShutDownNow: "Jetzt herunterfahren",
   transfersFinishedWithErrors: "Übertragungen mit Fehlern beendet",
   transfersFinished: "Übertragungen beendet",
-  failedCount: "{count} fehlgeschlagen",
-  skippedCount: "{count} übersprungen",
+  failedCount: { one: "{count} fehlgeschlagen", other: "{count} fehlgeschlagen" },
+  skippedCount: { one: "{count} übersprungen", other: "{count} übersprungen" },
 
   // lib/commands
   eachSelectedItemsFullPath:
@@ -106,8 +114,11 @@ export const automation = {
   // state/commandStore
   stopped: "Gestoppt",
   nothingToRun: "Nichts auszuführen",
-  allCommandsFinished: "Alle {finished} Befehle fertig",
-  ofCommandsFailed: "{failed} von {finished} Befehlen fehlgeschlagen",
+  allCommandsFinished: { one: "{count} Befehl fertig", other: "Alle {count} Befehle fertig" },
+  ofCommandsFailed: {
+    one: "{count} von {finished} Befehlen fehlgeschlagen",
+    other: "{count} von {finished} Befehlen fehlgeschlagen",
+  },
 
   // state/whenDone
   whenTheQueueFinished: "Nach dem Ende der Warteschlange",

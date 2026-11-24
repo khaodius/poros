@@ -5,12 +5,12 @@ export const pane = {
   filesDone: { one: "{count} Datei fertig, {size}", other: "{count} Dateien fertig, {size}" },
   namesAlreadyTaken: "Namen schon vergeben",
   isAlreadyIn: "{name} ist bereits in {folder}.",
-  andMore: "und {count} weitere",
+  andMore: { one: "und {count} weiteres", other: "und {count} weitere" },
   name2: "Name (2)",
   keepBoth: "Beide behalten",
   cancelling: "Wird abgebrochen...",
   unpacking: "Wird entpackt",
-  ofRenamed: "{count} von {total} umbenannt",
+  ofRenamed: { one: "{count} von {total} umbenannt", other: "{count} von {total} umbenannt" },
   starting: "Wird gestartet",
   progressWithFailures: {
     one: "{progress}, {count} fehlgeschlagen",
@@ -45,6 +45,8 @@ export const pane = {
     "Öffnen Sie zum Einfügen einen Ordner oder klicken Sie in den Ergebnissen mit der rechten Maustaste auf einen.",
   synchronizeFolder: "Ordner synchronisieren...",
   synchronizeFolder2: "Ordner synchronisieren ({needsSftp})",
+  notInAVault: "nicht in einem Tresor",
+  sftpOnly: "nur SFTP",
   sortBy: "Sortieren nach",
   ascending: "Aufsteigend",
   descending: "Absteigend",
@@ -64,7 +66,10 @@ export const pane = {
   copyTo: "Kopieren nach...",
   copyTo2: "Kopieren nach ({needsSftp})",
   extract: "Entpacken ({needsSftp})",
-  extractArchivesHere: "{count} Archive hier entpacken",
+  extractArchivesHere: {
+    one: "{count} Archiv hier entpacken",
+    other: "{count} Archive hier entpacken",
+  },
   extractHere: "Hier entpacken",
   extractEachToItsOwn: "Jedes in einen eigenen Ordner entpacken",
   extractTo: "Nach „{unpackedName}{separator}“ entpacken",
@@ -80,7 +85,7 @@ export const pane = {
   copyPath: "Pfad kopieren",
   properties: "Eigenschaften",
   properties2: "Eigenschaften ({needsSftp})",
-  deleteItems: "{count} Elemente löschen",
+  deleteItems: { one: "{count} Element löschen", other: "{count} Elemente löschen" },
   lock: "Sperren",
   saveThisConnection: "Diese Verbindung speichern",
   openTerminal: "Terminal öffnen",
@@ -173,16 +178,22 @@ export const pane = {
   aFolderCannotGoInside: "Ein Ordner kann nicht in sich selbst abgelegt werden.",
   local: "Lokal",
   cutFilesAreCopiedThere: "Ausgeschnittene Dateien werden dorthin kopiert, die Originale bleiben.",
-  entriesCouldNotBeDeleted:
-    "{count} Einträge konnten nicht gelöscht werden. Das Protokoll nennt die Gründe.",
+  entriesCouldNotBeDeleted: {
+    one: "{count} Eintrag konnte nicht gelöscht werden. Das Protokoll nennt den Grund.",
+    other: "{count} Einträge konnten nicht gelöscht werden. Das Protokoll nennt die Gründe.",
+  },
   aFolderCannotGoInsideItself: "Ein Ordner kann nicht in sich selbst abgelegt werden",
   filesCannotBeMovedInside: "Dateien können innerhalb eines Tresors nicht verschoben werden",
   movingOnThisServerNeeds: "Verschieben auf diesem Server braucht SFTP",
   someOfTheseAreIn: "Einige davon sind schon in diesem Ordner",
-  itemsCouldNotBeMoved:
-    "{count} Elemente konnten nicht verschoben werden. Das Protokoll nennt die Gründe.",
-  itemsCouldNotBeCopied:
-    "{count} Elemente konnten nicht kopiert werden. Das Protokoll nennt die Gründe.",
+  itemsCouldNotBeMoved: {
+    one: "{count} Element konnte nicht verschoben werden. Das Protokoll nennt den Grund.",
+    other: "{count} Elemente konnten nicht verschoben werden. Das Protokoll nennt die Gründe.",
+  },
+  itemsCouldNotBeCopied: {
+    one: "{count} Element konnte nicht kopiert werden. Das Protokoll nennt den Grund.",
+    other: "{count} Elemente konnten nicht kopiert werden. Das Protokoll nennt die Gründe.",
+  },
   deletingItemsFrom: {
     one: "{count} Element wird aus {folder} gelöscht",
     other: "{count} Elemente werden aus {folder} gelöscht",

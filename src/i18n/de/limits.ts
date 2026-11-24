@@ -40,7 +40,7 @@ export const limits = {
   clickToChangeTheSchedule: "{scheduleTooltip}\nKlicken, um den Zeitplan zu ändern.",
   scheduleIgnoredShort: "Zeitplan ignoriert",
   scheduleIgnoredShortUntil: "Zeitplan ignoriert bis {time}",
-  untilTime: "bis {time}",
+  limitsUntilTime: "{limits} bis {time}",
 
   // components/LimitScheduleWeek
   speedLimitsThroughTheWeek: "Geschwindigkeitsbegrenzungen über die Woche",

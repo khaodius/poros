@@ -55,7 +55,7 @@ export const preview = {
   thumbnailsNotLoaded: "Miniaturen nicht geladen",
   thumbnailsNotLoadedDetail:
     "Lesen von diesem Speicher kann Kosten verursachen, daher werden Bilder nur auf Anfrage gelesen.",
-  itemsSelected: "{count} Elemente ausgewählt",
+  itemsSelected: { one: "{count} Element ausgewählt", other: "{count} Elemente ausgewählt" },
   notTextOrAPicture: "Weder Text noch Bild",
   noPermissionToReadFile: "Keine Berechtigung zum Lesen dieser Datei",
   noPermissionToReadFolder: "Keine Berechtigung zum Lesen dieses Ordners",
@@ -107,7 +107,7 @@ export const preview = {
   dragToResizeDoubleClick: "Ziehen ändert die Größe, Doppelklick setzt sie zurück",
 
   // components/PreviewThumbnails
-  andMore: "und {count} weitere",
+  andMore: { one: "und {count} weiteres", other: "und {count} weitere" },
 
   // lib/previewLoad
   theFileChangesAsIt: "Die Datei ändert sich beim Lesen",

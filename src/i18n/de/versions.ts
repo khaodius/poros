@@ -38,10 +38,11 @@ export const versions = {
   deletedItems: { one: "{count} gelöschtes Element", other: "{count} gelöschte Elemente" },
   everythingDeletedUnderAFolder:
     "Alles, was unter einem Ordner gelöscht wurde, wird mit entfernt. Dateien, die noch darin sind, bleiben unberührt.",
-  andMore: "und {count} weitere",
+  andMore: { one: "und {count} weiteres", other: "und {count} weitere" },
   removeThisDeleteMarker: "Diese Löschmarkierung entfernen",
   deleteThisVersionForGood: "Diese Version endgültig löschen",
   versionFrom: "Version vom {when}",
+  versionFromUnknownTime: "Version mit unbekanntem Datum",
   currentVersion: "Aktuelle Version",
   isNoLongerDeleted: "{name} ist nicht mehr gelöscht.",
   theseItemsAreNoLongerDeleted: "Diese Elemente sind nicht mehr gelöscht.",

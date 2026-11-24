@@ -2,13 +2,16 @@ import type { TranslatedArea } from "../catalog";
 
 export const rsync = {
   // components/RsyncOptionsEditor
-  changed: "{changed} geändert",
+  changed: { one: "{count} geändert", other: "{count} geändert" },
   noLimit: "Keine Begrenzung",
   extraRsyncArguments: "Zusätzliche rsync-Argumente",
   typedAsOnRsyncsCommandLine:
     "So geschrieben wie auf der Befehlszeile von rsync. Sie haben Vorrang vor den Optionen darüber.",
 
   // lib/rsyncOptions
+  unitSeconds: { one: "s", other: "s" },
+  unitBytes: { one: "Byte", other: "Bytes" },
+  unitItems: { one: "Element", other: "Elemente" },
   sizeAndModificationTime: "Größe und Änderungszeit",
   sizeOnlySizeOnly: "Nur Größe (--size-only)",
   contentsCReadsFilesOf: "Inhalt (-c, liest Dateien gleicher Größe)",

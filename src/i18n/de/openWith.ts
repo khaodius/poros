@@ -143,7 +143,8 @@ export const openWith = {
   noFilesAreOpenIn:
     "Keine Dateien sind in anderen Programmen geöffnet. Klicken Sie mit der rechten Maustaste auf eine Datei und wählen Sie Öffnen mit.",
   inAVault: "In einem Tresor",
-  uploaded: "hochgeladen {uploadTime}",
+  uploadedAtTime: "um {time} hochgeladen",
+  uploadedOnDate: "am {date} hochgeladen",
   of: "{transferred} von {total}",
   decideWhatToUpload: "Entscheiden, was hochgeladen wird...",
   openInAnEditor: "In einem Editor öffnen...",

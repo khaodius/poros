@@ -20,8 +20,14 @@ export const editor = {
   yourUnsavedChangesWillBe: "Ihre ungespeicherten Änderungen gehen verloren.",
   utf8WithBom: "UTF-8 mit BOM",
   latin1: "Latin-1",
-  wasDeletedAfterYouOpened: "{name} wurde {where} gelöscht, nachdem Sie die Datei geöffnet haben.",
-  changedSinceYouOpenedIt: "{name} wurde {where} geändert, seit Sie die Datei geöffnet haben.",
+  wasDeletedOnTheServerAfterYouOpened:
+    "{name} wurde auf dem Server gelöscht, nachdem Sie die Datei geöffnet haben.",
+  wasDeletedOnDiskAfterYouOpened:
+    "{name} wurde auf dem Datenträger gelöscht, nachdem Sie die Datei geöffnet haben.",
+  changedOnTheServerSinceYouOpened:
+    "{name} wurde auf dem Server geändert, seit Sie die Datei geöffnet haben.",
+  changedOnDiskSinceYouOpened:
+    "{name} wurde auf dem Datenträger geändert, seit Sie die Datei geöffnet haben.",
   saveItAgain: "Erneut speichern",
   saving: "Wird gespeichert...",
   saved: "Gespeichert",

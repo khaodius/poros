@@ -7,7 +7,7 @@ export const connect = {
   importFromFilezillaWinscpAnd: "Aus FileZilla, WinSCP und anderen Programmen importieren",
   importConnections: "Verbindungen importieren",
   newConnection: "Neue Verbindung",
-  connectionsYouSaveAppearHere: "Gespeicherte Verbindungen erscheinen hier.",
+  emptyConnectionList: "Gespeicherte Verbindungen erscheinen hier. {importLink}",
   importThemFromAnotherApp: "Aus einem anderen Programm importieren",
   protocol: "Protokoll",
   account: "Konto",
@@ -95,10 +95,12 @@ export const connect = {
 
   // components/ImportConnectionsDialog
   importFrom: "Aus {label} importieren",
-  importedFrom: "{imported} aus {label} importiert.",
-  imported: "{imported} importiert.",
+  importedFrom: {
+    one: "{count} Verbindung aus {label} importiert.",
+    other: "{count} Verbindungen aus {label} importiert.",
+  },
+  imported: { one: "{count} Verbindung importiert.", other: "{count} Verbindungen importiert." },
   theseCouldNotBeSaved: "Diese konnten nicht gespeichert werden: {failures}",
-  importedConnections: { one: "{count} Verbindung", other: "{count} Verbindungen" },
   passwordsLeftOut: {
     one: "Der Schlüsselbund des Systems ist nicht verfügbar, daher wurde {count} Passwort ausgelassen. Poros fragt danach, wenn Sie verbinden.",
     other:
@@ -110,7 +112,10 @@ export const connect = {
     "Poros kopiert die gespeicherten Einträge dieser Programme in seine gespeicherten Verbindungen. Im anderen Programm ändert sich nichts.",
   chooseFile: "Datei auswählen...",
   alreadySaved: "Schon gespeichert",
-  leftOutSincePorosCannot: "{count} ausgelassen, da Poros sich so nicht mit ihnen verbinden kann",
+  leftOutSincePorosCannot: {
+    one: "{count} ausgelassen, da Poros sich so nicht damit verbinden kann",
+    other: "{count} ausgelassen, da Poros sich so nicht mit ihnen verbinden kann",
+  },
   putFolderNamesInFront: "Ordnernamen vor die Verbindungsnamen setzen",
   reading: "Wird gelesen...",
   otherFile: "Andere Datei...",
@@ -125,6 +130,8 @@ export const connect = {
   },
   foundFiles: "Gefunden: {files}",
   notFoundInChoose: "Nicht gefunden in {places}. {choose}",
+  throughConnection: "über {name}",
+  neededByConnection: "für {name} nötig",
   placeOrPlace: "{first} oder {second}",
   keepThePasswordsInTheKeychain: {
     one: "Das Passwort im Schlüsselbund des Systems speichern",

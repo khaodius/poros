@@ -43,6 +43,8 @@
 // Progress phrases take the passive ("Wird gespeichert..."), hints that start with "Off:"
 // read "Aus:" followed by a whole sentence. Key names stay as the menus show them (Ctrl,
 // Shift, Alt, Enter), as do units (KB, MiB, KiB/s); durations are written "2 min 5 s".
+// Separators are the English ones: "; " between clauses, " " between sentences, "{label}: {message}"
+// for an error toast. Share statements keep the plural verb (Alle ... können, Personen ... können).
 
 import { defineTranslation } from "../catalog";
 import { appearance } from "./appearance";

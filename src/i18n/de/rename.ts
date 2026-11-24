@@ -63,6 +63,8 @@ export const rename = {
   cannotBeRenamed: "Nicht umbenennbar",
   nameUnchanged: "Unverändert",
   ready: "Bereit",
+  lowercase: "kleinbuchstaben",
+  uppercase: "GROSSBUCHSTABEN",
   titleCase: "Jedes Wort Groß",
   sentenceCase: "Satzanfang groß",
   beforeTheName: "Vor dem Namen",
@@ -104,7 +106,14 @@ export const rename = {
 
   // lib/bulkRename
   theNameIsEmpty: "Der Name ist leer",
-  theNameIsTooLong: "Der Name ist zu lang: {length} von {maxLength} {lengthUnit}",
+  theNameIsTooLongInBytes: {
+    one: "Der Name ist zu lang: {length} von {count} Byte",
+    other: "Der Name ist zu lang: {length} von {count} Bytes",
+  },
+  theNameIsTooLongInCharacters: {
+    one: "Der Name ist zu lang: {length} von {count} Zeichen",
+    other: "Der Name ist zu lang: {length} von {count} Zeichen",
+  },
   nowNamed: "Heißt jetzt {temporary}: {message}",
   nameWithoutTheExtension: "Name ohne Erweiterung",
   dateModified: "Änderungsdatum",

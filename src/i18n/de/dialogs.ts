@@ -19,11 +19,12 @@ export const dialogs = {
   // components/DeleteDialog
   nothingToDelete: "Nichts zu löschen",
   deleteItem: "Element löschen",
-  deleteItems: "{count} Elemente löschen",
+  deleteItems: { one: "{count} Element löschen", other: "{count} Elemente löschen" },
   checkingTheFolder: "Ordner wird geprüft...",
   theseItemsAreNoLonger: "Diese Elemente sind nicht mehr im Ordner.",
 
   // components/PropertiesDialog
+  sizeWithContents: "{size} ({contents})",
   items: { one: "{count} Element", other: "{count} Elemente" },
   files: { one: "{count} Datei", other: "{count} Dateien" },
   folders: { one: "{count} Ordner", other: "{count} Ordner" },
@@ -32,7 +33,10 @@ export const dialogs = {
     other: "Wird gezählt: {count} Dateien, {size}",
   },
   propertiesOf: "Eigenschaften von {name}",
-  propertiesOfItems: "Eigenschaften von {count} Elementen",
+  propertiesOfItems: {
+    one: "Eigenschaften von {count} Element",
+    other: "Eigenschaften von {count} Elementen",
+  },
   items2: "Elemente",
   links: { one: "{count} Verknüpfung", other: "{count} Verknüpfungen" },
   type: "Typ",
@@ -44,7 +48,10 @@ export const dialogs = {
   permissions: "Berechtigungen",
   linksHaveNoPermissionsOf:
     "Verknüpfungen haben keine eigenen Berechtigungen und bleiben daher, wie sie sind. Änderungen an Besitzer und Gruppe gelten für die Verknüpfungen selbst.",
-  andMoreListedInThe: "und {count} weitere, im Protokoll aufgeführt",
+  andMoreListedInThe: {
+    one: "und {count} weiteres, im Protokoll aufgeführt",
+    other: "und {count} weitere, im Protokoll aufgeführt",
+  },
   changedItems: { one: "{count} Element geändert", other: "{count} Elemente geändert" },
   octal: "Oktal",
   mixed: "Gemischt",
@@ -54,7 +61,10 @@ export const dialogs = {
   folders2: "Ordner",
   files2: "Dateien",
   oneItemCouldNotBe: "Ein Element konnte nicht geändert werden:",
-  itemsCouldNotBeChanged: "{count} Elemente konnten nicht geändert werden:",
+  itemsCouldNotBeChanged: {
+    one: "{count} Element konnte nicht geändert werden:",
+    other: "{count} Elemente konnten nicht geändert werden:",
+  },
   applying: "Wird übernommen...",
   linkToAFolder: "Verknüpfung zu einem Ordner",
   linkToAFile: "Verknüpfung zu einer Datei",
@@ -70,10 +80,13 @@ export const dialogs = {
   permissionOfClass: "{who}: {permission}",
 
   // lib/deletion
-  deletedCount: "{count} gelöscht",
+  deletedCount: { one: "{count} gelöscht", other: "{count} gelöscht" },
   countingToDelete: "Zu Löschendes wird gezählt...",
-  deletedFoundSoFar: "{count} gelöscht, bisher {found} gefunden",
-  deletedOfTotal: "{count} von {total} gelöscht",
+  deletedFoundSoFar: {
+    one: "{count} gelöscht, bisher {found} gefunden",
+    other: "{count} gelöscht, bisher {found} gefunden",
+  },
+  deletedOfTotal: { one: "{count} von {total} gelöscht", other: "{count} von {total} gelöscht" },
 
   // lib/permissions
   setUserId: "Benutzer-ID setzen",

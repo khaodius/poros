@@ -102,7 +102,7 @@ export const drives = {
   uploadFailed: "Fehlgeschlagen: {error}",
   uploadWaiting: "Wartet",
   uploading: "Wird hochgeladen",
-  uploadingPercent: "Wird hochgeladen, {percent}\u00a0%",
+  uploadingPercent: "Wird hochgeladen, {percent}",
   chooseADriveLetter: "Wählen Sie einen Laufwerksbuchstaben.",
   chooseAFolder: "Wählen Sie einen Ordner.",
   driveLetterSuchAs: "Ein Laufwerksbuchstabe, etwa {example}",

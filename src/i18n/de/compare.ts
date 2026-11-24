@@ -108,13 +108,16 @@ export const compare = {
     "Der Vergleich pausiert, solange dieser Bereich Suchergebnisse zeigt. Die Markierungen kehren zurück, wenn die Ergebnisse geschlossen werden",
   pausedPartnerShowsResults:
     "Der Vergleich pausiert, solange {partner} Suchergebnisse zeigt. Die Markierungen kehren zurück, wenn die Ergebnisse geschlossen werden",
-  summaryNewerHere: "{count} hier neuer",
-  summaryOlderHere: "{count} hier älter",
-  summaryOnlyHere: "{count} nur hier",
-  summaryOnlyThere: "{count} nur im anderen Bereich",
-  summaryDifferent: "{count} verschieden",
-  summaryIdentical: "{count} identisch",
-  summaryNotCompared: "{count} nicht verglichen",
+  summaryNewerHere: { one: "{count} hier neuer", other: "{count} hier neuer" },
+  summaryOlderHere: { one: "{count} hier älter", other: "{count} hier älter" },
+  summaryOnlyHere: { one: "{count} nur hier", other: "{count} nur hier" },
+  summaryOnlyThere: {
+    one: "{count} nur im anderen Bereich",
+    other: "{count} nur im anderen Bereich",
+  },
+  summaryDifferent: { one: "{count} verschieden", other: "{count} verschieden" },
+  summaryIdentical: { one: "{count} identisch", other: "{count} identisch" },
+  summaryNotCompared: { one: "{count} nicht verglichen", other: "{count} nicht verglichen" },
 
   // state/folderCompare
   noFolderToCompare: "Dieser Bereich hat keinen Ordner zum Vergleichen",
