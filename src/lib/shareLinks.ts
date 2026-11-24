@@ -278,7 +278,7 @@ export interface StatementSubject {
   nowMillis: number;
 }
 
-/** In plain words: `Anyone with this link can download the file until 14 May, 18:30.` */
+/** In plain words: `Anyone with this link can download the file until May 14 at 18:30.` */
 export function linkStatement(subject: StatementSubject): string {
   const several = subject.count > 1;
   const organization = subject.organization ?? "";

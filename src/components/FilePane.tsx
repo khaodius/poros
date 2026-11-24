@@ -825,7 +825,7 @@ export function FilePane({
       if (action?.kind === "transfer") {
         transferFromPane(tabId, payload.entries, target.tabId, target.folder, landing);
       } else if (action?.kind === "blocked") {
-        showToast("info", `${action.reason}.`);
+        showToast("info", t("common.asSentence", { text: action.reason }));
       } else if (action?.kind === "place") {
         // Results already in the folder they are dropped on stay where they are.
         const entries = inResults

@@ -192,6 +192,11 @@ export function hardCodedTexts(fileName: string, source: string): string[] {
         : valueTexts(argument);
       for (const text of texts) report(argument, text);
     }
+    // A word that joins a list, such as " and ", belongs to the language.
+    const separator = call.arguments[0];
+    if (name === "join" && separator && ts.isStringLiteral(separator)) {
+      report(separator, separator.text);
+    }
     // A placeholder's value is shown inside the message, so it needs translating as well.
     const isTranslate = call.expression.getText() === "t" || call.expression.getText() === "t.rich";
     const params = call.arguments[1];
@@ -389,6 +394,14 @@ describe("interface text", () => {
       "example.ts:8: file",
       "example.ts:9: zstd",
     ]);
+  });
+
+  it("checks the words that join a list", () => {
+    const module = `
+      export function names(items: string[]) {
+        return [items.join(" and "), items.join(", "), items.join("\\n")];
+      }`;
+    expect(hardCodedTexts("example.ts", module)).toEqual(["example.ts:3: and"]);
   });
 
   it("takes one word for code only when it looks like a path or a dotted name", () => {

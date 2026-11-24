@@ -24,6 +24,7 @@ export const dialogs = {
   theseItemsAreNoLonger: "These items are no longer in the folder.",
 
   // components/PropertiesDialog
+  sizeWithContents: "{size} ({contents})",
   items: { one: "{count} item", other: "{count} items" },
   files: { one: "{count} file", other: "{count} files" },
   folders: { one: "{count} folder", other: "{count} folders" },

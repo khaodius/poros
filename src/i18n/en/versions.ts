@@ -40,6 +40,7 @@ export const versions = {
   removeThisDeleteMarker: "Remove this delete marker",
   deleteThisVersionForGood: "Delete this version for good",
   versionFrom: "Version from {when}",
+  versionFromUnknownTime: "Version from an unknown time",
   currentVersion: "Current version",
   isNoLongerDeleted: "{name} is no longer deleted.",
   theseItemsAreNoLongerDeleted: "These items are no longer deleted.",

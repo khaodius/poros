@@ -305,7 +305,9 @@ export function BulkRenameDialog({
   const counterPlace: CounterPlace = rules.counter.enabled ? rules.counter.placement : "off";
   const problems = problemSummary(preview);
   const summary =
-    entries.length === 0 && gone ? gone : [renamedSummary(preview), gone].filter(Boolean).join(" ");
+    entries.length === 0 && gone
+      ? gone
+      : [renamedSummary(preview), gone].filter(Boolean).join(t("common.sentenceSeparator"));
 
   return (
     <Dialog

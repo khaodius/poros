@@ -200,7 +200,8 @@ export type OptionField =
       key: KeysOf<number>;
       label: string;
       flag: string;
-      unit?: string;
+      /** The unit after the number, which may agree with it. */
+      unit?: (count: number) => string;
       max: number;
       hint?: string;
     }
@@ -209,7 +210,8 @@ export type OptionField =
       key: "blockSize" | "maxDelete";
       label: string;
       flag: string;
-      unit?: string;
+      /** The unit after the number, which may agree with it. */
+      unit?: (count: number) => string;
       max: number;
       hint?: string;
     }
@@ -286,7 +288,7 @@ export const OPTION_GROUPS: OptionGroup[] = [
           return t("rsync.timesThisCloseCountAs");
         },
         flag: "--modify-window",
-        unit: "s",
+        unit: (count) => t("rsync.unitSeconds", { count }),
         max: TIME_TOLERANCE_LIMITS.max,
         get hint() {
           return t("rsync.someFileSystemsSuchAs");
@@ -428,7 +430,7 @@ export const OPTION_GROUPS: OptionGroup[] = [
           return t("rsync.deltaBlockSize");
         },
         flag: "-B",
-        unit: "bytes",
+        unit: (count) => t("rsync.unitBytes", { count }),
         max: MAX_BLOCK_SIZE,
         get hint() {
           return t("rsync.blankPicksOneFromEach");
@@ -529,7 +531,7 @@ export const OPTION_GROUPS: OptionGroup[] = [
           return t("rsync.deleteAtMost");
         },
         flag: "--max-delete",
-        unit: "items",
+        unit: (count) => t("rsync.unitItems", { count }),
         max: 1_000_000_000,
         get hint() {
           return t("rsync.blankIsNoLimit0");
@@ -836,7 +838,7 @@ export const OPTION_GROUPS: OptionGroup[] = [
           return t("rsync.speedLimit");
         },
         flag: "--bwlimit",
-        unit: "KiB/s",
+        unit: () => "KiB/s",
         max: 100 * 1024 * 1024,
         get hint() {
           return t("rsync.n0IsUnlimitedSharedBy");

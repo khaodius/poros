@@ -44,6 +44,15 @@ export function LimitScheduleStatus() {
   const until = limits.until === null ? null : clockTime(limits.until, now);
   const override = overrideText(limits);
   const OverrideIcon = limits.ignored ? CalendarClock : CalendarOff;
+  const shown = shownLimits(limits).map(({ direction, mode, text }) => {
+    const { Icon, label } = DIRECTIONS[direction];
+    return (
+      <span key={direction} className={`status-schedule-limit is-${mode}`}>
+        <Icon size={12} aria-label={label} />
+        {text}
+      </span>
+    );
+  });
   return (
     <span className={`status-item status-schedule ${limits.ignored ? "is-ignored" : ""}`}>
       <button
@@ -54,26 +63,13 @@ export function LimitScheduleStatus() {
         })}
         onClick={openScheduleSettings}
       >
-        {limits.ignored ? (
-          until === null ? (
-            t("limits.scheduleIgnoredShort")
-          ) : (
-            t("limits.scheduleIgnoredShortUntil", { time: until })
-          )
-        ) : (
-          <>
-            {shownLimits(limits).map(({ direction, mode, text }) => {
-              const { Icon, label } = DIRECTIONS[direction];
-              return (
-                <span key={direction} className={`status-schedule-limit is-${mode}`}>
-                  <Icon size={12} aria-label={label} />
-                  {text}
-                </span>
-              );
-            })}
-            {until !== null && ` ${t("limits.untilTime", { time: until })}`}
-          </>
-        )}
+        {limits.ignored
+          ? until === null
+            ? t("limits.scheduleIgnoredShort")
+            : t("limits.scheduleIgnoredShortUntil", { time: until })
+          : until === null
+            ? shown
+            : t.rich("limits.limitsUntilTime", { limits: shown, time: until })}
       </button>
       <button
         type="button"

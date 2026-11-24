@@ -396,13 +396,17 @@ function VersionComparison({
 }) {
   const t = useT();
   const { sessionId, path, name } = file;
+  const timeKnown = version.modified !== null;
   const [left, right] = useMemo((): [CompareSide, CompareSide] => {
     const location = { kind: "remote" as const, sessionId };
+    const where = timeKnown
+      ? t("versions.versionFrom", { when })
+      : t("versions.versionFromUnknownTime");
     return [
-      { location, path, name, where: t("versions.versionFrom", { when }) },
+      { location, path, name, where },
       { location, path, name, where: t("versions.currentVersion") },
     ];
-  }, [sessionId, path, name, when, t]);
+  }, [sessionId, path, name, when, timeKnown, t]);
   const compare = useCallback(
     (operationId: string, options: CompareOptions) =>
       versions.compare({
