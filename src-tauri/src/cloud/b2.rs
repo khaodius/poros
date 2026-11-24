@@ -746,7 +746,8 @@ impl B2Fs {
 
     /// Puts the parts of a large file of `size` bytes together. An attempt may finish the file
     /// though its answer is lost, and then a retry is refused; the file's own record tells
-    /// whether it was finished.
+    /// whether it was finished. After a lost answer a record that still reads unfinished may
+    /// be of a finish under way, so the file is not to be cancelled then.
     async fn finish_large_file(
         &self,
         file_id: &str,
@@ -775,8 +776,7 @@ impl B2Fs {
         }
         match self.finished_file(file_id, path).await {
             Ok(Some(file)) if file.content_length == size => Ok(()),
-            Ok(_) => Err(error.into()),
-            Err(_) => Err(Unfinished {
+            _ => Err(Unfinished {
                 error,
                 discard: !answer_lost,
             }),
@@ -1603,8 +1603,7 @@ struct B2Upload {
     path: String,
     modified: Option<i64>,
     chunk_size: usize,
-    /// The large file in progress, cancelled if the upload does not finish. It is let go while
-    /// the file is being finished, which may succeed though its answer is lost.
+    /// The large file in progress, cancelled if the upload does not finish.
     large_file: Option<String>,
     part_address: Option<UploadAddress>,
     sha1s: Vec<String>,
@@ -1673,17 +1672,19 @@ impl UploadTarget for B2Upload {
             .await?;
         self.sha1s.push(sha1_hex(&data));
         if last {
-            self.large_file = None;
+            // The large file stays open while it is finished, so that a cancel cancels it: B2
+            // refuses to cancel a file that has no upload in progress.
             let finished = self
                 .files
                 .finish_large_file(&file_id, &self.sha1s, end, &self.path)
                 .await;
             if let Err(unfinished) = finished {
-                if unfinished.discard {
-                    self.large_file = Some(file_id);
+                if !unfinished.discard {
+                    self.large_file = None;
                 }
                 return Err(unfinished.error);
             }
+            self.large_file = None;
         }
         Ok(())
     }
@@ -1957,7 +1958,7 @@ mod tests {
         }
     }
 
-    async fn upload_content(service: &ScriptedService) -> AppResult<()> {
+    fn large_upload(service: &ScriptedService) -> Box<dyn WriteStream> {
         let target = B2Upload {
             files: Arc::new(files_at(&service.address)),
             bucket_id: "bucket-1".into(),
@@ -1969,8 +1970,11 @@ mod tests {
             part_address: None,
             sha1s: Vec::new(),
         };
-        let mut upload: Box<dyn WriteStream> =
-            Box::new(ChunkedUpload::new(target, CONTENT.len() as u64));
+        Box::new(ChunkedUpload::new(target, CONTENT.len() as u64))
+    }
+
+    async fn upload_content(service: &ScriptedService) -> AppResult<()> {
+        let mut upload = large_upload(service);
         upload.write(Bytes::from_static(CONTENT)).await?;
         upload.finish().await
     }
@@ -2059,5 +2063,40 @@ mod tests {
         upload_content(&service).await.unwrap_err();
         assert_eq!(service.count(FILE_INFO), 1);
         assert_not_cancelled(&service).await;
+
+        // Nor when the record still reads unfinished: the finish may be under way.
+        let service = large_file_service(
+            vec![Reply::status(200, STARTED)],
+            vec![Reply::HangUp, b2_error(400, "bad_request")],
+            vec![Reply::status(200, STARTED)],
+        )
+        .await;
+        let error = upload_content(&service).await.unwrap_err();
+        assert_eq!(error.kind, ErrorKind::InvalidInput);
+        assert_eq!(service.count(FILE_INFO), 1);
+        assert_not_cancelled(&service).await;
+    }
+
+    /// B2 refuses to cancel a file it has finished, so a cancel cancels whatever the finish
+    /// has come to.
+    #[tokio::test]
+    async fn a_large_file_cancelled_while_it_finishes_is_cancelled() {
+        for finishing in [
+            Reply::Silence,
+            b2_error(503, "service_unavailable").with_header("retry-after", "30"),
+        ] {
+            let service = large_file_service(
+                vec![Reply::status(200, STARTED)],
+                vec![finishing],
+                Vec::new(),
+            )
+            .await;
+            let mut upload = large_upload(&service);
+            upload.write(Bytes::from_static(CONTENT)).await.unwrap();
+            let finishing = tokio::time::timeout(Duration::from_secs(1), upload.finish()).await;
+            assert!(finishing.is_err(), "the finish was over");
+            assert_eq!(service.count(FINISH), 1);
+            assert!(service.waits_for(CANCEL, Duration::from_secs(5)).await);
+        }
     }
 }

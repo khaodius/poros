@@ -26,8 +26,8 @@ pub fn chunk_size_within(size: u64, max_chunks: u64) -> usize {
 /// Why an upload session was not completed, and whether the parts sent may be thrown away.
 pub struct Unfinished {
     pub error: AppError,
-    /// False when the service may have completed the upload after all, its answer lost, or no
-    /// longer has it: ending the session then could undo a finished file, or finds nothing.
+    /// False when the session is not to be ended: the service no longer has it, or may still
+    /// be completing it after an answer was lost.
     pub discard: bool,
 }
 
