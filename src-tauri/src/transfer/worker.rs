@@ -31,7 +31,7 @@ use crate::ftp::FtpFs;
 use crate::model::{EntryKind, LinkTarget};
 use crate::protocol::{Protocol, RemoteFileSystem};
 use crate::settings::TransferSettings;
-use crate::sftp::{RemoteFs, RemoteStat};
+use crate::sftp::{Opened, RemoteFs, RemoteStat};
 use crate::ssh::{self, HostKeyApproval, SshHandle};
 use crate::{local, remote_path, session};
 
@@ -543,6 +543,13 @@ impl JobContext<'_> {
         self.job().retarget(target, name);
     }
 
+    /// How a handle this transfer wrote to is closed.
+    pub(super) fn written(&self) -> Opened {
+        Opened::ForWriting {
+            sync: self.settings.flush_to_disk,
+        }
+    }
+
     /// What the first worker read as it closed, worth keeping only if no other worker joined.
     fn keep_closing_stat(&self, stat: Option<RemoteStat>) {
         if let Some(stat) = stat.filter(|_| !self.run.is_segmented()) {
@@ -742,7 +749,8 @@ fn log_server_change(shared: &Shared, session_id: &str, change: ServerChange, er
     shared.events.log(level, Some(session_id), message);
 }
 
-/// Deletes the temporary files of transfers removed from the queue before they finished.
+/// Deletes the temporary files of transfers removed from the queue before they finished, and
+/// says which folders changed.
 async fn discard_partials(shared: &Shared, connections: &Connections, abandoned: Vec<Abandoned>) {
     for partial in abandoned {
         match partial.direction {
@@ -759,6 +767,7 @@ async fn discard_partials(shared: &Shared, connections: &Connections, abandoned:
                 }
             }
         }
+        shared.queue.lock().unwrap().deleted(&partial);
     }
 }
 
@@ -1130,7 +1139,10 @@ async fn download(
     );
     let handle = context.fs.open_for_read(&spec.source).await?;
     let copied = copy::download(&context.copy_context(), &handle, &mut file).await;
-    let (stat, _) = context.fs.close_and_stat(handle, false).await;
+    let (stat, _) = context
+        .fs
+        .close_and_stat(handle, Opened::ForReading, &context.run.cancel)
+        .await;
     copied?;
     context.keep_closing_stat(stat);
     Ok(RunOutcome::Completed)
@@ -1272,7 +1284,7 @@ async fn upload(
     );
     let copied = copy::upload(&context.copy_context(), &mut file, &handle).await;
     let (stat, closed) = fs
-        .close_and_stat(handle, context.settings.flush_to_disk)
+        .close_and_stat(handle, context.written(), &context.run.cancel)
         .await;
     copied?;
     closed?;
@@ -1399,7 +1411,7 @@ async fn help(context: &JobContext<'_>) -> AppResult<RunOutcome> {
             let copied = copy::upload(&context.copy_context(), &mut file, &handle).await;
             let (_, closed) = context
                 .fs
-                .close_and_stat(handle, context.settings.flush_to_disk)
+                .close_and_stat(handle, context.written(), &context.run.cancel)
                 .await;
             copied?;
             closed?;
@@ -1458,7 +1470,9 @@ async fn finalize_download(context: &JobContext<'_>) -> AppResult<()> {
 }
 
 /// Checks a download against the checksums and signatures published beside its source. A file
-/// that fails is not saved: its temporary file is deleted.
+/// that fails is not saved: its temporary file is deleted, and so is a file written in place
+/// that holds only this attempt's bytes. One resumed onto what was already there, or written
+/// through a link, is left where it is, and the error says so.
 pub(super) async fn check_published(
     job: &JobRef<'_>,
     source: published::Source<'_>,
@@ -1478,16 +1492,20 @@ pub(super) async fn check_published(
         .map_err(|error| AppError::from(error).with_path(plan.target.clone()))?;
     }
     let checked = published::check(job, source, &job.spec.source, Path::new(&plan.target)).await;
-    if checked
-        .as_ref()
-        .is_err_and(|error| error.kind == ErrorKind::Untrusted)
-    {
-        job.run.restart.store(true, Ordering::Relaxed);
-        if plan.rename_to.is_some() {
-            let _ = tokio::fs::remove_file(&plan.target).await;
-        }
+    let Err(error) = checked else {
+        return Ok(());
+    };
+    if error.kind != ErrorKind::Untrusted {
+        return Err(error);
     }
-    checked
+    job.run.restart.store(true, Ordering::Relaxed);
+    let only_this_attempt = plan.rename_to.is_some()
+        || (job.run.start() == Some(0) && !delta::is_local_symlink(Path::new(&plan.target)).await);
+    if only_this_attempt {
+        let _ = tokio::fs::remove_file(&plan.target).await;
+        return Err(published::rejected(error, None));
+    }
+    Err(published::rejected(error, Some(&plan.target)))
 }
 
 /// Where the downloaded file ends, once the source is known not to have changed meanwhile.
