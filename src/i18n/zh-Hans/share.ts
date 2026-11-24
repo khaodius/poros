@@ -1,0 +1,118 @@
+import type { TranslatedArea } from "../catalog";
+
+export const share = {
+  // components/ShareDialog
+  share: "共享 {name}",
+  share2: "共享 {selectionSummary}",
+  onIn: "位于 {service} 的 {folder}",
+  links: "链接",
+  lookingForLinksItAlready: "正在查找已有的链接...",
+  changeLink: "更改链接",
+  newLink: "新建链接",
+  letsPeople: "允许他人",
+  whoCanOpenIt: "谁可以打开",
+  worksFor: "有效期",
+  noEnd: "永不过期",
+  custom: "自定义",
+  howMany: "数量",
+  unit: "单位",
+  passwordOptional: "密码（可选）",
+  anyoneWithTheLinkCan: "拥有链接的任何人都可以打开",
+  copyNewLink: "复制新链接",
+  copyNewLinks: "复制新链接",
+  linkAddress: "链接地址",
+  openInBrowser: "在浏览器中打开",
+  stopSharing: "停止共享",
+  peopleWhoHaveThisLink: "拥有此链接的人将无法再打开它。",
+  keepSharing: "继续共享",
+  minutes2: "分钟",
+  hours2: "小时",
+  days2: "天",
+  link: "链接",
+  links2: { other: "{count} 个链接" },
+  keepsOneLinkPerItem:
+    "{service} 为每个项目只保留一个链接，因此这会更改上方的链接，所有拥有该链接的人都会受影响。",
+  keepsOneLinkPerItemSo:
+    "{service} 为每个项目只保留一个链接，因此已有链接的项目，其链接会对所有拥有者更改。",
+  changing: "正在更改...",
+  creating: "正在创建...",
+  copied: "已复制",
+  stopping: "正在停止...",
+  couldNotReadTheLinksItHas: "无法读取其已有的链接：{message}",
+  createLink: "创建链接",
+  createLinks: { other: "创建 {count} 个链接" },
+  copyLink: "复制链接",
+  checking: "正在检查...",
+  makingTheLink: "正在生成链接...",
+  noLinkYet: "尚无链接",
+
+  // lib/shareLinks
+  shareLinkNotInA: "共享链接（不适用于保险库）",
+  shareLinkCloudStorageOnly: "共享链接（仅限云存储）",
+  shareLinkFilesOnly: "共享链接（仅限文件）",
+  shareLink: "共享链接...",
+  days: { other: "{count} 天" },
+  hours: { other: "{count} 小时" },
+  minutes: { other: "{count} 分钟" },
+  seconds: { other: "{count} 秒" },
+  files: { other: "{count} 个文件" },
+  folders: { other: "{count} 个文件夹" },
+  view: "查看",
+  n1Hour: "1 小时",
+  n1Day: "1 天",
+  n7Days: "7 天",
+  anyoneWithTheLink: "拥有链接的任何人",
+  peopleAlreadyInvited: "已邀请的人",
+  peopleIn: "{organization} 中的人",
+  peopleInYourOrganization: "您所在组织中的人",
+  enterHowLongTheLinkShouldWork: "以整数输入链接的有效时长。",
+  chooseHowLongTheLinkShouldWork: "选择链接的有效时长。",
+  linksHereLastAtMost: "此处的链接最长有效期为 {lifetime}。",
+  anyoneWithThisLinkCanDownload: "拥有此链接的任何人{until}都可以下载{what}。",
+  anyoneWithThisLinkCanEdit: "拥有此链接的任何人{until}都可以打开和更改{what}。",
+  anyoneWithThisLinkCanView: "拥有此链接的任何人{until}都可以打开{what}。",
+  anyoneWithOneOfTheseLinksCanDownload: "拥有其中任一链接的任何人{until}都可以下载{what}。",
+  anyoneWithOneOfTheseLinksCanEdit: "拥有其中任一链接的任何人{until}都可以打开和更改{what}。",
+  anyoneWithOneOfTheseLinksCanView: "拥有其中任一链接的任何人{until}都可以打开{what}。",
+  peopleInWithThisLinkCanDownload: "{organization} 中拥有此链接的人{until}都可以下载{what}。",
+  peopleInWithThisLinkCanEdit: "{organization} 中拥有此链接的人{until}都可以打开和更改{what}。",
+  peopleInWithThisLinkCanView: "{organization} 中拥有此链接的人{until}都可以打开{what}。",
+  peopleInWithOneOfTheseLinksCanDownload:
+    "{organization} 中拥有其中任一链接的人{until}都可以下载{what}。",
+  peopleInWithOneOfTheseLinksCanEdit:
+    "{organization} 中拥有其中任一链接的人{until}都可以打开和更改{what}。",
+  peopleInWithOneOfTheseLinksCanView:
+    "{organization} 中拥有其中任一链接的人{until}都可以打开{what}。",
+  peopleInYourOrganizationWithThisLinkCanDownload:
+    "您所在组织中拥有此链接的人{until}都可以下载{what}。",
+  peopleInYourOrganizationWithThisLinkCanEdit:
+    "您所在组织中拥有此链接的人{until}都可以打开和更改{what}。",
+  peopleInYourOrganizationWithThisLinkCanView:
+    "您所在组织中拥有此链接的人{until}都可以打开{what}。",
+  peopleInYourOrganizationWithOneOfTheseLinksCanDownload:
+    "您所在组织中拥有其中任一链接的人{until}都可以下载{what}。",
+  peopleInYourOrganizationWithOneOfTheseLinksCanEdit:
+    "您所在组织中拥有其中任一链接的人{until}都可以打开和更改{what}。",
+  peopleInYourOrganizationWithOneOfTheseLinksCanView:
+    "您所在组织中拥有其中任一链接的人{until}都可以打开{what}。",
+  peopleAlreadyInvitedWhoHaveThisLinkCanDownload: "已邀请且拥有此链接的人{until}都可以下载{what}。",
+  peopleAlreadyInvitedWhoHaveThisLinkCanEdit:
+    "已邀请且拥有此链接的人{until}都可以打开和更改{what}。",
+  peopleAlreadyInvitedWhoHaveThisLinkCanView: "已邀请且拥有此链接的人{until}都可以打开{what}。",
+  peopleAlreadyInvitedWhoHaveOneOfTheseLinksCanDownload:
+    "已邀请且拥有其中任一链接的人{until}都可以下载{what}。",
+  peopleAlreadyInvitedWhoHaveOneOfTheseLinksCanEdit:
+    "已邀请且拥有其中任一链接的人{until}都可以打开和更改{what}。",
+  peopleAlreadyInvitedWhoHaveOneOfTheseLinksCanView:
+    "已邀请且拥有其中任一链接的人{until}都可以打开{what}。",
+  statementWithPassword: "{statement}访问前需要先输入密码。",
+  theItemItIsFor: "其对应的项目",
+  theFileItIsFor: "其对应的文件",
+  theFolderAndEverythingInIt: "该文件夹及其中的所有内容",
+  theFile: "该文件",
+  untilDeadline: "在 {deadline} 之前",
+  untilYouStopSharing: "在您停止共享之前",
+  forAsLongAsItIsThere: "在其存在期间",
+  sharedBefore: "之前的共享：{statement}",
+  notWhatWasAsked: "与请求不符：{statement}",
+} satisfies TranslatedArea<"share">;
