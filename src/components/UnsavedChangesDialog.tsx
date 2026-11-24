@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useLatest } from "../hooks/useLatest";
 import { findTab } from "../lib/layout";
 import { closeEditorTab, closeWindowNow, saveAndClose } from "../state/editorActions";
 import { useLayoutStore } from "../state/layoutStore";
@@ -14,26 +15,45 @@ interface UnsavedChangesDialogProps {
 export function UnsavedChangesDialog({ tabIds, closeWindow, onClose }: UnsavedChangesDialogProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Dismissed while the files save, the question leaves the window open.
+  const shown = useRef(true);
+  useEffect(() => {
+    shown.current = true;
+    return () => {
+      shown.current = false;
+    };
+  }, []);
+  // The question as it is now: tabs, and the window, can join it while the files save.
+  const latest = useLatest({ tabIds, closeWindow, onClose });
   const root = useLayoutStore((state) => state.root);
   const names = tabIds.flatMap((tabId) => {
     const tab = findTab(root, tabId);
     return tab?.kind === "editor" ? [tab.name] : [];
   });
 
-  const finish = () => {
-    onClose();
-    if (closeWindow) closeWindowNow();
-  };
+  const finished = useRef(false);
+  const finish = useCallback(() => {
+    if (finished.current) return;
+    finished.current = true;
+    latest.current.onClose();
+    if (latest.current.closeWindow && shown.current) closeWindowNow();
+  }, [latest]);
+
+  // Its tabs closed meanwhile, as when a save started from a question dismissed since ends:
+  // nothing is left to ask about, and a window waiting on the answer closes.
+  const noneLeft = names.length === 0;
+  useEffect(() => {
+    if (noneLeft && !busy) finish();
+  }, [noneLeft, busy, finish]);
 
   const save = async () => {
     setBusy(true);
     setError(null);
-    if (await saveAndClose(tabIds)) {
-      finish();
-      return;
-    }
+    const saved = await saveAndClose(tabIds);
     setBusy(false);
-    setError("Some files could not be saved. Their tabs say why.");
+    if (!saved) setError("Some files could not be saved. Their tabs say why.");
+    // Tabs that joined meanwhile are still to be asked about, and the question stays for them.
+    else if (latest.current.tabIds.every((tabId) => tabIds.includes(tabId))) finish();
   };
 
   const discard = () => {

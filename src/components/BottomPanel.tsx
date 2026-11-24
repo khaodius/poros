@@ -14,6 +14,7 @@ import { MAX_WORKERS } from "../lib/settings";
 import { jobsIn, VIEW_STATES, type TransferViewKind } from "../lib/transfers";
 import { saveSettingsSection, useSettingsStore } from "../state/settingsStore";
 import { useTransferStore } from "../state/transferStore";
+import { ScheduleOverrideButton } from "./LimitScheduleStatus";
 import { LogView } from "./LogView";
 import { Stepper } from "./Stepper";
 import { TransferView } from "./TransferView";
@@ -118,6 +119,7 @@ export function BottomPanel() {
                 {queuePaused ? <Play size={13} /> : <Pause size={13} />}
                 <span className="narrow-hidden">{queuePaused ? "Start queue" : "Pause queue"}</span>
               </button>
+              <ScheduleOverrideButton />
               <span className="toolbar-divider" />
               <PanelButton
                 label="Pause selected"

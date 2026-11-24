@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useLatest } from "../hooks/useLatest";
 import { Dialog } from "./Dialog";
 
 interface PromptDialogProps {
@@ -28,6 +29,7 @@ export function PromptDialog({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const latestOnClose = useLatest(onClose);
 
   useEffect(() => {
     const input = inputRef.current;
@@ -44,7 +46,7 @@ export function PromptDialog({
     setError(null);
     try {
       await onSubmit(trimmed);
-      onClose();
+      latestOnClose.current();
     } catch (caught) {
       setError((caught as { message?: string }).message ?? String(caught));
       setBusy(false);

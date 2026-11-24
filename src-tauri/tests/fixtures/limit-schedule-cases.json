@@ -1,0 +1,263 @@
+{
+  "about": "Speed limit schedules and what they put in force at a local date and time. Read by the tests of src-tauri/src/transfer/limit_schedule.rs and of src/lib/limitSchedule.ts, so the two cannot drift. `ordinary` is the upload and download limit from the settings in KiB per second, zero being unlimited. `rule` is the place in the list of the rule in force, null when none is. `upload` and `download` are a number of KiB per second, \"unlimited\" or \"paused\". 2026-11-23 is a Monday.",
+  "schedules": {
+    "office": {
+      "enabled": true,
+      "rules": [
+        {
+          "id": "night",
+          "name": "Night",
+          "days": [0, 1, 2, 3, 4, 5, 6],
+          "startMinute": 1320,
+          "endMinute": 360,
+          "upload": { "mode": "unlimited", "kib": 0 },
+          "download": { "mode": "unlimited", "kib": 0 }
+        },
+        {
+          "id": "work",
+          "name": "Work hours",
+          "days": [0, 1, 2, 3, 4],
+          "startMinute": 540,
+          "endMinute": 1080,
+          "upload": { "mode": "limited", "kib": 200 },
+          "download": { "mode": "limited", "kib": 500 }
+        },
+        {
+          "id": "backup",
+          "name": "Backup window",
+          "days": [0, 1, 2, 3, 4, 5, 6],
+          "startMinute": 120,
+          "endMinute": 150,
+          "upload": { "mode": "paused", "kib": 0 },
+          "download": { "mode": "paused", "kib": 0 }
+        }
+      ]
+    },
+    "weekendNights": {
+      "enabled": true,
+      "rules": [
+        {
+          "id": "late",
+          "name": "Late",
+          "days": [4, 5],
+          "startMinute": 1380,
+          "endMinute": 420,
+          "upload": { "mode": "limited", "kib": 100 },
+          "download": { "mode": "paused", "kib": 0 }
+        }
+      ]
+    },
+    "wholeDays": {
+      "enabled": true,
+      "rules": [
+        {
+          "id": "sunday",
+          "name": "Sunday",
+          "days": [6],
+          "startMinute": 0,
+          "endMinute": 0,
+          "upload": { "mode": "paused", "kib": 0 },
+          "download": { "mode": "paused", "kib": 0 }
+        },
+        {
+          "id": "noon",
+          "name": "Noon to noon",
+          "days": [2],
+          "startMinute": 720,
+          "endMinute": 720,
+          "upload": { "mode": "limited", "kib": 50 },
+          "download": { "mode": "limited", "kib": 60 }
+        },
+        {
+          "id": "evening",
+          "name": "Until midnight",
+          "days": [0],
+          "startMinute": 1200,
+          "endMinute": 0,
+          "upload": { "mode": "limited", "kib": 70 },
+          "download": { "mode": "unlimited", "kib": 0 }
+        }
+      ]
+    },
+    "overlapping": {
+      "enabled": true,
+      "rules": [
+        {
+          "id": "always",
+          "name": "Always",
+          "days": [0, 1, 2, 3, 4, 5, 6],
+          "startMinute": 0,
+          "endMinute": 0,
+          "upload": { "mode": "limited", "kib": 1000 },
+          "download": { "mode": "limited", "kib": 1000 }
+        },
+        {
+          "id": "work",
+          "name": "Work hours",
+          "days": [0, 1, 2, 3, 4],
+          "startMinute": 540,
+          "endMinute": 1080,
+          "upload": { "mode": "limited", "kib": 300 },
+          "download": { "mode": "limited", "kib": 300 }
+        },
+        {
+          "id": "lunch",
+          "name": "Lunch",
+          "days": [2],
+          "startMinute": 720,
+          "endMinute": 780,
+          "upload": { "mode": "unlimited", "kib": 0 },
+          "download": { "mode": "unlimited", "kib": 0 }
+        }
+      ]
+    },
+    "overlappingReversed": {
+      "enabled": true,
+      "rules": [
+        {
+          "id": "work",
+          "name": "Work hours",
+          "days": [0, 1, 2, 3, 4],
+          "startMinute": 540,
+          "endMinute": 1080,
+          "upload": { "mode": "limited", "kib": 300 },
+          "download": { "mode": "limited", "kib": 300 }
+        },
+        {
+          "id": "always",
+          "name": "Always",
+          "days": [0, 1, 2, 3, 4, 5, 6],
+          "startMinute": 0,
+          "endMinute": 0,
+          "upload": { "mode": "limited", "kib": 1000 },
+          "download": { "mode": "limited", "kib": 1000 }
+        }
+      ]
+    },
+    "noRules": { "enabled": true, "rules": [] },
+    "noDays": {
+      "enabled": true,
+      "rules": [
+        {
+          "id": "never",
+          "name": "Never",
+          "days": [],
+          "startMinute": 0,
+          "endMinute": 0,
+          "upload": { "mode": "paused", "kib": 0 },
+          "download": { "mode": "paused", "kib": 0 }
+        }
+      ]
+    },
+    "switchedOff": {
+      "enabled": false,
+      "rules": [
+        {
+          "id": "always",
+          "name": "Always",
+          "days": [0, 1, 2, 3, 4, 5, 6],
+          "startMinute": 0,
+          "endMinute": 0,
+          "upload": { "mode": "paused", "kib": 0 },
+          "download": { "mode": "paused", "kib": 0 }
+        }
+      ]
+    },
+    "rememberedNumbers": {
+      "enabled": true,
+      "rules": [
+        {
+          "id": "always",
+          "name": "Always",
+          "days": [0, 1, 2, 3, 4, 5, 6],
+          "startMinute": 0,
+          "endMinute": 0,
+          "upload": { "mode": "unlimited", "kib": 300 },
+          "download": { "mode": "paused", "kib": 800 }
+        }
+      ]
+    },
+    "clockChanges": {
+      "enabled": true,
+      "rules": [
+        {
+          "id": "after",
+          "name": "Starts in the skipped hour",
+          "days": [0, 1, 2, 3, 4, 5, 6],
+          "startMinute": 150,
+          "endMinute": 240,
+          "upload": { "mode": "limited", "kib": 100 },
+          "download": { "mode": "limited", "kib": 100 }
+        },
+        {
+          "id": "before",
+          "name": "Ends in the skipped hour",
+          "days": [0, 1, 2, 3, 4, 5, 6],
+          "startMinute": 90,
+          "endMinute": 135,
+          "upload": { "mode": "paused", "kib": 0 },
+          "download": { "mode": "paused", "kib": 0 }
+        }
+      ]
+    }
+  },
+  "cases": [
+    { "why": "before the working day", "schedule": "office", "ordinary": [0, 2000], "at": "2026-11-23T08:59:00", "rule": null, "upload": "unlimited", "download": 2000 },
+    { "why": "seconds do not round up into a rule", "schedule": "office", "ordinary": [0, 2000], "at": "2026-11-23T08:59:59", "rule": null, "upload": "unlimited", "download": 2000 },
+    { "why": "a rule starts on its first minute", "schedule": "office", "ordinary": [0, 2000], "at": "2026-11-23T09:00:00", "rule": 1, "upload": 200, "download": 500 },
+    { "why": "the last minute of a rule", "schedule": "office", "ordinary": [0, 2000], "at": "2026-11-23T17:59:59", "rule": 1, "upload": 200, "download": 500 },
+    { "why": "the end is not part of the rule", "schedule": "office", "ordinary": [0, 2000], "at": "2026-11-23T18:00:00", "rule": null, "upload": "unlimited", "download": 2000 },
+    { "why": "Friday is a working day", "schedule": "office", "ordinary": [0, 2000], "at": "2026-11-27T12:00:00", "rule": 1, "upload": 200, "download": 500 },
+    { "why": "Saturday is not", "schedule": "office", "ordinary": [0, 2000], "at": "2026-11-28T12:00:00", "rule": null, "upload": "unlimited", "download": 2000 },
+    { "why": "Sunday is not", "schedule": "office", "ordinary": [300, 0], "at": "2026-11-29T12:00:00", "rule": null, "upload": 300, "download": "unlimited" },
+    { "why": "the night starts", "schedule": "office", "ordinary": [300, 2000], "at": "2026-11-23T22:00:00", "rule": 0, "upload": "unlimited", "download": "unlimited" },
+    { "why": "the night runs past midnight", "schedule": "office", "ordinary": [300, 2000], "at": "2026-11-24T01:59:00", "rule": 0, "upload": "unlimited", "download": "unlimited" },
+    { "why": "a later rule overrides an earlier one", "schedule": "office", "ordinary": [300, 2000], "at": "2026-11-24T02:00:00", "rule": 2, "upload": "paused", "download": "paused" },
+    { "why": "to its last minute", "schedule": "office", "ordinary": [300, 2000], "at": "2026-11-24T02:29:00", "rule": 2, "upload": "paused", "download": "paused" },
+    { "why": "the earlier rule shows again behind it", "schedule": "office", "ordinary": [300, 2000], "at": "2026-11-24T02:30:00", "rule": 0, "upload": "unlimited", "download": "unlimited" },
+    { "why": "the night's last minute", "schedule": "office", "ordinary": [300, 2000], "at": "2026-11-24T05:59:00", "rule": 0, "upload": "unlimited", "download": "unlimited" },
+    { "why": "the night is over", "schedule": "office", "ordinary": [300, 2000], "at": "2026-11-24T06:00:00", "rule": null, "upload": 300, "download": 2000 },
+    { "why": "the week wraps from Sunday night into Monday", "schedule": "office", "ordinary": [300, 2000], "at": "2026-11-30T00:30:00", "rule": 0, "upload": "unlimited", "download": "unlimited" },
+
+    { "why": "not yet Friday night", "schedule": "weekendNights", "ordinary": [0, 0], "at": "2026-11-27T22:59:00", "rule": null, "upload": "unlimited", "download": "unlimited" },
+    { "why": "Friday night starts", "schedule": "weekendNights", "ordinary": [0, 0], "at": "2026-11-27T23:00:00", "rule": 0, "upload": 100, "download": "paused" },
+    { "why": "Friday's rule on Saturday morning", "schedule": "weekendNights", "ordinary": [0, 0], "at": "2026-11-28T06:59:00", "rule": 0, "upload": 100, "download": "paused" },
+    { "why": "and it ends there", "schedule": "weekendNights", "ordinary": [0, 0], "at": "2026-11-28T07:00:00", "rule": null, "upload": "unlimited", "download": "unlimited" },
+    { "why": "Saturday's rule on Sunday morning, a day the rule does not name", "schedule": "weekendNights", "ordinary": [0, 0], "at": "2026-11-29T03:00:00", "rule": 0, "upload": 100, "download": "paused" },
+    { "why": "Sunday night is not chosen", "schedule": "weekendNights", "ordinary": [0, 0], "at": "2026-11-29T23:30:00", "rule": null, "upload": "unlimited", "download": "unlimited" },
+    { "why": "so Monday morning is free", "schedule": "weekendNights", "ordinary": [0, 0], "at": "2026-11-30T03:00:00", "rule": null, "upload": "unlimited", "download": "unlimited" },
+    { "why": "Friday morning belongs to Thursday, which is not chosen", "schedule": "weekendNights", "ordinary": [0, 0], "at": "2026-11-27T03:00:00", "rule": null, "upload": "unlimited", "download": "unlimited" },
+
+    { "why": "the minute before a whole day", "schedule": "wholeDays", "ordinary": [10, 20], "at": "2026-11-28T23:59:00", "rule": null, "upload": 10, "download": 20 },
+    { "why": "the same start and end is a whole day", "schedule": "wholeDays", "ordinary": [10, 20], "at": "2026-11-29T00:00:00", "rule": 0, "upload": "paused", "download": "paused" },
+    { "why": "to its last minute", "schedule": "wholeDays", "ordinary": [10, 20], "at": "2026-11-29T23:59:00", "rule": 0, "upload": "paused", "download": "paused" },
+    { "why": "and no further", "schedule": "wholeDays", "ordinary": [10, 20], "at": "2026-11-30T00:00:00", "rule": null, "upload": 10, "download": 20 },
+    { "why": "before a whole day that starts at noon", "schedule": "wholeDays", "ordinary": [10, 20], "at": "2026-11-25T11:59:00", "rule": null, "upload": 10, "download": 20 },
+    { "why": "noon to noon starts", "schedule": "wholeDays", "ordinary": [10, 20], "at": "2026-11-25T12:00:00", "rule": 1, "upload": 50, "download": 60 },
+    { "why": "noon to noon on the next morning", "schedule": "wholeDays", "ordinary": [10, 20], "at": "2026-11-26T11:59:00", "rule": 1, "upload": 50, "download": 60 },
+    { "why": "noon to noon ends", "schedule": "wholeDays", "ordinary": [10, 20], "at": "2026-11-26T12:00:00", "rule": null, "upload": 10, "download": 20 },
+    { "why": "an end at midnight", "schedule": "wholeDays", "ordinary": [10, 20], "at": "2026-11-23T23:59:00", "rule": 2, "upload": 70, "download": "unlimited" },
+    { "why": "stops at midnight", "schedule": "wholeDays", "ordinary": [10, 20], "at": "2026-11-24T00:00:00", "rule": null, "upload": 10, "download": 20 },
+    { "why": "and starts in the evening", "schedule": "wholeDays", "ordinary": [10, 20], "at": "2026-11-23T19:59:00", "rule": null, "upload": 10, "download": 20 },
+
+    { "why": "the base rule alone", "schedule": "overlapping", "ordinary": [0, 0], "at": "2026-11-29T03:00:00", "rule": 0, "upload": 1000, "download": 1000 },
+    { "why": "the second of two", "schedule": "overlapping", "ordinary": [0, 0], "at": "2026-11-25T11:59:00", "rule": 1, "upload": 300, "download": 300 },
+    { "why": "the third of three, which lifts the limit", "schedule": "overlapping", "ordinary": [0, 0], "at": "2026-11-25T12:00:00", "rule": 2, "upload": "unlimited", "download": "unlimited" },
+    { "why": "back to the second", "schedule": "overlapping", "ordinary": [0, 0], "at": "2026-11-25T13:00:00", "rule": 1, "upload": 300, "download": 300 },
+    { "why": "back to the first", "schedule": "overlapping", "ordinary": [0, 0], "at": "2026-11-25T18:00:00", "rule": 0, "upload": 1000, "download": 1000 },
+    { "why": "the order decides, not how narrow a rule is", "schedule": "overlappingReversed", "ordinary": [0, 0], "at": "2026-11-25T10:00:00", "rule": 1, "upload": 1000, "download": 1000 },
+
+    { "why": "no rules", "schedule": "noRules", "ordinary": [40, 0], "at": "2026-11-23T12:00:00", "rule": null, "upload": 40, "download": "unlimited" },
+    { "why": "a rule with no days never applies", "schedule": "noDays", "ordinary": [40, 0], "at": "2026-11-23T12:00:00", "rule": null, "upload": 40, "download": "unlimited" },
+    { "why": "nor at midnight", "schedule": "noDays", "ordinary": [40, 0], "at": "2026-11-23T00:00:00", "rule": null, "upload": 40, "download": "unlimited" },
+    { "why": "a schedule switched off", "schedule": "switchedOff", "ordinary": [40, 0], "at": "2026-11-23T12:00:00", "rule": null, "upload": 40, "download": "unlimited" },
+    { "why": "a number kept for later is not a limit", "schedule": "rememberedNumbers", "ordinary": [40, 0], "at": "2026-11-23T12:00:00", "rule": 0, "upload": "unlimited", "download": "paused" },
+
+    { "why": "the last minute before clocks go forward (Europe/Berlin, 02:00 becomes 03:00)", "schedule": "clockChanges", "ordinary": [0, 0], "at": "2026-03-29T01:59:00", "rule": 1, "upload": "paused", "download": "paused" },
+    { "why": "the first minute after: the rule that would have started at 02:30 is on", "schedule": "clockChanges", "ordinary": [0, 0], "at": "2026-03-29T03:00:00", "rule": 0, "upload": 100, "download": 100 },
+    { "why": "and ends at its usual time", "schedule": "clockChanges", "ordinary": [0, 0], "at": "2026-03-29T04:00:00", "rule": null, "upload": "unlimited", "download": "unlimited" },
+    { "why": "the hour repeated when clocks go back reads the same both times", "schedule": "clockChanges", "ordinary": [0, 0], "at": "2026-10-25T02:10:00", "rule": 1, "upload": "paused", "download": "paused" },
+    { "why": "later in the repeated hour", "schedule": "clockChanges", "ordinary": [0, 0], "at": "2026-10-25T02:45:00", "rule": 0, "upload": 100, "download": 100 },
+    { "why": "between the two rules in the repeated hour", "schedule": "clockChanges", "ordinary": [0, 0], "at": "2026-10-25T02:20:00", "rule": null, "upload": "unlimited", "download": "unlimited" }
+  ]
+}

@@ -38,8 +38,8 @@ use crate::session::{SessionInfo, SessionManager};
 use crate::settings::{Settings, SettingsStore};
 use crate::ssh::{AuthMethod, ConnectProfile, HostKeyApproval};
 use crate::sync::{
-    OptionCheck, SyncDirection, SyncManager, SyncOptions, SyncPlanView, SyncRequest,
-    SyncRunRequest, SyncRunSummary,
+    FolderCompareRequest, FolderComparison, OptionCheck, SyncDirection, SyncManager, SyncOptions,
+    SyncPlanView, SyncRequest, SyncRunRequest, SyncRunSummary,
 };
 use crate::system_icons::{self, IconRequest};
 use crate::terminal::{Sink, TerminalEvent, TerminalInfo, TerminalManager};
@@ -441,11 +441,26 @@ pub fn transfer_pause_session(transfers: State<'_, TransferManager>, session_id:
 }
 
 #[tauri::command]
+pub fn transfer_ignore_schedule(transfers: State<'_, TransferManager>, ignored: bool) {
+    transfers.ignore_limit_schedule(ignored);
+}
+
+#[tauri::command]
 pub async fn sync_compare(
     sync: State<'_, SyncManager>,
     request: SyncRequest,
 ) -> AppResult<SyncPlanView> {
     sync.compare(request).await
+}
+
+/// Compares what two folders hold below them, each on this computer or a server, for two
+/// panes that are compared. `sync_cancel` stops it.
+#[tauri::command]
+pub async fn sync_compare_folders(
+    sync: State<'_, SyncManager>,
+    request: FolderCompareRequest,
+) -> AppResult<FolderComparison> {
+    sync.compare_folders(request).await
 }
 
 /// rsync options with layers of rsync arguments applied in turn, checked, and shown as the
