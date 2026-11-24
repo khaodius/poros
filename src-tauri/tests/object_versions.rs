@@ -699,16 +699,16 @@ async fn a_bucket_that_keeps_versions_goes_with_them_only_when_asked() {
         .unwrap_err();
     assert_eq!(refused.kind, ErrorKind::AlreadyExists, "{refused:?}");
     assert!(scratch.files.stat(&root).await.unwrap().is_some());
-    assert!(scratch
-        .files
-        .list_dir(&root)
-        .await
-        .unwrap()
-        .entries
-        .is_empty());
+    // Some services, moto among them, still list a folder whose files all lie under markers.
+    let left = scratch.files.list_dir(&root).await.unwrap().entries;
+    assert!(
+        left.iter().all(|entry| entry.kind == EntryKind::Dir),
+        "{left:?}"
+    );
     let history = scratch.history("a.txt").await;
     assert_eq!(history.len(), 3);
     assert!(history[0].kind == VersionKind::DeleteMarker && history[0].latest);
+    assert!(scratch.history("docs/b.txt").await[0].kind == VersionKind::DeleteMarker);
 
     // Deleting a bucket that keeps no versions needs nothing more.
     let plain = format!("{}-plain", scratch.bucket);
