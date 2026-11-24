@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { COUNTDOWN_SECONDS, COUNTDOWN_TEXT } from "../lib/automation";
+import { COUNTDOWN_MESSAGE, COUNTDOWN_SECONDS, COUNTDOWN_TEXT } from "../lib/automation";
 import { cancelCountdown, performNow, useCountdownStore } from "../state/whenDone";
 import { Dialog } from "./Dialog";
 import { useT } from "../i18n";
@@ -33,8 +33,7 @@ export function WhenDoneCountdown() {
   return (
     <Dialog title={text.title} onClose={cancelCountdown} width={400}>
       <p className="countdown-text">
-        {t.rich("automation.theTransferQueueHasFinished", {
-          title: text.title,
+        {t.rich(COUNTDOWN_MESSAGE[countdown.action], {
           seconds: <strong>{t("automation.seconds", { count: seconds })}</strong>,
         })}
       </p>

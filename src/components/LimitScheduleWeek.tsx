@@ -74,7 +74,7 @@ export function LimitScheduleWeek({ schedule, ordinary, now, onPickRule }: Limit
   const shown = pointed ?? (focused ? active : null);
   const current = week[today].find((span) => span.start <= minuteNow && span.end > minuteNow);
   const detail = shown
-    ? describeCell(shown, "; ")
+    ? describeCell(shown, t("common.clauseSeparator"))
     : current
       ? t("limits.nowSpan", { span: describeSpan(schedule, today, current) })
       : "";

@@ -92,6 +92,20 @@ describe("stored options", () => {
 });
 
 describe("editing", () => {
+  it("writes each unit to agree with the number before it", () => {
+    const units = Object.fromEntries(
+      OPTION_GROUPS.flatMap((group) => group.fields).flatMap((field) =>
+        "unit" in field && field.unit ? [[field.key, [field.unit(1), field.unit(5)]]] : [],
+      ),
+    );
+    expect(units).toEqual({
+      timeToleranceSecs: ["s", "s"],
+      blockSize: ["byte", "bytes"],
+      maxDelete: ["item", "items"],
+      bwlimitKib: ["KiB/s", "KiB/s"],
+    });
+  });
+
   it("counts the options of a group that differ from the defaults", () => {
     const deletion = OPTION_GROUPS.find((group) => group.id === "delete")!;
     expect(changedCount(deletion, DEFAULT_SYNC_OPTIONS)).toBe(0);

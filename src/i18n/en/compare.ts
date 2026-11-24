@@ -102,13 +102,16 @@ export const compare = {
     "Comparing is paused while this pane shows search results. The marks come back when the results are closed",
   pausedPartnerShowsResults:
     "Comparing is paused while {partner} shows search results. The marks come back when the results are closed",
-  summaryNewerHere: "{count} newer here",
-  summaryOlderHere: "{count} older here",
-  summaryOnlyHere: "{count} only here",
-  summaryOnlyThere: "{count} only in the other pane",
-  summaryDifferent: "{count} different",
-  summaryIdentical: "{count} identical",
-  summaryNotCompared: "{count} not compared",
+  summaryNewerHere: { one: "{count} newer here", other: "{count} newer here" },
+  summaryOlderHere: { one: "{count} older here", other: "{count} older here" },
+  summaryOnlyHere: { one: "{count} only here", other: "{count} only here" },
+  summaryOnlyThere: {
+    one: "{count} only in the other pane",
+    other: "{count} only in the other pane",
+  },
+  summaryDifferent: { one: "{count} different", other: "{count} different" },
+  summaryIdentical: { one: "{count} identical", other: "{count} identical" },
+  summaryNotCompared: { one: "{count} not compared", other: "{count} not compared" },
 
   // state/folderCompare
   noFolderToCompare: "This pane has no folder to compare",

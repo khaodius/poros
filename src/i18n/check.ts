@@ -105,7 +105,12 @@ export function checkTranslation(translation: Translation, english: Translation)
           `${id}: placeholders {${found.join("}, {")}}; English has {${wanted.join("}, {")}}`,
         );
       }
-      if (textsOf(message).some((text) => text.trim() === "")) problems.push(`${id}: empty`);
+      // A separator that is only a space in English, such as the one between two sentences,
+      // can be nothing at all in a language that writes none.
+      const blank = (text: string) => text.trim() === "";
+      if (!textsOf(source).every(blank) && textsOf(message).some(blank)) {
+        problems.push(`${id}: empty`);
+      }
       if (textsOf(message).some((text) => STRAY_BRACE.test(text))) {
         problems.push(`${id}: a brace that is not a placeholder`);
       }

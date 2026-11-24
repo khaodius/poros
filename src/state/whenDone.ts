@@ -37,7 +37,7 @@ export const useCountdownStore = create<{ countdown: Countdown | null }>(() => (
 function report(context: string, shown: string, caught: unknown): void {
   const { message } = toAppError(caught);
   useLogStore.getState().write("error", `${context}: ${message}`);
-  useToastStore.getState().show("error", `${shown}: ${message}`);
+  useToastStore.getState().show("error", t("common.labelWithMessage", { label: shown, message }));
 }
 
 export function cancelCountdown(): void {

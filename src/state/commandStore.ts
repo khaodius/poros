@@ -118,8 +118,8 @@ async function runEach(run: CommandRun, hooks: RunHooks): Promise<RunSummary> {
     };
   }
   return failed === 0
-    ? { succeeded: true, text: t("automation.allCommandsFinished", { finished }) }
-    : { succeeded: false, text: t("automation.ofCommandsFailed", { failed, finished }) };
+    ? { succeeded: true, text: t("automation.allCommandsFinished", { count: finished }) }
+    : { succeeded: false, text: t("automation.ofCommandsFailed", { count: failed, finished }) };
 }
 
 export function refreshServerPanes(sessionId: string): void {

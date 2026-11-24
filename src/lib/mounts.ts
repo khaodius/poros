@@ -1,5 +1,5 @@
 import { t } from "../i18n";
-import { formatSize } from "./format";
+import { formatPercent, formatSize } from "./format";
 import type { DriveUpload, DriveView, SessionInfo } from "./types";
 
 /** The drives that show any of the sessions. */
@@ -83,7 +83,7 @@ export function uploadText(upload: DriveUpload): string {
   if (!upload.uploading) return t("drives.uploadWaiting");
   if (upload.size === 0) return t("drives.uploading");
   const percent = Math.min(100, Math.floor((upload.sent / upload.size) * 100));
-  return t("drives.uploadingPercent", { percent });
+  return t("drives.uploadingPercent", { percent: formatPercent(percent) });
 }
 
 /** A local path with the home folder shown as `~`. */

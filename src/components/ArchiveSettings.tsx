@@ -138,7 +138,9 @@ export function ArchiveSettingsPage({ settings }: { settings: Settings }) {
                   <bdi>{tool.path}</bdi>
                 </span>
                 <span className="archive-tool-formats">
-                  {[...new Set(tool.formats.map((format) => FORMAT_NAMES[format]))].join(", ")}
+                  {[...new Set(tool.formats.map((format) => FORMAT_NAMES[format]))].join(
+                    t("common.listSeparator"),
+                  )}
                 </span>
               </li>
             ))}

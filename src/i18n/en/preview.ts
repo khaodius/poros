@@ -53,7 +53,7 @@ export const preview = {
   thumbnailsNotLoaded: "Thumbnails not loaded",
   thumbnailsNotLoadedDetail:
     "Reading from this storage may be charged for, so pictures are read only when asked.",
-  itemsSelected: "{count} items selected",
+  itemsSelected: { one: "{count} items selected", other: "{count} items selected" },
   notTextOrAPicture: "Not text or a picture",
   noPermissionToReadFile: "No permission to read this file",
   noPermissionToReadFolder: "No permission to read this folder",
@@ -103,7 +103,7 @@ export const preview = {
   dragToResizeDoubleClick: "Drag to resize, double-click to reset",
 
   // components/PreviewThumbnails
-  andMore: "and {count} more",
+  andMore: { one: "and {count} more", other: "and {count} more" },
 
   // lib/previewLoad
   theFileChangesAsIt: "The file changes as it is read",
