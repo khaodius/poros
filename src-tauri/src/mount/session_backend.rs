@@ -298,10 +298,8 @@ impl SessionBackend {
     }
 
     async fn open_ftp(&self, session: &Arc<Session>) -> AppResult<Arc<dyn RemoteFileSystem>> {
-        let approval = (!session.host_key_fingerprint.is_empty()).then(|| HostKeyApproval {
-            fingerprint: session.host_key_fingerprint.clone(),
-            remember: false,
-        });
+        let approval = (!session.host_key_fingerprint.is_empty())
+            .then(|| HostKeyApproval::for_server(&session.profile, &session.host_key_fingerprint));
         let (files, _) = FtpFs::connect(
             &format!("{}#drive", session.id),
             &session.profile,

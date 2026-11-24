@@ -17,6 +17,7 @@ pub mod editor;
 pub mod error;
 pub mod events;
 pub mod file_ops;
+pub mod file_preview;
 #[cfg(feature = "gui")]
 pub mod fonts;
 pub mod format;
@@ -72,6 +73,7 @@ use {
     editor::EditorManager,
     events::Events,
     file_ops::FileOperations,
+    file_preview::FilePreviews,
     mount::manager::{MountManager, SPOOL_FOLDER},
     search::SearchManager,
     session::SessionManager,
@@ -140,6 +142,10 @@ pub fn run() {
                     });
                 },
             ));
+            let store = connections.clone();
+            sessions.set_secret_source(Arc::new(move |id: &str, scope: &SecretScope| {
+                store.secret_for(id, scope).ok().flatten()
+            }));
             let transfers =
                 TransferManager::new(sessions.clone(), events.clone(), settings.get().transfers);
             let (handle, store) = (app.handle().clone(), connections.clone());
@@ -157,6 +163,7 @@ pub fn run() {
             app.manage(TerminalManager::new(sessions.clone(), events.clone()));
             app.manage(CommandRunner::new(sessions.clone(), events.clone()));
             app.manage(FileOperations::new(sessions.clone(), events.clone()));
+            app.manage(FilePreviews::new(sessions.clone()));
             app.manage(SearchManager::new(sessions.clone()));
             let handle = app.handle().clone();
             let mounts = MountManager::new(
@@ -367,6 +374,9 @@ pub fn run() {
             commands::editor_adopt,
             commands::editor_save,
             commands::editor_close,
+            commands::file_preview_read,
+            commands::file_preview_list,
+            commands::file_preview_cancel,
             commands::search_start,
             commands::search_cancel,
             commands::search_recheck,

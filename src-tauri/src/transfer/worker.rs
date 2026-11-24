@@ -304,10 +304,8 @@ async fn connect_directly(
     number: usize,
     compress: bool,
 ) -> AppResult<WorkerConnection> {
-    let approval = (!login.host_key_fingerprint.is_empty()).then(|| HostKeyApproval {
-        fingerprint: login.host_key_fingerprint.clone(),
-        remember: false,
-    });
+    let approval = (!login.host_key_fingerprint.is_empty())
+        .then(|| HostKeyApproval::for_server(&login.profile, &login.host_key_fingerprint));
     let mut profile = login.profile.clone();
     profile.compression |= compress;
     let connection_id = if compress {
@@ -641,7 +639,7 @@ async fn execute(shared: &Shared, connections: &mut Connections, claim: Claim) {
                 job.reconnecting,
             )
         });
-        (settled, change, queue.take_abandoned())
+        (settled, change, shared.take_abandoned(&mut queue))
     };
     let error = settled.as_ref().and_then(|(_, error, _, _)| error.clone());
     if let Some((state, error, spec, false)) = settled {
@@ -751,19 +749,26 @@ fn log_server_change(shared: &Shared, session_id: &str, change: ServerChange, er
 
 /// Deletes the temporary files of transfers removed from the queue before they finished, and
 /// says which folders changed.
-async fn discard_partials(shared: &Shared, connections: &Connections, abandoned: Vec<Abandoned>) {
-    for partial in abandoned {
+async fn discard_partials(
+    shared: &Shared,
+    connections: &Connections,
+    abandoned: Vec<(Abandoned, Option<Arc<SessionTarget>>)>,
+) {
+    for (partial, target) in abandoned {
         match partial.direction {
             Direction::Download => {
                 let _ = tokio::fs::remove_file(&partial.path).await;
             }
             Direction::Upload | Direction::Relay => {
                 let paths = std::slice::from_ref(&partial.path);
-                match connections.existing(&partial.session_id) {
-                    Some(fs) => {
+                match (connections.existing(&partial.session_id), target) {
+                    (Some(fs), _) => {
                         let _ = fs.delete(paths).await;
                     }
-                    None => super::discard_with_browsing_session(shared, &partial).await,
+                    (None, Some(target)) => {
+                        super::discard_with_browsing_session(shared, &target, &partial).await
+                    }
+                    (None, None) => {}
                 }
             }
         }
@@ -1008,16 +1013,27 @@ pub(super) fn source_changed(
 
 /// Whether a local source differs from when its transfer started, by size, time or stamp.
 pub(super) async fn local_source_changed(source: &str, plan: &Plan) -> AppResult<bool> {
+    let then = FileFacts {
+        size: plan.source_size,
+        modified: plan.source_modified,
+    };
+    local_source_differs(source, then, plan.source_stamp).await
+}
+
+/// Whether a local source differs from `then` by size, time or `stamp`.
+pub(super) async fn local_source_differs(
+    source: &str,
+    then: FileFacts,
+    stamp: Option<SourceStamp>,
+) -> AppResult<bool> {
     let metadata = match tokio::fs::metadata(source).await {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
         Err(error) => return Err(AppError::from(error).with_path(source)),
     };
-    Ok(metadata.len() != plan.source_size
-        || modified_seconds(&metadata) != plan.source_modified
-        || plan
-            .source_stamp
-            .is_some_and(|stamp| stamp != SourceStamp::of(&metadata)))
+    Ok(metadata.len() != then.size
+        || modified_seconds(&metadata) != then.modified
+        || stamp.is_some_and(|stamp| stamp != SourceStamp::of(&metadata)))
 }
 
 async fn download(

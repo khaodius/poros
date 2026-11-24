@@ -15,6 +15,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use futures::future::BoxFuture;
 use tokio::sync::{Mutex, OwnedMutexGuard};
+use tokio_util::sync::CancellationToken;
 
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::events::{Events, LogLevel};
@@ -37,6 +38,60 @@ const READ_CHUNK: usize = 256 * 1024;
 const END_PROBE: Duration = Duration::from_millis(500);
 
 type ControlGuard = OwnedMutexGuard<Option<Control>>;
+
+/// How long, and until what, requests under `waiting_briefly` wait for a control connection
+/// something else holds.
+#[derive(Clone)]
+pub struct Patience {
+    /// The longest each request waits before it answers busy.
+    pub bound: Duration,
+    /// Stops a wait as cancelled.
+    pub cancel: CancellationToken,
+    /// Ends a wait at once as busy, and refuses every one after it: cancelled by whoever sees
+    /// transfers take the connection, which they keep for whole files.
+    pub give_up: CancellationToken,
+}
+
+impl Patience {
+    async fn take<T>(&self, lock: Arc<Mutex<T>>) -> AppResult<OwnedMutexGuard<T>> {
+        tokio::select! {
+            biased;
+            () = self.cancel.cancelled() => Err(AppError::cancelled()),
+            () = self.give_up.cancelled() => Err(connection_in_use()),
+            taken = lock.lock_owned() => Ok(taken),
+            () = tokio::time::sleep(self.bound) => Err(connection_in_use()),
+        }
+    }
+}
+
+tokio::task_local! {
+    /// Set while the requests under way must not queue for the control connection for long.
+    static PATIENCE: Patience;
+}
+
+/// Runs `requests` so that each one waits for the control connection only as `patience` says,
+/// and answers busy past that instead of queueing on. The preview pane reads this way: the
+/// listing of a folder soon frees the connection, but a transfer that borrows it keeps it for a
+/// whole file, and the preview must neither wait that long nor make the transfer wait. Nothing
+/// is sent before the connection is taken, so ending a wait leaves it as it was. A vault on the
+/// server reads through here too, as it runs in the same task, and its requests wait for each
+/// other as for anything else.
+pub async fn waiting_briefly<F: std::future::Future>(patience: Patience, requests: F) -> F::Output {
+    PATIENCE.scope(patience, requests).await
+}
+
+/// Takes `lock` on the terms `waiting_briefly` sets for the requests under it, and waits as
+/// long as it takes for any other.
+pub(crate) async fn take_connection<T>(lock: Arc<Mutex<T>>) -> AppResult<OwnedMutexGuard<T>> {
+    match PATIENCE.try_with(Patience::clone) {
+        Ok(patience) => patience.take(lock).await,
+        Err(_) => Ok(lock.lock_owned().await),
+    }
+}
+
+fn connection_in_use() -> AppError {
+    AppError::new(ErrorKind::Busy, "Another request is using this connection")
+}
 
 pub struct FtpFs {
     profile: ConnectProfile,
@@ -129,19 +184,20 @@ impl FtpFs {
         Ok((control, home, certificate))
     }
 
-    /// The control connection, reopened if the server dropped it.
+    /// The control connection, reopened if the server dropped it. Under `waiting_briefly` it is
+    /// waited for only as long as that allows.
     async fn connection(&self) -> AppResult<ControlGuard> {
-        let mut guard = self.control.clone().lock_owned().await;
+        let mut guard = take_connection(self.control.clone()).await?;
         if let Some(control) = guard.as_mut() {
             if control.idle_for() > STALE_AFTER && control.noop().await.is_err() {
                 *guard = None;
             }
         }
         if guard.is_none() {
-            let approval = self.certificate.clone().map(|fingerprint| HostKeyApproval {
-                fingerprint,
-                remember: false,
-            });
+            let approval = self
+                .certificate
+                .as_deref()
+                .map(|fingerprint| HostKeyApproval::for_server(&self.profile, fingerprint));
             let quiet = Events::default();
             let tls = Self::tls(
                 &self.session_id,
@@ -343,7 +399,7 @@ impl RemoteFileSystem for FtpFs {
 
     async fn rename(&self, path: &str, new_name: &str) -> AppResult<String> {
         protocol::validate_name(new_name)?;
-        let path = self.resolve(path);
+        let path = protocol::normalize_exact(&self.resolve(path))?;
         let parent = remote_path::parent(&path)
             .ok_or_else(|| AppError::invalid("Cannot rename the root folder"))?;
         let target = remote_path::join(&parent, new_name);
@@ -368,7 +424,7 @@ impl RemoteFileSystem for FtpFs {
 
     async fn delete(&self, paths: &[String]) -> AppResult<()> {
         let resolved: Vec<String> = paths.iter().map(|path| self.resolve(path)).collect();
-        let targets = protocol::outermost(&resolved);
+        let targets = protocol::outermost(&resolved)?;
         self.with_control(move |control| {
             Box::pin(async move {
                 for path in targets {
@@ -629,5 +685,100 @@ impl Drop for FtpWriter {
         if !self.finished {
             *self.guard = None;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn patience(bound: Duration) -> Patience {
+        Patience {
+            bound,
+            cancel: CancellationToken::new(),
+            give_up: CancellationToken::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_patient_request_takes_the_connection_once_it_is_free() {
+        let lock = Arc::new(Mutex::new(()));
+        let held = lock.clone().lock_owned().await;
+        let taking = waiting_briefly(
+            patience(Duration::from_secs(30)),
+            take_connection(lock.clone()),
+        );
+        tokio::pin!(taking);
+        assert!(futures::poll!(taking.as_mut()).is_pending());
+        drop(held);
+        assert!(taking.await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_patient_request_answers_busy_past_its_bound() {
+        let lock = Arc::new(Mutex::new(()));
+        let held = lock.clone().lock_owned().await;
+        let error = waiting_briefly(
+            patience(Duration::from_millis(20)),
+            take_connection(lock.clone()),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.kind, ErrorKind::Busy);
+        // Nothing waits for it any more.
+        drop(held);
+        assert!(lock.try_lock().is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_wait_stops_when_cancelled_or_given_up() {
+        let lock = Arc::new(Mutex::new(()));
+        let held = lock.clone().lock_owned().await;
+        let terms = patience(Duration::from_secs(30));
+        let cancelled = waiting_briefly(terms.clone(), take_connection(lock.clone()));
+        tokio::pin!(cancelled);
+        assert!(futures::poll!(cancelled.as_mut()).is_pending());
+        terms.cancel.cancel();
+        assert_eq!(cancelled.await.unwrap_err().kind, ErrorKind::Cancelled);
+
+        let terms = patience(Duration::from_secs(30));
+        let given_up = waiting_briefly(terms.clone(), take_connection(lock.clone()));
+        tokio::pin!(given_up);
+        assert!(futures::poll!(given_up.as_mut()).is_pending());
+        terms.give_up.cancel();
+        assert_eq!(given_up.await.unwrap_err().kind, ErrorKind::Busy);
+
+        // Given up, it refuses even a free connection.
+        drop(held);
+        let refused = waiting_briefly(terms, take_connection(lock.clone())).await;
+        assert_eq!(refused.unwrap_err().kind, ErrorKind::Busy);
+    }
+
+    #[tokio::test]
+    async fn requests_of_one_task_wait_for_each_other() {
+        let lock = Arc::new(Mutex::new(0));
+        let one = |lock: Arc<Mutex<i32>>| async move {
+            let mut taken = take_connection(lock).await?;
+            *taken += 1;
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            AppResult::Ok(())
+        };
+        let (first, second, third) = waiting_briefly(patience(Duration::from_secs(30)), async {
+            tokio::join!(one(lock.clone()), one(lock.clone()), one(lock.clone()))
+        })
+        .await;
+        assert!(first.is_ok() && second.is_ok() && third.is_ok());
+        assert_eq!(*lock.lock().await, 3);
+    }
+
+    #[tokio::test]
+    async fn requests_outside_wait_as_long_as_it_takes() {
+        let lock = Arc::new(Mutex::new(()));
+        let held = lock.clone().lock_owned().await;
+        let waiting = tokio::spawn(take_connection(lock.clone()));
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!waiting.is_finished());
+        drop(held);
+        assert!(waiting.await.unwrap().is_ok());
     }
 }

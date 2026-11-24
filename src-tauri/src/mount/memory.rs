@@ -294,6 +294,8 @@ impl RemoteFileSystem for MemoryFs {
     async fn rename(&self, path: &str, new_name: &str) -> AppResult<String> {
         self.check_online()?;
         protocol::validate_name(new_name)?;
+        // Refused as every real server refuses it.
+        let path = &protocol::normalize_exact(path)?;
         let parent = remote_path::parent(path).ok_or_else(|| AppError::invalid("No parent"))?;
         let target = remote_path::join(&parent, new_name);
         if self.exists(&target) {
@@ -323,6 +325,9 @@ impl RemoteFileSystem for MemoryFs {
     /// A link goes by itself; what it leads to stays.
     async fn delete(&self, paths: &[String]) -> AppResult<()> {
         self.check_online()?;
+        for path in paths {
+            protocol::normalize_exact(path)?;
+        }
         let mut items = self.items.lock().unwrap();
         for path in paths {
             if !items.contains_key(path) {

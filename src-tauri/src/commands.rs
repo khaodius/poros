@@ -26,6 +26,7 @@ use crate::file_ops::{
     FileOperations, Location, MoveCopyRequest, OperationSummary, PermissionRequest,
     PermissionSummary, RenameRequest, RenameSummary, Usage,
 };
+use crate::file_preview::{FilePreviews, ReadRequest};
 use crate::fonts::{self, FontFamily};
 use crate::import::{
     self, ImportOutcome, ImportRequest, ImportScan, ImportScans, ImportSource, SourceInfo,
@@ -753,6 +754,46 @@ pub async fn editor_save(
 pub async fn editor_close(editor: State<'_, EditorManager>, document_id: String) -> AppResult<()> {
     editor.close(&document_id).await;
     Ok(())
+}
+
+/// Answers with the file's size and time, then the bytes read, as one binary block. A read is
+/// named within the window that asks for it.
+#[tauri::command]
+pub async fn file_preview_read(
+    window: WebviewWindow,
+    previews: State<'_, FilePreviews>,
+    transfers: State<'_, TransferManager>,
+    request: ReadRequest,
+) -> AppResult<tauri::ipc::Response> {
+    let reply = previews
+        .read(window.label(), request, |files| {
+            transfers.borrows_connection_of(files)
+        })
+        .await?;
+    Ok(tauri::ipc::Response::new(reply.into_frame()))
+}
+
+#[tauri::command]
+pub async fn file_preview_list(
+    previews: State<'_, FilePreviews>,
+    transfers: State<'_, TransferManager>,
+    session_id: String,
+    path: String,
+) -> AppResult<DirListing> {
+    previews
+        .list(&session_id, &path, |files| {
+            transfers.borrows_connection_of(files)
+        })
+        .await
+}
+
+#[tauri::command]
+pub fn file_preview_cancel(
+    window: WebviewWindow,
+    previews: State<'_, FilePreviews>,
+    request_id: String,
+) {
+    previews.cancel(window.label(), &request_id);
 }
 
 /// Searches below a folder; what is found arrives on `reports` while the search runs.

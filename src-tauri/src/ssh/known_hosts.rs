@@ -18,9 +18,12 @@ use crate::storage;
 pub enum HostKeyStatus {
     Trusted,
     Unknown,
-    /// Also returned for a `@revoked` key, and for a key of a type the host is not on record
-    /// with when it is on record with others.
+    /// Also returned for a key of a type the host is not on record with when it is on record
+    /// with others.
     Changed,
+    /// A `@revoked` line in any of the files names the key for the host. No approval can let
+    /// it in.
+    Revoked,
 }
 
 /// What one known_hosts file says about a host's key.
@@ -28,7 +31,7 @@ pub enum HostKeyStatus {
 enum Record {
     NotListed,
     Trusted,
-    /// Revoked, or another key of the same type is listed.
+    /// Another key of the same type is listed.
     Changed,
     /// The host is listed, but only with keys of other types.
     OtherKeyTypes,
@@ -40,6 +43,9 @@ pub struct KnownHosts {
     system_files: Vec<PathBuf>,
     /// Keys trusted until Poros closes, shared by every clone.
     trusted_until_exit: Arc<Mutex<Vec<(String, PublicKey)>>>,
+    /// Fingerprints of the only keys some hosts are accepted with until Poros closes, shared by
+    /// every clone.
+    pinned: Arc<Mutex<Vec<(String, String)>>>,
     /// Held while the app's file is rewritten, so keys trusted at once all stay on record.
     writing: Arc<Mutex<()>>,
 }
@@ -50,6 +56,7 @@ impl KnownHosts {
             app_file,
             system_files,
             trusted_until_exit: Arc::default(),
+            pinned: Arc::default(),
             writing: Arc::default(),
         }
     }
@@ -63,6 +70,11 @@ impl KnownHosts {
 
     pub fn check(&self, host: &str, port: u16, key: &PublicKey) -> HostKeyStatus {
         let host_port = host_pattern(host, port);
+        // As in OpenSSH, a revocation in any file outweighs every line and approval that trusts
+        // the key, wherever it comes in the files.
+        if self.files().any(|file| revokes(file, &host_port, key)) {
+            return HostKeyStatus::Revoked;
+        }
         let trusted_for_now =
             self.trusted_until_exit
                 .lock()
@@ -122,7 +134,7 @@ impl KnownHosts {
             .map(|(_, key)| key.algorithm())
             .collect();
         for file in self.files() {
-            let Ok(contents) = fs::read_to_string(file) else {
+            let Some(contents) = read_lines(file) else {
                 continue;
             };
             recorded.extend(
@@ -149,14 +161,37 @@ impl KnownHosts {
             .push((host_pattern(host, port), key.clone()));
     }
 
+    /// From now on the host is accepted only with the key `fingerprint` names, whatever the files
+    /// say or the user approves, as `poros-cli --host-key` asks.
+    pub fn pin(&self, host: &str, port: u16, fingerprint: &str) {
+        self.pinned
+            .lock()
+            .unwrap()
+            .push((host_pattern(host, port), fingerprint.to_string()));
+    }
+
+    /// The fingerprint of the only key the host is accepted with, if it was pinned to one.
+    pub fn pinned(&self, host: &str, port: u16) -> Option<String> {
+        let host_port = host_pattern(host, port);
+        self.pinned
+            .lock()
+            .unwrap()
+            .iter()
+            .rev()
+            .find(|(pinned_host, _)| *pinned_host == host_port)
+            .map(|(_, fingerprint)| fingerprint.clone())
+    }
+
     /// Replaces any recorded key of the same algorithm for the host.
     pub fn trust(&self, host: &str, port: u16, key: &PublicKey) -> io::Result<()> {
         let _writing = self.writing.lock().unwrap();
         let host_port = host_pattern(host, port);
-        let existing = fs::read_to_string(&self.app_file).unwrap_or_default();
+        let existing = read_lines(&self.app_file).unwrap_or_default();
         let mut kept: Vec<&str> = existing
             .lines()
             .filter(|line| match parse_line(line) {
+                // A revocation or an authority is not this host's key, even where it matches.
+                Some(entry) if entry.marker != Marker::None => true,
                 Some(entry) => {
                     !(entry.matches_host(&host_port)
                         && entry.key.key_data().algorithm() == key.key_data().algorithm())
@@ -221,7 +256,7 @@ fn host_pattern(host: &str, port: u16) -> String {
 }
 
 fn check_file(path: &Path, host_port: &str, key: &PublicKey) -> Record {
-    let Ok(contents) = fs::read_to_string(path) else {
+    let Some(contents) = read_lines(path) else {
         return Record::NotListed;
     };
     let mut record = Record::NotListed;
@@ -229,13 +264,12 @@ fn check_file(path: &Path, host_port: &str, key: &PublicKey) -> Record {
         if !entry.matches_host(host_port) {
             continue;
         }
-        let same_key = entry.key.key_data() == key.key_data();
         match entry.marker {
-            Marker::Revoked if same_key => return Record::Changed,
+            // Revocations are looked for in every file before any file is read for this.
             Marker::Revoked | Marker::CertAuthority => continue,
             Marker::None => {}
         }
-        if same_key {
+        if entry.key.key_data() == key.key_data() {
             return Record::Trusted;
         }
         if entry.key.key_data().algorithm() == key.key_data().algorithm() {
@@ -245,6 +279,25 @@ fn check_file(path: &Path, host_port: &str, key: &PublicKey) -> Record {
         }
     }
     record
+}
+
+/// A known_hosts file's text. A byte that is not UTF-8, as in a comment written in another
+/// encoding, costs only its own character, never the lines around it.
+fn read_lines(path: &Path) -> Option<String> {
+    let bytes = fs::read(path).ok()?;
+    Some(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// Whether a `@revoked` line in the file names `key` for the host.
+fn revokes(path: &Path, host_port: &str, key: &PublicKey) -> bool {
+    let Some(contents) = read_lines(path) else {
+        return false;
+    };
+    contents.lines().filter_map(parse_line).any(|entry| {
+        entry.marker == Marker::Revoked
+            && entry.matches_host(host_port)
+            && entry.key.key_data() == key.key_data()
+    })
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -463,7 +516,82 @@ mod tests {
         );
         assert_eq!(
             known_hosts.check("a.example.com", 22, &key(KEY_B)),
-            HostKeyStatus::Changed
+            HostKeyStatus::Revoked
+        );
+    }
+
+    #[test]
+    fn saving_a_key_keeps_revocations_and_authorities() {
+        let marked = format!(
+            "@revoked * ssh-ed25519 {KEY_A}\n@cert-authority *.example.com ssh-ed25519 {KEY_A}\n"
+        );
+        let (_dir, known_hosts) = store(&marked, "");
+        known_hosts
+            .trust("web.example.com", 22, &key(KEY_B))
+            .unwrap();
+        assert_eq!(
+            known_hosts.check("web.example.com", 22, &key(KEY_A)),
+            HostKeyStatus::Revoked
+        );
+        let contents = fs::read_to_string(&known_hosts.app_file).unwrap();
+        assert!(contents.starts_with(&marked), "{contents}");
+        assert!(contents.contains(&format!("web.example.com ssh-ed25519 {KEY_B}")));
+    }
+
+    #[test]
+    fn a_byte_that_is_not_utf8_hides_no_line() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let system_file = temp_dir.path().join("known_hosts");
+        let mut contents = b"# Schl\xfcssel des Servers\n".to_vec();
+        contents.extend_from_slice(format!("web.example.com ssh-ed25519 {KEY_A}\n").as_bytes());
+        contents.extend_from_slice(format!("@revoked * ssh-ed25519 {KEY_B}\n").as_bytes());
+        fs::write(&system_file, contents).unwrap();
+        let known_hosts = KnownHosts::new(temp_dir.path().join("app"), vec![system_file]);
+        assert_eq!(
+            known_hosts.check("web.example.com", 22, &key(KEY_A)),
+            HostKeyStatus::Trusted
+        );
+        assert_eq!(
+            known_hosts.check("web.example.com", 22, &key(KEY_B)),
+            HostKeyStatus::Revoked
+        );
+    }
+
+    #[test]
+    fn a_revoked_key_is_refused_wherever_it_is_trusted() {
+        let plain = format!("web.example.com ssh-ed25519 {KEY_A}\n");
+        let revoked = format!("@revoked * ssh-ed25519 {KEY_A}\n");
+
+        // The revocation an admin appended after the line it revokes.
+        let (_dir, known_hosts) = store("", &format!("{plain}{revoked}"));
+        assert_eq!(
+            known_hosts.check("web.example.com", 22, &key(KEY_A)),
+            HostKeyStatus::Revoked
+        );
+
+        // Approved in Poros once, revoked in the system file since.
+        let (_dir, known_hosts) = store(&plain, &revoked);
+        assert_eq!(
+            known_hosts.check("web.example.com", 22, &key(KEY_A)),
+            HostKeyStatus::Revoked
+        );
+
+        // Trusted until Poros closes.
+        let (_dir, known_hosts) = store("", &revoked);
+        known_hosts.trust_until_exit("web.example.com", 22, &key(KEY_A));
+        assert_eq!(
+            known_hosts.check("web.example.com", 22, &key(KEY_A)),
+            HostKeyStatus::Revoked
+        );
+
+        // Other keys of the host are not touched by it.
+        let (_dir, known_hosts) = store(
+            "",
+            &format!("web.example.com ssh-ed25519 {KEY_B}\n{revoked}"),
+        );
+        assert_eq!(
+            known_hosts.check("web.example.com", 22, &key(KEY_B)),
+            HostKeyStatus::Trusted
         );
     }
 

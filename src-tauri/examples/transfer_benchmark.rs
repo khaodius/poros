@@ -70,10 +70,7 @@ async fn connect(manager: &SessionManager) -> SessionInfo {
             let host_key = error
                 .host_key
                 .unwrap_or_else(|| panic!("could not connect: {}", error.message));
-            let approval = HostKeyApproval {
-                fingerprint: host_key.fingerprint,
-                remember: true,
-            };
+            let approval = HostKeyApproval::of(&host_key, true);
             manager
                 .connect(profile(), Some(approval), OWNER)
                 .await

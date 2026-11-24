@@ -422,6 +422,7 @@ mod tests {
         );
         assert!(checked.errors.is_empty(), "{:?}", checked.errors);
         assert!(checked.options.delete_extraneous && checked.options.ignore_errors);
-        assert_eq!(checked.options.excludes, ["*.log"]);
+        // Typed excludes are filter rules, checked in the order given.
+        assert_eq!(checked.options.filter_rules, ["- *.log"]);
     }
 }

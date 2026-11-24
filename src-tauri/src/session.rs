@@ -29,6 +29,10 @@ pub type SecretSink = Arc<dyn Fn(&str, &SecretScope, &str) + Send + Sync>;
 /// connection saved from the session later keeps one that still works.
 pub type GrantSink = Arc<dyn Fn(&str, &str) + Send + Sync>;
 
+/// Reads the secret stored for a saved connection's id and what the session signed in to, as
+/// the keychain holds it now.
+pub type SecretSource = Arc<dyn Fn(&str, &SecretScope) -> Option<String> + Send + Sync>;
+
 pub struct Session {
     pub id: String,
     /// Kept (with credentials) so transfer workers can open more connections. An unlocked
@@ -192,10 +196,8 @@ impl RemoteTarget {
                 self.protocol.display_name()
             )));
         }
-        let approval = (!self.host_key_fingerprint.is_empty()).then(|| HostKeyApproval {
-            fingerprint: self.host_key_fingerprint.clone(),
-            remember: false,
-        });
+        let approval = (!self.host_key_fingerprint.is_empty())
+            .then(|| HostKeyApproval::for_server(&self.profile, &self.host_key_fingerprint));
         let connection_id = format!("{}#{purpose}", self.session_id);
         let connection = ssh::connect(
             &connection_id,
@@ -253,6 +255,7 @@ pub struct SessionManager {
     pub known_hosts: KnownHosts,
     pub certificates: TrustedCertificates,
     secret_sink: SyncRwLock<Option<SecretSink>>,
+    secret_source: SyncRwLock<Option<SecretSource>>,
     grant_sink: SyncRwLock<Option<GrantSink>>,
     events: Events,
 }
@@ -267,6 +270,7 @@ impl SessionManager {
             known_hosts: KnownHosts::with_defaults(known_hosts_file),
             certificates: TrustedCertificates::new(certificates_file),
             secret_sink: SyncRwLock::new(None),
+            secret_source: SyncRwLock::new(None),
             grant_sink: SyncRwLock::new(None),
             events,
         }
@@ -274,6 +278,10 @@ impl SessionManager {
 
     pub fn set_secret_sink(&self, sink: SecretSink) {
         *self.secret_sink.write().unwrap() = Some(sink);
+    }
+
+    pub fn set_secret_source(&self, source: SecretSource) {
+        *self.secret_source.write().unwrap() = Some(source);
     }
 
     pub fn set_grant_sink(&self, sink: GrantSink) {
@@ -306,6 +314,15 @@ impl SessionManager {
                 sink(grant_id, secret);
             }
         }))
+    }
+
+    /// Where a session reads its saved connection's refresh token again, for when another
+    /// session or program on the same account used up the one it holds.
+    fn reload_hook(&self, profile: &ConnectProfile) -> Option<cloud::TokenReload> {
+        let saved_id = profile.saved_connection_id.clone()?;
+        let source = self.secret_source.read().unwrap().clone()?;
+        let scope = SecretScope::of_profile(profile);
+        Some(Arc::new(move || source(&saved_id, &scope)))
     }
 
     pub async fn connect(
@@ -345,9 +362,8 @@ impl SessionManager {
             ));
         }
         let approval = approval.or_else(|| {
-            (!previous.host_key_fingerprint.is_empty()).then(|| HostKeyApproval {
-                fingerprint: previous.host_key_fingerprint.clone(),
-                remember: false,
+            (!previous.host_key_fingerprint.is_empty()).then(|| {
+                HostKeyApproval::for_server(&previous.profile, &previous.host_key_fingerprint)
             })
         });
         let info = self
@@ -513,12 +529,26 @@ impl SessionManager {
                     certificates: &self.certificates,
                     approval,
                     rotation: self.rotation_hook(&profile),
+                    reload: self.reload_hook(&profile),
                 };
                 let (files, fingerprint) =
                     cloud::connect(id, &profile, login, &self.events).await?;
                 (Link::Direct(files), fingerprint)
             }
         };
+        self.add(id, profile, link, host_key_fingerprint, owner)
+            .await
+    }
+
+    /// Keeps a session over the connection `link` open, in the folder its profile starts in.
+    async fn add(
+        &self,
+        id: &str,
+        profile: ConnectProfile,
+        link: Link,
+        host_key_fingerprint: String,
+        owner: &str,
+    ) -> AppResult<SessionInfo> {
         let files = match &link {
             Link::Ssh { fs, .. } => fs.clone() as Arc<dyn RemoteFileSystem>,
             Link::Direct(files) => files.clone(),
@@ -760,6 +790,21 @@ impl SessionManager {
         for id in ids {
             let _ = self.disconnect(&id).await;
         }
+    }
+}
+
+#[cfg(test)]
+impl SessionManager {
+    /// A session over files that stand in for a server, for tests that need no real one.
+    pub(crate) async fn open_over(
+        &self,
+        profile: ConnectProfile,
+        files: Arc<dyn RemoteFileSystem>,
+    ) -> SessionInfo {
+        let id = uuid::Uuid::new_v4().to_string();
+        self.add(&id, profile, Link::Direct(files), String::new(), "test")
+            .await
+            .unwrap()
     }
 }
 

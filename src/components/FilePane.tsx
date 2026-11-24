@@ -41,6 +41,7 @@ import {
   Lock,
   LockKeyhole,
   PackageOpen,
+  PanelRight,
   Pencil,
   RefreshCw,
   RotateCcw,
@@ -65,6 +66,7 @@ import { entryAfterRemoval } from "../lib/cursor";
 import { sameFilesystem, toLocation, worksInPlace, type FileOrigin } from "../lib/fileOrigin";
 import type { FileSource } from "../lib/fileSource";
 import { PANE_KEYBOARD_TARGET } from "../lib/focus";
+import { FOCUS_PREVIEW_SHORTCUT, isFocusPreviewKey, nextPane } from "../lib/paneFocus";
 import { toAppError } from "../lib/ipc";
 import { formatSize, pluralize } from "../lib/format";
 import { baseName, exampleFileName, samePath } from "../lib/path";
@@ -118,6 +120,7 @@ import {
   saveSettingsSection,
   useSettingsStore,
 } from "../state/settingsStore";
+import { togglePreview, usePreviewOpen } from "../state/previewState";
 import { openTerminal } from "../state/terminalActions";
 import { useToastStore } from "../state/toastStore";
 import {
@@ -136,7 +139,9 @@ import { FileList, type MenuPosition } from "./FileList";
 import { FolderCompareBar } from "./FolderCompareBar";
 import { COMPARE_FOLDERS_SHORTCUT, folderCompareMenuItems } from "./folderCompareMenu";
 import { NewVaultDialog } from "./NewVaultDialog";
+import { PanePreview } from "./PanePreview";
 import { PathBar } from "./PathBar";
+import { PreviewSplit } from "./PreviewSplit";
 import { PromptDialog } from "./PromptDialog";
 import { PropertiesDialog } from "./PropertiesDialog";
 import { SearchBar } from "./SearchBar";
@@ -179,20 +184,26 @@ interface OpenMenu {
   path?: string;
 }
 
-/** Moves keyboard focus to the next file list on screen, left to right, then top to bottom. */
+/**
+ * Moves keyboard focus to the next file list on screen, left to right, then top to bottom.
+ * Previews are not on the way: from one, focus goes on to the next pane's list.
+ */
 function focusNextPane(from: HTMLElement | null) {
   const lists = [
     ...document.querySelectorAll<HTMLElement>(`.tab-panel:not([hidden]) ${PANE_KEYBOARD_TARGET}`),
-  ]
-    .map((list) => ({ list, bounds: list.getBoundingClientRect() }))
-    .sort(
-      (first, second) =>
-        first.bounds.left - second.bounds.left || first.bounds.top - second.bounds.top,
-    )
-    .map(({ list }) => list);
-  if (lists.length < 2) return;
-  const current = lists.findIndex((list) => list === from || list.contains(from));
-  lists[(current + 1) % lists.length].focus();
+  ];
+  const leavingPreview = Boolean(from?.closest(".preview"));
+  const own = lists.find(
+    (list) =>
+      list === from ||
+      list.contains(from) ||
+      (leavingPreview && Boolean(list.closest(".pane")?.contains(from))),
+  );
+  const stops = lists.map((list) => {
+    const bounds = list.getBoundingClientRect();
+    return { pane: list, left: bounds.left, top: bounds.top };
+  });
+  nextPane(stops, own ?? null, leavingPreview)?.focus();
 }
 
 /** A regular file, or a link to one: what compare can read. */
@@ -344,6 +355,7 @@ export function FilePane({
     setRenaming(null);
   }
   const [pathEditRequest, setPathEditRequest] = useState(0);
+  const previewOpen = usePreviewOpen(tabId);
   const sectionRef = useRef<HTMLElement>(null);
   const filterRef = useRef<HTMLInputElement>(null);
   const writeLog = useLogStore((state) => state.write);
@@ -722,6 +734,32 @@ export function FilePane({
   };
 
   const markActive = () => updatePane(tabId, { visible: true, activatedAt: Date.now() });
+
+  /** Opens or closes the preview. The keyboard goes back to the list if the preview had it. */
+  const switchPreview = () => {
+    const leaving = sectionRef.current?.querySelector(".preview")?.contains(document.activeElement);
+    togglePreview(tabId);
+    if (leaving) focusList();
+  };
+
+  /** The preview takes the keyboard as soon as it is open, when it was opened to take it. */
+  const previewWantsFocus = useRef(false);
+  const focusPreview = () =>
+    sectionRef.current?.querySelector<HTMLElement>(".preview")?.focus({ preventScroll: true });
+  /** Gives the keyboard to the preview, opening it first if it is closed. */
+  const goToPreview = () => {
+    if (previewOpen) {
+      focusPreview();
+      return;
+    }
+    previewWantsFocus.current = true;
+    togglePreview(tabId);
+  };
+  useEffect(() => {
+    if (!previewOpen || !previewWantsFocus.current) return;
+    previewWantsFocus.current = false;
+    focusPreview();
+  }, [previewOpen]);
 
   const startDrag = (event: ReactPointerEvent<HTMLElement>, entry: FileEntry) => {
     const wasSelected = pane.selection.has(entry.path);
@@ -1249,10 +1287,20 @@ export function FilePane({
       onKeyDown={(event) => {
         // From anywhere in the pane; the file list handles it itself while it has the keyboard.
         const primary = event.ctrlKey || event.metaKey;
-        if (!primary || !event.shiftKey || event.altKey || event.key.toLowerCase() !== "d") return;
-        if (dialog || menu) return;
+        if (primary && event.shiftKey && !event.altKey && event.key.toLowerCase() === "d") {
+          if (dialog || menu) return;
+          event.preventDefault();
+          folderCompare.toggle();
+          return;
+        }
+        // Not from a dialog the pane opened, whose keys reach here without being inside it.
+        const inPane = event.currentTarget.contains(event.target as Node);
+        if (!inPane) return;
+        const plain = !(event.ctrlKey || event.metaKey || event.altKey || event.shiftKey);
+        if (event.key === "F3" && plain) switchPreview();
+        else if (isFocusPreviewKey(event)) goToPreview();
+        else return;
         event.preventDefault();
-        folderCompare.toggle();
       }}
     >
       <header className="pane-header">
@@ -1369,6 +1417,13 @@ export function FilePane({
           >
             <GitCompareArrows size={15} />
           </ToolbarButton>
+          <ToolbarButton
+            label={`Preview (F3), focus it (${FOCUS_PREVIEW_SHORTCUT})`}
+            onClick={switchPreview}
+            pressed={previewOpen}
+          >
+            <PanelRight size={15} />
+          </ToolbarButton>
         </div>
       </header>
 
@@ -1482,56 +1537,72 @@ export function FilePane({
               onMenu={(anchor, items) => setMenu({ x: anchor.left, y: anchor.bottom + 4, items })}
             />
           )}
-          <FileList
-            pane={listPane}
-            side={side}
-            active={active}
-            rowHeight={Math.max(rowHeight, fontSize + MIN_ROW_PADDING)}
-            hiddenColumns={hiddenColumns}
-            columnWidths={columnWidths}
-            onColumnWidthsChange={(widths, done) => {
-              if (done) void saveSettingsSection("interface", { columnWidths: widths });
-              else previewSettingsSection("interface", { columnWidths: widths });
-            }}
-            dateFormat={dateFormat}
-            striped={stripedRows}
-            fontSize={fontSize}
-            dropFolder={dropFolder}
-            cutPaths={cutPaths}
-            compareMarks={folderCompare.marks}
-            onActivate={markActive}
-            onContextMenu={showContextMenu}
-            onHeaderContextMenu={showHeaderMenu}
-            onDelete={openDelete}
-            renaming={renaming}
-            heldPaths={heldPaths}
-            onRename={(entry) => setRenaming(entry.path)}
-            onRenameSeveral={() => openBulkRename(pane.selectedEntries())}
-            onRenameSubmit={renameEntry}
-            onRenameCancel={() => setRenaming(null)}
-            onEdit={edit}
-            onNewFolder={openNewFolder}
-            onNewFile={openNewFile}
-            onEditPath={() => setPathEditRequest((count) => count + 1)}
-            onFocusFilter={() => filterRef.current?.focus()}
-            onSwitchPane={(from) => focusNextPane(from)}
-            onRowPointerDown={startDrag}
-            onFileActivate={activateFile}
-            onCut={() => cutOrCopy("move", pane.selectedEntries())}
-            onCopy={() => cutOrCopy("copy", pane.selectedEntries())}
-            onPaste={() => pasteInto(null)}
-            onProperties={() => openProperties(pane.selectedEntries())}
-            onCompareFolders={folderCompare.toggle}
-            onSearch={() => (lockedCard ? undefined : openSearch())}
-            folderOf={inResults ? folderLabel : undefined}
-            emptyMessage={
-              inResults
-                ? searchEmptyMessage(searchView)
-                : identicalHidden > 0
-                  ? "Everything here is identical in both panes"
-                  : undefined
+          <PreviewSplit
+            preview={
+              previewOpen ? (
+                <PanePreview
+                  pane={listPane}
+                  source={source}
+                  sessionId={sessionId}
+                  dateFormat={dateFormat}
+                  onOpenInEditor={edit}
+                  onSwitchPane={focusNextPane}
+                  onLeave={focusList}
+                />
+              ) : null
             }
-          />
+          >
+            <FileList
+              pane={listPane}
+              side={side}
+              active={active}
+              rowHeight={Math.max(rowHeight, fontSize + MIN_ROW_PADDING)}
+              hiddenColumns={hiddenColumns}
+              columnWidths={columnWidths}
+              onColumnWidthsChange={(widths, done) => {
+                if (done) void saveSettingsSection("interface", { columnWidths: widths });
+                else previewSettingsSection("interface", { columnWidths: widths });
+              }}
+              dateFormat={dateFormat}
+              striped={stripedRows}
+              fontSize={fontSize}
+              dropFolder={dropFolder}
+              cutPaths={cutPaths}
+              compareMarks={folderCompare.marks}
+              onActivate={markActive}
+              onContextMenu={showContextMenu}
+              onHeaderContextMenu={showHeaderMenu}
+              onDelete={openDelete}
+              renaming={renaming}
+              heldPaths={heldPaths}
+              onRename={(entry) => setRenaming(entry.path)}
+              onRenameSeveral={() => openBulkRename(pane.selectedEntries())}
+              onRenameSubmit={renameEntry}
+              onRenameCancel={() => setRenaming(null)}
+              onEdit={edit}
+              onNewFolder={openNewFolder}
+              onNewFile={openNewFile}
+              onEditPath={() => setPathEditRequest((count) => count + 1)}
+              onFocusFilter={() => filterRef.current?.focus()}
+              onSwitchPane={(from) => focusNextPane(from)}
+              onRowPointerDown={startDrag}
+              onFileActivate={activateFile}
+              onCut={() => cutOrCopy("move", pane.selectedEntries())}
+              onCopy={() => cutOrCopy("copy", pane.selectedEntries())}
+              onPaste={() => pasteInto(null)}
+              onProperties={() => openProperties(pane.selectedEntries())}
+              onCompareFolders={folderCompare.toggle}
+              onSearch={() => (lockedCard ? undefined : openSearch())}
+              folderOf={inResults ? folderLabel : undefined}
+              emptyMessage={
+                inResults
+                  ? searchEmptyMessage(searchView)
+                  : identicalHidden > 0
+                    ? "Everything here is identical in both panes"
+                    : undefined
+              }
+            />
+          </PreviewSplit>
         </>
       ) : (
         <div className="pane-empty">

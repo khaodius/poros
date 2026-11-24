@@ -99,6 +99,12 @@ pub struct FileTransfer {
     pub options: Option<Arc<JobOptions>>,
 }
 
+/// Jobs ready to be queued, and the sessions whose servers they reach.
+struct NewJobs {
+    specs: Vec<JobSpec>,
+    sessions: Vec<Arc<Session>>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TransferStats {
@@ -370,6 +376,43 @@ impl Shared {
             .ok_or_else(AppError::session_not_found)
     }
 
+    /// Keeps what workers need to reach the session's server. Called with the queue locked,
+    /// and the jobs that need the target added before it is unlocked: targets no job involves
+    /// are forgotten under that lock, so one kept any earlier could be gone when its jobs run.
+    fn register(&self, _queue: &Queue, session: &Session) {
+        self.targets
+            .lock()
+            .unwrap()
+            .entry(session.id.clone())
+            .or_insert_with(|| Arc::new(SessionTarget::for_session(session)));
+    }
+
+    /// Forgets the servers of sessions that no job in the queue involves any more.
+    fn forget_unused_targets(&self, queue: &Queue) {
+        self.targets
+            .lock()
+            .unwrap()
+            .retain(|session_id, _| queue.has_session_jobs(session_id));
+    }
+
+    /// Takes the temporary files of jobs that left the queue unfinished, each with what reaches
+    /// its server. Called with the queue locked: once it is unlocked, a tick may forget the
+    /// server of jobs that were its last while their files are still being deleted.
+    fn take_abandoned(&self, queue: &mut Queue) -> Vec<(Abandoned, Option<Arc<SessionTarget>>)> {
+        let abandoned = queue.take_abandoned();
+        if abandoned.is_empty() {
+            return Vec::new();
+        }
+        let targets = self.targets.lock().unwrap();
+        abandoned
+            .into_iter()
+            .map(|partial| {
+                let target = targets.get(&partial.session_id).cloned();
+                (partial, target)
+            })
+            .collect()
+    }
+
     /// A relay counts once, as data coming in, so batch totals do not count it twice.
     fn total_for(&self, direction: Direction) -> &AtomicU64 {
         match direction {
@@ -620,7 +663,7 @@ impl TransferManager {
         self.shared.unsaved_folders.lock().unwrap().push(folder);
     }
 
-    async fn specs_for(&self, request: &EnqueueRequest) -> AppResult<Vec<JobSpec>> {
+    async fn specs_for(&self, request: &EnqueueRequest) -> AppResult<NewJobs> {
         let session = self.shared.sessions.get(&request.session_id).await?;
         let source_session = match (request.direction, &request.source_session_id) {
             (Direction::Relay, Some(source_id)) => Some(self.shared.sessions.get(source_id).await?),
@@ -659,11 +702,9 @@ impl TransferManager {
                 options: None,
             });
         }
-        if let Some(source_session) = &source_session {
-            self.register(source_session);
-        }
-        self.register(&session);
-        Ok(specs)
+        let mut sessions = vec![session];
+        sessions.extend(source_session);
+        Ok(NewJobs { specs, sessions })
     }
 
     /// Queues single files, each knowing what to do with a file already at its target.
@@ -673,10 +714,10 @@ impl TransferManager {
         files: Vec<FileTransfer>,
     ) -> AppResult<Vec<JobId>> {
         let session = self.shared.sessions.get(session_id).await?;
-        self.register(&session);
         let auto_start = self.shared.settings().auto_start;
         let ids = {
             let mut queue = self.shared.queue.lock().unwrap();
+            self.shared.register(&queue, &session);
             if !auto_start && queue.counts().is_idle() {
                 queue.paused = true;
             }
@@ -713,22 +754,16 @@ impl TransferManager {
         }
     }
 
-    /// Keeps what workers need to reach the session's server.
-    fn register(&self, session: &Session) {
-        self.shared
-            .targets
-            .lock()
-            .unwrap()
-            .entry(session.id.clone())
-            .or_insert_with(|| Arc::new(SessionTarget::for_session(session)));
-    }
-
-    fn add_jobs(&self, specs: Vec<JobSpec>, placement: Placement) {
+    fn add_jobs(&self, specs: NewJobs, placement: Placement) {
+        let NewJobs { specs, sessions } = specs;
         let auto_start = self.shared.settings().auto_start;
         {
             let mut queue = self.shared.queue.lock().unwrap();
             if placement == Placement::Last && !auto_start && queue.counts().is_idle() {
                 queue.paused = true;
+            }
+            for session in &sessions {
+                self.shared.register(&queue, session);
             }
             let ids: Vec<JobId> = specs.into_iter().map(|spec| queue.add(spec)).collect();
             if placement == Placement::First {
@@ -857,6 +892,49 @@ impl TransferManager {
             .unwrap()
             .session_failures(session_id)
     }
+
+    /// Whether transfers that run or are about to send their bytes over the very connection
+    /// `files` uses, as they do with an FTP server that takes one connection or with separate
+    /// connections turned off. Anything else read over it would wait for them, or they for it.
+    pub fn borrows_connection_of(&self, files: &dyn RemoteFileSystem) -> bool {
+        if !files.transport().is_ftp() {
+            return false;
+        }
+        let always_borrows = !self.shared.settings().separate_connections;
+        let connection = files.connection_identity();
+        let borrowers: Vec<String> = self
+            .shared
+            .targets
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|target| always_borrows || target.channels_only.load(Ordering::Relaxed))
+            .filter(|target| {
+                target
+                    .login()
+                    .browsing_files
+                    .is_some_and(|browsing| browsing.connection_identity() == connection)
+            })
+            .map(|target| target.session_id.clone())
+            .collect();
+        if borrowers.is_empty() {
+            return false;
+        }
+        let queue = self.shared.queue.lock().unwrap();
+        let starts_queued = !queue.paused;
+        let borrowing = queue.jobs().any(|job| {
+            let active = match job.state {
+                JobState::Running => true,
+                JobState::Queued => starts_queued,
+                _ => false,
+            };
+            active
+                && borrowers
+                    .iter()
+                    .any(|session_id| job.spec.involves(session_id))
+        });
+        borrowing
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -871,20 +949,21 @@ fn update_queue(shared: &Arc<Shared>, change: impl FnOnce(&mut Queue)) {
     let abandoned = {
         let mut queue = shared.queue.lock().unwrap();
         change(&mut queue);
-        queue.take_abandoned()
+        shared.take_abandoned(&mut queue)
     };
     shared.work.notify_waiters();
     if !abandoned.is_empty() {
         let shared = shared.clone();
         crate::runtime::spawn(async move {
-            for partial in abandoned {
-                match partial.direction {
-                    Direction::Download => {
+            for (partial, target) in abandoned {
+                match (partial.direction, target) {
+                    (Direction::Download, _) => {
                         let _ = tokio::fs::remove_file(&partial.path).await;
                     }
-                    Direction::Upload | Direction::Relay => {
-                        discard_with_browsing_session(&shared, &partial).await
+                    (Direction::Upload | Direction::Relay, Some(target)) => {
+                        discard_with_browsing_session(&shared, &target, &partial).await
                     }
+                    (Direction::Upload | Direction::Relay, None) => {}
                 }
                 shared.queue.lock().unwrap().deleted(&partial);
             }
@@ -959,8 +1038,7 @@ async fn report_progress(shared: Weak<Shared>) {
                 limits,
             };
             if stats.counts.is_idle() {
-                let mut targets = shared.targets.lock().unwrap();
-                targets.retain(|session_id, _| queue.has_session_jobs(session_id));
+                shared.forget_unused_targets(&queue);
             }
             if queue.unsaved {
                 persist_due.get_or_insert(now);
@@ -1100,10 +1178,11 @@ async fn retry_reached_again(shared: &Shared, servers: Vec<(String, Instant)>) {
 }
 
 /// Deletes a server-side temporary file through the session the user browses with, if open.
-pub(super) async fn discard_with_browsing_session(shared: &Shared, partial: &Abandoned) {
-    let Ok(target) = shared.target(&partial.session_id) else {
-        return;
-    };
+pub(super) async fn discard_with_browsing_session(
+    shared: &Shared,
+    target: &SessionTarget,
+    partial: &Abandoned,
+) {
     target.adopt_live_session(&shared.sessions).await;
     let files = match target.browsing_files() {
         Ok(files) => files,
@@ -1179,28 +1258,32 @@ mod tests {
     use crate::ssh::proxy::{Proxy, ProxyKind};
     use crate::ssh::{AuthMethod, Route};
 
+    fn profile(protocol: Protocol) -> ConnectProfile {
+        ConnectProfile {
+            protocol,
+            host: "example.com".into(),
+            port: protocol.default_port(),
+            username: "me".into(),
+            auth: AuthMethod::Agent,
+            initial_path: None,
+            timeout_secs: None,
+            keepalive_secs: None,
+            compression: false,
+            receive_buffer_kib: None,
+            send_buffer_kib: None,
+            saved_connection_id: None,
+            ftp_active: false,
+            bypass_proxy: false,
+            jump_connection_id: None,
+            rsync_path: None,
+            s3: Default::default(),
+            route: Route::default(),
+        }
+    }
+
     fn login() -> Login {
         Login {
-            profile: ConnectProfile {
-                protocol: Protocol::Sftp,
-                host: "example.com".into(),
-                port: 22,
-                username: "me".into(),
-                auth: AuthMethod::Agent,
-                initial_path: None,
-                timeout_secs: None,
-                keepalive_secs: None,
-                compression: false,
-                receive_buffer_kib: None,
-                send_buffer_kib: None,
-                saved_connection_id: None,
-                ftp_active: false,
-                bypass_proxy: false,
-                jump_connection_id: None,
-                rsync_path: None,
-                s3: Default::default(),
-                route: Route::default(),
-            },
+            profile: profile(Protocol::Sftp),
             host_key_fingerprint: String::new(),
             browsing_session: "restored".into(),
             browsing_files: None,
@@ -1398,5 +1481,272 @@ mod tests {
             .unwrap();
         assert_eq!(calls.load(Ordering::Relaxed), 0);
         assert!(target.login().profile.route.proxy.is_none());
+    }
+
+    /// A WebDAV server on which every folder is empty. Deleting takes 150 ms, as over a slow
+    /// network, and the paths deleted are kept. Nothing else can be done.
+    #[derive(Default)]
+    struct EmptyFolders {
+        deleted: Mutex<Vec<String>>,
+    }
+
+    impl EmptyFolders {
+        fn deleted(&self) -> Vec<String> {
+            let mut deleted = self.deleted.lock().unwrap().clone();
+            deleted.sort();
+            deleted
+        }
+    }
+
+    fn refused() -> AppError {
+        AppError::unsupported("This server only lists empty folders")
+    }
+
+    #[async_trait::async_trait]
+    impl RemoteFileSystem for EmptyFolders {
+        fn protocol(&self) -> Protocol {
+            Protocol::WebDav
+        }
+
+        fn home(&self) -> &str {
+            "/"
+        }
+
+        fn capabilities(&self) -> crate::protocol::Capabilities {
+            crate::protocol::Capabilities::default()
+        }
+
+        async fn canonicalize(&self, path: &str) -> AppResult<String> {
+            Ok(path.to_string())
+        }
+
+        async fn list_dir(&self, path: &str) -> AppResult<crate::model::DirListing> {
+            Ok(crate::model::DirListing {
+                path: path.to_string(),
+                parent: None,
+                entries: Vec::new(),
+            })
+        }
+
+        async fn make_dir(&self, _parent: &str, _name: &str) -> AppResult<String> {
+            Err(refused())
+        }
+
+        async fn rename(&self, _path: &str, _new_name: &str) -> AppResult<String> {
+            Err(refused())
+        }
+
+        async fn delete(&self, paths: &[String]) -> AppResult<()> {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            self.deleted.lock().unwrap().extend_from_slice(paths);
+            Ok(())
+        }
+
+        async fn stat(&self, _path: &str) -> AppResult<Option<crate::protocol::RemoteStat>> {
+            Err(refused())
+        }
+
+        async fn ensure_dir(&self, _path: &str) -> AppResult<()> {
+            Err(refused())
+        }
+
+        async fn set_attributes(
+            &self,
+            _path: &str,
+            _modified: Option<i64>,
+            _permissions: Option<u32>,
+        ) -> AppResult<()> {
+            Err(refused())
+        }
+
+        async fn open_read(
+            self: Arc<Self>,
+            _path: &str,
+            _range: std::ops::Range<u64>,
+        ) -> AppResult<Box<dyn crate::protocol::ReadStream>> {
+            Err(refused())
+        }
+
+        async fn open_write(
+            self: Arc<Self>,
+            _request: crate::protocol::WriteRequest,
+        ) -> AppResult<Box<dyn crate::protocol::WriteStream>> {
+            Err(refused())
+        }
+    }
+
+    fn runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+    }
+
+    /// A transfer manager without retries, and the id of a session open over `server`.
+    fn manager_over(temp_dir: &Path, server: Arc<EmptyFolders>) -> (Arc<TransferManager>, String) {
+        let sessions = Arc::new(SessionManager::new(
+            temp_dir.join("known_hosts"),
+            Events::default(),
+        ));
+        let session = runtime().block_on(sessions.open_over(profile(Protocol::WebDav), server));
+        let settings = TransferSettings {
+            retry_attempts: 0,
+            ..TransferSettings::default()
+        };
+        let manager = TransferManager::new(sessions, Events::default(), settings);
+        (Arc::new(manager), session.id)
+    }
+
+    /// Runs `queue_jobs` on another thread while holding the idle queue, as a tick of the
+    /// progress loop does, then forgets the servers no job involves, as the tick does.
+    /// `queue_jobs` waits for the queue meanwhile. Should it keep a server before it adds the
+    /// jobs, the tick waits for that, and so comes between the two.
+    fn tick_while<T: Send + 'static>(
+        manager: &Arc<TransferManager>,
+        queue_jobs: impl FnOnce(Arc<TransferManager>) -> T + Send + 'static,
+    ) -> T {
+        let tick = manager.shared.queue.lock().unwrap();
+        let queuing = {
+            let manager = manager.clone();
+            std::thread::spawn(move || queue_jobs(manager))
+        };
+        let deadline = Instant::now() + Duration::from_millis(500);
+        while manager.shared.targets.lock().unwrap().is_empty() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        manager.shared.forget_unused_targets(&tick);
+        drop(tick);
+        queuing.join().unwrap()
+    }
+
+    /// Saves, as the app does when it closes, paused uploads to the server `manager_over`
+    /// opens a session to, each with part of its file in a temporary file there. Returns the
+    /// paths of those files.
+    fn save_uploads(file: &Path, count: usize) -> Vec<String> {
+        let partials: Vec<String> = (0..count)
+            .map(|index| format!("/upload/.{index}.bin.poros-part"))
+            .collect();
+        let jobs: Vec<serde_json::Value> = partials
+            .iter()
+            .enumerate()
+            .map(|(index, partial)| {
+                serde_json::json!({
+                    "server": 0,
+                    "direction": "upload",
+                    "kind": "file",
+                    "name": format!("{index}.bin"),
+                    "source": format!("/local/{index}.bin"),
+                    "target": format!("/upload/{index}.bin"),
+                    "targetDirectory": "/upload",
+                    "size": 1000,
+                    "resume": {
+                        "offset": 500,
+                        "partial": partial,
+                        "sourceSize": 1000,
+                        "sourceModified": null,
+                    },
+                })
+            })
+            .collect();
+        let saved = serde_json::json!({
+            "servers": [{
+                "protocol": "webDav",
+                "host": "example.com",
+                "port": 80,
+                "username": "me",
+                "auth": { "type": "agent" },
+                "compression": false,
+            }],
+            "jobs": jobs,
+        });
+        std::fs::write(file, saved.to_string()).unwrap();
+        partials
+    }
+
+    /// Once the queue is idle, each tick of the progress loop forgets, with the queue locked,
+    /// the servers of sessions no job involves. Jobs queued for a server meanwhile still find
+    /// it when they run. A copy out of a vault to a server no transfer had used yet once failed
+    /// at the start with "Session is no longer open".
+    #[test]
+    fn jobs_queued_while_unused_servers_are_forgotten_keep_their_server() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (manager, session_id) = manager_over(temp_dir.path(), Arc::default());
+        let request = EnqueueRequest {
+            session_id,
+            source_session_id: None,
+            direction: Direction::Download,
+            target_directory: temp_dir.path().to_string_lossy().into_owned(),
+            items: vec![TransferItem {
+                path: "/folder".into(),
+                name: "folder".into(),
+                is_dir: true,
+                size: 0,
+            }],
+        };
+
+        tick_while(&manager, |manager| {
+            runtime().block_on(manager.enqueue(request)).unwrap()
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let list = loop {
+            let list = manager.list();
+            if list.stats.counts.queued == 0 && list.stats.counts.running == 0 {
+                break list;
+            }
+            assert!(Instant::now() < deadline, "{:#?}", list.jobs);
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        let failed: Vec<_> = list
+            .jobs
+            .iter()
+            .filter(|job| job.state == JobState::Failed)
+            .collect();
+        assert!(failed.is_empty(), "{failed:#?}");
+        assert!(temp_dir.path().join("folder").is_dir());
+    }
+
+    /// The same for the transfers saved by the last run: the servers they are restored with are
+    /// still there for them after a tick, so they can run once resumed.
+    #[test]
+    fn transfers_restored_while_unused_servers_are_forgotten_keep_their_server() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file = temp_dir.path().join("transfers.json");
+        save_uploads(&file, 2);
+        let (manager, _) = manager_over(temp_dir.path(), Arc::default());
+
+        tick_while(&manager, move |manager| manager.keep_queue_in(file));
+
+        let jobs = manager.list().jobs;
+        assert_eq!(jobs.len(), 2);
+        for job in jobs {
+            assert!(
+                manager.shared.target(&job.session_id).is_ok(),
+                "{} lost its server",
+                job.name
+            );
+        }
+    }
+
+    /// Removing unfinished uploads deletes every temporary file they left on the server, though
+    /// the first tick after they leave the queue forgets their server while the files are still
+    /// being deleted one by one.
+    #[test]
+    fn removed_uploads_leave_none_of_their_temporary_files_behind() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file = temp_dir.path().join("transfers.json");
+        let partials = save_uploads(&file, 5);
+        let server = Arc::new(EmptyFolders::default());
+        let (manager, _) = manager_over(temp_dir.path(), server.clone());
+        manager.keep_queue_in(file);
+        let ids: Vec<JobId> = manager.list().jobs.iter().map(|job| job.id).collect();
+        assert_eq!(ids.len(), partials.len());
+
+        manager.remove(&ids);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while server.deleted().len() < partials.len() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(server.deleted(), partials);
     }
 }

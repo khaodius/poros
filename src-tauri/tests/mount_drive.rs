@@ -122,10 +122,7 @@ async fn connect(sessions: &SessionManager, server: &Server) -> SessionInfo {
             let host_key = error
                 .host_key
                 .unwrap_or_else(|| panic!("{label}: {}", error.message));
-            let approval = HostKeyApproval {
-                fingerprint: host_key.fingerprint,
-                remember: true,
-            };
+            let approval = HostKeyApproval::of(&host_key, true);
             sessions
                 .connect(profile, Some(approval), OWNER)
                 .await
