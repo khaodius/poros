@@ -959,8 +959,7 @@ impl FollowUp {
         lines.extend(failures.iter().cloned());
 
         let deleted = summary.deleted + deleted_later;
-        // Jobs that left the queue were done before completed ones were cleared.
-        let copied = outcome.done + outcome.removed;
+        let copied = outcome.done;
         let mut message = format!(
             "Synchronized {} with {}: {} copied",
             run.stored.local.root,
