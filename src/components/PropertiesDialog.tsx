@@ -448,7 +448,7 @@ export function PropertiesDialog({
             className="button button-primary"
             disabled={applying.busy}
           >
-            {nothingToApply ? "OK" : t("common.apply")}
+            {nothingToApply ? t("common.ok") : t("common.apply")}
           </button>
         </div>
       </form>

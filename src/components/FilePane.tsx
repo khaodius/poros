@@ -537,8 +537,10 @@ export function FilePane({
     reportedError.current = pane.error;
     // A listing left up because the server could not be reached says so in the pane.
     if (pane.stale !== "outdated") showToast("error", pane.error.message);
-    writeLog("error", `${title}: ${pane.error.message}`);
-  }, [pane.error, pane.listing, pane.stale, showToast, writeLog, title]);
+    // The log is in English: a local pane's title is in the interface's language.
+    const paneName = source.kind === "local" ? "Local" : title;
+    writeLog("error", `${paneName}: ${pane.error.message}`);
+  }, [pane.error, pane.listing, pane.stale, showToast, writeLog, title, source.kind]);
 
   const selected = pane.selectedEntries();
   const selectedSize = selected.reduce(

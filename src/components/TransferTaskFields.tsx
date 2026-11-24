@@ -244,7 +244,7 @@ export function TransferTaskFields({ action, connections, onChange }: TransferTa
           <input
             className="mono"
             value={action.subfolder}
-            placeholder="backup-{date}"
+            placeholder={t("schedule.subfolderExample", { date: "{date}" })}
             spellCheck={false}
             autoCapitalize="off"
             aria-invalid={"error" in pattern}

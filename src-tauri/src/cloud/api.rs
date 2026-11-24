@@ -162,38 +162,76 @@ pub type BuildAttempt<'build> = &'build (dyn Fn() -> AppResult<Request> + Send +
 /// server errors with backoff the way `Api::send` does. Any other answer comes back as it is,
 /// for the caller to read, and so does the last one when every attempt was refused.
 pub async fn send_retrying(http: &Client, build: BuildAttempt<'_>) -> AppResult<Response> {
-    retrying(http, build, false).await
+    send_retrying_within(http, build, false, &mut Attempts::default()).await
 }
 
-/// Like `send_retrying`, for a `POST` that only reads, which is as safe to send again as a
-/// `GET`.
-pub async fn send_retrying_idempotent(
+/// The attempts at one request, counted across every step that may send it again, so that it
+/// goes out at most `ATTEMPTS` times with the same backoff however it fails. A caller that
+/// reads the answer before deciding to try again keeps counting in the same one.
+#[derive(Debug, Default)]
+pub struct Attempts {
+    made: u32,
+    /// An attempt went out and its answer never arrived.
+    unanswered: bool,
+}
+
+impl Attempts {
+    pub fn made(&self) -> u32 {
+        self.made
+    }
+
+    pub fn remain(&self) -> bool {
+        self.made < ATTEMPTS
+    }
+
+    /// Whether the service may have carried out an attempt whose answer never arrived.
+    pub fn may_have_gone_through(&self) -> bool {
+        self.unanswered
+    }
+
+    /// Records that the answer to the last attempt was lost, as when its body broke off.
+    pub fn lose_answer(&mut self) {
+        self.unanswered = true;
+    }
+
+    /// Waits before the next attempt: as long as the service asked, or else the backoff.
+    pub async fn wait(&self, asked: Option<Duration>) {
+        let wait = asked.unwrap_or_else(|| backoff(self.made));
+        tokio::time::sleep(wait.min(MAX_BACKOFF)).await;
+    }
+}
+
+/// Like `send_retrying`, counting in `attempts`. `idempotent` marks a `POST` that is as safe
+/// to send again as a `GET`: one that only reads, or one whose caller copes with an earlier
+/// attempt having gone through.
+pub async fn send_retrying_within(
     http: &Client,
     build: BuildAttempt<'_>,
+    idempotent: bool,
+    attempts: &mut Attempts,
 ) -> AppResult<Response> {
-    retrying(http, build, true).await
-}
-
-async fn retrying(http: &Client, build: BuildAttempt<'_>, idempotent: bool) -> AppResult<Response> {
-    let mut attempt = 0;
     loop {
-        attempt += 1;
+        attempts.made += 1;
         let request = build()?;
         let repeatable = idempotent || request.method() != Method::POST;
         let response = match send_request(http, request, STALL_TIMEOUT).await {
             Ok(response) => response,
             Err(failure) => {
-                if attempt < ATTEMPTS && (repeatable || failure.is_connect()) {
-                    tokio::time::sleep(backoff(attempt)).await;
+                // A connection that was never made carried nothing.
+                if !failure.is_connect() {
+                    attempts.lose_answer();
+                }
+                if attempts.remain() && (repeatable || failure.is_connect()) {
+                    attempts.wait(None).await;
                     continue;
                 }
                 return Err(failure.into());
             }
         };
-        if attempt < ATTEMPTS && is_transient(response.status(), repeatable) {
-            let wait = retry_after(&response).unwrap_or_else(|| backoff(attempt));
+        if attempts.remain() && is_transient(response.status(), repeatable) {
+            let asked = retry_after(&response);
             drop(response);
-            tokio::time::sleep(wait.min(MAX_BACKOFF)).await;
+            attempts.wait(asked).await;
             continue;
         }
         return Ok(response);
@@ -384,12 +422,12 @@ impl Api {
     /// and dropped connections are retried with backoff, though a `POST` that may have gone
     /// through is retried only when the service said it was too busy to take it.
     pub async fn send(&self, build: BuildRequest<'_>) -> AppResult<Response> {
-        self.execute(build, true, &[]).await
+        self.execute(build, true, &[], false).await
     }
 
     /// For upload addresses that carry their own authorization and reject a second one.
     pub async fn send_unauthorized(&self, build: BuildRequest<'_>) -> AppResult<Response> {
-        self.execute(build, false, &[]).await
+        self.execute(build, false, &[], false).await
     }
 
     /// Like `send`, but an answer with one of `expected` statuses comes back for the caller to
@@ -399,7 +437,17 @@ impl Api {
         build: BuildRequest<'_>,
         expected: &[StatusCode],
     ) -> AppResult<Response> {
-        self.execute(build, true, expected).await
+        self.execute(build, true, expected, false).await
+    }
+
+    /// Like `send_expecting`, for a `POST` that is safe to send again, such as one that opens
+    /// an upload session: a repeat only leaves an unused session behind, which expires.
+    pub async fn send_repeatable(
+        &self,
+        build: BuildRequest<'_>,
+        expected: &[StatusCode],
+    ) -> AppResult<Response> {
+        self.execute(build, true, expected, true).await
     }
 
     pub async fn json<T: DeserializeOwned>(&self, build: BuildRequest<'_>) -> AppResult<T> {
@@ -411,6 +459,7 @@ impl Api {
         build: BuildRequest<'_>,
         authorize: bool,
         expected: &[StatusCode],
+        idempotent: bool,
     ) -> AppResult<Response> {
         let mut attempt = 0;
         let mut renewed = false;
@@ -425,7 +474,7 @@ impl Api {
                 builder = builder.bearer_auth(token);
             }
             let request = builder.build().map_err(transport_error)?;
-            let repeatable = request.method() != Method::POST;
+            let repeatable = idempotent || request.method() != Method::POST;
             let response = match send_request(&self.tokens.http, request, STALL_TIMEOUT).await {
                 Ok(response) => response,
                 Err(failure) => {
@@ -660,6 +709,7 @@ impl ServiceError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cloud::scripted_service::{Reply, ScriptedService};
     use std::net::Ipv4Addr;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::{TcpListener, TcpSocket};
@@ -969,6 +1019,50 @@ mod tests {
         let lost = open_session();
         let error = lost.get().await.unwrap_err();
         assert_eq!(error.kind, ErrorKind::AuthFailed);
+    }
+
+    fn signed_in_api() -> Api {
+        let client = OAuthClient {
+            provider: crate::cloud::CloudProvider::Box,
+            client_id: "poros".into(),
+            client_secret: "secret".into(),
+            tenant: String::new(),
+        };
+        let tokens = AccessTokens::new(http_client().unwrap(), client, "R0".into(), None, None);
+        *tokens.current.try_lock().unwrap() = Some(AccessToken {
+            value: "A0".into(),
+            renew_at: Instant::now() + DEFAULT_TOKEN_LIFETIME,
+        });
+        Api::new(Arc::new(tokens))
+    }
+
+    #[tokio::test]
+    async fn opening_an_upload_session_is_sent_again_after_a_server_error() {
+        const OPEN: &str = "POST /upload_sessions ";
+        let failing_once = || {
+            ScriptedService::start(|_| {
+                vec![(
+                    OPEN,
+                    vec![Reply::status(500, "{}"), Reply::status(201, "{}")],
+                )]
+            })
+        };
+        let api = signed_in_api();
+        let service = failing_once().await;
+        let url = format!("{}/upload_sessions", service.address);
+        let response = api
+            .send_repeatable(&|http| http.post(&url), &[])
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        assert_eq!(service.count(OPEN), 2);
+
+        // Any other `POST` may have been carried out, so it is not.
+        let service = failing_once().await;
+        let url = format!("{}/upload_sessions", service.address);
+        let error = api.send(&|http| http.post(&url)).await.unwrap_err();
+        assert_eq!(error.kind, ErrorKind::Cloud);
+        assert_eq!(service.count(OPEN), 1);
     }
 
     #[test]
