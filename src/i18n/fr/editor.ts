@@ -1,0 +1,52 @@
+import type { TranslatedArea } from "../catalog";
+
+export const editor = {
+  // components/EditorPane
+  lfLinuxMacos: "LF (Linux, macOS)",
+  crlfWindows: "CRLF (Windows)",
+  unsavedChanges: "Modifications non enregistrées",
+  findAndReplaceCtrlF: "Rechercher et remplacer (Ctrl+F)",
+  saveCtrlS: "Enregistrer (Ctrl+S)",
+  reloadTheirs: "Recharger leur version",
+  couldNotSave: "Impossible d’enregistrer\u00a0: {saveError}",
+  opening: "Ouverture de {name}...",
+  couldNotOpen: "Impossible d’ouvrir {name}",
+  encodingUsedWhenSaving: "Encodage utilisé à l’enregistrement",
+  lineEndingsUsedWhenSaving: "Fins de ligne utilisées à l’enregistrement",
+  stopWrappingLongLines: "Désactiver le retour automatique à la ligne",
+  wrapLongLines: "Retour automatique à la ligne",
+  reload: "Recharger {name}\u202f?",
+  discardAndReload: "Abandonner et recharger",
+  yourUnsavedChangesWillBe: "Vos modifications non enregistrées seront perdues.",
+  utf8WithBom: "UTF-8 avec BOM",
+  latin1: "Latin-1",
+  wasDeletedOnTheServerAfterYouOpened: "{name} a été supprimé du serveur après son ouverture.",
+  wasDeletedOnDiskAfterYouOpened: "{name} a été supprimé du disque après son ouverture.",
+  changedOnTheServerSinceYouOpened: "{name} a été modifié sur le serveur depuis son ouverture.",
+  changedOnDiskSinceYouOpened: "{name} a été modifié sur le disque depuis son ouverture.",
+  saveItAgain: "L’enregistrer de nouveau",
+  saving: "Enregistrement...",
+  saved: "Enregistré",
+  plainText: "Texte brut",
+  reloadFromTheServer: "Recharger depuis le serveur",
+  reloadFromDisk: "Recharger depuis le disque",
+  lineColumn: "L. {line}, col. {column}",
+  lineColumnSelected: "L. {line}, col. {column} (sélection\u00a0: {selected})",
+  anOlderVersionIsReadOnly: "Une ancienne version est en lecture seule",
+  encodingOfThisOlderVersion: "Encodage de cette ancienne version",
+  lineEndingsOfThisOlderVersion: "Fins de ligne de cette ancienne version",
+  olderVersionReadOnly: "Ancienne version, lecture seule",
+
+  // components/UnsavedChangesDialog
+  someFilesCouldNotBe:
+    "Certains fichiers n’ont pas pu être enregistrés. Leurs onglets indiquent pourquoi.",
+  changesYouDontSaveAre: "Les modifications non enregistrées sont perdues.",
+  dontSave: "Ne pas enregistrer",
+  saveAll: "Tout enregistrer",
+  saveChangesTo: "Enregistrer les modifications de {name}\u202f?",
+  saveChangesToFiles: {
+    one: "Enregistrer les modifications de {count} fichier\u202f?",
+    many: "Enregistrer les modifications de {count} de fichiers\u202f?",
+    other: "Enregistrer les modifications de {count} fichiers\u202f?",
+  },
+} satisfies TranslatedArea<"editor">;
