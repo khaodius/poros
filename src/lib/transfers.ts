@@ -15,6 +15,14 @@ export const EMPTY_STATS: TransferStats = {
   uploadSpeed: 0,
   downloadSpeed: 0,
   queuePaused: false,
+  limits: {
+    upload: { mode: "unlimited", kib: 0 },
+    download: { mode: "unlimited", kib: 0 },
+    rule: null,
+    until: null,
+    ignored: false,
+    pauseEnds: { upload: null, download: null, relay: null },
+  },
 };
 
 export const EMPTY_SNAPSHOT: TransferSnapshot = {

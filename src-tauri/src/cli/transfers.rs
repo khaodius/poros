@@ -3,6 +3,7 @@
 
 use std::time::Duration;
 
+use chrono::{DateTime, Local, TimeZone};
 use serde::Serialize;
 
 use super::args::{Exists, TransferOptions};
@@ -14,8 +15,8 @@ use crate::error::{AppError, AppResult};
 use crate::format::{format_duration, format_size};
 use crate::settings::TransferSettings;
 use crate::transfer::{
-    Direction, EnqueueRequest, ExistsAction, JobKind, JobSnapshot, JobState, TransferItem,
-    TransferManager,
+    clock_time, Direction, EnqueueRequest, ExistsAction, JobKind, JobSnapshot, JobState,
+    LimitStatus, TransferItem, TransferManager,
 };
 
 const POLL: Duration = Duration::from_millis(100);
@@ -65,11 +66,15 @@ pub fn settings(base: &TransferSettings, options: &TransferOptions) -> TransferS
     settings.temporary_files &= !options.no_temp_files;
     settings.segmented &= !options.no_segments;
     settings.delta_transfers &= !options.no_delta;
+    // A limit given for this run is the one that counts, so the speed limit schedule of the
+    // saved settings leaves that direction alone.
     if let Some(limit) = options.limit_up {
         settings.upload_limit_kib = limit;
+        settings.limit_schedule.pin_upload(limit);
     }
     if let Some(limit) = options.limit_down {
         settings.download_limit_kib = limit;
+        settings.limit_schedule.pin_download(limit);
     }
     if let Some(retries) = options.retries {
         settings.retry_attempts = retries;
@@ -187,9 +192,22 @@ pub async fn wait(
     verified: bool,
 ) -> AppResult<TransferSummary> {
     let mut reporter = Reporter::new(context.progress());
+    let mut told_of_schedule = false;
     loop {
         let list = manager.list();
         reporter.update(snapshot(&list.jobs));
+        if !told_of_schedule {
+            let queued: Vec<Direction> = list
+                .jobs
+                .iter()
+                .filter(|job| job.state == JobState::Queued)
+                .map(|job| job.direction)
+                .collect();
+            if let Some(notice) = schedule_notice(&list.stats.limits, &queued, &Local::now()) {
+                log::warn!("{notice}");
+                told_of_schedule = true;
+            }
+        }
         let counts = &list.stats.counts;
         if counts.queued == 0 && counts.running == 0 && counts.paused == 0 && counts.conflict == 0 {
             break;
@@ -208,6 +226,46 @@ pub async fn wait(
     reporter.finish();
     let elapsed = reporter.elapsed();
     Ok(summarize(&manager.list().jobs, elapsed, workers, verified))
+}
+
+/// What to say once when the speed limit schedule of the saved settings keeps transfers
+/// waiting, which without it would look like a run that hangs.
+fn schedule_notice<Tz: TimeZone>(
+    limits: &LimitStatus,
+    queued: &[Direction],
+    now: &DateTime<Tz>,
+) -> Option<String> {
+    // A copy between two servers needs both directions.
+    let waits = |paused: bool, direction: Direction| {
+        paused
+            && queued
+                .iter()
+                .any(|queued| *queued == direction || *queued == Direction::Relay)
+    };
+    let uploads_wait = waits(limits.upload.is_paused(), Direction::Upload);
+    let downloads_wait = waits(limits.download.is_paused(), Direction::Download);
+    let ends = &limits.pause_ends;
+    let (paused, option, end) = match (uploads_wait, downloads_wait) {
+        (true, true) => (
+            "uploads and downloads",
+            "--limit-up and --limit-down",
+            ends.relay,
+        ),
+        (true, false) => ("uploads", "--limit-up", ends.upload),
+        (false, true) => ("downloads", "--limit-down", ends.download),
+        (false, false) => return None,
+    };
+    let until = end
+        .and_then(|until| now.timezone().timestamp_opt(until, 0).single())
+        .map(|until| {
+            let shown = clock_time(&until.naive_local(), &now.naive_local());
+            format!(" until {shown}")
+        })
+        .unwrap_or_default();
+    Some(format!(
+        "The speed limit schedule in the Poros settings pauses {paused}{until}, so this waits. \
+         To run now, set the limit for this run with {option} (0 for none)."
+    ))
 }
 
 fn snapshot(jobs: &[JobSnapshot]) -> Snapshot {
@@ -318,6 +376,103 @@ mod tests {
 
         let last_wins = settings(&base, &options(&["--no-verify", "--verify"]));
         assert!(last_wins.verify_checksums && last_wins.read_back);
+    }
+
+    #[test]
+    fn a_limit_on_the_command_line_takes_its_direction_out_of_the_schedule() {
+        use crate::transfer::{LimitRule, LimitSchedule, RateLimit};
+
+        let night = LimitRule {
+            id: "night".into(),
+            name: "Night".into(),
+            days: vec![0, 1, 2, 3, 4, 5, 6],
+            start_minute: 22 * 60,
+            end_minute: 6 * 60,
+            upload: RateLimit::PAUSED,
+            download: RateLimit::limited(500),
+        };
+        let base = TransferSettings {
+            upload_limit_kib: 100,
+            download_limit_kib: 2000,
+            limit_schedule: LimitSchedule {
+                enabled: true,
+                rules: vec![night.clone()],
+            },
+            ..TransferSettings::default()
+        };
+        // The saved settings come with their schedule.
+        let saved = settings(&base, &options(&[]));
+        assert_eq!(saved.limit_schedule, base.limit_schedule);
+
+        let given = settings(&base, &options(&["--limit-up", "300"]));
+        assert_eq!(given.upload_limit_kib, 300);
+        assert_eq!(given.download_limit_kib, 2000);
+        let rule = &given.limit_schedule.rules[0];
+        assert_eq!(rule.upload, RateLimit::limited(300));
+        assert_eq!(rule.download, night.download);
+
+        // Zero is no limit, at any time of day.
+        let unlimited = settings(&base, &options(&["--limit-up", "0", "--limit-down", "0"]));
+        let rule = &unlimited.limit_schedule.rules[0];
+        assert_eq!(rule.upload, RateLimit::UNLIMITED);
+        assert_eq!(rule.download, RateLimit::UNLIMITED);
+    }
+
+    #[test]
+    fn a_run_waiting_for_the_schedule_says_so() {
+        use crate::transfer::{PauseEnds, RateLimit};
+        use chrono::FixedOffset;
+
+        let zone = FixedOffset::east_opt(3600).unwrap();
+        let now = zone.with_ymd_and_hms(2026, 11, 23, 23, 30, 0).unwrap();
+        let at = |hour| {
+            zone.with_ymd_and_hms(2026, 11, 24, hour, 0, 0)
+                .unwrap()
+                .timestamp()
+        };
+        // The schedule changes at two, into another rule that pauses uploads until six.
+        let limits = LimitStatus {
+            upload: RateLimit::PAUSED,
+            download: RateLimit::limited(500),
+            rule: None,
+            until: Some(at(2)),
+            ignored: false,
+            pause_ends: PauseEnds {
+                upload: Some(at(6)),
+                download: None,
+                relay: Some(at(6)),
+            },
+        };
+        let notice = schedule_notice(&limits, &[Direction::Upload], &now).unwrap();
+        assert_eq!(
+            notice,
+            "The speed limit schedule in the Poros settings pauses uploads until Tue 06:00, \
+             so this waits. To run now, set the limit for this run with --limit-up (0 for none)."
+        );
+        // Downloads are only slowed, and nothing waits once the queue is empty.
+        assert_eq!(schedule_notice(&limits, &[Direction::Download], &now), None);
+        assert_eq!(schedule_notice(&limits, &[], &now), None);
+
+        // A copy between servers waits until neither direction is paused.
+        let both = LimitStatus {
+            download: RateLimit::PAUSED,
+            pause_ends: PauseEnds {
+                upload: Some(at(6)),
+                download: Some(at(7)),
+                relay: Some(at(7)),
+            },
+            ..limits.clone()
+        };
+        let notice = schedule_notice(&both, &[Direction::Relay], &now).unwrap();
+        assert!(notice.contains("pauses uploads and downloads until Tue 07:00, so this waits"));
+        assert!(notice.contains("--limit-up and --limit-down"));
+        // A pause with no end in the coming week names no time.
+        let endless = LimitStatus {
+            pause_ends: PauseEnds::default(),
+            ..limits
+        };
+        let notice = schedule_notice(&endless, &[Direction::Upload], &now).unwrap();
+        assert!(notice.contains("pauses uploads, so this waits"));
     }
 
     #[test]

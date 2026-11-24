@@ -222,6 +222,8 @@ export const transfers = {
     call<void>("transfer_resolve", { id, action, applyToAll }),
   sessionJobs: (sessionId: string) => call<number>("transfer_session_jobs", { sessionId }),
   pauseSession: (sessionId: string) => call<number>("transfer_pause_session", { sessionId }),
+  /** Sets the speed limit schedule aside until its next change, or follows it again. */
+  ignoreSchedule: (ignored: boolean) => call<void>("transfer_ignore_schedule", { ignored }),
 };
 
 export const sync = {
