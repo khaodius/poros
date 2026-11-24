@@ -69,6 +69,9 @@ pub struct MemoryFs {
     pub links_in_listings: AtomicBool,
     /// A pause before every delete, in milliseconds.
     pub delete_delay_millis: AtomicU64,
+    /// Deletes are refused as if nothing were there while set, as some FTP servers answer
+    /// every refused delete.
+    pub deletes_refused_as_missing: AtomicBool,
     /// Paths nothing may be moved or renamed onto.
     refused_move_targets: Mutex<HashSet<String>>,
     clock: AtomicU64,
@@ -92,6 +95,7 @@ impl MemoryFs {
             refused_new_files: AtomicBool::new(false),
             links_in_listings: AtomicBool::new(false),
             delete_delay_millis: AtomicU64::new(0),
+            deletes_refused_as_missing: AtomicBool::new(false),
             refused_move_targets: Mutex::new(HashSet::new()),
             clock: AtomicU64::new(1_700_000_000),
         })
@@ -373,6 +377,12 @@ impl RemoteFileSystem for MemoryFs {
         self.check_online()?;
         for path in paths {
             protocol::normalize_exact(path)?;
+        }
+        if self.deletes_refused_as_missing.load(Ordering::Relaxed) {
+            return Err(AppError::new(
+                ErrorKind::NotFound,
+                "550 Delete operation failed.",
+            ));
         }
         let mut items = self.items.lock().unwrap();
         for path in paths {

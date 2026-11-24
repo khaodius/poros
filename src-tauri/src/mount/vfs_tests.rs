@@ -1693,6 +1693,41 @@ async fn an_original_something_took_the_place_of_stays_aside() {
     );
 }
 
+#[tokio::test]
+async fn a_file_the_server_would_not_delete_stays_on_the_drive() {
+    let drive = drive();
+    drive.server.put_file("/ro/keep.txt", "keep");
+    let folder = node(&drive, "/ro").await;
+    node(&drive, "/ro/keep.txt").await;
+    // Refused as if it were not there, as vsftpd answers "550 Delete operation failed."
+    drive
+        .server
+        .deletes_refused_as_missing
+        .store(true, Ordering::Relaxed);
+    assert_eq!(
+        drive.fs.remove_file(folder, "keep.txt").await,
+        Err(VfsError::PermissionDenied)
+    );
+    assert!(drive.server.exists("/ro/keep.txt"));
+    assert!(drive.fs.lookup(folder, "keep.txt").await.is_ok());
+
+    // One the server really no longer has goes from the drive without an error.
+    drive
+        .server
+        .deletes_refused_as_missing
+        .store(false, Ordering::Relaxed);
+    drive
+        .server
+        .delete(&["/ro/keep.txt".to_string()])
+        .await
+        .unwrap();
+    assert_eq!(drive.fs.remove_file(folder, "keep.txt").await, Ok(()));
+    assert_eq!(
+        drive.fs.lookup(folder, "keep.txt").await.map(|_| ()),
+        Err(VfsError::NotFound)
+    );
+}
+
 /// Saves `/docs/log.txt` so that the original steps aside and cannot come back. Gives the
 /// name of the original's hidden copy, and the handle the save was made through, still open
 /// so that no close sends it again.

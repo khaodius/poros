@@ -165,6 +165,12 @@ impl Staging {
             return;
         };
         for upload in stranded {
+            if let Some(aside) = &upload.aside {
+                log::warn!(
+                    "The original of {target} stays as {aside}: the file was removed or replaced \
+                     through the drive"
+                );
+            }
             self.remember(&upload.staged, target);
         }
     }
@@ -204,6 +210,7 @@ impl Staging {
                 Err(_) => continue,
             };
             if taken {
+                log::warn!("The original of {file} stays as {aside}: another file took its name");
                 self.forget_aside(&file, &aside);
                 continue;
             }
@@ -213,6 +220,10 @@ impl Staging {
                 Err(_) => continue,
             };
             if !still_aside {
+                log::warn!(
+                    "The original of {file} is no longer at {aside}, as when its folder moved, \
+                     and is not put back"
+                );
                 self.forget_aside(&file, &aside);
                 continue;
             }

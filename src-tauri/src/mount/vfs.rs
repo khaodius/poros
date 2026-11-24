@@ -1920,16 +1920,32 @@ impl MountFs {
             // An upload that finished after the removal would bring the file back.
             self.wait_for_upload(id).await;
         }
-        // Nor may an original that stepped aside for an upload come back in its place.
-        self.staging.forget_stranded(&path);
-        match self.delete(&path).await {
-            // Only here so far, as when its upload could not take the original's place.
-            Err(VfsError::NotFound) => {
-                self.forget_path(&path);
-                Ok(())
-            }
+        let removed = match self.delete(&path).await {
+            Err(VfsError::NotFound) => self.gone_from(&folder, &remote, &path).await,
             removed => removed,
+        };
+        if removed.is_ok() {
+            // Nor may an original that stepped aside for an upload come back in its place.
+            self.staging.forget_stranded(&path);
         }
+        removed
+    }
+
+    /// After the server said there is nothing to delete at `path`: whether that is so. It is
+    /// when the file was only here so far, as when its upload could not take the original's
+    /// place, but some servers answer every refused delete that way, so the folder is listed
+    /// again to tell.
+    async fn gone_from(&self, folder: &str, remote: &str, path: &str) -> VfsResult<()> {
+        let (listed, links) = self
+            .request(|files| async move { files.list_dir_with_links(folder).await })
+            .await?;
+        let still_there = listed.entries.iter().any(|entry| entry.name == remote);
+        self.store_listing(folder, listed, links);
+        if still_there {
+            return Err(VfsError::PermissionDenied);
+        }
+        self.forget_path(path);
+        Ok(())
     }
 
     pub async fn remove_folder(&self, parent: NodeId, name: &str) -> VfsResult<()> {

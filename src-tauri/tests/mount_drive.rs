@@ -756,6 +756,50 @@ async fn an_upload_the_server_refuses_reaches_the_program_and_is_sent_when_tried
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_file_the_ftp_server_will_not_delete_stays_where_it_is() {
+    let Some(server) = ftp_server() else {
+        return;
+    };
+    if !can_mount() {
+        return;
+    }
+    let setup = Setup::new(&server, "undeletable").await;
+    let folder = setup.files.make_dir(&setup.scratch, "ro").await.unwrap();
+    let keep = remote_path::join(&folder, "keep.txt");
+    write_remote(&setup.files, &keep, b"keep").await;
+    let at = setup.mount_point("drive");
+    let Some(_drive) = setup
+        .mount(&setup.session.id, &setup.scratch, &at, false)
+        .await
+    else {
+        setup.finish().await;
+        return;
+    };
+    // The server answers the refused delete with a bare "550 Delete operation failed."
+    setup
+        .files
+        .set_attributes(&folder, None, Some(0o555))
+        .await
+        .unwrap();
+    let shown = at.join("ro/keep.txt");
+    let (removed, still_shown) = program(move || {
+        let removed = std::fs::remove_file(&shown).map_err(|error| errno(&error));
+        (removed, shown.exists())
+    })
+    .await;
+    // Writable again before anything is asserted, so the folder can always be cleaned up.
+    setup
+        .files
+        .set_attributes(&folder, None, Some(0o755))
+        .await
+        .unwrap();
+    assert_eq!(removed, Err(libc::EACCES));
+    assert!(still_shown, "the drive still shows it");
+    assert_eq!(read_remote(&setup.files, &keep).await, b"keep");
+    setup.finish().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn removing_a_folder_with_links_in_it_removes_only_the_links() {
     let Some(server) = sftp_server() else {
         return;
