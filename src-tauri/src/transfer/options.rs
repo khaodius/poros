@@ -36,6 +36,12 @@ pub struct JobOptions {
     /// Bytes per second, shared by every job with the same `limit_group`; zero is unlimited.
     pub rate_limit: u64,
     pub limit_group: String,
+    /// Keeps the finished job listed whatever the setting says, for a caller that reads how
+    /// it ended.
+    pub keep_completed: Option<bool>,
+    /// Queued and followed by Poros itself, such as the upload of a file saved in another
+    /// program: not saved between runs, and left out of the summary when the queue finishes.
+    pub quiet: bool,
 }
 
 /// Where a replaced file goes.
@@ -89,6 +95,7 @@ impl JobOptions {
             (&mut settings.flush_to_disk, self.flush_to_disk),
             (&mut settings.verify_checksums, self.verify_checksums),
             (&mut settings.log_each_file, self.log_each_file),
+            (&mut settings.keep_completed, self.keep_completed),
         ];
         for (setting, value) in overrides {
             if let Some(value) = value {

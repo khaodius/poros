@@ -1264,6 +1264,120 @@ export interface PreviewPlacement {
 export type UpdateProgress =
   { stage: "downloading"; received: number; total: number | null } | { stage: "installing" };
 
+/** What to open a file with. Mirrored in src-tauri/src/external_editor/mod.rs. */
+export type OpenWith =
+  | { kind: "default" }
+  /** A program from Settings > Interface > Open with. */
+  | { kind: "program"; id: string }
+  /** A program picked for this one file. */
+  | { kind: "custom"; command: string };
+
+export interface ExternalOpenRequest {
+  sessionId: string;
+  path: string;
+  with: OpenWith;
+  /** The user agreed to open a file of a type that runs, in the program named. */
+  confirmedExecutable?: boolean;
+}
+
+export type ExternalEditState =
+  | "downloading"
+  /** Open in its program, with nothing to upload. */
+  | "watching"
+  /** Saved, and waiting for the user to say it should be uploaded. */
+  | "changed"
+  /** An upload waits for the server or for the transfer queue. */
+  | "waiting"
+  /** The server's copy changed since it was downloaded. */
+  | "conflict"
+  | "uploading"
+  | "failed";
+
+/** The two copies of a file whose server copy changed. */
+export interface ExternalEditConflict {
+  serverSize: number | null;
+  /** Seconds since the Unix epoch. */
+  serverModified: number | null;
+  /** The file is gone from the server. */
+  deleted: boolean;
+  localSize: number;
+  /** Milliseconds since the Unix epoch. */
+  localModified: number | null;
+}
+
+/** A server file open in another program. */
+export interface ExternalEdit {
+  id: string;
+  name: string;
+  remotePath: string;
+  /** The session uploads go through now, which changes when a tab reconnects. */
+  sessionId: string;
+  /** The server's label. */
+  server: string;
+  inVault: boolean;
+  /** Saves are still uploaded once the tab is closed; a vault's are not, as it locks. */
+  outlivesSession: boolean;
+  localPath: string;
+  /** What the file was opened with; empty for a file taken up from an earlier run. */
+  program: string;
+  state: ExternalEditState;
+  transferred: number;
+  size: number;
+  /** Why an upload failed or waits. */
+  detail?: string;
+  conflict?: ExternalEditConflict;
+  /** Downloaded but not opened, because its content is a program's. */
+  blocked: boolean;
+  uploads: number;
+  /** Milliseconds since the Unix epoch. */
+  lastUpload?: number;
+}
+
+export type ExternalOpenOutcome =
+  | { kind: "opening"; edit: ExternalEdit }
+  /** The file was open already; its working copy opens again. */
+  | { kind: "alreadyOpen"; edit: ExternalEdit }
+  /** A file on this computer was handed to its program; nothing follows it. */
+  | { kind: "opened" }
+  /** A file of a type that runs: nothing was downloaded until the user names an editor. */
+  | { kind: "needsConfirmation"; name: string };
+
+/** Told once, by the window in use. */
+export type ExternalEditNotice =
+  | { kind: "uploaded"; editId: string; name: string; renamedTo: string | null }
+  | { kind: "uploadFailed"; editId: string; name: string; message: string }
+  | { kind: "conflict"; editId: string; name: string }
+  | { kind: "saved"; editId: string; name: string }
+  | { kind: "blocked"; editId: string; name: string }
+  | { kind: "openFailed"; name: string; message: string }
+  | { kind: "ended"; name: string; message: string };
+
+export interface ExternalEditsUpdate {
+  edits: ExternalEdit[];
+  notice?: ExternalEditNotice;
+}
+
+/** What to do when the server's copy changed. */
+export type ExternalResolution = "overwrite" | "keepBoth" | "cancel";
+
+/** A working copy an earlier run left with changes the server never got. */
+export interface ExternalLeftover {
+  id: string;
+  name: string;
+  remotePath: string;
+  /** The server's label. */
+  server: string;
+  /** The server's own protocol, also for a file in a vault on it. */
+  protocol: Protocol;
+  host: string;
+  port: number;
+  username: string;
+  vaultRoot?: string;
+  size: number;
+  /** Milliseconds since the Unix epoch. */
+  modified?: number;
+}
+
 /** Mirrored in src-tauri/src/search/pattern.rs. */
 export type SearchPatternKind = "text" | "regex";
 

@@ -47,6 +47,7 @@ import { ArchiveSettingsPage } from "./ArchiveSettings";
 import { AutomationSettingsPage } from "./AutomationSettings";
 import { CloudSettingsPage } from "./CloudSettings";
 import { Dialog } from "./Dialog";
+import { ExternalEditorSettings } from "./ExternalEditorSettings";
 import { LimitScheduleSettings } from "./LimitScheduleSettings";
 import { PreviewSettingsGroup } from "./PreviewSettings";
 import { SyncSettingsPage } from "./SyncSettings";
@@ -605,7 +606,9 @@ function InterfaceSettingsPage({ settings }: { settings: Settings }) {
           value={options.doubleClickFile}
           options={[
             { value: "transfer", label: "Transfers it to the other side" },
-            { value: "edit", label: "Opens it in the editor" },
+            { value: "edit", label: "Opens it in the built-in editor" },
+            { value: "open", label: "Opens it in its program" },
+            { value: "ask", label: "Asks how to open it" },
             { value: "nothing", label: "Does nothing" },
           ]}
           onChange={(doubleClickFile) => set({ doubleClickFile })}
@@ -680,6 +683,7 @@ function InterfaceSettingsPage({ settings }: { settings: Settings }) {
           onChange={(prefetchOnCloud) => set({ prefetchOnCloud })}
         />
       </SettingGroup>
+      <ExternalEditorSettings settings={settings} />
       <PreviewSettingsGroup settings={settings} />
       <SettingGroup title="Tabs and windows">
         <SwitchSetting

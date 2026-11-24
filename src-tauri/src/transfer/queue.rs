@@ -980,6 +980,7 @@ impl Queue {
         }
         self.dirty.insert(id);
         let session_id = job.spec.session_id.clone();
+        let counted = counts_in_totals(&job.spec);
 
         let failure = match (stop, outcome) {
             (Some(StopReason::Remove), _) => {
@@ -987,7 +988,7 @@ impl Queue {
                 return None;
             }
             (_, RunOutcome::Completed) => {
-                self.totals.done += 1;
+                self.totals.done += u64::from(counted);
                 job.state = JobState::Done;
                 job.error = None;
                 job.resume = None;
@@ -1011,7 +1012,7 @@ impl Queue {
                 return self.server_answered(&session_id);
             }
             (_, RunOutcome::Skipped(reason)) => {
-                self.totals.skipped += 1;
+                self.totals.skipped += u64::from(counted);
                 job.state = JobState::Skipped;
                 job.error = Some(reason);
                 if !settings.keep_completed {
@@ -1075,7 +1076,7 @@ impl Queue {
             job.not_before = Some(now + Duration::from_secs(u64::from(settings.retry_delay_secs)));
             self.pending.insert(job.rank.clone(), id);
         } else {
-            self.totals.failed += 1;
+            self.totals.failed += u64::from(counted);
             job.state = JobState::Failed;
             job.error = Some(failure.message);
             job.unreachable_since = given_up_since;
@@ -1147,7 +1148,7 @@ impl Queue {
                 );
                 let failed = self.fail_waiting(&session_id, &message, since) + 1;
                 let job = self.jobs.get_mut(&id)?;
-                self.totals.failed += 1;
+                self.totals.failed += u64::from(counts_in_totals(&job.spec));
                 job.state = JobState::Failed;
                 job.reconnecting = false;
                 job.unreachable_since = Some(since);
@@ -1180,10 +1181,10 @@ impl Queue {
                 job.reconnecting = false;
                 job.unreachable_since = Some(since);
                 job.error = Some(message.to_string());
+                self.totals.failed += u64::from(counts_in_totals(&job.spec));
                 self.dirty.insert(*id);
             }
         }
-        self.totals.failed += waiting.len() as u64;
         waiting.len()
     }
 
@@ -1665,6 +1666,12 @@ impl Queue {
     pub fn forget_outages(&mut self) {
         self.outages.clear();
     }
+}
+
+/// Whether a job is part of the summary when the queue finishes. Quiet jobs are reported by
+/// whatever queued them.
+fn counts_in_totals(spec: &JobSpec) -> bool {
+    !spec.options.as_ref().is_some_and(|options| options.quiet)
 }
 
 fn stop_run(job: &mut Job, reason: StopReason) {

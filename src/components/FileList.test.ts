@@ -149,6 +149,7 @@ describe("FileList", () => {
     onRenameSubmit: async () => true,
     onRenameCancel: ignored,
     onEdit: ignored,
+    onOpenExternally: ignored,
     onNewFolder: ignored,
     onNewFile: ignored,
     onEditPath: ignored,

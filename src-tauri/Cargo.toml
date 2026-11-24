@@ -32,6 +32,11 @@ required-features = ["cli"]
 name = "sftp_server"
 required-features = ["gui"]
 
+# Files open in other programs, which only the app does.
+[[test]]
+name = "external_editor"
+required-features = ["gui"]
+
 [[test]]
 name = "cli"
 required-features = ["cli"]

@@ -14,6 +14,9 @@ pub const SYNC_PROGRESS_EVENT: &str = "poros://sync-progress";
 pub const QUEUE_FINISHED_EVENT: &str = "poros://queue-finished";
 pub const COMMAND_OUTPUT_EVENT: &str = "poros://command-output";
 pub const FILE_OPERATION_EVENT: &str = "poros://file-operation";
+/// The files open in other programs, whenever one of them changes.
+#[cfg(feature = "gui")]
+pub const EXTERNAL_EDIT_EVENT: &str = "poros://external-edit";
 /// Records kept for the main window while it loads; later ones past this are dropped.
 const MAX_STARTUP_RECORDS: usize = 500;
 
@@ -129,6 +132,11 @@ impl Events {
 
     pub fn file_operation(&self, progress: &crate::file_ops::OperationProgress) {
         self.emit(FILE_OPERATION_EVENT, progress);
+    }
+
+    #[cfg(feature = "gui")]
+    pub fn external_edits(&self, update: &crate::external_editor::EditsUpdate) {
+        self.emit(EXTERNAL_EDIT_EVENT, update);
     }
 
     pub fn store_changed(&self, store: Store) {
