@@ -439,7 +439,7 @@ impl PinnedVersion {
         validate_version_id(version_id)?;
         of(files.as_ref())?;
         Ok(Arc::new(Self {
-            path: protocol::normalize(&files.resolve(path)),
+            path: protocol::normalize_exact(&files.resolve(path))?,
             files,
             version_id: version_id.to_string(),
         }))

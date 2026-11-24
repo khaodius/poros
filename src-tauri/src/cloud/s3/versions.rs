@@ -84,9 +84,10 @@ fn prefix_of(key: &str) -> String {
 }
 
 impl S3Fs {
-    /// The bucket and key of a file, which a version belongs to.
+    /// The bucket and key of a file, which a version belongs to. A `.` or `..` part is refused,
+    /// not followed, so no other file's history is read or changed in its place.
     fn object_at(&self, path: &str) -> AppResult<(String, String, String)> {
-        let path = protocol::normalize(&self.resolve(path));
+        let path = protocol::normalize_exact(&self.resolve(path))?;
         match split(&path) {
             (Some(bucket), key) if !key.is_empty() => Ok((bucket, key, path)),
             _ => Err(AppError::invalid("Versions belong to files inside a bucket").with_path(path)),
@@ -151,7 +152,10 @@ impl S3Fs {
         let path = format!("/{bucket}/{prefix}");
         let response = self.send(&request).await?;
         let status = response.status();
-        let body = api::body_bytes(response).await?;
+        let body = match status.is_success() {
+            true => api::body_bytes(response).await?,
+            false => api::error_body(response).await?,
+        };
         match xml::embedded_error(&body) {
             Some(error) if not_implemented(status, &error.code) => {
                 Err(versions::no_versions(&path))
@@ -360,7 +364,10 @@ impl ObjectVersions for S3Fs {
         let request = S3Request::new(Method::GET, Some(&bucket), "").query("versioning", "");
         let response = self.send(&request).await?;
         let status = response.status();
-        let body = api::body_bytes(response).await?;
+        let body = match status.is_success() {
+            true => api::body_bytes(response).await?,
+            false => api::error_body(response).await?,
+        };
         let error = match status.is_success() {
             true => xml::ErrorBody::default(),
             false => xml::embedded_error(&body).unwrap_or_default(),
@@ -392,7 +399,7 @@ impl ObjectVersions for S3Fs {
     }
 
     async fn deleted_under(&self, folder: &str) -> AppResult<Vec<HiddenFile>> {
-        let directory = protocol::normalize(&self.resolve(folder));
+        let directory = protocol::normalize_exact(&self.resolve(folder))?;
         let (Some(bucket), key) = split(&directory) else {
             return Err(AppError::invalid("Deleted files are kept inside a bucket"));
         };
@@ -426,6 +433,7 @@ impl ObjectVersions for S3Fs {
         range: Range<u64>,
     ) -> AppResult<Box<dyn ReadStream>> {
         versions::validate_version_id(version_id)?;
+        self.object_at(path)?;
         self.read_object(path, Some(version_id), range).await
     }
 

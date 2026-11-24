@@ -192,10 +192,11 @@ impl B2Fs {
         }
     }
 
-    /// The bucket and name of a file, which a version belongs to.
+    /// The bucket and name of a file, which a version belongs to. A `.` or `..` part is
+    /// refused, not followed, so no other file's history is read or changed in its place.
     fn file_named(&self, path: &str) -> AppResult<(String, String, String)> {
         let resolved = self.resolve(path);
-        let path = protocol::normalize(&resolved);
+        let path = protocol::normalize_exact(&resolved)?;
         match name_keeping_slash(&resolved) {
             (Some(bucket), key) if !key.is_empty() => Ok((bucket, key, path)),
             _ => Err(AppError::invalid("Versions belong to files inside a bucket").with_path(path)),
@@ -338,7 +339,7 @@ impl ObjectVersions for B2Fs {
     }
 
     async fn deleted_under(&self, folder: &str) -> AppResult<Vec<HiddenFile>> {
-        let directory = protocol::normalize(&self.resolve(folder));
+        let directory = protocol::normalize_exact(&self.resolve(folder))?;
         let (Some(bucket), key) = split(&directory) else {
             return Err(AppError::invalid("Deleted files are kept inside a bucket"));
         };

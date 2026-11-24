@@ -633,6 +633,59 @@ async fn restores_and_purges_deleted_folders_as_one_operation() {
     assert_eq!(scratch.history("site/index.html").await, history_before);
     assert_eq!(scratch.read("site/index.html").await, b"written again");
 
+    // A `..` part is refused, not followed: `site/archive/..` is not all of `site`, and
+    // `site/archive/../gone.txt` is not `site/gone.txt`.
+    scratch.delete("site/gone.txt").await;
+    let gone_before = scratch.history("site/gone.txt").await;
+    let dotted = operations
+        .restore_or_purge_deleted(DeletedRequest {
+            operation_id: "purge-dotted".into(),
+            session_id: scratch.session.id.clone(),
+            action: DeletedAction::Purge,
+            items: vec![
+                DeletedItem {
+                    path: scratch.path("site/archive/.."),
+                    is_dir: true,
+                },
+                DeletedItem {
+                    path: scratch.path("site/archive/../gone.txt"),
+                    is_dir: false,
+                },
+            ],
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        (dotted.files, dotted.failed),
+        (0, 2),
+        "{:?}",
+        dotted.failures
+    );
+    for failure in &dotted.failures {
+        assert!(
+            failure.message.contains("stands for another folder"),
+            "{failure:?}"
+        );
+    }
+    let versioned = versions::of(scratch.files.as_ref()).unwrap();
+    let dotted_restore = versioned
+        .restore_version(
+            &scratch.path("site/archive/../gone.txt"),
+            &gone_before[1].version_id,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        dotted_restore.kind,
+        ErrorKind::InvalidInput,
+        "{dotted_restore:?}"
+    );
+    assert_eq!(scratch.history("site/gone.txt").await, gone_before);
+    versioned
+        .undelete(&scratch.path("site/gone.txt"))
+        .await
+        .unwrap();
+
     // Deleting for good leaves nothing of the folder behind, and nothing of the files kept.
     scratch.delete("site/archive").await;
     scratch.delete("site/gone.txt").await;
