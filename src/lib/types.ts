@@ -207,7 +207,9 @@ export type ErrorKind =
   | "cancelled"
   | "keychain"
   | "update"
-  | "wrongPassword";
+  | "wrongPassword"
+  | "busy"
+  | "lent";
 
 export interface AppError {
   kind: ErrorKind;
@@ -1161,6 +1163,22 @@ export interface FileStamp {
   size: number;
   /** Milliseconds since the Unix epoch. */
   modified: number | null;
+}
+
+/** Asks for part of a file for the preview pane. Mirrors `ReadRequest` in file_preview.rs. */
+export interface PreviewReadRequest {
+  /** Names the read for cancelling it. */
+  requestId: string;
+  location: DocumentLocation;
+  offset: number;
+  /** The most bytes to read; the backend returns no more than 64 MiB whatever this says. */
+  length: number;
+}
+
+/** What a preview read returns: the file as it is now, and the bytes asked for. */
+export interface PreviewRead {
+  stamp: FileStamp;
+  bytes: Uint8Array;
 }
 
 export interface TextDocument {

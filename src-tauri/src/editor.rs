@@ -509,7 +509,7 @@ fn not_a_file(path: &str) -> AppError {
     AppError::invalid("Only files can be opened in the editor").with_path(path)
 }
 
-fn local_stamp(metadata: &std::fs::Metadata) -> FileStamp {
+pub(crate) fn local_stamp(metadata: &std::fs::Metadata) -> FileStamp {
     let modified = metadata
         .modified()
         .ok()
@@ -535,7 +535,7 @@ fn existing_file(stat: Option<RemoteStat>, path: &str) -> AppResult<RemoteStat> 
     Ok(stat)
 }
 
-fn remote_stamp(stat: RemoteStat) -> FileStamp {
+pub(crate) fn remote_stamp(stat: RemoteStat) -> FileStamp {
     FileStamp {
         size: stat.size,
         modified: stat.modified.map(|seconds| seconds * 1000),
