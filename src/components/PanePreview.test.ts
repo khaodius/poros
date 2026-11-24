@@ -117,6 +117,16 @@ describe("PanePreview", () => {
     expect(props.subject).toEqual({ kind: "selection", entries: results });
   });
 
+  it("previews only rows on show, as when rows identical in both panes are hidden", async () => {
+    const shownRow = file("/srv/www/changed.css");
+    const hidden = file("/srv/www/same.css");
+    // The pane leaves hidden rows out of what it shows and of what is selected.
+    const pane = paneShowing([shownRow], hidden.path);
+    expect((await render(pane)).subject).toEqual({ kind: "nothing" });
+    const selected = paneShowing([shownRow], hidden.path, { selectedEntries: () => [shownRow] });
+    expect((await render(selected)).subject).toEqual({ kind: "file", entry: shownRow });
+  });
+
   it("trusts nothing a remembered listing says, but results are never remembered", async () => {
     const entries = [file("/srv/www/logo.png")];
     const remembered = await render(paneShowing(entries, entries[0].path, { stale: "outdated" }));
