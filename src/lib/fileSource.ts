@@ -29,7 +29,8 @@ export interface FileSource {
   /** Creates an empty file; fails if the name is taken. */
   makeFile(parent: string, name: string): Promise<string>;
   rename(path: string, newName: string): Promise<string>;
-  remove(paths: string[]): Promise<void>;
+  /** `withVersions`: S3 buckets among `paths` whose older versions and deleted files go too. */
+  remove(paths: string[], withVersions?: readonly string[]): Promise<void>;
 }
 
 const isWindows = typeof navigator !== "undefined" && /windows/i.test(navigator.userAgent);
@@ -118,9 +119,9 @@ export function remoteSource(session: SessionInfo, profile: ConnectProfile | nul
       announce(scope, [path, renamed]);
       return renamed;
     },
-    remove: async (paths) => {
+    remove: async (paths, withVersions) => {
       try {
-        await remote.remove(id, paths);
+        await remote.remove(id, paths, withVersions);
       } finally {
         // Whatever went before a failure is gone too.
         announce(scope, paths);

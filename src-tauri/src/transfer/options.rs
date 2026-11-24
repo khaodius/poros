@@ -36,6 +36,11 @@ pub struct JobOptions {
     /// Bytes per second, shared by every job with the same `limit_group`; zero is unlimited.
     pub rate_limit: u64,
     pub limit_group: String,
+    /// The version of the source a download reads, in a bucket that keeps versions; `None`
+    /// reads the file as it is now. Left out of the saved queue when unset, so queues without
+    /// such a download are saved exactly as before.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_version: Option<String>,
     /// Keeps the finished job listed whatever the setting says, for a caller that reads how
     /// it ended.
     pub keep_completed: Option<bool>,

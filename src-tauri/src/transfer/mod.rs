@@ -19,6 +19,7 @@ mod scheduled_limits;
 mod single;
 mod streamed;
 mod verify;
+mod version;
 mod worker;
 
 use std::collections::{BTreeSet, HashMap, VecDeque};
@@ -42,6 +43,7 @@ pub use queue::{
 };
 pub use scheduled_limits::{ActiveRule, LimitClock, LimitStatus};
 pub use single::{FileQueue, JobProgress, TransferRoute};
+pub use version::VersionDownload;
 #[cfg(feature = "gui")]
 pub(crate) use worker::is_partial_name;
 pub(crate) use worker::{ensure_remote_folders, keep_local_backup, keep_remote_backup};
