@@ -1,0 +1,257 @@
+import type { TranslatedArea } from "../catalog";
+
+export const sync = {
+  // components/SyncDialog
+  chooseTheLocalFolder: "Elegir la carpeta local",
+  synchronizeFolders: "Sincronizar carpetas",
+  localFolder: "Carpeta local",
+  theFolderOnThisComputer: "La carpeta de este equipo",
+  server: "Servidor",
+  noSftpServerConnected: "No hay ningún servidor SFTP conectado",
+  serverFolder: "Carpeta del servidor",
+  direction: "Dirección",
+  rsyncOptions: "Opciones de rsync",
+  schedule: "Programar...",
+  runThisSynchronizationAtSet: "Ejecutar esta sincronización a horas fijas",
+  fillInBothFoldersOf: "Rellena las dos carpetas de una conexión guardada para programarla",
+  comparingContentsOfFiles: {
+    one: "Comparando contenido: {compared} de {count} archivo",
+    many: "Comparando contenido: {compared} de {count} de archivos",
+    other: "Comparando contenido: {compared} de {count} archivos",
+  },
+  startingFromTheDefaultsIn:
+    "Parte de los valores predeterminados de Configuración, con los argumentos de rsync guardados para {siteName}. Los cambios que hagas aquí solo se aplican a esta sincronización.",
+  startingFromTheDefaultsInSettings:
+    "Parte de los valores predeterminados de Configuración. Los cambios que hagas aquí solo se aplican a esta sincronización.",
+  compareDryRun: "Comparar (simulación)",
+  compare: "Comparar",
+  listingFoldersLocalAndServer:
+    "Listando carpetas: {local} entradas locales y {remote} del servidor",
+
+  // components/SyncPlanList
+  rsync: "rsync {arguments}",
+  theOptionsAsRsyncArguments: "Las opciones como argumentos de rsync",
+  dryRunRunningThisChanges:
+    "Simulación: al ejecutarla no cambia nada y se escribe en el registro lo que ocurriría.",
+  unchangedSourceFilesWillBe: {
+    one: "También se quitará {count} archivo de origen sin cambios.",
+    many: "También se quitarán {count} de archivos de origen sin cambios.",
+    other: "También se quitarán {count} archivos de origen sin cambios.",
+  },
+  includeAll: "Incluir todo",
+  action: "Acción",
+  why: "Motivo",
+  entriesPassedOverBrokenOr: {
+    one: "{count} entrada pasada por alto: vínculos rotos o circulares, archivos especiales y carpetas que no se pudieron leer",
+    many: "{count} de entradas pasadas por alto: vínculos rotos o circulares, archivos especiales y carpetas que no se pudieron leer",
+    other:
+      "{count} entradas pasadas por alto: vínculos rotos o circulares, archivos especiales y carpetas que no se pudieron leer",
+  },
+  include: "Incluir {path}",
+  settle: "Resolver {path}",
+  leaveAsIs: "Dejar como está",
+  uploadLocalCopy: "Subir la copia local",
+  downloadServerCopy: "Descargar la copia del servidor",
+  files: { one: "{count} archivo", many: "{count} de archivos", other: "{count} archivos" },
+  all: "Todo",
+  conflicts: "Conflictos",
+  noFilesToCopy: "No hay archivos que copiar.",
+  everythingIsInSync: "Todo está sincronizado.",
+  starting: "Iniciando...",
+  settleByHand: "Resolver a mano",
+  dryRun: "Simulación",
+  synchronize: "Sincronizar",
+  localSide: "Local",
+  serverSide: "Servidor",
+  sideMissing: "{side}: no existe",
+  sideFolder: "{side}: carpeta",
+  sideFolderWithPermissions: "{side}: carpeta, {permissions}",
+  sideFile: "{side}: {size}, {modified}",
+  sideFileWithPermissions: "{side}: {size}, {modified}, {permissions}",
+  sideLink: "{side}: vínculo, {size}, {modified}",
+  sideLinkWithPermissions: "{side}: vínculo, {size}, {modified}, {permissions}",
+
+  // components/SyncSettings
+  rsync2: "rsync",
+  rsyncRunsOnTheServer:
+    "rsync se ejecuta en el servidor a través de tu conexión SSH, así que el servidor necesita tener rsync instalado. No se admiten los daemons de rsync (direcciones rsync:// en el puerto 873).",
+  useRsync: "Usar rsync",
+  useRsyncHint:
+    "Los archivos que ya existen en el otro lado se actualizan enviando solo las partes que cambiaron. Si esta opción está desactivada, o el servidor no tiene rsync, los archivos se copian completos por SFTP.",
+  forFilesLargerThan: "Para archivos de más de",
+  forFilesLargerThanHint: "Los archivos más pequeños se copian más rápido completos.",
+  rsyncOnTheServer: "rsync en el servidor",
+  rsyncOnTheServerHint: "El comando que lo inicia, para servidores donde no está en el PATH.",
+  folderSynchronization: "Sincronización de carpetas",
+  eachSynchronizationStartsWithThese:
+    "Cada sincronización parte de estas opciones. Los argumentos de rsync propios de un sitio guardado se aplican encima, y Sincronizar carpetas puede cambiar cualquiera de ellas para una ejecución.",
+  typedAsOnRsyncsCommand:
+    "Escritos como en la línea de comandos de rsync; se aplican por encima de las opciones de arriba en todas las sincronizaciones.",
+
+  // lib/sync
+  folders: { one: "{count} carpeta", many: "{count} de carpetas", other: "{count} carpetas" },
+  files2: {
+    one: "{count} archivo, {size}",
+    many: "{count} de archivos, {size}",
+    other: "{count} archivos, {size}",
+  },
+  deleteItems: {
+    one: "Eliminar {count} elemento",
+    many: "Eliminar {count} de elementos",
+    other: "Eliminar {count} elementos",
+  },
+  deletionsHeldBackByThe: {
+    one: "{count} eliminación retenida por el límite",
+    many: "{count} de eliminaciones retenidas por el límite",
+    other: "{count} eliminaciones retenidas por el límite",
+  },
+  emptyFoldersLeftOut: {
+    one: "{count} carpeta vacía omitida",
+    many: "{count} de carpetas vacías omitidas",
+    other: "{count} carpetas vacías omitidas",
+  },
+  wouldCopyFiles: {
+    one: "se copiaría {count} archivo ({size})",
+    many: "se copiarían {count} de archivos ({size})",
+    other: "se copiarían {count} archivos ({size})",
+  },
+  deleteItems2: {
+    one: "se eliminaría {count} elemento",
+    many: "se eliminarían {count} de elementos",
+    other: "se eliminarían {count} elementos",
+  },
+  createFolders: {
+    one: "se crearía {count} carpeta",
+    many: "se crearían {count} de carpetas",
+    other: "se crearían {count} carpetas",
+  },
+  queuedFiles: {
+    one: "Se agregó a la cola {count} archivo ({size})",
+    many: "Se agregaron a la cola {count} de archivos ({size})",
+    other: "Se agregaron a la cola {count} archivos ({size})",
+  },
+  deletedItems: {
+    one: "se eliminó {count} elemento",
+    many: "se eliminaron {count} de elementos",
+    other: "se eliminaron {count} elementos",
+  },
+  itemsToDeleteOnceCopying: {
+    one: "{count} elemento por eliminar cuando termine la copia",
+    many: "{count} de elementos por eliminar cuando termine la copia",
+    other: "{count} elementos por eliminar cuando termine la copia",
+  },
+  createdFolders: {
+    one: "se creó {count} carpeta",
+    many: "se crearon {count} de carpetas",
+    other: "se crearon {count} carpetas",
+  },
+  createdLinks: {
+    one: "se creó {count} vínculo",
+    many: "se crearon {count} de vínculos",
+    other: "se crearon {count} vínculos",
+  },
+  updatedFiles: {
+    one: "se actualizó {count} archivo",
+    many: "se actualizaron {count} de archivos",
+    other: "se actualizaron {count} archivos",
+  },
+  removedUnchangedSourceFiles: {
+    one: "se quitó {count} archivo de origen sin cambios",
+    many: "se quitaron {count} de archivos de origen sin cambios",
+    other: "se quitaron {count} archivos de origen sin cambios",
+  },
+  localToServer: "Local a servidor",
+  makesTheServerFolderMatch: "Hace que la carpeta del servidor coincida con la local.",
+  serverToLocal: "Servidor a local",
+  makesTheLocalFolderMatch: "Hace que la carpeta local coincida con la del servidor.",
+  bothWays: "En ambos sentidos",
+  copiesNewFilesEachWay:
+    "Copia los archivos nuevos en cada sentido; donde los dos lados tienen un archivo, gana el más reciente.",
+  deleteLocal: "Eliminar en local",
+  deleteOnServer: "Eliminar en el servidor",
+  conflict: "Conflicto",
+  plannedUpload: "Subir {total}",
+  plannedDownload: "Descargar {total}",
+  conflictsLeft: {
+    one: "{count} conflicto se deja como está",
+    many: "{count} de conflictos se dejan como están",
+    other: "{count} conflictos se dejan como están",
+  },
+  plannedSentences: "{parts}.",
+  plannedSeparator: ". ",
+  nothingSelected: "No hay nada seleccionado.",
+  onlyInTheLocalFolder: "Solo en la carpeta local",
+  onlyOnTheServer: "Solo en el servidor",
+  sizeOrTimeDiffers: "El tamaño o la hora difieren",
+  contentsDiffer: "El contenido difiere",
+  copiedWithoutComparing: "Se copia sin comparar",
+  newerInTheLocalFolder: "Más reciente en la carpeta local",
+  newerOnTheServer: "Más reciente en el servidor",
+  notInTheLocalFolder: "No está en la carpeta local",
+  notOnTheServer: "No está en el servidor",
+  typeDiffers: "{here} aquí, {there} en el servidor",
+  differsWithTheSameTimeOnBothSides: "Difiere, con la misma hora en los dos lados",
+  shorterOnTheTarget: "Más corto en el destino; solo se envía el resto",
+  sameContentsOnlyTheTimeOrPermissions:
+    "Mismo contenido; solo se establecen la hora o los permisos",
+  nothingHere: "Nada",
+  folderHere: "Carpeta",
+  linkHere: "Vínculo",
+  fileHere: "Archivo",
+  nothingThere: "nada",
+  folderThere: "carpeta",
+  linkThere: "vínculo",
+  fileThere: "archivo",
+  countUnchanged: {
+    one: "{count} sin cambios",
+    many: "{count} de elementos sin cambios",
+    other: "{count} sin cambios",
+  },
+  countKeptAsTheyAre: {
+    one: "{count} se conserva tal cual",
+    many: "{count} de elementos se conservan tal cual",
+    other: "{count} se conservan tal cual",
+  },
+  countOnlyInTheLocalFolderNotDeleted: {
+    one: "{count} solo en la carpeta local, no eliminado",
+    many: "{count} de elementos solo en la carpeta local, no eliminados",
+    other: "{count} solo en la carpeta local, no eliminados",
+  },
+  countOnlyOnTheServerNotDeleted: {
+    one: "{count} solo en el servidor, no eliminado",
+    many: "{count} de elementos solo en el servidor, no eliminados",
+    other: "{count} solo en el servidor, no eliminados",
+  },
+  countProtectedFromDeletion: {
+    one: "{count} protegido contra la eliminación",
+    many: "{count} de elementos protegidos contra la eliminación",
+    other: "{count} protegidos contra la eliminación",
+  },
+  countNewNotCreated: {
+    one: "{count} nuevo, no creado",
+    many: "{count} de elementos nuevos, no creados",
+    other: "{count} nuevos, no creados",
+  },
+  countOutsideTheSizeLimits: {
+    one: "{count} fuera de los límites de tamaño",
+    many: "{count} de elementos fuera de los límites de tamaño",
+    other: "{count} fuera de los límites de tamaño",
+  },
+  countExcluded: {
+    one: "{count} excluido",
+    many: "{count} de elementos excluidos",
+    other: "{count} excluidos",
+  },
+  countPassedOver: {
+    one: "{count} pasado por alto",
+    many: "{count} de elementos pasados por alto",
+    other: "{count} pasados por alto",
+  },
+  dryRunSummary: "Simulación: {parts}. No se cambió nada; el registro tiene los detalles.",
+  runSummary: "{done}.",
+  runSummaryWithFailures: {
+    one: "{done}. {count} cambio falló; el registro tiene los detalles.",
+    many: "{done}. {count} de cambios fallaron; el registro tiene los detalles.",
+    other: "{done}. {count} cambios fallaron; el registro tiene los detalles.",
+  },
+} satisfies TranslatedArea<"sync">;

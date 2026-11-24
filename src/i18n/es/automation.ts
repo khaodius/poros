@@ -1,0 +1,144 @@
+import type { TranslatedArea } from "../catalog";
+
+export const automation = {
+  // components/AutomationSettings
+  whenTheTransferQueueFinishes: "Cuando termine la cola de transferencias",
+  then: "Después",
+  thenHint:
+    "También en la barra de herramientas de la cola. Todo salvo un comando hace una cuenta atrás de 30 segundos antes, para que puedas detenerlo.",
+  onlyTheNextTime: "Solo la próxima vez",
+  onlyTheNextTimeHint: "Vuelve a No hacer nada después de ocurrir.",
+  command: "Comando",
+  commandHint:
+    "Para Ejecutar un comando; se ejecuta en este equipo. {done}, {failed}, {skipped} y {bytes} contienen los totales.",
+  aCommandOrScript: "Un comando o script",
+  showANotification: "Mostrar una notificación",
+  onlyWhenPorosIsIn: "Solo cuando Poros está en segundo plano",
+  playASound: "Reproducir un sonido",
+  serverCommands: "Comandos del servidor",
+  listedUnderCommandsWhenYou:
+    "Aparecen en Comandos al hacer clic con el botón derecho en un panel de servidor. Se ejecutan en el shell del servidor, en la carpeta mostrada, con estos valores:",
+  scheduledTasks: "Tareas programadas",
+  synchronizeFoldersOrRunCommands: "Sincronizar carpetas o ejecutar comandos a horas fijas",
+  synchronizeFoldersOrRunCommandsHint:
+    "Las tareas se ejecutan mientras Poros está abierto, en segundo plano, mediante conexiones guardadas.",
+  output: "Salida",
+  openAWindowWithWhat:
+    "Abrir una ventana con lo que imprime el comando; desactivado, se ejecuta sin mostrar nada",
+  reloadTheServersFoldersWhen: "Volver a cargar las carpetas del servidor al terminar el comando",
+  deleteCommand: "Eliminar comando",
+  nameOfTheNewCommand: "Nombre del nuevo comando",
+  newCommand: "Nuevo comando",
+
+  // components/CommandOutputDialog
+  earlierOutputWasDropped: "Se descartó la salida anterior.",
+  theCommandPrintedNothing: "El comando no imprimió nada.",
+  running: "En ejecución",
+  commandIn: "{command} en {folder}",
+  commandsIn: {
+    one: "{count} comando en {folder}",
+    many: "{count} de comandos en {folder}",
+    other: "{count} comandos en {folder}",
+  },
+  theLoginFolder: "la carpeta de inicio de sesión",
+
+  // components/RunCommandDialog
+  runACommand: "Ejecutar un comando",
+  runACommandOnThe: "Ejecutar un comando en el servidor",
+  commandToRunIn: "Comando que se ejecutará en {folder}",
+  refreshTheServersFoldersWhen: "Actualizar las carpetas del servidor al terminar",
+  selectFilesOrFoldersTo: "Selecciona archivos o carpetas para rellenar los marcadores.",
+  run: "Ejecutar",
+
+  // components/WhenDoneControl
+  whatHappensWhenTheQueue: "Qué ocurre cuando termina la cola",
+  whenDone: "Al terminar",
+  whenTheQueueFinishes: "Cuando termine la cola",
+
+  // components/WhenDoneCountdown
+  seconds: { one: "{count} segundo", many: "{count} de segundos", other: "{count} segundos" },
+
+  // components/commandMenu
+  commands: "Comandos",
+  runACommand2: "Ejecutar un comando...",
+  editCommands: "Editar comandos...",
+
+  // lib/automation
+  queueFinishedClosingPorosIn:
+    "La cola de transferencias ha terminado. Poros se cerrará en {seconds}.",
+  queueFinishedLockingIn:
+    "La cola de transferencias ha terminado. El equipo se bloqueará en {seconds}.",
+  queueFinishedSleepingIn:
+    "La cola de transferencias ha terminado. El equipo entrará en suspensión en {seconds}.",
+  queueFinishedHibernatingIn:
+    "La cola de transferencias ha terminado. El equipo entrará en hibernación en {seconds}.",
+  queueFinishedLoggingOffIn:
+    "La cola de transferencias ha terminado. La sesión se cerrará en {seconds}.",
+  queueFinishedShuttingDownIn:
+    "La cola de transferencias ha terminado. El equipo se apagará en {seconds}.",
+  filesTransferredIn: {
+    one: "{count} archivo transferido ({size}) en {duration}",
+    many: "{count} de archivos transferidos ({size}) en {duration}",
+    other: "{count} archivos transferidos ({size}) en {duration}",
+  },
+  doNothing: "No hacer nada",
+  closePoros: "Cerrar Poros",
+  lockTheComputer: "Bloquear el equipo",
+  sleep: "Suspender",
+  hibernate: "Hibernar",
+  logOff: "Cerrar sesión",
+  shutDown: "Apagar",
+  closingPoros: "Cerrando Poros",
+  lockingTheComputer: "Bloqueando el equipo",
+  puttingTheComputerToSleep: "Suspendiendo el equipo",
+  hibernatingTheComputer: "Hibernando el equipo",
+  loggingOff: "Cerrando sesión",
+  shuttingDownTheComputer: "Apagando el equipo",
+  confirmCloseNow: "Cerrar ahora",
+  confirmLockNow: "Bloquear ahora",
+  confirmSleepNow: "Suspender ahora",
+  confirmHibernateNow: "Hibernar ahora",
+  confirmLogOffNow: "Cerrar sesión ahora",
+  confirmShutDownNow: "Apagar ahora",
+  transfersFinishedWithErrors: "Transferencias terminadas con errores",
+  transfersFinished: "Transferencias terminadas",
+  failedCount: { one: "{count} con error", many: "{count} con error", other: "{count} con error" },
+  skippedCount: { one: "{count} omitido", many: "{count} omitidos", other: "{count} omitidos" },
+
+  // lib/commands
+  eachSelectedItemsFullPath:
+    "la ruta completa de cada elemento seleccionado, una ejecución por elemento",
+  eachSelectedItemsNameRunning:
+    "el nombre de cada elemento seleccionado, una ejecución por elemento",
+  theFullPathsOfAll: "las rutas completas de todos los elementos seleccionados",
+  theNamesOfAllSelected: "los nombres de todos los elementos seleccionados",
+  theFolderShown: "la carpeta mostrada",
+  keepPlaceholdersOutOfAnotherShell:
+    "No pongas marcadores dentro de una cadena de comando que lea otro shell, como {bashExample} o {sshExample}: ese shell leería un nombre como parte de su comando.",
+  cannotTellHowTheShellReads:
+    "Poros no puede saber con certeza cómo lee el shell este comando: tiene un here-document, {ansiQuoted}, o una comilla o un corchete sin cerrar. Cada marcador entra como {parameter} y así sucesivamente, lo que mantiene un nombre como una sola palabra solo fuera de las comillas.",
+  commandWithParameters: "{command} con {parameters}",
+  stoppedAfter: "Detenido después de {elapsed}",
+  endedBySignal: "Terminado por la señal {signal} después de {elapsed}",
+  endedWithoutStatus: "Terminado sin estado de salida después de {elapsed}",
+  exitedWithStatus: "Salió con el estado {status} después de {elapsed}",
+  finishedIn: "Terminado en {elapsed}",
+
+  // state/commandStore
+  stopped: "Detenido",
+  nothingToRun: "Nada que ejecutar",
+  allCommandsFinished: {
+    one: "Terminó el comando",
+    many: "Terminaron los {count} de comandos",
+    other: "Terminaron los {count} comandos",
+  },
+  ofCommandsFailed: {
+    one: "Falló {count} de {finished} comandos",
+    many: "Fallaron {count} de {finished} comandos",
+    other: "Fallaron {count} de {finished} comandos",
+  },
+
+  // state/whenDone
+  whenTheQueueFinished: "Al terminar la cola",
+  theCommandAfterTheQueue: "El comando tras terminar la cola",
+} satisfies TranslatedArea<"automation">;
