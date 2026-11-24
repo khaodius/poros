@@ -3945,6 +3945,7 @@ dependencies = [
  "md4",
  "minisign-verify",
  "percent-encoding",
+ "pkcs8",
  "png 0.18.1",
  "quick-xml 0.42.0",
  "regex",

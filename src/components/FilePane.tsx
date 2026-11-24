@@ -92,6 +92,7 @@ import { useClipboardStore } from "../state/clipboardStore";
 import { beginDrag, useDragStore, type DropHandler } from "../state/dragStore";
 import { dragFilesOut } from "../state/dragOut";
 import { openInEditor } from "../state/editorActions";
+import { openWithDefault, useExternalEditStore, type OpenTarget } from "../state/externalEditStore";
 import {
   deleteOnServer,
   dropAction,
@@ -140,6 +141,7 @@ import { FileList, type MenuPosition } from "./FileList";
 import { FolderCompareBar } from "./FolderCompareBar";
 import { COMPARE_FOLDERS_SHORTCUT, folderCompareMenuItems } from "./folderCompareMenu";
 import { NewVaultDialog } from "./NewVaultDialog";
+import { openMenuItems } from "./openWithMenu";
 import { PanePreview } from "./PanePreview";
 import { PathBar } from "./PathBar";
 import { PreviewSplit } from "./PreviewSplit";
@@ -823,6 +825,16 @@ export function FilePane({
     void openInEditor(location, ownGroup());
   };
 
+  const openTarget = (entry: FileEntry): OpenTarget =>
+    source.kind === "remote" && sessionId
+      ? { side: "remote", sessionId, path: entry.path, name: entry.name }
+      : { side: "local", path: entry.path, name: entry.name };
+
+  /** Open: the file's own program, with Ctrl+Enter. */
+  const openExternally = (entry: FileEntry) => {
+    if (!isDirLike(entry)) void openWithDefault(openTarget(entry));
+  };
+
   const cutOrCopy = (mode: PlaceMode, entries: FileEntry[]) => {
     const self = getPane(tabId);
     if (self) putOnClipboard(mode, self, entries);
@@ -846,6 +858,12 @@ export function FilePane({
   const activateFile = (entry: FileEntry) => {
     if (doubleClickFile === "transfer") transferToOtherSide(tabId, [entry]);
     else if (doubleClickFile === "edit") edit(entry);
+    else if (doubleClickFile === "open") openExternally(entry);
+    else if (doubleClickFile === "ask") {
+      useExternalEditStore.setState({
+        prompt: { kind: "choose", target: openTarget(entry), nearGroupId: ownGroup() },
+      });
+    }
   };
 
   const transferMenuItem = (targets: FileEntry[]): MenuItem => {
@@ -1157,6 +1175,7 @@ export function FilePane({
         : []),
       ...(entry && !isDirLike(entry)
         ? [
+            ...openMenuItems(openTarget(entry), ownGroup()),
             {
               label: "Edit",
               icon: <FilePen size={14} />,
@@ -1585,6 +1604,7 @@ export function FilePane({
               onRenameSubmit={renameEntry}
               onRenameCancel={() => setRenaming(null)}
               onEdit={edit}
+              onOpenExternally={openExternally}
               onNewFolder={openNewFolder}
               onNewFile={openNewFile}
               onEditPath={() => setPathEditRequest((count) => count + 1)}

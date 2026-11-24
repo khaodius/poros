@@ -2,8 +2,9 @@ import { check, type Update } from "@tauri-apps/plugin-updater";
 import { create } from "zustand";
 import { pluralize } from "../lib/format";
 import { toAppError, updates } from "../lib/ipc";
-import type { UpdateProgress } from "../lib/types";
+import type { ExternalEdit, UpdateProgress } from "../lib/types";
 import { useUnsavedStore } from "./editorRegistry";
+import { useExternalEditStore } from "./externalEditStore";
 import { useLogStore } from "./logStore";
 import { saveSettingsSection, useSettingsStore } from "./settingsStore";
 import { useTransferStore } from "./transferStore";
@@ -144,6 +145,7 @@ export function useRestartWarnings(): string[] {
   );
   const keepQueue = useSettingsStore((state) => state.settings.transfers.keepQueue);
   const unsavedFiles = useUnsavedStore((state) => Object.keys(state.tabs).length);
+  const edits = useExternalEditStore((state) => state.edits);
   const warnings: string[] = [];
   if (pendingTransfers > 0) {
     warnings.push(
@@ -156,7 +158,28 @@ export function useRestartWarnings(): string[] {
       `Unsaved changes in ${pluralize(unsavedFiles, "file")} will be lost when Poros restarts.`,
     );
   }
+  const editsWarning = notUploadedWarning(edits);
+  if (editsWarning) warnings.push(editsWarning);
   return warnings;
+}
+
+/** What restarting does to saves made in other programs that have not reached their servers. */
+export function notUploadedWarning(edits: readonly ExternalEdit[]): string | null {
+  const held = edits.filter((edit) => edit.state !== "watching" && edit.state !== "downloading");
+  if (held.length === 0) return null;
+  const inVaults = held.filter((edit) => edit.inVault).length;
+  const one = held.length === 1;
+  const them = one ? "it" : "them";
+  const files = one
+    ? "A file open in another program holds a save"
+    : `${held.length} files open in other programs hold saves`;
+  const after =
+    inVaults === 0
+      ? `Poros offers to upload ${them} after the restart.`
+      : inVaults === held.length
+        ? `Restarting wipes ${them}, as vault files are not kept unencrypted.`
+        : "Those from vaults are wiped; Poros offers to upload the others after the restart.";
+  return `${files} not uploaded yet. ${after}`;
 }
 
 export async function restartToUpdate(): Promise<void> {

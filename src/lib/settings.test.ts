@@ -24,6 +24,50 @@ describe("sanitizeSettings", () => {
     expect(settings.log.levels).toEqual({ info: true, warn: false, error: true, server: true });
   });
 
+  it("keeps the programs files open in, and the new double-click choices", () => {
+    const before = sanitizeSettings({ interface: { doubleClickFile: "edit" } });
+    expect(before.editing).toEqual({ programs: [], uploadOnSave: true, keepMinutes: 10 });
+    const settings = sanitizeSettings({
+      interface: { doubleClickFile: "ask" },
+      editing: {
+        uploadOnSave: false,
+        programs: [
+          {
+            id: "gimp",
+            name: "GIMP",
+            command: "gimp",
+            arguments: "{file}",
+            patterns: ["*.psd", 4],
+          },
+          { id: "empty", name: "No command", command: " " },
+          { id: "odd", command: "code", arguments: 7 },
+          { id: "gimp", command: "kate" },
+          { command: "nano" },
+          "not a program",
+        ],
+      },
+    });
+    expect(settings.interface.doubleClickFile).toBe("ask");
+    expect(
+      sanitizeSettings({ interface: { doubleClickFile: "open" } }).interface.doubleClickFile,
+    ).toBe("open");
+    expect(settings.editing.uploadOnSave).toBe(false);
+    expect(settings.editing.keepMinutes).toBe(10);
+    const [gimp, code, kate, nano] = settings.editing.programs;
+    expect(settings.editing.programs).toHaveLength(4);
+    expect(gimp).toEqual({
+      id: "gimp",
+      name: "GIMP",
+      command: "gimp",
+      arguments: "{file}",
+      patterns: ["*.psd"],
+    });
+    expect(code).toEqual({ id: "odd", name: "", command: "code", arguments: "", patterns: [] });
+    // A repeated id and a missing one are replaced as the backend replaces them.
+    expect(kate).toMatchObject({ id: "program-4", command: "kate" });
+    expect(nano).toMatchObject({ id: "program-5", command: "nano" });
+  });
+
   it("keeps the cloud apps and the FXP switch", () => {
     const settings = sanitizeSettings({
       transfers: { fxp: false },

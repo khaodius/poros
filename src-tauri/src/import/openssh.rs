@@ -5,12 +5,15 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 
-use super::{parse_port, split_user_host, Candidate, Input, Parsed};
+use super::{parse_port, read_file, split_user_host, Candidate, Input, Parsed, MAX_FILE_BYTES};
 use crate::connections::AuthType;
 use crate::protocol::Protocol;
 
 /// How deep `Include` files may nest, as in OpenSSH.
 const MAX_INCLUDE_DEPTH: usize = 16;
+/// How many files `Include` lines may read in all, since each file read can name several
+/// more, itself included. Together they may hold as much as one config file.
+const MAX_INCLUDED_FILES: usize = 256;
 
 pub fn looks_like_config(text: &str) -> bool {
     text.lines().any(|line| {
@@ -53,6 +56,9 @@ struct Config {
     blocks: Vec<Block>,
     base: Option<PathBuf>,
     warnings: Vec<String>,
+    /// The files `Include` lines read so far, and their size in all.
+    included_files: usize,
+    included_bytes: u64,
 }
 
 impl Config {
@@ -107,14 +113,26 @@ impl Config {
             _ => PathBuf::from(&expanded),
         };
         for file in glob(&path) {
-            match std::fs::read(&file) {
-                Ok(bytes) => {
-                    let text = String::from_utf8_lossy(&bytes).into_owned();
-                    self.read(&text, depth + 1);
+            if self.included_files >= MAX_INCLUDED_FILES || self.included_bytes > MAX_FILE_BYTES {
+                self.warnings.push(
+                    "Include lines name more files than Poros reads; the rest were left out."
+                        .to_string(),
+                );
+                return;
+            }
+            self.included_files += 1;
+            match read_file(&file, Vec::new()) {
+                Ok(included) => {
+                    self.included_bytes += included.text.len() as u64;
+                    self.read(&included.text, depth + 1);
                 }
-                Err(error) => self
-                    .warnings
-                    .push(format!("{} could not be read: {error}", file.display())),
+                // An error that carries the path leaves it out of its message.
+                Err(error) if error.path.is_some() => self.warnings.push(format!(
+                    "{} could not be read: {}",
+                    file.display(),
+                    error.message
+                )),
+                Err(error) => self.warnings.push(error.message),
             }
         }
     }
@@ -200,6 +218,8 @@ pub fn parse(input: &Input) -> Parsed {
             .and_then(Path::parent)
             .map(Path::to_path_buf),
         warnings: Vec::new(),
+        included_files: 0,
+        included_bytes: 0,
     };
     config.read(&input.text, 0);
     let mut parsed = Parsed::default();
@@ -554,6 +574,66 @@ mod tests {
             .map(|site| site.connection.name.as_str())
             .collect();
         assert_eq!(names, vec!["work", "home"]);
+    }
+
+    fn parse_file(path: PathBuf) -> Parsed {
+        let mut input = Input::from_text("config", std::fs::read_to_string(&path).unwrap());
+        input.path = Some(path);
+        parse(&input)
+    }
+
+    fn names(parsed: &Parsed) -> Vec<&str> {
+        parsed
+            .candidates
+            .iter()
+            .map(|site| site.connection.name.as_str())
+            .collect()
+    }
+
+    /// Each read of the file names it twice more, which depth alone limits to 65535 reads.
+    #[test]
+    fn stops_following_include_files_after_a_few_hundred() {
+        let folder = tempfile::tempdir().unwrap();
+        let config = folder.path().join("config");
+        std::fs::write(
+            &config,
+            "Include config config\nHost web\n  HostName web.example.com\n",
+        )
+        .unwrap();
+        let parsed = parse_file(config);
+        assert_eq!(names(&parsed), vec!["web"]);
+        assert!(
+            parsed
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("more files than Poros reads")),
+            "{:?}",
+            parsed.warnings
+        );
+    }
+
+    #[test]
+    fn leaves_out_include_files_too_large_to_be_a_config() {
+        let folder = tempfile::tempdir().unwrap();
+        let mut huge = String::from("Host huge\n");
+        huge.push_str(&"# padding\n".repeat(2 * 1024 * 1024));
+        std::fs::write(folder.path().join("huge.conf"), huge).unwrap();
+        let config = folder.path().join("config");
+        std::fs::write(
+            &config,
+            "Include huge.conf\nHost home\n  HostName home.lan\n",
+        )
+        .unwrap();
+        let parsed = parse_file(config);
+        assert_eq!(names(&parsed), vec!["home"]);
+        assert!(
+            parsed
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("huge.conf is too big")),
+            "{:?}",
+            parsed.warnings
+        );
     }
 
     #[test]

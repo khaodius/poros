@@ -17,6 +17,7 @@ mod winscp;
 mod xml;
 
 use std::collections::{HashMap, HashSet};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -334,14 +335,24 @@ fn walk(
 fn read_file(path: &Path, folder: Vec<String>) -> AppResult<Input> {
     let with_path =
         |error: std::io::Error| AppError::from(error).with_path(path.display().to_string());
-    let size = std::fs::metadata(path).map_err(with_path)?.len();
-    if size > MAX_FILE_BYTES {
-        return Err(AppError::invalid(format!(
+    let too_big = || {
+        AppError::invalid(format!(
             "{} is too big to be a list of sites",
             path.display()
-        )));
+        ))
+    };
+    let size = std::fs::metadata(path).map_err(with_path)?.len();
+    if size > MAX_FILE_BYTES {
+        return Err(too_big());
     }
-    let bytes = std::fs::read(path).map_err(with_path)?;
+    // A device, or a file still being written, can hold more than its size says.
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .and_then(|file| file.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes))
+        .map_err(with_path)?;
+    if bytes.len() as u64 > MAX_FILE_BYTES {
+        return Err(too_big());
+    }
     let text = crate::text::decode(&bytes)
         .map_err(|_| {
             AppError::invalid(format!(
@@ -782,6 +793,18 @@ mod tests {
         assert_eq!(site.connection.port, 990);
         let site = Candidate::new(Protocol::Sftp, "x", "h", Some(0), "");
         assert_eq!(site.connection.port, 22);
+    }
+
+    /// A device, like a file still being written, can hold more than its size says: this one
+    /// says nothing and never ends.
+    #[cfg(unix)]
+    #[test]
+    fn stops_reading_a_file_at_the_size_limit_whatever_its_size_says() {
+        let folder = tempfile::tempdir().unwrap();
+        let site_file = folder.path().join("sitemanager.xml");
+        std::os::unix::fs::symlink("/dev/zero", &site_file).unwrap();
+        let error = read_file(&site_file, Vec::new()).unwrap_err();
+        assert!(error.message.contains("too big"), "{}", error.message);
     }
 
     #[test]

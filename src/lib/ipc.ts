@@ -24,6 +24,12 @@ import type {
   DragOutRequest,
   EnqueueRequest,
   ExistsAction,
+  ExternalEdit,
+  ExternalEditsUpdate,
+  ExternalLeftover,
+  ExternalOpenOutcome,
+  ExternalOpenRequest,
+  ExternalResolution,
   FileDetails,
   FileEntry,
   FileLocation,
@@ -43,6 +49,7 @@ import type {
   MoveCopyRequest,
   OperationProgress,
   OperationSummary,
+  OpenWith,
   OptionCheck,
   OutputChunk,
   PermissionRequest,
@@ -97,6 +104,7 @@ export const SYNC_PROGRESS_EVENT = "poros://sync-progress";
 export const QUEUE_FINISHED_EVENT = "poros://queue-finished";
 export const COMMAND_OUTPUT_EVENT = "poros://command-output";
 export const FILE_OPERATION_EVENT = "poros://file-operation";
+export const EXTERNAL_EDIT_EVENT = "poros://external-edit";
 /** Sent by a torn-out window to hand a tab back to the main window. */
 export const RETURN_TAB_EVENT = "poros://return-tab";
 /** Sent by the window a tab is dragged out of to the window under the pointer. */
@@ -356,6 +364,35 @@ export const editor = {
   close: (documentId: string) => call<void>("editor_close", { documentId }),
 };
 
+/** Files opened in the user's own programs: server files through a working copy. */
+export const external = {
+  /** Downloads a server file to a working copy and opens it; saves are uploaded. */
+  open: (request: ExternalOpenRequest) =>
+    call<ExternalOpenOutcome>("external_edit_open", { request }),
+  /** Opens a file on this computer where it is. */
+  openLocal: (path: string, openWith: OpenWith) =>
+    call<ExternalOpenOutcome>("external_open_local", { path, with: openWith }),
+  list: () => call<ExternalEdit[]>("external_edit_list"),
+  upload: (id: string) => call<void>("external_edit_upload", { id }),
+  resolve: (id: string, resolution: ExternalResolution) =>
+    call<void>("external_edit_resolve", { id, resolution }),
+  /** Opens the working copy again, with `openWith` or what it was opened with before. */
+  reopen: (id: string, openWith: OpenWith | null) =>
+    call<void>("external_edit_reopen", { id, with: openWith }),
+  reveal: (id: string) => call<void>("external_edit_reveal", { id }),
+  /** Stops following the file and deletes its working copy. */
+  stop: (id: string) => call<void>("external_edit_stop", { id }),
+  /** The edits holding something the server does not. */
+  unsaved: () => call<ExternalEdit[]>("external_edit_unsaved"),
+  /** Uploads what the edits hold and waits; returns the ones that still could not be. */
+  flush: (ids: string[]) => call<ExternalEdit[]>("external_edit_flush", { ids }),
+  leftovers: () => call<ExternalLeftover[]>("external_edit_leftovers"),
+  recover: (id: string, sessionId: string) =>
+    call<ExternalEdit>("external_edit_recover", { id, sessionId }),
+  revealLeftover: (id: string) => call<void>("external_edit_reveal_leftover", { id }),
+  discardLeftover: (id: string) => call<void>("external_edit_discard_leftover", { id }),
+};
+
 export const filePreview = {
   /** Part of a file, as raw bytes, with the file's size and time as they are now. */
   read: async (request: PreviewReadRequest): Promise<PreviewRead> => {
@@ -534,3 +571,5 @@ export const onCommandOutput = (handler: (chunk: OutputChunk) => void) =>
   subscribe(COMMAND_OUTPUT_EVENT, handler);
 export const onFileOperation = (handler: (progress: OperationProgress) => void) =>
   subscribe(FILE_OPERATION_EVENT, handler);
+export const onExternalEdits = (handler: (update: ExternalEditsUpdate) => void) =>
+  subscribe(EXTERNAL_EDIT_EVENT, handler);

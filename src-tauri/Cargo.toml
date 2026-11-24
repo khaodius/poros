@@ -32,6 +32,11 @@ required-features = ["cli"]
 name = "sftp_server"
 required-features = ["gui"]
 
+# Files open in other programs, which only the app does.
+[[test]]
+name = "external_editor"
+required-features = ["gui"]
+
 [[test]]
 name = "cli"
 required-features = ["cli"]
@@ -76,6 +81,9 @@ futures = "0.3"
 # so Windows contributors don't need NASM/CMake.
 russh = { version = "0.64", default-features = false, features = ["ring", "flate2", "rsa"] }
 russh-sftp = "3.0.1"
+# Reads the passphrase settings of encrypted PKCS#8 keys before russh derives the key. The
+# version russh decodes them with.
+pkcs8 = { version = "0.11", features = ["encryption"] }
 thiserror = "2"
 uuid = { version = "1", features = ["v4"] }
 dirs = "6"

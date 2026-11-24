@@ -16,6 +16,7 @@ mod pieces;
 mod published;
 mod queue;
 mod scheduled_limits;
+mod single;
 mod streamed;
 mod verify;
 mod worker;
@@ -40,6 +41,7 @@ pub use queue::{
     ChangedDirectory, Direction, JobId, JobKind, JobSnapshot, JobState, QueueCounts, Side,
 };
 pub use scheduled_limits::{ActiveRule, LimitClock, LimitStatus};
+pub use single::{FileQueue, JobProgress, TransferRoute};
 #[cfg(feature = "gui")]
 pub(crate) use worker::is_partial_name;
 pub(crate) use worker::{ensure_remote_folders, keep_local_backup, keep_remote_backup};
@@ -366,13 +368,16 @@ impl Shared {
         self.settings.read().unwrap().clone()
     }
 
-    /// The job writes into a folder that is not kept between runs.
+    /// The job writes into a folder that is not kept between runs, or belongs to a part of
+    /// the app that queues it again itself.
     fn is_unsaved(&self, spec: &JobSpec) -> bool {
-        self.unsaved_folders
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|folder| downloads_into(spec, folder))
+        spec.options.as_ref().is_some_and(|options| options.quiet)
+            || self
+                .unsaved_folders
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|folder| downloads_into(spec, folder))
     }
 
     fn target(&self, session_id: &str) -> AppResult<Arc<SessionTarget>> {
@@ -393,6 +398,16 @@ impl Shared {
             .unwrap()
             .entry(session.id.clone())
             .or_insert_with(|| Arc::new(SessionTarget::for_session(session)));
+    }
+
+    /// Keeps a target a caller held on to for a session that may have closed since, as
+    /// [`Self::register`] keeps one for an open session, and under the same lock.
+    fn keep_target(&self, _queue: &Queue, target: &Arc<SessionTarget>) {
+        self.targets
+            .lock()
+            .unwrap()
+            .entry(target.session_id.clone())
+            .or_insert_with(|| target.clone());
     }
 
     /// Forgets the servers of sessions that no job in the queue involves any more.

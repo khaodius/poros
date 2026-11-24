@@ -7,6 +7,7 @@ import { transfers } from "../lib/ipc";
 import { allTabs, isRestoring } from "../lib/layout";
 import { sessionShowing } from "../lib/vaults";
 import { savedOrDiscarded, unsavedOnlyThrough } from "./editorActions";
+import { editsAllowLock } from "./externalEditStore";
 import { useLayoutStore } from "./layoutStore";
 import { useLogStore } from "./logStore";
 import { getPane } from "./paneRegistry";
@@ -55,8 +56,11 @@ export async function lockVault(sessionId: string): Promise<void> {
   useLogStore.getState().write("info", `Locked vault ${root}`, parentSessionId);
 }
 
-/** Locks a vault, asking first when transfers for it are still in the queue or files in it have
- * unsaved changes, which nothing can save once it is locked. */
+/**
+ * Locks a vault, asking first when files in it have unsaved changes, which nothing can save once
+ * it is locked, when files from it are open in other programs, which locking ends, or when
+ * transfers for it are still in the queue.
+ */
 export async function requestLockVault(sessionId: string): Promise<void> {
   const info = useSessionStore.getState().sessions[sessionId]?.info;
   if (!info?.vault) return;
@@ -65,6 +69,9 @@ export async function requestLockVault(sessionId: string): Promise<void> {
     if (await savedOrDiscarded(unsaved)) await requestLockVault(sessionId);
     return;
   }
+  if (!(await editsAllowLock(sessionId, info.vault.name))) return;
+  // Locked meanwhile, as when its server's tab closed.
+  if (!useSessionStore.getState().sessions[sessionId]) return;
   const confirm = useSettingsStore.getState().settings.interface.confirmCloseWithTransfers;
   const pendingTransfers = confirm ? await transfers.sessionJobs(sessionId).catch(() => 0) : 0;
   if (pendingTransfers > 0) {

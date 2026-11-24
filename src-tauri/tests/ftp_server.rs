@@ -1004,6 +1004,64 @@ async fn resumes_interrupted_transfers() {
     fixture.close().await;
 }
 
+/// A write and a read that start partway through a file, in passive and active mode, on
+/// plain and encrypted connections.
+#[tokio::test]
+async fn continues_files_from_an_offset_in_every_mode() {
+    for server in every_ftp_server() {
+        for ftp_active in [false, true] {
+            let mut fixture = Fixture::new();
+            let index = fixture
+                .open_with(
+                    ConnectProfile {
+                        ftp_active,
+                        ..profile(&server, &server.password)
+                    },
+                    "offset",
+                )
+                .await;
+            let Connected { files, remote, .. } = fixture.at(index);
+            let mode = format!("port {}, active {ftp_active}", server.port);
+            let path = remote_path::join(remote, "partial.bin");
+            let offset = 123_457;
+            // A marked start shows that the part already on the server is kept.
+            let mut expected = pattern(300_000, 12);
+            expected[..100].fill(0);
+            write_remote(files, &path, &expected[..offset]).await;
+
+            let mut stream = files
+                .clone()
+                .open_write(WriteRequest {
+                    path: path.clone(),
+                    offset: offset as u64,
+                    size: expected.len() as u64,
+                    modified: None,
+                    permissions: None,
+                })
+                .await
+                .unwrap();
+            for chunk in expected[offset..].chunks(100_000) {
+                stream.write(Bytes::copy_from_slice(chunk)).await.unwrap();
+            }
+            stream.finish().await.unwrap();
+            assert_eq!(read_remote(files, &path).await, expected, "{mode}");
+
+            let mut rest = files
+                .clone()
+                .open_read(&path, offset as u64..expected.len() as u64)
+                .await
+                .unwrap();
+            let mut received = Vec::new();
+            while let Some(chunk) = rest.next_chunk().await.unwrap() {
+                received.extend_from_slice(&chunk);
+            }
+            rest.finish().await.unwrap();
+            assert_eq!(received, expected[offset..], "{mode}");
+            fixture.close().await;
+        }
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn transfer_conflicts_follow_the_settings() {
     let Some(server) = plain_server() else { return };
