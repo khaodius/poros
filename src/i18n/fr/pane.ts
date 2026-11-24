@@ -46,10 +46,10 @@ export const pane = {
     other: "{count} des {total} éléments copiés portent des noms déjà présents dans {folder}.",
   },
   replaceOrKeepBoth: {
-    one: "Remplacer écrase les fichiers et fusionne les dossiers. Conserver les deux donne au nouvel élément un nom comme {example}.",
-    many: "Remplacer écrase les fichiers et fusionne les dossiers. Conserver les deux donne aux nouveaux éléments des noms comme {example}.",
+    one: "«\u00a0Remplacer\u00a0» écrase les fichiers et fusionne les dossiers. «\u00a0Conserver les deux\u00a0» donne au nouvel élément un nom comme {example}.",
+    many: "«\u00a0Remplacer\u00a0» écrase les fichiers et fusionne les dossiers. «\u00a0Conserver les deux\u00a0» donne aux nouveaux éléments des noms comme {example}.",
     other:
-      "Remplacer écrase les fichiers et fusionne les dossiers. Conserver les deux donne aux nouveaux éléments des noms comme {example}.",
+      "«\u00a0Remplacer\u00a0» écrase les fichiers et fusionne les dossiers. «\u00a0Conserver les deux\u00a0» donne aux nouveaux éléments des noms comme {example}.",
   },
 
   // components/FilePane

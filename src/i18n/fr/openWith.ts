@@ -8,7 +8,7 @@ export const openWith = {
   onTheServer: "Sur le serveur",
   yourSavedCopy: "Votre copie enregistrée",
   keepBothUploadsYourCopy:
-    "Conserver les deux envoie votre copie à côté de celle du serveur, sous un nom qui n’y est pas pris.",
+    "«\u00a0Conserver les deux\u00a0» envoie votre copie à côté de celle du serveur, sous un nom qui n’y est pas pris.",
   comparingReadsTheServersCopy: "La comparaison lit la copie du serveur par SFTP",
   dontUpload: "Ne pas envoyer",
   uploadItAgain: "L’envoyer de nouveau",
@@ -143,7 +143,7 @@ export const openWith = {
   nameOfTheNewProgram: "Nom du nouveau programme",
   newProgram: "Nouveau programme",
   inTheArgumentsStandsFor:
-    "{placeholder} dans les arguments représente le fichier, et le fichier vient en dernier s’il est omis. Les guillemets gardent les espaces dans un même argument. Les fichiers qui correspondent à un motif sous Par défaut pour s’ouvrent dans ce programme.",
+    "{placeholder} dans les arguments représente le fichier, et le fichier vient en dernier s’il est omis. Les guillemets gardent les espaces dans un même argument. Les fichiers qui correspondent à un motif sous «\u00a0Par défaut pour\u00a0» s’ouvrent dans ce programme.",
 
   // components/ExternalEditsStatus
   filesOpenInOtherPrograms: "Fichiers ouverts dans d’autres programmes",

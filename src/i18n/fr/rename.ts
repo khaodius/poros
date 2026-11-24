@@ -113,14 +113,14 @@ export const rename = {
   // lib/bulkRename
   theNameIsEmpty: "Le nom est vide",
   theNameIsTooLongInBytes: {
-    one: "Le nom est trop long\u00a0: {length} pour {count} octet au maximum",
+    one: "Le nom est trop long\u00a0: {length} pour {count}\u00a0octet au maximum",
     many: "Le nom est trop long\u00a0: {length} pour {count} d’octets au maximum",
-    other: "Le nom est trop long\u00a0: {length} pour {count} octets au maximum",
+    other: "Le nom est trop long\u00a0: {length} pour {count}\u00a0octets au maximum",
   },
   theNameIsTooLongInCharacters: {
-    one: "Le nom est trop long\u00a0: {length} pour {count} caractère au maximum",
+    one: "Le nom est trop long\u00a0: {length} pour {count}\u00a0caractère au maximum",
     many: "Le nom est trop long\u00a0: {length} pour {count} de caractères au maximum",
-    other: "Le nom est trop long\u00a0: {length} pour {count} caractères au maximum",
+    other: "Le nom est trop long\u00a0: {length} pour {count}\u00a0caractères au maximum",
   },
   nowNamed: "S’appelle maintenant {temporary}\u00a0: {message}",
   nameWithoutTheExtension: "Nom sans l’extension",

@@ -51,7 +51,7 @@ export const share = {
   noLinkYet: "Pas encore de lien",
 
   // lib/shareLinks
-  shareLinkNotInA: "Lien de partage (pas dans un coffre)",
+  shareLinkNotInA: "Lien de partage (indisponible dans un coffre)",
   shareLinkCloudStorageOnly: "Lien de partage (stockage cloud uniquement)",
   shareLinkFilesOnly: "Lien de partage (fichiers uniquement)",
   shareLink: "Lien de partage...",

@@ -85,7 +85,7 @@ export const sync = {
   rsyncOnTheServerHint: "La commande qui le lance, pour les serveurs où il n’est pas dans le PATH.",
   folderSynchronization: "Synchronisation de dossiers",
   eachSynchronizationStartsWithThese:
-    "Chaque synchronisation part de ces options. Les arguments rsync propres à un site enregistré s’y ajoutent, et Synchroniser des dossiers peut modifier chacune d’elles pour une exécution.",
+    "Chaque synchronisation part de ces options. Les arguments rsync propres à un site enregistré s’y ajoutent, et «\u00a0Synchroniser des dossiers\u00a0» peut modifier chacune d’elles pour une exécution.",
   typedAsOnRsyncsCommand:
     "Saisis comme sur la ligne de commande de rsync\u202f; ils s’appliquent par-dessus les options ci-dessus pour chaque synchronisation.",
 

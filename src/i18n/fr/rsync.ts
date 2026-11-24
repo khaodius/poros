@@ -47,7 +47,7 @@ export const rsync = {
   removeSourceFilesOnceThey: "Supprimer les fichiers source une fois sur la cible",
   foldersStayFilesAlreadyThe:
     "Les dossiers restent. Les fichiers déjà identiques des deux côtés sont aussi supprimés.",
-  flushEachFileToDisk: "Écrire chaque fichier sur le disque",
+  flushEachFileToDisk: "Forcer l’écriture de chaque fichier sur le disque",
   rsyncOnTheServer: "rsync sur le serveur",
   blankUsesTheSitesSetting:
     "Vide, le réglage du site est utilisé, puis celui des paramètres de transfert.",
@@ -74,10 +74,10 @@ export const rsync = {
   logPUploadsDirMerge: "- *.log\nP /uploads/\ndir-merge .rsync-filter",
   rsyncsFilterSyntaxOneRule:
     "La syntaxe de filtrage de rsync, une règle par ligne, vérifiée avant les inclusions et les exclusions.",
-  excludePatternsFromFiles: "Exclure les motifs de fichiers",
+  excludePatternsFromFiles: "Motifs d’exclusion lus dans des fichiers",
   filesOnThisComputerOne:
     "Fichiers sur cet ordinateur, un par ligne\u202f; les chemins relatifs partent du dossier local.",
-  includePatternsFromFiles: "Inclure les motifs de fichiers",
+  includePatternsFromFiles: "Motifs d’inclusion lus dans des fichiers",
   copyOnlyTheFilesListed: "Copier seulement les fichiers listés dans",
   namesInThoseFilesEnd: "Les noms dans ces fichiers se terminent par un caractère nul",
   rulesInRsyncFilterFiles: "Règles des fichiers .rsync-filter",

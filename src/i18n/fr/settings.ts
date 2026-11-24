@@ -61,7 +61,7 @@ export const settings = {
   checkTheTransferredPartBefore: "Vérifier la partie déjà transférée avant de reprendre",
   checkTheTransferredPartBeforeHint:
     "Compare ce qui est déjà présent avec la source, partie par partie, et reprend à la première partie qui diffère. Quand le serveur ne peut pas hacher des parties d’un fichier, les derniers 64\u00a0KiB sont comparés.",
-  flushToDiskBeforeFinishing: "Écrire sur le disque avant de terminer",
+  flushToDiskBeforeFinishing: "Forcer l’écriture sur le disque avant de terminer",
   flushToDiskBeforeFinishingHint:
     "Un fichier ne compte comme terminé qu’une fois stocké, pour qu’une coupure de courant juste après ne puisse pas le perdre. Sur les serveurs qui le permettent\u202f; ralentit les transferts de nombreux petits fichiers.",
   checkTimesAndPermissionsAfter: "Vérifier les dates et permissions après les avoir appliquées",

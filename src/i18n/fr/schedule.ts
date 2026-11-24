@@ -44,7 +44,7 @@ export const schedule = {
   downloadFrom: "Télécharger depuis",
   copyTo: "Copier vers",
   tasksRunWhilePorosIsOpen:
-    "Les tâches s’exécutent pendant que Poros est ouvert, ou depuis poros-cli avec cron ou un minuteur. Celles que vous enregistrez apparaissent ici.",
+    "Les tâches s’exécutent pendant que Poros est ouvert, ou depuis poros-cli avec cron ou un timer systemd. Celles que vous enregistrez apparaissent ici.",
   turnedOff: "Désactivée",
   chooseAConnection: "Choisir une connexion",
   noSavedConnections: "Aucune connexion enregistrée",
@@ -152,7 +152,7 @@ export const schedule = {
     other: "Le modèle de dossier dépasse {count} caractères",
   },
   patternLoneBrace:
-    "Le modèle de dossier contient une accolade sans son partenaire\u202f; écrivez les variables sous la forme {example}",
+    "Le modèle de dossier contient une accolade non appariée\u202f; écrivez les variables sous la forme {example}",
   patternUnknown:
     "Le modèle de dossier contient {found}, qui n’est pas une variable\u202f; utilisez {known}",
   patternBadName:
@@ -172,7 +172,7 @@ export const schedule = {
     "Les transferts sélectionnés vont dans des dossiers différents. Sélectionnez-en qui vont dans un même dossier.",
   selectTheFilesToSchedule: "Sélectionnez les fichiers à planifier.",
   blockedNoServer: "aucun serveur",
-  blockedInVault: "pas dans un coffre",
+  blockedInVault: "indisponible dans un coffre",
   blockedUnsaved: "enregistrez d’abord la connexion",
 
   // state/scheduleActions

@@ -7,10 +7,10 @@ export const automation = {
   thenHint:
     "Aussi dans la barre d’outils de la file d’attente. Tout sauf une commande est précédé d’un compte à rebours de 30\u00a0secondes, pour que vous puissiez l’arrêter.",
   onlyTheNextTime: "Seulement la prochaine fois",
-  onlyTheNextTimeHint: "Revient à Ne rien faire une fois l’action effectuée.",
+  onlyTheNextTimeHint: "Revient à «\u00a0Ne rien faire\u00a0» une fois l’action effectuée.",
   command: "Commande",
   commandHint:
-    "Pour Exécuter une commande\u202f; s’exécute sur cet ordinateur. {done}, {failed}, {skipped} et {bytes} contiennent les totaux.",
+    "Pour «\u00a0Exécuter une commande\u00a0», la commande s’exécute sur cet ordinateur. {done}, {failed}, {skipped} et {bytes} contiennent les totaux.",
   aCommandOrScript: "Une commande ou un script",
   showANotification: "Afficher une notification",
   onlyWhenPorosIsIn: "Seulement quand Poros est en arrière-plan",
@@ -32,7 +32,7 @@ export const automation = {
   newCommand: "Nouvelle commande",
 
   // components/CommandOutputDialog
-  earlierOutputWasDropped: "La sortie antérieure a été abandonnée.",
+  earlierOutputWasDropped: "Le début de la sortie n’a pas été conservé.",
   theCommandPrintedNothing: "La commande n’a rien affiché.",
   running: "En cours",
   commandIn: "{command} dans {folder}",

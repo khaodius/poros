@@ -50,7 +50,7 @@ export const compare = {
   inAnotherWindow: "{label} dans une autre fenêtre",
   nothingToCompareYet: "rien à comparer pour l’instant",
   stateCount: "{state}\u00a0: {amount}",
-  stateCountHidden: "{state}\u00a0: {amount}, masqués",
+  stateCountHidden: "{state}\u00a0: {amount} (masquage activé)",
 
   // components/folderCompareMenu
   selectNewerAndOnlyHere: "Sélectionner les plus récents et ceux présents seulement ici",
@@ -99,9 +99,9 @@ export const compare = {
   filesDifferInBytes: "Les lignes sont les mêmes\u202f; les fichiers diffèrent par leurs octets.",
 
   // lib/folderCompare
-  differsInside: "Diffère à l’intérieur ({found})",
+  differsInside: "Diffère à l’intérieur\u00a0: {found}",
   noDifferencesFoundInsideBut:
-    "Aucune différence trouvée à l’intérieur, mais tout n’a pas été comparé ({found})",
+    "Aucune différence trouvée à l’intérieur, mais tout n’a pas été comparé\u00a0: {found}",
   identicalInsideFiles: {
     one: "Identique à l’intérieur\u00a0: {count} fichier",
     many: "Identique à l’intérieur\u00a0: {count} de fichiers",

@@ -100,7 +100,7 @@ export const preview = {
   // components/PreviewSettings
   largestPictureLoaded: "Plus grande image chargée",
   largestPictureLoadedHint:
-    "Les images plus grandes affichent leurs détails et un bouton Charger quand même.",
+    "Les images plus grandes affichent leurs détails et un bouton «\u00a0Charger quand même\u00a0».",
   textReadFromAFile: "Texte lu dans un fichier",
   textReadFromAFileHint: "Un fichier plus long affiche son début.",
   thumbnailSize: "Taille des miniatures",

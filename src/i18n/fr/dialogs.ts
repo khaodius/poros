@@ -54,7 +54,7 @@ export const dialogs = {
   mixedUnchanged: "Mixte, inchangé",
   permissions: "Permissions",
   linksHaveNoPermissionsOf:
-    "Les liens n’ont pas de permissions propres, ils gardent donc les leurs. Les changements de propriétaire et de groupe s’appliquent aux liens eux-mêmes.",
+    "Les liens n’ont pas de permissions propres\u202f; les changements de permissions ne les modifient donc pas. Les changements de propriétaire et de groupe s’appliquent aux liens eux-mêmes.",
   andMoreListedInThe: {
     one: "et {count} autre, indiqué dans le journal",
     many: "et {count} d’autres, indiqués dans le journal",
@@ -108,11 +108,11 @@ export const dialogs = {
   },
 
   // lib/permissions
-  setUserId: "Setuid",
+  setUserId: "Définir l’UID",
   runsAsTheFilesOwner: "S’exécute en tant que propriétaire du fichier",
-  setGroupId: "Setgid",
+  setGroupId: "Définir le GID",
   runsAsTheGroupNew: "S’exécute en tant que groupe\u202f; les nouveaux fichiers en héritent",
-  sticky: "Sticky",
+  sticky: "Bit collant",
   onlyOwnersMayDeleteOr: "Seuls les propriétaires peuvent supprimer ou renommer les entrées",
   others: "Autres",
   read: "Lecture",
