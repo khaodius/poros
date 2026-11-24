@@ -41,16 +41,18 @@ export function placeholdersOf(message: Message): string[] {
 
 /**
  * The translator for one language. A key the language does not have yet is written in
- * `fallback` (English), and `onMissing` hears about it.
+ * `fallback` (English), and `onMissing` hears about it. Numbers in the placeholders are written
+ * as `numberLocale` writes them, the user's region where it fits the language.
  */
 export function createTranslate(
   translation: Translation,
   fallback: Translation,
   onMissing?: (key: string, locale: string) => void,
+  numberLocale: string = translation.locale,
 ): Translate {
   const plurals = new Intl.PluralRules(translation.locale);
   const fallbackPlurals = new Intl.PluralRules(fallback.locale);
-  const numbers = new Intl.NumberFormat(translation.locale);
+  const numbers = new Intl.NumberFormat(numberLocale);
 
   const textOf = (key: string, params: Params | undefined): string => {
     let message = own(translation.messages, key);

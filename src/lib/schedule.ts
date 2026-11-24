@@ -14,7 +14,7 @@ import type {
   TaskView,
   Trigger,
 } from "./types";
-import { dateTimeFormat, t, type MessageKey, type PlainMessageKey } from "../i18n";
+import { dateWordFormat, t, type MessageKey, type PlainMessageKey } from "../i18n";
 
 export type TransferTaskAction = Extract<TaskAction, { type: "transfer" }>;
 
@@ -27,7 +27,7 @@ const EVERY_DAY = WEEKDAYS;
 /** A weekday's short name in the interface's language: `Mon` in English, `Mo` in German. */
 export function weekdayName(day: number): string {
   // 1 January 2024 was a Monday.
-  return dateTimeFormat({ weekday: "short" }).format(new Date(2024, 0, 1 + day));
+  return dateWordFormat({ weekday: "short" }).format(new Date(2024, 0, 1 + day));
 }
 const WORKDAYS = [0, 1, 2, 3, 4];
 const WEEKEND = [5, 6];

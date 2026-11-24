@@ -57,6 +57,15 @@ export const sync = {
   settleByHand: "Settle by hand",
   dryRun: "Dry run",
   synchronize: "Synchronize",
+  localSide: "Local",
+  serverSide: "Server",
+  sideMissing: "{side}: missing",
+  sideFolder: "{side}: folder",
+  sideFolderWithPermissions: "{side}: folder, {permissions}",
+  sideFile: "{side}: {size}, {modified}",
+  sideFileWithPermissions: "{side}: {size}, {modified}, {permissions}",
+  sideLink: "{side}: link, {size}, {modified}",
+  sideLinkWithPermissions: "{side}: link, {size}, {modified}, {permissions}",
 
   // components/SyncSettings
   rsync2: "rsync",

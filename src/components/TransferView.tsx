@@ -37,7 +37,7 @@ import { useSettingsStore } from "../state/settingsStore";
 import { useTransferStore } from "../state/transferStore";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { ProgressBar } from "./ProgressBar";
-import { t, useT } from "../i18n";
+import { t, useT, type Translate } from "../i18n";
 
 const ROW_HEIGHT = 28;
 
@@ -60,7 +60,7 @@ const EMPTY_MESSAGES: Record<TransferViewKind, string> = {
 };
 
 /** `scheduleWaitText` names what the speed limit schedule holds the job for, when it does. */
-function statusText(job: JobSnapshot, scheduleWaitText: string | null): string {
+function statusText(t: Translate, job: JobSnapshot, scheduleWaitText: string | null): string {
   switch (job.state) {
     case "queued":
       if (job.reconnecting) return t("transfers.connectionLostWaitingForTheServer");
@@ -371,9 +371,12 @@ const TransferRow = memo(function TransferRow({
   onClick,
   onContextMenu,
 }: TransferRowProps) {
+  // A memoized row: reading the translator here re-renders it when the language changes, its
+  // sizes and speeds included.
+  const t = useT();
   const progress = jobProgress(job);
   const DirectionIcon = DIRECTION_ICONS[job.direction];
-  const status = statusText(job, scheduleWaitText);
+  const status = statusText(t, job, scheduleWaitText);
   return (
     <div
       className={`transfer-row state-${job.state} ${selected ? "is-selected" : ""}`}

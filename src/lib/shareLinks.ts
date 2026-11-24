@@ -9,7 +9,7 @@ import type {
   ShareLink,
   ShareOptions,
 } from "./types";
-import { dateTimeFormat, formatList, t } from "../i18n";
+import { dateWordFormat, formatList, t } from "../i18n";
 
 /** How a server pane's menu shows sharing: offered, or shown with why it is not. */
 export interface ShareMenuEntry {
@@ -190,7 +190,7 @@ export function formatDeadline(epochSeconds: number, nowMillis: number): string 
   const date = new Date(epochSeconds * 1000);
   const parts = {
     day: String(date.getDate()),
-    month: dateTimeFormat({ month: "long" }).format(date),
+    month: dateWordFormat({ month: "long" }).format(date),
     time: `${twoDigits(date.getHours())}:${twoDigits(date.getMinutes())}`,
   };
   return date.getFullYear() === new Date(nowMillis).getFullYear()

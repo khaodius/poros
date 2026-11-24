@@ -19,20 +19,11 @@ import {
   SettingRow,
   TextSetting,
 } from "./settingsFields";
-import { formatList, useT } from "../i18n";
+import { useT } from "../i18n";
 
-const SERVER_PROGRAMS = [
-  "7-Zip",
-  "unrar",
-  "unar",
-  "bsdtar",
-  "tar",
-  "unzip",
-  "gzip",
-  "bzip2",
-  "xz",
-  "zstd",
-];
+/** The programs a server is searched for, in that order; the message puts "and" before the last. */
+const SERVER_PROGRAMS = ["7-Zip", "unrar", "unar", "bsdtar", "tar", "unzip", "gzip", "bzip2", "xz"];
+const LAST_SERVER_PROGRAM = "zstd";
 
 /** Settings > Archives: the program that extracts on this computer, and what servers use. */
 export function ArchiveSettingsPage({ settings }: { settings: Settings }) {
@@ -156,7 +147,10 @@ export function ArchiveSettingsPage({ settings }: { settings: Settings }) {
       </SettingGroup>
       <SettingGroup title={t("archives.onServers")}>
         <p className="setting-note">
-          {t("archives.archivesOnAnSftpServer", { programs: formatList(SERVER_PROGRAMS) })}
+          {t("archives.archivesOnAnSftpServer", {
+            programs: SERVER_PROGRAMS.join(t("common.listSeparator")),
+            lastProgram: LAST_SERVER_PROGRAM,
+          })}
         </p>
       </SettingGroup>
     </>
