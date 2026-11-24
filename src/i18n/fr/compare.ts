@@ -127,13 +127,41 @@ export const compare = {
     "La comparaison est suspendue tant que ce volet affiche des résultats de recherche. Les marques reviennent quand les résultats sont fermés",
   pausedPartnerShowsResults:
     "La comparaison est suspendue tant que {partner} affiche des résultats de recherche. Les marques reviennent quand les résultats sont fermés",
-  summaryNewerHere: "plus récent ici\u00a0: {count}",
-  summaryOlderHere: "plus ancien ici\u00a0: {count}",
-  summaryOnlyHere: "seulement ici\u00a0: {count}",
-  summaryOnlyThere: "seulement dans l’autre volet\u00a0: {count}",
-  summaryDifferent: "différent\u00a0: {count}",
-  summaryIdentical: "identique\u00a0: {count}",
-  summaryNotCompared: "non comparé\u00a0: {count}",
+  summaryNewerHere: {
+    one: "{count} plus récent ici",
+    many: "{count} plus récents ici",
+    other: "{count} plus récents ici",
+  },
+  summaryOlderHere: {
+    one: "{count} plus ancien ici",
+    many: "{count} plus anciens ici",
+    other: "{count} plus anciens ici",
+  },
+  summaryOnlyHere: {
+    one: "{count} seulement ici",
+    many: "{count} seulement ici",
+    other: "{count} seulement ici",
+  },
+  summaryOnlyThere: {
+    one: "{count} seulement dans l’autre volet",
+    many: "{count} seulement dans l’autre volet",
+    other: "{count} seulement dans l’autre volet",
+  },
+  summaryDifferent: {
+    one: "{count} différent",
+    many: "{count} différents",
+    other: "{count} différents",
+  },
+  summaryIdentical: {
+    one: "{count} identique",
+    many: "{count} identiques",
+    other: "{count} identiques",
+  },
+  summaryNotCompared: {
+    one: "{count} non comparé",
+    many: "{count} non comparés",
+    other: "{count} non comparés",
+  },
 
   // state/folderCompare
   noFolderToCompare: "Ce volet n’a aucun dossier à comparer",

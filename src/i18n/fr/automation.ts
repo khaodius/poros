@@ -57,8 +57,6 @@ export const automation = {
   whenTheQueueFinishes: "Quand la file d’attente se termine",
 
   // components/WhenDoneCountdown
-  theTransferQueueHasFinished:
-    "La file d’attente des transferts est terminée. {title} dans {seconds}.",
   seconds: {
     one: "{count}\u00a0seconde",
     many: "{count} de secondes",
@@ -71,6 +69,18 @@ export const automation = {
   editCommands: "Modifier les commandes...",
 
   // lib/automation
+  queueFinishedClosingPorosIn:
+    "La file d’attente des transferts est terminée. Fermeture de Poros dans {seconds}.",
+  queueFinishedLockingIn:
+    "La file d’attente des transferts est terminée. Verrouillage de l’ordinateur dans {seconds}.",
+  queueFinishedSleepingIn:
+    "La file d’attente des transferts est terminée. Mise en veille de l’ordinateur dans {seconds}.",
+  queueFinishedHibernatingIn:
+    "La file d’attente des transferts est terminée. Mise en veille prolongée de l’ordinateur dans {seconds}.",
+  queueFinishedLoggingOffIn:
+    "La file d’attente des transferts est terminée. Fermeture de la session dans {seconds}.",
+  queueFinishedShuttingDownIn:
+    "La file d’attente des transferts est terminée. Arrêt de l’ordinateur dans {seconds}.",
   filesTransferredIn: {
     one: "{count} fichier transféré ({size}) en {duration}",
     many: "{count} de fichiers transférés ({size}) en {duration}",
@@ -97,8 +107,8 @@ export const automation = {
   confirmShutDownNow: "Arrêter maintenant",
   transfersFinishedWithErrors: "Transferts terminés avec des erreurs",
   transfersFinished: "Transferts terminés",
-  failedCount: "échecs\u00a0: {count}",
-  skippedCount: "ignorés\u00a0: {count}",
+  failedCount: { one: "{count} en échec", many: "{count} en échec", other: "{count} en échec" },
+  skippedCount: { one: "{count} ignoré", many: "{count} ignorés", other: "{count} ignorés" },
 
   // lib/commands
   eachSelectedItemsFullPath:
@@ -116,8 +126,16 @@ export const automation = {
   // state/commandStore
   stopped: "Arrêtée",
   nothingToRun: "Rien à exécuter",
-  allCommandsFinished: "Les {finished} commandes sont terminées",
-  ofCommandsFailed: "Commandes en échec\u00a0: {failed} sur {finished}",
+  allCommandsFinished: {
+    one: "{count} commande terminée",
+    many: "Les {count} de commandes sont terminées",
+    other: "Les {count} commandes sont terminées",
+  },
+  ofCommandsFailed: {
+    one: "{count} commande sur {finished} a échoué",
+    many: "{count} de commandes sur {finished} ont échoué",
+    other: "{count} commandes sur {finished} ont échoué",
+  },
 
   // state/whenDone
   whenTheQueueFinished: "À la fin de la file d’attente",

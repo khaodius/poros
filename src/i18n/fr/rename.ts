@@ -68,6 +68,8 @@ export const rename = {
   cannotBeRenamed: "Impossible à renommer",
   nameUnchanged: "Inchangé",
   ready: "Prêt",
+  lowercase: "minuscules",
+  uppercase: "MAJUSCULES",
   titleCase: "Majuscule À Chaque Mot",
   sentenceCase: "Majuscule en début de phrase",
   beforeTheName: "Avant le nom",
@@ -110,7 +112,16 @@ export const rename = {
 
   // lib/bulkRename
   theNameIsEmpty: "Le nom est vide",
-  theNameIsTooLong: "Le nom est trop long\u00a0: {length} sur {maxLength} {lengthUnit}",
+  theNameIsTooLongInBytes: {
+    one: "Le nom est trop long\u00a0: {length} pour {count} octet au maximum",
+    many: "Le nom est trop long\u00a0: {length} pour {count} d’octets au maximum",
+    other: "Le nom est trop long\u00a0: {length} pour {count} octets au maximum",
+  },
+  theNameIsTooLongInCharacters: {
+    one: "Le nom est trop long\u00a0: {length} pour {count} caractère au maximum",
+    many: "Le nom est trop long\u00a0: {length} pour {count} de caractères au maximum",
+    other: "Le nom est trop long\u00a0: {length} pour {count} caractères au maximum",
+  },
   nowNamed: "S’appelle maintenant {temporary}\u00a0: {message}",
   nameWithoutTheExtension: "Nom sans l’extension",
   dateModified: "Date de modification",

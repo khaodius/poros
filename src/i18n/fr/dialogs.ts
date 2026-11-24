@@ -20,11 +20,16 @@ export const dialogs = {
   // components/DeleteDialog
   nothingToDelete: "Rien à supprimer",
   deleteItem: "Supprimer l’élément",
-  deleteItems: "Supprimer {count} éléments",
+  deleteItems: {
+    one: "Supprimer {count} élément",
+    many: "Supprimer {count} d’éléments",
+    other: "Supprimer {count} éléments",
+  },
   checkingTheFolder: "Vérification du dossier...",
   theseItemsAreNoLonger: "Ces éléments ne sont plus dans le dossier.",
 
   // components/PropertiesDialog
+  sizeWithContents: "{size} ({contents})",
   items: { one: "{count} élément", many: "{count} d’éléments", other: "{count} éléments" },
   files: { one: "{count} fichier", many: "{count} de fichiers", other: "{count} fichiers" },
   folders: { one: "{count} dossier", many: "{count} de dossiers", other: "{count} dossiers" },
@@ -34,7 +39,11 @@ export const dialogs = {
     other: "Décompte\u00a0: {count} fichiers, {size}",
   },
   propertiesOf: "Propriétés de {name}",
-  propertiesOfItems: "Propriétés de {count} éléments",
+  propertiesOfItems: {
+    one: "Propriétés de {count} élément",
+    many: "Propriétés de {count} d’éléments",
+    other: "Propriétés de {count} éléments",
+  },
   items2: "Éléments",
   links: { one: "{count} lien", many: "{count} de liens", other: "{count} liens" },
   type: "Type",
@@ -46,7 +55,11 @@ export const dialogs = {
   permissions: "Permissions",
   linksHaveNoPermissionsOf:
     "Les liens n’ont pas de permissions propres, ils gardent donc les leurs. Les changements de propriétaire et de groupe s’appliquent aux liens eux-mêmes.",
-  andMoreListedInThe: "et {count} de plus, indiqués dans le journal",
+  andMoreListedInThe: {
+    one: "et {count} autre, indiqué dans le journal",
+    many: "et {count} d’autres, indiqués dans le journal",
+    other: "et {count} autres, indiqués dans le journal",
+  },
   changedItems: {
     one: "{count} élément modifié",
     many: "{count} d’éléments modifiés",
@@ -60,7 +73,11 @@ export const dialogs = {
   folders2: "Dossiers",
   files2: "Fichiers",
   oneItemCouldNotBe: "Un élément n’a pas pu être modifié\u00a0:",
-  itemsCouldNotBeChanged: "{count} éléments n’ont pas pu être modifiés\u00a0:",
+  itemsCouldNotBeChanged: {
+    one: "{count} élément n’a pas pu être modifié\u00a0:",
+    many: "{count} d’éléments n’ont pas pu être modifiés\u00a0:",
+    other: "{count} éléments n’ont pas pu être modifiés\u00a0:",
+  },
   applying: "Application...",
   linkToAFolder: "Lien vers un dossier",
   linkToAFile: "Lien vers un fichier",
@@ -77,10 +94,18 @@ export const dialogs = {
   permissionOfClass: "{who}\u00a0: {permission}",
 
   // lib/deletion
-  deletedCount: "Supprimés\u00a0: {count}",
+  deletedCount: { one: "{count} supprimé", many: "{count} supprimés", other: "{count} supprimés" },
   countingToDelete: "Décompte de ce qu’il faut supprimer...",
-  deletedFoundSoFar: "Supprimés\u00a0: {count}, trouvés jusqu’ici\u00a0: {found}",
-  deletedOfTotal: "Supprimés\u00a0: {count} sur {total}",
+  deletedFoundSoFar: {
+    one: "{count} supprimé, {found} trouvés jusqu’ici",
+    many: "{count} supprimés, {found} trouvés jusqu’ici",
+    other: "{count} supprimés, {found} trouvés jusqu’ici",
+  },
+  deletedOfTotal: {
+    one: "{count} supprimé sur {total}",
+    many: "{count} supprimés sur {total}",
+    other: "{count} supprimés sur {total}",
+  },
 
   // lib/permissions
   setUserId: "Setuid",

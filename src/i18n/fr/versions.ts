@@ -41,10 +41,11 @@ export const versions = {
   },
   everythingDeletedUnderAFolder:
     "Tout ce qui a été supprimé dans un dossier disparaît aussi. Les fichiers qui y sont encore ne sont pas touchés.",
-  andMore: "et {count} de plus",
+  andMore: { one: "et {count} autre", many: "et {count} d’autres", other: "et {count} autres" },
   removeThisDeleteMarker: "Retirer ce marqueur de suppression",
   deleteThisVersionForGood: "Supprimer définitivement cette version",
   versionFrom: "Version du {when}",
+  versionFromUnknownTime: "Version de date inconnue",
   currentVersion: "Version actuelle",
   isNoLongerDeleted: "{name} n’est plus supprimé.",
   theseItemsAreNoLongerDeleted: "Ces éléments ne sont plus supprimés.",

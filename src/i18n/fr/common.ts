@@ -17,6 +17,7 @@ export const common = {
   add: "Ajouter",
 
   // components/BulkRenameDialog
+  sentenceSeparator: " ",
   start: "Démarrer",
   tryAgain: "Réessayer",
   cancel: "Annuler",
@@ -62,6 +63,7 @@ export const common = {
   replace: "Remplacer",
 
   // components/FilePane
+  asSentence: "{text}.",
   none: "Aucun",
   cut: "Couper",
   copy: "Copier",
@@ -73,6 +75,7 @@ export const common = {
   default: "Par défaut",
 
   // components/ImportConnectionsDialog
+  clauseSeparator: "\u202f; ",
   back: "Retour",
 
   // components/LimitScheduleSettings
@@ -109,4 +112,7 @@ export const common = {
   durationSeconds: "{seconds}\u00a0s",
   durationMinutes: "{minutes}\u00a0min {seconds}\u00a0s",
   durationHours: "{hours}\u00a0h {minutes}\u00a0min",
+
+  // state/archiveActions
+  labelWithMessage: "{label}\u00a0: {message}",
 } satisfies TranslatedArea<"common">;

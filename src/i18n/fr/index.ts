@@ -13,9 +13,12 @@
 // Typography: a no-break space (U+00A0) before ":" and inside « », a narrow no-break space
 // (U+202F) before ";", "?" and "!", and a no-break space between a number and its unit
 // ("30 s", "9 px", "64 KiB"). The apostrophe is ’. Capitals keep their accents (État, À).
-// Status texts that run are nouns ("Connexion...", "Enregistrement..."). Where a count stands
-// in a message that has no plural forms, the label goes first ("Supprimés : 3"), so that the
-// words do not need to agree with the number.
+// Status texts that run are nouns ("Connexion...", "Enregistrement..."). Counts read as
+// sentences that agree with the number ("3 supprimés", "1 élément n’a pas pu être copié"). The
+// many form puts "de" before a noun ("{count} de fichiers") but not before an adjective or a
+// participle ("{count} supprimés"), nor in the unit entries shown beside a number field
+// (schedule.unit*, rsync.unit*). Separators: "\u202f; " between clauses, " " between
+// sentences, "{label}\u00a0: {message}" for an error toast.
 //
 // | Term              | French                                                    |
 // | ----------------- | --------------------------------------------------------- |

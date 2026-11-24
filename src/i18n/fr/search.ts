@@ -43,7 +43,7 @@ export const search = {
   },
   leaveABoxEmptyTo: "Laissez un champ vide pour ne pas limiter ce côté.",
   foldersThatCouldNotBe: "Dossiers qui n’ont pas pu être lus",
-  andMore: "et {count} de plus",
+  andMore: { one: "et {count} autre", many: "et {count} d’autres", other: "et {count} autres" },
   theSearchWentPastIt: {
     one: "La recherche est passée devant {count} dossier qu’elle n’a pas pu lire. Ce qu’il contient n’est pas dans les résultats.",
     many: "La recherche est passée devant {count} de dossiers qu’elle n’a pas pu lire. Ce qu’ils contiennent n’est pas dans les résultats.",
@@ -52,7 +52,11 @@ export const search = {
   },
   searchIn: "Rechercher dans {folder}",
   pressEnterToSearch: "Appuyez sur Enter pour rechercher dans {folder} et ses sous-dossiers",
-  searchingFoundIn: "Recherche\u00a0: {found} dans {folders}",
+  searchingFoundIn: {
+    one: "Recherche\u00a0: {count} résultat dans {folders}",
+    many: "Recherche\u00a0: {count} de résultats dans {folders}",
+    other: "Recherche\u00a0: {count} résultats dans {folders}",
+  },
   foundInFoldersSearched: "{found} en parcourant {folders}",
   searchedByTheServer: "Recherche effectuée par le serveur",
   stoppedAfterSoFar: "Arrêtée après {folders}\u00a0: {found} jusqu’ici",

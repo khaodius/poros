@@ -28,7 +28,7 @@ export const openWith = {
   filesNotUploadedLastTime: "Fichiers non envoyés la dernière fois",
   later: "Plus tard",
   lock: "Verrouiller {label}\u202f?",
-  close: "Fermer {label}\u202f?",
+  close: "Fermer l’onglet {label}\u202f?",
   theirSavesKeepBeingUploaded:
     "Leurs enregistrements continuent d’être envoyés après la fermeture de l’onglet.",
   stopEditingAndClose: "Arrêter la modification et fermer",
@@ -154,7 +154,8 @@ export const openWith = {
   noFilesAreOpenIn:
     "Aucun fichier n’est ouvert dans d’autres programmes. Cliquez avec le bouton droit sur un fichier et choisissez Ouvrir avec.",
   inAVault: "Dans un coffre",
-  uploaded: "envoyé\u00a0: {uploadTime}",
+  uploadedAtTime: "envoyé à {time}",
+  uploadedOnDate: "envoyé le {date}",
   of: "{transferred} sur {total}",
   decideWhatToUpload: "Choisir quoi envoyer...",
   openInAnEditor: "Ouvrir dans un éditeur...",

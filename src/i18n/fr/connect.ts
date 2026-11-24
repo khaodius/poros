@@ -7,7 +7,7 @@ export const connect = {
   importFromFilezillaWinscpAnd: "Importer depuis FileZilla, WinSCP et d’autres applications",
   importConnections: "Importer des connexions",
   newConnection: "Nouvelle connexion",
-  connectionsYouSaveAppearHere: "Les connexions que vous enregistrez apparaissent ici.",
+  emptyConnectionList: "Les connexions que vous enregistrez apparaissent ici. {importLink}",
   importThemFromAnotherApp: "Les importer depuis une autre application",
   protocol: "Protocole",
   account: "Compte",
@@ -96,14 +96,17 @@ export const connect = {
 
   // components/ImportConnectionsDialog
   importFrom: "Importer depuis {label}",
-  importedFrom: "Import depuis {label} terminé\u00a0: {imported}.",
-  imported: "Import terminé\u00a0: {imported}.",
-  theseCouldNotBeSaved: "Impossible d’enregistrer celles-ci\u00a0: {failures}",
-  importedConnections: {
-    one: "{count} connexion",
-    many: "{count} de connexions",
-    other: "{count} connexions",
+  importedFrom: {
+    one: "{count} connexion importée depuis {label}.",
+    many: "{count} de connexions importées depuis {label}.",
+    other: "{count} connexions importées depuis {label}.",
   },
+  imported: {
+    one: "{count} connexion importée.",
+    many: "{count} de connexions importées.",
+    other: "{count} connexions importées.",
+  },
+  theseCouldNotBeSaved: "Impossible d’enregistrer celles-ci\u00a0: {failures}",
   passwordsLeftOut: {
     one: "Le trousseau du système n’est pas disponible, donc {count} mot de passe a été écarté\u202f; Poros le demandera à la connexion.",
     many: "Le trousseau du système n’est pas disponible, donc {count} de mots de passe ont été écartés\u202f; Poros les demandera à la connexion.",
@@ -116,8 +119,11 @@ export const connect = {
     "Poros copie les sites enregistrés de ces applications dans ses propres connexions enregistrées. Rien ne change dans l’autre application.",
   chooseFile: "Choisir un fichier...",
   alreadySaved: "Déjà enregistré",
-  leftOutSincePorosCannot:
-    "Écartés\u00a0: {count}, car Poros ne peut pas s’y connecter tels qu’ils sont",
+  leftOutSincePorosCannot: {
+    one: "{count} connexion écartée, car Poros ne peut pas l’utiliser telle quelle",
+    many: "{count} de connexions écartées, car Poros ne peut pas les utiliser telles quelles",
+    other: "{count} connexions écartées, car Poros ne peut pas les utiliser telles quelles",
+  },
   putFolderNamesInFront: "Placer le nom des dossiers devant le nom des connexions",
   reading: "Lecture...",
   otherFile: "Autre fichier...",
@@ -133,6 +139,8 @@ export const connect = {
   },
   foundFiles: "Trouvé\u00a0: {files}",
   notFoundInChoose: "Introuvable dans {places}. {choose}",
+  throughConnection: "via {name}",
+  neededByConnection: "nécessaire pour {name}",
   placeOrPlace: "{first} ou {second}",
   keepThePasswordsInTheKeychain: {
     one: "Conserver le mot de passe dans le trousseau du système",

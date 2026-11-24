@@ -29,7 +29,7 @@ export const workspace = {
   log: "Journal",
 
   // components/CloseTabDialog
-  close: "Fermer {label}\u202f?",
+  close: "Fermer l’onglet {label}\u202f?",
   transfersIntoOrOutOf:
     "Les transferts vers ou depuis un coffre déverrouillé sont suspendus dans tous les cas\u00a0: fermer l’onglet verrouille le coffre. Reprenez-les une fois le coffre de nouveau déverrouillé.",
   pauseTransfersAndClose: "Suspendre les transferts et fermer",
