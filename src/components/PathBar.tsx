@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronRight, LockKeyhole } from "lucide-react";
 import type { PathStyle } from "../lib/fileSource";
 import { breadcrumbs, samePath } from "../lib/path";
+import { useT } from "../i18n";
 
 interface PathBarProps {
   path: string | null;
@@ -22,6 +23,7 @@ export function PathBar({
   onNavigate,
   onDone,
 }: PathBarProps) {
+  const t = useT();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [handledEditRequest, setHandledEditRequest] = useState(editRequest);
@@ -90,11 +92,7 @@ export function PathBar({
   const crumbs = path ? breadcrumbs(path, pathStyle) : [];
   // The space after the crumbs is always there, so the whole path can be picked up to copy.
   return (
-    <div
-      className="path-bar"
-      onClick={startEditing}
-      title="Click to type or copy the path (Ctrl+L)"
-    >
+    <div className="path-bar" onClick={startEditing} title={t("pane.clickToTypeOrCopy")}>
       <div ref={crumbsRef} className={`crumbs ${clipped ? "is-clipped" : ""}`}>
         {crumbs.map((crumb, index) => {
           const opensVault = vaultRoot !== undefined && samePath(crumb.path, vaultRoot, pathStyle);
@@ -104,7 +102,7 @@ export function PathBar({
               <button
                 type="button"
                 className={`crumb ${opensVault ? "crumb-vault" : ""}`}
-                title={opensVault ? "Unlocked vault" : undefined}
+                title={opensVault ? t("pane.unlockedVault") : undefined}
                 onClick={(event) => {
                   event.stopPropagation();
                   void onNavigate(crumb.path);

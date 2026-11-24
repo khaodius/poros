@@ -3,6 +3,7 @@ import { pluralize } from "../lib/format";
 import { transfers } from "../lib/ipc";
 import { closeRemoteTab, familyOf } from "../state/tabActions";
 import { Dialog } from "./Dialog";
+import { useT } from "../i18n";
 
 interface CloseTabDialogProps {
   tabId: string;
@@ -22,6 +23,7 @@ export function CloseTabDialog({
   vaultTransfers,
   onClose,
 }: CloseTabDialogProps) {
+  const t = useT();
   const latestOnClose = useLatest(onClose);
   const close = async (pauseTransfers: boolean) => {
     const [serverId, ...vaultIds] = familyOf(sessionId);
@@ -33,26 +35,21 @@ export function CloseTabDialog({
   };
 
   return (
-    <Dialog title={`Close ${label}?`} onClose={onClose}>
+    <Dialog title={t("workspace.close", { label })} onClose={onClose}>
       <div className="confirm-body">
         <p>
-          {pluralize(pendingTransfers, "transfer")} for this server{" "}
+          {t("workspace.transfers", { count: pendingTransfers })} for this server{" "}
           {pendingTransfers === 1 ? "is" : "are"} still in the queue. They can keep running on their
           own connections after the tab closes, or wait paused until you resume them.
         </p>
-        {vaultTransfers > 0 && (
-          <p>
-            Transfers into or out of an unlocked vault are paused either way: closing the tab locks
-            the vault. Resume them once the vault is unlocked again.
-          </p>
-        )}
+        {vaultTransfers > 0 && <p>{t("workspace.transfersIntoOrOutOf")}</p>}
       </div>
       <div className="dialog-actions">
         <button type="button" className="button" onClick={onClose}>
-          Cancel
+          {t("common.cancel")}
         </button>
         <button type="button" className="button" onClick={() => void close(true)}>
-          Pause transfers and close
+          {t("workspace.pauseTransfersAndClose")}
         </button>
         <button
           type="button"
@@ -60,7 +57,7 @@ export function CloseTabDialog({
           className="button button-primary"
           onClick={() => void close(false)}
         >
-          Keep transferring
+          {t("workspace.keepTransferring")}
         </button>
       </div>
     </Dialog>

@@ -2,14 +2,30 @@ import { useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "
 import { daySpans, describeSpan, hourSpans, type Limits, type Span } from "../lib/limitSchedule";
 import { WEEKDAY_NAMES } from "../lib/schedule";
 import type { LimitMode, LimitSchedule } from "../lib/types";
+import { useT, t } from "../i18n";
 
 const HOURS_PER_DAY = 24;
 const HOURS = Array.from({ length: HOURS_PER_DAY }, (_, hour) => hour);
 const LABELLED_HOURS = [0, 3, 6, 9, 12, 15, 18, 21];
 const LEGEND: { mode: LimitMode; label: string }[] = [
-  { mode: "unlimited", label: "Unlimited" },
-  { mode: "limited", label: "Limited" },
-  { mode: "paused", label: "Paused" },
+  {
+    mode: "unlimited",
+    get label() {
+      return t("limits.unlimited");
+    },
+  },
+  {
+    mode: "limited",
+    get label() {
+      return t("limits.limited");
+    },
+  },
+  {
+    mode: "paused",
+    get label() {
+      return t("limits.paused");
+    },
+  },
 ];
 
 interface Cell {
@@ -31,6 +47,7 @@ interface LimitScheduleWeekProps {
  * download lane below, filled by the limit in force. Arrow keys move between hours and days.
  */
 export function LimitScheduleWeek({ schedule, ordinary, now, onPickRule }: LimitScheduleWeekProps) {
+  const t = useT();
   // Switched off, it shows what the rules would do, so they can be set up first.
   const week = useMemo(
     () => WEEKDAY_NAMES.map((_, day) => daySpans({ ...schedule, enabled: true }, ordinary, day)),
@@ -116,7 +133,7 @@ export function LimitScheduleWeek({ schedule, ordinary, now, onPickRule }: Limit
       <div
         className="limit-week-grid"
         role="grid"
-        aria-label="Speed limits through the week"
+        aria-label={t("limits.speedLimitsThroughTheWeek")}
         aria-describedby="limit-week-legend"
         onKeyDown={handleKey}
         onFocus={() => setFocused(true)}
@@ -184,10 +201,10 @@ export function LimitScheduleWeek({ schedule, ordinary, now, onPickRule }: Limit
             {label}
           </span>
         ))}
-        <span className="limit-week-key">Each hour: uploads above, downloads below</span>
+        <span className="limit-week-key">{t("limits.eachHourUploadsAboveDownloads")}</span>
         <span className="limit-week-key">
           <span className="limit-week-swatch-now" aria-hidden />
-          Now
+          {t("limits.now")}
         </span>
       </div>
     </div>

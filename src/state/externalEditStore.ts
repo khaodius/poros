@@ -15,6 +15,7 @@ import { openInEditor } from "./editorActions";
 import { useSettingsStore } from "./settingsStore";
 import { useToastStore } from "./toastStore";
 import { useUiStore } from "./uiStore";
+import { t } from "../i18n";
 
 /** A file to open, on this computer or on the server of a session. */
 export type OpenTarget = DocumentLocation & { name: string };
@@ -113,7 +114,7 @@ export async function openFile(
     } else if (outcome.kind === "alreadyOpen") {
       useToastStore
         .getState()
-        .show("info", `${outcome.edit.name} is open already. Its working copy opens again.`);
+        .show("info", t("openWith.isOpenAlreadyItsWorking", { name: outcome.edit.name }));
     }
   } catch (caught) {
     showError(caught);
@@ -137,7 +138,7 @@ export async function pickProgram(): Promise<string | null> {
   const chosen = await openFileDialog({
     multiple: false,
     directory: false,
-    title: "Choose a program",
+    title: t("openWith.chooseAProgram2"),
     filters: windows ? [{ name: "Programs", extensions: ["exe", "cmd", "bat", "com"] }] : undefined,
   }).catch((caught: unknown) => {
     showError(caught);

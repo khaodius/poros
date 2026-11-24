@@ -34,6 +34,8 @@ import {
   SettingRow,
   SwitchSetting,
 } from "./settingsFields";
+import { formatNumber, t, useT } from "../i18n";
+import { formatDuration, formatPercent } from "../lib/format";
 
 interface Choice<T extends string> {
   value: T;
@@ -41,61 +43,267 @@ interface Choice<T extends string> {
 }
 
 const FILLS: (Choice<ProgressFill> & { hint: string })[] = [
-  { value: "solid", label: "Solid", hint: "One flat color." },
-  { value: "gradient", label: "Gradient", hint: "Fades in from the start of the bar." },
-  { value: "striped", label: "Striped", hint: "Faint diagonal stripes." },
-  { value: "segmented", label: "Segmented", hint: "Cut into short pieces." },
-  { value: "glow", label: "Glowing", hint: "Lit from above, with a glow around it." },
-  { value: "candy", label: "Candy", hint: "Wide stripes in two tones." },
-  { value: "chevrons", label: "Chevrons", hint: "Arrowheads that point the way the bar grows." },
-  { value: "aurora", label: "Aurora", hint: "The color drifts to the hues beside it." },
-  { value: "neon", label: "Neon", hint: "An outlined tube with a faint light inside." },
+  {
+    value: "solid",
+    get label() {
+      return t("appearance.solid");
+    },
+    get hint() {
+      return t("appearance.oneFlatColor");
+    },
+  },
+  {
+    value: "gradient",
+    get label() {
+      return t("appearance.gradient");
+    },
+    get hint() {
+      return t("appearance.fadesInFromTheStart");
+    },
+  },
+  {
+    value: "striped",
+    get label() {
+      return t("appearance.striped");
+    },
+    get hint() {
+      return t("appearance.faintDiagonalStripes");
+    },
+  },
+  {
+    value: "segmented",
+    get label() {
+      return t("appearance.segmented");
+    },
+    get hint() {
+      return t("appearance.cutIntoShortPieces");
+    },
+  },
+  {
+    value: "glow",
+    get label() {
+      return t("appearance.glowing");
+    },
+    get hint() {
+      return t("appearance.litFromAboveWithA");
+    },
+  },
+  {
+    value: "candy",
+    get label() {
+      return t("appearance.candy");
+    },
+    get hint() {
+      return t("appearance.wideStripesInTwoTones");
+    },
+  },
+  {
+    value: "chevrons",
+    get label() {
+      return t("appearance.chevrons");
+    },
+    get hint() {
+      return t("appearance.arrowheadsThatPointTheWay");
+    },
+  },
+  {
+    value: "aurora",
+    get label() {
+      return t("appearance.aurora");
+    },
+    get hint() {
+      return t("appearance.theColorDriftsToThe");
+    },
+  },
+  {
+    value: "neon",
+    get label() {
+      return t("appearance.neon");
+    },
+    get hint() {
+      return t("appearance.anOutlinedTubeWithA");
+    },
+  },
   {
     value: "wave",
-    label: "Wave",
-    hint: "A liquid. Its surface ripples on bars 9 px and thicker.",
+    get label() {
+      return t("appearance.wave");
+    },
+    get hint() {
+      return t("appearance.aLiquidItsSurfaceRipples");
+    },
   },
-  { value: "line", label: "Line", hint: "A thin line led by a round head." },
-  { value: "dots", label: "Dots", hint: "Beads that light up one at a time." },
-  { value: "blocks", label: "Blocks", hint: "Cells that light up one at a time." },
+  {
+    value: "line",
+    get label() {
+      return t("appearance.line");
+    },
+    get hint() {
+      return t("appearance.aThinLineLedBy");
+    },
+  },
+  {
+    value: "dots",
+    get label() {
+      return t("appearance.dots");
+    },
+    get hint() {
+      return t("appearance.beadsThatLightUpOne");
+    },
+  },
+  {
+    value: "blocks",
+    get label() {
+      return t("appearance.blocks");
+    },
+    get hint() {
+      return t("appearance.cellsThatLightUpOne");
+    },
+  },
 ];
 
 const COLORINGS: Choice<ProgressColoring>[] = [
-  { value: "theme", label: "The theme's" },
-  { value: "direction", label: "By direction" },
-  { value: "custom", label: "Custom" },
+  {
+    value: "theme",
+    get label() {
+      return t("appearance.theThemes");
+    },
+  },
+  {
+    value: "direction",
+    get label() {
+      return t("appearance.byDirection");
+    },
+  },
+  {
+    value: "custom",
+    get label() {
+      return t("appearance.custom");
+    },
+  },
 ];
 
 const COLORING_HINTS: Record<ProgressColoring, string> = {
-  theme: "The theme's Progress bars color, which Colors > All colors changes.",
-  direction: "Uploads take the theme's Uploads color, downloads its Downloads color.",
-  custom: "The same color for every bar.",
+  get theme() {
+    return t("appearance.theThemesProgressBarsColor");
+  },
+  get direction() {
+    return t("appearance.uploadsTakeTheThemesUploads");
+  },
+  get custom() {
+    return t("appearance.theSameColorForEvery");
+  },
 };
 
 const SHAPES: Choice<ProgressShape>[] = [
-  { value: "pill", label: "Round" },
-  { value: "soft", label: "Soft" },
-  { value: "square", label: "Square" },
-  { value: "slanted", label: "Slanted" },
+  {
+    value: "pill",
+    get label() {
+      return t("appearance.round");
+    },
+  },
+  {
+    value: "soft",
+    get label() {
+      return t("appearance.soft");
+    },
+  },
+  {
+    value: "square",
+    get label() {
+      return t("appearance.square");
+    },
+  },
+  {
+    value: "slanted",
+    get label() {
+      return t("appearance.slanted");
+    },
+  },
 ];
 
 const MOTIONS: Choice<ProgressMotion>[] = [
-  { value: "none", label: "Nothing" },
-  { value: "stripes", label: "Moving stripes" },
-  { value: "shimmer", label: "Shimmer" },
-  { value: "pulse", label: "Pulse" },
-  { value: "scan", label: "Scan" },
-  { value: "ripple", label: "Ripple" },
-  { value: "comet", label: "Comet" },
-  { value: "sparkle", label: "Sparkle" },
-  { value: "breathe", label: "Breathing glow" },
+  {
+    value: "none",
+    get label() {
+      return t("common.nothing");
+    },
+  },
+  {
+    value: "stripes",
+    get label() {
+      return t("appearance.movingStripes");
+    },
+  },
+  {
+    value: "shimmer",
+    get label() {
+      return t("appearance.shimmer");
+    },
+  },
+  {
+    value: "pulse",
+    get label() {
+      return t("appearance.pulse");
+    },
+  },
+  {
+    value: "scan",
+    get label() {
+      return t("appearance.scan");
+    },
+  },
+  {
+    value: "ripple",
+    get label() {
+      return t("appearance.ripple");
+    },
+  },
+  {
+    value: "comet",
+    get label() {
+      return t("appearance.comet");
+    },
+  },
+  {
+    value: "sparkle",
+    get label() {
+      return t("appearance.sparkle");
+    },
+  },
+  {
+    value: "breathe",
+    get label() {
+      return t("appearance.breathingGlow");
+    },
+  },
 ];
 
 const LABELS: Choice<ProgressLabel>[] = [
-  { value: "percent", label: "Percent" },
-  { value: "bytes", label: "Transferred and size" },
-  { value: "remaining", label: "Time left" },
-  { value: "none", label: "No text" },
+  {
+    value: "percent",
+    get label() {
+      return t("appearance.percent");
+    },
+  },
+  {
+    value: "bytes",
+    get label() {
+      return t("appearance.transferredAndSize");
+    },
+  },
+  {
+    value: "remaining",
+    get label() {
+      return t("appearance.timeLeft");
+    },
+  },
+  {
+    value: "none",
+    get label() {
+      return t("appearance.noText");
+    },
+  },
 ];
 
 const MIB = 1024 * 1024;
@@ -155,7 +363,9 @@ const SAMPLES: SampleTransfer[] = [
     speed: 0,
   },
   {
-    name: "Unpacking site.zip",
+    get name() {
+      return t("appearance.sampleUnpacking", { name: "site.zip" });
+    },
     file: "site.zip",
     state: "running",
     size: 0,
@@ -165,12 +375,18 @@ const SAMPLES: SampleTransfer[] = [
 ];
 
 /** The text a miniature shows on its bar, for looks that put text there. */
-const MINIATURE_TEXT: Record<ProgressLabel, string> = {
-  percent: "62%",
-  bytes: "62 MB",
-  remaining: "2m left",
-  none: "",
-};
+function miniatureText(label: ProgressLabel): string {
+  switch (label) {
+    case "percent":
+      return formatPercent(62);
+    case "bytes":
+      return `${formatNumber(62)} MB`;
+    case "remaining":
+      return t("transfers.timeLeft", { duration: formatDuration(120) });
+    case "none":
+      return "";
+  }
+}
 
 const MINIATURE_FRACTION = 0.62;
 /** Thick enough for every fill to show what sets it apart. */
@@ -187,8 +403,9 @@ function sameBars(left: ProgressBarSettings, right: ProgressBarSettings): boolea
 
 /** Bars drawn as the transfer list draws them, with the settings being edited. */
 function ProgressPreview({ bars }: { bars: ProgressBarSettings }) {
+  const t = useT();
   return (
-    <div className="progress-preview" aria-label="Preview">
+    <div className="progress-preview" aria-label={t("appearance.preview")}>
       {SAMPLES.map((sample) => {
         const fraction = sample.fraction ?? 0;
         const job = {
@@ -302,9 +519,10 @@ interface PresetsProps {
 
 /** The named looks, each drawn as itself, and the current one when it is none of them. */
 function Presets({ bars, onPick }: PresetsProps) {
+  const t = useT();
   const current = matchingPreset(bars);
   return (
-    <div className="look-grid is-presets" role="group" aria-label="Presets">
+    <div className="look-grid is-presets" role="group" aria-label={t("appearance.presets")}>
       {PROGRESS_PRESETS.map((preset) => (
         <button
           key={preset.id}
@@ -315,27 +533,28 @@ function Presets({ bars, onPick }: PresetsProps) {
         >
           <LookSample
             look={{ ...preset.look, color: bars.color }}
-            text={preset.look.labelInside ? MINIATURE_TEXT[preset.look.label] : ""}
+            text={preset.look.labelInside ? miniatureText(preset.look.label) : ""}
           />
           <span className="look-card-name">{preset.name}</span>
         </button>
       ))}
       <div
         className={`look-card look-card-custom ${current ? "" : "is-current"}`}
-        title={current ? "Change anything below to make a look of your own" : undefined}
+        title={current ? t("appearance.changeAnythingBelowToMake") : undefined}
       >
         {current ? (
           <span className="look-card-blank" />
         ) : (
-          <LookSample look={bars} text={bars.labelInside ? MINIATURE_TEXT[bars.label] : ""} />
+          <LookSample look={bars} text={bars.labelInside ? miniatureText(bars.label) : ""} />
         )}
-        <span className="look-card-name">Custom</span>
+        <span className="look-card-name">{t("appearance.custom")}</span>
       </div>
     </div>
   );
 }
 
 export function ProgressBarGroup() {
+  const t = useT();
   const bars = useSettingsStore((state) => state.settings.appearance.progressBars);
   const latest = () => useSettingsStore.getState().settings.appearance.progressBars;
   const save = (change: Partial<ProgressBarSettings>) =>
@@ -353,15 +572,15 @@ export function ProgressBarGroup() {
   const fill = FILLS.find((option) => option.value === bars.fill);
 
   return (
-    <SettingGroup title="Progress bars">
+    <SettingGroup title={t("appearance.progressBars")}>
       <ProgressPreview bars={bars} />
 
-      <LookHeading title="Presets" hint="One click sets everything below." />
+      <LookHeading title={t("appearance.presets")} hint={t("appearance.presetsHint")} />
       <Presets bars={bars} onPick={save} />
 
-      <LookHeading title="Fill" hint={fill?.hint} />
+      <LookHeading title={t("appearance.fill")} hint={fill?.hint} />
       <LookSwatches
-        label="Fill"
+        label={t("appearance.fill")}
         value={bars.fill}
         options={FILLS}
         lookOf={(value) => swatchLook({ fill: value, motion: "none", height: SWATCH_HEIGHT })}
@@ -369,13 +588,13 @@ export function ProgressBarGroup() {
         onChange={(value) => save({ fill: value })}
       />
 
-      <LookHeading title="Color" />
-      <SettingRow label="Bar color" hint={COLORING_HINTS[bars.coloring]}>
+      <LookHeading title={t("appearance.color")} />
+      <SettingRow label={t("appearance.barColor")} hint={COLORING_HINTS[bars.coloring]}>
         <span className="progress-color">
           {bars.coloring === "custom" && (
             <ColorInput
               className="swatch-picker"
-              aria-label="Custom bar color"
+              aria-label={t("appearance.customBarColor")}
               value={bars.color}
               onPreview={(color) => preview({ color })}
               onCommit={(color) => save({ color })}
@@ -383,7 +602,7 @@ export function ProgressBarGroup() {
           )}
           <select
             value={bars.coloring}
-            aria-label="Bar color"
+            aria-label={t("appearance.barColor")}
             onChange={(event) => save({ coloring: event.target.value as ProgressColoring })}
           >
             {COLORINGS.map((option) => (
@@ -395,20 +614,26 @@ export function ProgressBarGroup() {
         </span>
       </SettingRow>
       <SwitchSetting
-        label="Color finished, paused and failed transfers"
-        hint="Green, gray and red from the theme, whatever the color above."
+        label={t("appearance.colorFinishedPausedAndFailed")}
+        hint={t("appearance.colorFinishedPausedAndFailedHint")}
         checked={bars.stateColors}
         onChange={(stateColors) => save({ stateColors })}
       />
 
-      <LookHeading title="Shape" />
+      <LookHeading title={t("appearance.shape")} />
       <SettingRow
-        label="Ends"
-        hint={shaped ? undefined : `${fill?.label ?? "This fill"} keeps its own shape.`}
+        label={t("appearance.ends")}
+        hint={
+          shaped
+            ? undefined
+            : fill
+              ? t("appearance.fillKeepsItsShape", { fill: fill.label })
+              : t("appearance.thisFillKeepsItsShape")
+        }
         disabled={!shaped}
       >
         <LookSwatches
-          label="Ends"
+          label={t("appearance.ends")}
           value={bars.shape}
           options={SHAPES}
           lookOf={(value) => swatchLook({ shape: value, motion: "none", height: SWATCH_HEIGHT })}
@@ -418,8 +643,8 @@ export function ProgressBarGroup() {
         />
       </SettingRow>
       <RangeSetting
-        label="Thickness"
-        hint="Of the bars in the transfer list."
+        label={t("appearance.thickness")}
+        hint={t("appearance.thicknessHint")}
         value={bars.height}
         min={PROGRESS_HEIGHT_LIMITS.min}
         max={PROGRESS_HEIGHT_LIMITS.max}
@@ -428,12 +653,9 @@ export function ProgressBarGroup() {
         onCommit={(height) => save({ height })}
       />
 
-      <LookHeading
-        title="Motion"
-        hint="Plays on bars whose work is under way, and holds still when the system asks for less motion."
-      />
+      <LookHeading title={t("appearance.motion")} hint={t("appearance.motionHint")} />
       <LookSwatches
-        label="Motion"
+        label={t("appearance.motion")}
         value={bars.motion}
         options={MOTIONS}
         lookOf={(value) =>
@@ -449,17 +671,17 @@ export function ProgressBarGroup() {
         onChange={(value) => save({ motion: value })}
       />
 
-      <LookHeading title="Text" />
+      <LookHeading title={t("appearance.text")} />
       <SelectSetting
-        label="Transfer text"
-        hint="What each transfer shows beside its bar."
+        label={t("appearance.transferText")}
+        hint={t("appearance.transferTextHint")}
         value={bars.label}
         options={LABELS}
         onChange={(label) => save({ label })}
       />
       <SwitchSetting
-        label="Text on the bar"
-        hint="The bar grows to fit it."
+        label={t("appearance.textOnTheBar")}
+        hint={t("appearance.textOnTheBarHint")}
         checked={bars.labelInside}
         disabled={bars.label === "none"}
         onChange={(labelInside) => save({ labelInside })}
@@ -472,7 +694,7 @@ export function ProgressBarGroup() {
           onClick={() => save(DEFAULT_PROGRESS_BARS)}
         >
           <RotateCcw size={14} />
-          Reset progress bars
+          {t("appearance.resetProgressBars")}
         </button>
       </div>
     </SettingGroup>
@@ -514,6 +736,7 @@ function boxOf(element: Element): Box {
 }
 
 export function AnimationGroup() {
+  const t = useT();
   const transferAnimation = useSettingsStore(
     (state) => state.settings.appearance.transferAnimation,
   );
@@ -537,10 +760,10 @@ export function AnimationGroup() {
   };
 
   return (
-    <SettingGroup title="Animation">
+    <SettingGroup title={t("appearance.animation")}>
       <SwitchSetting
-        label="Flying files"
-        hint="Each file you upload, download, move or copy hops out of its pane as it finishes and lands on its row where it went, or on the folder it went into."
+        label={t("appearance.flyingFiles")}
+        hint={t("appearance.flyingFilesHint")}
         checked={transferAnimation}
         onChange={(checked) =>
           void saveSettingsSection("appearance", { transferAnimation: checked })
@@ -548,7 +771,7 @@ export function AnimationGroup() {
       />
       <div className="flight-demo" ref={stageRef}>
         <div className="flight-demo-pane flight-demo-local">
-          <span className="flight-demo-title">This computer</span>
+          <span className="flight-demo-title">{t("appearance.thisComputer")}</span>
           <span className="flight-demo-files">
             {LOCAL_DEMO_FILES.map((file) => (
               <FileIcon key={file.name} entry={file} />
@@ -560,7 +783,7 @@ export function AnimationGroup() {
           {toServer ? "Upload" : "Download"}
         </button>
         <div className="flight-demo-pane flight-demo-server">
-          <span className="flight-demo-title">Server</span>
+          <span className="flight-demo-title">{t("appearance.server")}</span>
           <span className="flight-demo-files">
             {SERVER_DEMO_FILES.map((file) => (
               <FileIcon key={file.name} entry={file} />
@@ -568,12 +791,7 @@ export function AnimationGroup() {
           </span>
         </div>
       </div>
-      {lessMotion && (
-        <p className="setting-note">
-          The system asks apps for less motion, as Windows does while its animation effects are off.
-          Files fly anyway while this is on.
-        </p>
-      )}
+      {lessMotion && <p className="setting-note">{t("appearance.theSystemAsksAppsFor")}</p>}
     </SettingGroup>
   );
 }

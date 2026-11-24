@@ -5,6 +5,7 @@ import { cloud, toAppError } from "../lib/ipc";
 import { PROVIDER_NAMES, protocolInfo } from "../lib/protocols";
 import type { Protocol, SignedIn } from "../lib/types";
 import { useUiStore } from "../state/uiStore";
+import { useT } from "../i18n";
 
 interface CloudSignInProps {
   protocol: Protocol;
@@ -16,6 +17,7 @@ interface CloudSignInProps {
 
 /** Signs in to a cloud storage account in the system browser. */
 export function CloudSignIn({ protocol, account, onSignedIn, onError }: CloudSignInProps) {
+  const t = useT();
   const info = protocolInfo(protocol);
   const provider = info.provider ?? "google";
   const providerName = PROVIDER_NAMES[provider];
@@ -68,7 +70,7 @@ export function CloudSignIn({ protocol, account, onSignedIn, onError }: CloudSig
           className="button"
           onClick={() => openDialog({ kind: "settings", section: "cloud" })}
         >
-          Open Settings
+          {t("cloud.openSettings")}
         </button>
       </div>
     );
@@ -79,10 +81,10 @@ export function CloudSignIn({ protocol, account, onSignedIn, onError }: CloudSig
       <div className="cloud-account">
         <LoaderCircle size={18} className="cloud-account-icon spin" />
         <span className="cloud-account-text">
-          Finish signing in to {providerName} in your browser.
+          {t("cloud.finishSigningInToIn", { providerName })}
         </span>
         <button type="button" className="button" onClick={cancel}>
-          Cancel
+          {t("common.cancel")}
         </button>
       </div>
     );
@@ -93,10 +95,10 @@ export function CloudSignIn({ protocol, account, onSignedIn, onError }: CloudSig
       <div className="cloud-account">
         <CircleUserRound size={18} className="cloud-account-icon" />
         <span className="cloud-account-text">
-          Signed in as <strong>{account}</strong>
+          {t("cloud.signedInAs")} <strong>{account}</strong>
         </span>
         <button type="button" className="button" onClick={() => void signIn()}>
-          Sign in again
+          {t("cloud.signInAgain")}
         </button>
       </div>
     );
@@ -104,11 +106,9 @@ export function CloudSignIn({ protocol, account, onSignedIn, onError }: CloudSig
 
   return (
     <div className="cloud-account">
-      <span className="cloud-account-text">
-        Poros opens the {providerName} sign-in page in your browser.
-      </span>
+      <span className="cloud-account-text">{t("cloud.porosOpensTheSignIn", { providerName })}</span>
       <button type="button" className="button button-primary" onClick={() => void signIn()}>
-        Sign in with {providerName}
+        {t("cloud.signInWith", { providerName })}
       </button>
     </div>
   );

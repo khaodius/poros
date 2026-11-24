@@ -14,11 +14,13 @@ import type { ImportScan, ImportSource, ImportSourceInfo } from "../lib/types";
 import { useToastStore } from "../state/toastStore";
 import { ConnectionIcon } from "./ConnectionIcon";
 import { Dialog } from "./Dialog";
+import { useT } from "../i18n";
 
 /** What is being read or saved, to show on its button. */
 type Busy = { kind: "scan"; source: ImportSource | null } | { kind: "import" } | null;
 
 export function ImportConnectionsDialog({ onClose }: { onClose: () => void }) {
+  const t = useT();
   const showToast = useToastStore((state) => state.show);
   const [sources, setSources] = useState<ImportSourceInfo[] | null>(null);
   const [scan, setScan] = useState<ImportScan | null>(null);
@@ -75,7 +77,9 @@ export function ImportConnectionsDialog({ onClose }: { onClose: () => void }) {
 
   const chooseFiles = async (source: ImportSource | null) => {
     const chosen = await openFileDialog({
-      title: source ? `Import from ${IMPORT_SOURCES[source].label}` : "Import connections",
+      title: source
+        ? t("connect.importFrom", { label: IMPORT_SOURCES[source].label })
+        : t("connect.importConnections"),
       multiple: true,
       directory: false,
     });
@@ -117,14 +121,18 @@ export function ImportConnectionsDialog({ onClose }: { onClose: () => void }) {
       if (outcome.failures.length === 0) {
         showToast(
           "info",
-          `Imported ${count} from ${IMPORT_SOURCES[scan.source].label}.${passwords}`,
+          t("connect.importedFrom", { count, label: IMPORT_SOURCES[scan.source].label, passwords }),
         );
         latestOnClose.current();
         return;
       }
       setScan(null);
       setError(
-        `Imported ${count}.${passwords} These could not be saved: ${outcome.failures.join("; ")}`,
+        t("connect.importedTheseCouldNotBe", {
+          count,
+          passwords,
+          join: outcome.failures.join("; "),
+        }),
       );
     } catch (caught) {
       setError(toAppError(caught).message);
@@ -133,7 +141,7 @@ export function ImportConnectionsDialog({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <Dialog title="Import connections" onClose={onClose} width={680}>
+    <Dialog title={t("connect.importConnections")} onClose={onClose} width={680}>
       {scan ? (
         <ImportReview
           scan={scan}
@@ -164,14 +172,14 @@ export function ImportConnectionsDialog({ onClose }: { onClose: () => void }) {
             disabled={busy !== null}
             onClick={back}
           >
-            Back
+            {t("common.back")}
           </button>
         ) : (
           <button
             type="button"
             className="button push-left"
             disabled={busy !== null}
-            title="Poros works out which app wrote the file"
+            title={t("connect.porosWorksOutWhichApp")}
             onClick={() => void chooseFiles(null)}
           >
             <FileSearch size={14} />
@@ -179,7 +187,7 @@ export function ImportConnectionsDialog({ onClose }: { onClose: () => void }) {
           </button>
         )}
         <button type="button" className="button" onClick={onClose}>
-          Cancel
+          {t("common.cancel")}
         </button>
         {scan && (
           <button
@@ -206,20 +214,18 @@ interface SourceListProps {
 }
 
 function SourceList({ sources, busy, onRead, onChoose }: SourceListProps) {
+  const t = useT();
   const firstImport = useRef<HTMLButtonElement>(null);
   const loaded = sources !== null;
   // The list arrives after the dialog has opened and focused what was there.
   useEffect(() => {
     if (loaded) firstImport.current?.focus();
   }, [loaded]);
-  if (!sources) return <p className="field-hint">Looking for other apps...</p>;
+  if (!sources) return <p className="field-hint">{t("connect.lookingForOtherApps")}</p>;
   const firstFound = sources.find((info) => info.found.length > 0)?.source;
   return (
     <>
-      <p className="field-hint import-intro">
-        Poros copies the saved sites of these apps into its own saved connections. Nothing changes
-        in the other app.
-      </p>
+      <p className="field-hint import-intro">{t("connect.porosCopiesTheSavedSites")}</p>
       <ul className="import-sources">
         {sources.map((info) => {
           const text = IMPORT_SOURCES[info.source];
@@ -245,7 +251,7 @@ function SourceList({ sources, busy, onRead, onChoose }: SourceListProps) {
                 disabled={busy !== null}
                 onClick={() => onChoose(info.source)}
               >
-                Choose file...
+                {t("connect.chooseFile")}
               </button>
               {found && (
                 <button
@@ -287,6 +293,7 @@ function ImportReview({
   onSavePasswords,
   onFolderNames,
 }: ImportReviewProps) {
+  const t = useT();
   const entries = scan.entries;
   const allSelected = entries.length > 0 && selected.size === entries.length;
   const someSelected = selected.size > 0 && !allSelected;
@@ -365,20 +372,22 @@ function ImportReview({
                     ))}
                   </span>
                   <span className="import-entry-tags">
-                    {entry.existingId && <span className="import-tag">Already saved</span>}
+                    {entry.existingId && (
+                      <span className="import-tag">{t("connect.alreadySaved")}</span>
+                    )}
                     {entry.hasPassword && (
                       <span className="import-tag">
-                        <KeyRound size={11} /> Password
+                        <KeyRound size={11} /> {t("connect.password")}
                       </span>
                     )}
                     {entry.connection.authType === "publicKey" && (
                       <span className="import-tag" title={entry.connection.keyPath ?? undefined}>
-                        <KeyRound size={11} /> Key file
+                        <KeyRound size={11} /> {t("connect.keyFile")}
                       </span>
                     )}
                     {entry.connection.authType === "agent" && (
                       <span className="import-tag">
-                        <UserRound size={11} /> SSH agent
+                        <UserRound size={11} /> {t("connect.sshAgent")}
                       </span>
                     )}
                   </span>
@@ -391,9 +400,7 @@ function ImportReview({
 
       {scan.skipped.length > 0 && (
         <details className="import-skipped">
-          <summary>
-            {scan.skipped.length} left out, since Poros cannot connect to them as they are
-          </summary>
+          <summary>{t("connect.leftOutSincePorosCannot", { count: scan.skipped.length })}</summary>
           <ul>
             {scan.skipped.map((skipped, index) => (
               <li key={index}>
@@ -429,7 +436,7 @@ function ImportReview({
                 checked={folderNames}
                 onChange={(event) => onFolderNames(event.target.checked)}
               />
-              Put folder names in front of connection names
+              {t("connect.putFolderNamesInFront")}
             </label>
           )}
         </div>

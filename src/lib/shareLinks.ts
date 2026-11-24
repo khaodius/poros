@@ -10,6 +10,7 @@ import type {
   ShareLink,
   ShareOptions,
 } from "./types";
+import { t } from "../i18n";
 
 /** How a server pane's menu shows sharing: offered, or shown with why it is not. */
 export interface ShareMenuEntry {
@@ -33,18 +34,24 @@ export function shareMenuEntry(
 ): ShareMenuEntry | null {
   if (entries.length === 0) return null;
   // The server holds a vault's files encrypted, so a link to one would be unreadable.
-  if (inVault) return { label: "Share link (not in a vault)", disabled: true };
-  if (!sharing) return { label: "Share link (cloud storage only)", disabled: true };
+  if (inVault) return { label: t("share.shareLinkNotInA"), disabled: true };
+  if (!sharing) return { label: t("share.shareLinkCloudStorageOnly"), disabled: true };
   if (!sharing.folders && entries.some(isFolderLike)) {
-    return { label: "Share link (files only)", disabled: true };
+    return { label: t("share.shareLinkFilesOnly"), disabled: true };
   }
-  return { label: "Share link...", disabled: false };
+  return { label: t("share.shareLink"), disabled: false };
 }
 
 export const KIND_LABELS: Record<LinkKind, string> = {
-  view: "View",
-  edit: "Edit",
-  download: "Download",
+  get view() {
+    return t("share.view");
+  },
+  get edit() {
+    return t("common.edit");
+  },
+  get download() {
+    return t("common.download");
+  },
 };
 
 export function audienceLabel(audience: ShareAudience, organization?: string): string {
@@ -65,9 +72,24 @@ export interface LifetimePreset {
 }
 
 const LIFETIME_PRESETS: LifetimePreset[] = [
-  { label: "1 hour", seconds: 3600 },
-  { label: "1 day", seconds: 86_400 },
-  { label: "7 days", seconds: 604_800 },
+  {
+    get label() {
+      return t("share.n1Hour");
+    },
+    seconds: 3600,
+  },
+  {
+    get label() {
+      return t("share.n1Day");
+    },
+    seconds: 86_400,
+  },
+  {
+    get label() {
+      return t("share.n7Days");
+    },
+    seconds: 604_800,
+  },
 ];
 
 /** The preset lifetimes the service takes. */
@@ -78,10 +100,10 @@ export function lifetimePresets(sharing: ShareCapabilities): LifetimePreset[] {
 
 /** "7 days", "90 minutes": the largest unit that leaves no remainder. */
 export function lifetimeText(seconds: number): string {
-  if (seconds % 86_400 === 0) return pluralize(seconds / 86_400, "day");
-  if (seconds % 3600 === 0) return pluralize(seconds / 3600, "hour");
-  if (seconds % 60 === 0) return pluralize(seconds / 60, "minute");
-  return pluralize(seconds, "second");
+  if (seconds % 86_400 === 0) return t("share.days", { count: seconds / 86_400 });
+  if (seconds % 3600 === 0) return t("share.hours", { count: seconds / 3600 });
+  if (seconds % 60 === 0) return t("share.minutes", { count: seconds / 60 });
+  return t("share.seconds", { count: seconds });
 }
 
 /** A preset's seconds, a lifetime typed by hand, or a link without an end. */
@@ -241,7 +263,10 @@ export function linkStatement(subject: StatementSubject): string {
 export function selectionSummary(entries: readonly Pick<FileEntry, "kind">[]): string {
   const folders = entries.filter((entry) => entry.kind === "dir").length;
   const files = entries.length - folders;
-  return [files > 0 && pluralize(files, "file"), folders > 0 && pluralize(folders, "folder")]
+  return [
+    files > 0 && t("share.files", { count: files }),
+    folders > 0 && t("share.folders", { count: folders }),
+  ]
     .filter(Boolean)
     .join(" and ");
 }

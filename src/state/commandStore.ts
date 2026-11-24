@@ -12,6 +12,7 @@ import { forgetServerListings } from "./listings";
 import { listPanes } from "./paneRegistry";
 import { currentSessionId } from "./sessionStore";
 import { useToastStore } from "./toastStore";
+import { t } from "../i18n";
 
 /** Output kept in the window; the oldest text goes first. */
 const MAX_OUTPUT_CHARS = 512 * 1024;
@@ -109,16 +110,16 @@ async function runEach(run: CommandRun, hooks: RunHooks): Promise<RunSummary> {
     }
     finished++;
   }
-  if (hooks.control.stopped) return { succeeded: false, text: "Stopped" };
+  if (hooks.control.stopped) return { succeeded: false, text: t("automation.stopped") };
   if (!several) {
     return {
       succeeded: failed === 0,
-      text: lastError ?? (last ? describeResult(last) : "Nothing to run"),
+      text: lastError ?? (last ? describeResult(last) : t("automation.nothingToRun")),
     };
   }
   return failed === 0
-    ? { succeeded: true, text: `All ${finished} commands finished` }
-    : { succeeded: false, text: `${failed} of ${finished} commands failed` };
+    ? { succeeded: true, text: t("automation.allCommandsFinished", { finished }) }
+    : { succeeded: false, text: t("automation.ofCommandsFailed", { failed, finished }) };
 }
 
 export function refreshServerPanes(sessionId: string): void {

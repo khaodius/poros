@@ -16,6 +16,7 @@ import {
 import { pickProgram, takeProgramSettingsAsk } from "../state/externalEditStore";
 import { saveSettingsSection } from "../state/settingsStore";
 import { CommitInput, NumberSetting, SettingGroup, SwitchSetting } from "./settingsFields";
+import { useT } from "../i18n";
 
 const COMMAND_EXAMPLE =
   localSource.pathStyle === "windows"
@@ -24,6 +25,7 @@ const COMMAND_EXAMPLE =
 
 /** Settings > Interface > Open with: the programs files open in, and what becomes of saves. */
 export function ExternalEditorSettings({ settings }: { settings: Settings }) {
+  const t = useT();
   const editing = settings.editing;
   const set = (change: Partial<EditingSettings>) => void saveSettingsSection("editing", change);
   const noteRef = useRef<HTMLParagraphElement>(null);
@@ -35,21 +37,20 @@ export function ExternalEditorSettings({ settings }: { settings: Settings }) {
     });
   }, []);
   return (
-    <SettingGroup title="Open with">
+    <SettingGroup title={t("openWith.openWith")}>
       <p ref={noteRef} className="setting-note">
-        Open (Ctrl+Enter) uses the program set up for a file's kind, else the system's own. A server
-        file opens from a copy on this computer, which is uploaded each time the program saves it.
+        {t("openWith.openCtrlEnterUsesThe")}
       </p>
       <ProgramList programs={editing.programs} onChange={(programs) => set({ programs })} />
       <SwitchSetting
-        label="Upload each save without asking"
-        hint="Off: asks before every upload."
+        label={t("openWith.uploadEachSaveWithoutAsking")}
+        hint={t("openWith.uploadEachSaveWithoutAskingHint")}
         checked={editing.uploadOnSave}
         onChange={(uploadOnSave) => set({ uploadOnSave })}
       />
       <NumberSetting
-        label="Keep copies after the program closes"
-        hint="Counted from the last save or upload. Copies of files in vaults are wiped at once."
+        label={t("openWith.keepCopiesAfterTheProgram")}
+        hint={t("openWith.keepCopiesAfterTheProgramHint")}
         value={editing.keepMinutes}
         min={0}
         max={MAX_KEEP_WORKING_COPY_MINUTES}
@@ -66,6 +67,7 @@ interface ProgramListProps {
 }
 
 function ProgramList({ programs, onChange }: ProgramListProps) {
+  const t = useT();
   const [name, setName] = useState("");
   const [command, setCommand] = useState("");
 
@@ -103,7 +105,7 @@ function ProgramList({ programs, onChange }: ProgramListProps) {
           <div className="program-card-header">
             <CommitInput
               className="program-name"
-              label="Name"
+              label={t("common.name")}
               value={program.name}
               placeholder={programLabel(program)}
               onCommit={(value) => update(program.id, { name: value.trim() })}
@@ -111,18 +113,18 @@ function ProgramList({ programs, onChange }: ProgramListProps) {
             <button
               type="button"
               className="icon-button"
-              title="Remove program"
-              aria-label={`Remove ${programLabel(program)}`}
+              title={t("openWith.removeProgram")}
+              aria-label={t("openWith.remove", { programLabel: programLabel(program) })}
               onClick={() => onChange(programs.filter((existing) => existing.id !== program.id))}
             >
               <Trash2 size={14} />
             </button>
           </div>
           <div className="program-field">
-            <span>Program</span>
+            <span>{t("openWith.program")}</span>
             <span className="input-with-button">
               <CommitInput
-                label="Program"
+                label={t("openWith.program")}
                 value={program.command}
                 placeholder={COMMAND_EXAMPLE}
                 onCommit={(value) => update(program.id, { command: value.trim() })}
@@ -132,25 +134,25 @@ function ProgramList({ programs, onChange }: ProgramListProps) {
                 className="button"
                 onClick={() => void browse((chosen) => update(program.id, { command: chosen }))}
               >
-                <FolderOpen size={14} /> Browse
+                <FolderOpen size={14} /> {t("common.browse")}
               </button>
             </span>
           </div>
           <div className="program-field">
-            <span>Arguments</span>
+            <span>{t("openWith.arguments")}</span>
             <CommitInput
-              label="Arguments"
+              label={t("openWith.arguments")}
               value={program.arguments}
               placeholder={FILE_PLACEHOLDER}
               onCommit={(value) => update(program.id, { arguments: value })}
             />
           </div>
           <div className="program-field">
-            <span>Default for</span>
+            <span>{t("openWith.defaultFor")}</span>
             <CommitInput
-              label="Files this program opens by default"
+              label={t("openWith.filesThisProgramOpensBy")}
               value={formatPatterns(program.patterns)}
-              placeholder="*.psd, *.xcf"
+              placeholder={t("openWith.psdXcf")}
               onCommit={(value) => update(program.id, { patterns: parsePatterns(value) })}
             />
           </div>
@@ -159,32 +161,30 @@ function ProgramList({ programs, onChange }: ProgramListProps) {
       <form className="program-new" onSubmit={add}>
         <input
           className="program-name"
-          aria-label="Name of the new program"
+          aria-label={t("openWith.nameOfTheNewProgram")}
           value={name}
-          placeholder="Name"
+          placeholder={t("common.name")}
           spellCheck={false}
           onChange={(event) => setName(event.target.value)}
         />
         <span className="input-with-button">
           <input
-            aria-label="New program"
+            aria-label={t("openWith.newProgram")}
             value={command}
             placeholder={COMMAND_EXAMPLE}
             spellCheck={false}
             onChange={(event) => setCommand(event.target.value)}
           />
           <button type="button" className="button" onClick={() => void browse(setCommand)}>
-            <FolderOpen size={14} /> Browse
+            <FolderOpen size={14} /> {t("common.browse")}
           </button>
         </span>
         <button type="submit" className="button" disabled={!command.trim()}>
-          <Plus size={14} /> Add
+          <Plus size={14} /> {t("common.add")}
         </button>
       </form>
       <p className="setting-hint program-hint">
-        {FILE_PLACEHOLDER} in the arguments stands for the file, and the file goes last when it is
-        left out. Quotes keep spaces in one argument. Files matching a pattern under Default for
-        open in that program.
+        {t("openWith.inTheArgumentsStandsFor", { value: FILE_PLACEHOLDER })}
       </p>
     </div>
   );

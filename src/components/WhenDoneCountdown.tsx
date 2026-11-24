@@ -3,9 +3,11 @@ import { COUNTDOWN_SECONDS, COUNTDOWN_TEXT } from "../lib/automation";
 import { pluralize } from "../lib/format";
 import { cancelCountdown, performNow, useCountdownStore } from "../state/whenDone";
 import { Dialog } from "./Dialog";
+import { useT } from "../i18n";
 
 /** Counts down before closing Poros or locking, sleeping or shutting down the computer. */
 export function WhenDoneCountdown() {
+  const t = useT();
   const countdown = useCountdownStore((state) => state.countdown);
   const [now, setNow] = useState(() => Date.now());
 
@@ -32,8 +34,8 @@ export function WhenDoneCountdown() {
   return (
     <Dialog title={text.title} onClose={cancelCountdown} width={400}>
       <p className="countdown-text">
-        The transfer queue has finished. {text.title} in{" "}
-        <strong>{pluralize(seconds, "second")}</strong>.
+        {t("automation.theTransferQueueHasFinished", { title: text.title })}
+        <strong>{t("automation.seconds", { count: seconds })}</strong>.
       </p>
       <div className="dialog-actions">
         <button type="button" className="button" onClick={() => void performNow(countdown.action)}>
@@ -45,7 +47,7 @@ export function WhenDoneCountdown() {
           className="button button-primary"
           onClick={cancelCountdown}
         >
-          Cancel
+          {t("common.cancel")}
         </button>
       </div>
     </Dialog>

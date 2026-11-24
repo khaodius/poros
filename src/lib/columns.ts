@@ -1,15 +1,26 @@
 import type { FileEntry } from "./types";
+import { t } from "../i18n";
 
 /** File list columns besides the name, in the order they show. */
 export const DETAIL_COLUMNS = ["size", "type", "modified", "permissions", "owner"] as const;
 export type DetailColumn = (typeof DETAIL_COLUMNS)[number];
 
 export const COLUMN_LABELS: Record<DetailColumn, string> = {
-  size: "Size",
-  type: "Type",
-  modified: "Modified",
-  permissions: "Permissions",
-  owner: "Owner",
+  get size() {
+    return t("common.size");
+  },
+  get type() {
+    return t("fileList.type");
+  },
+  get modified() {
+    return t("fileList.modified");
+  },
+  get permissions() {
+    return t("fileList.permissions");
+  },
+  get owner() {
+    return t("fileList.owner");
+  },
 };
 
 /** The detail columns a listing has values for: local listings on Windows have no owners. */

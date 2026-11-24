@@ -2,8 +2,10 @@ import { ShieldAlert, ShieldQuestion } from "lucide-react";
 import { approvalOf } from "../lib/hostKey";
 import { useHostKeyPrompt } from "../state/connectFlow";
 import { Dialog } from "./Dialog";
+import { useT } from "../i18n";
 
 export function HostKeyDialog() {
+  const t = useT();
   const question = useHostKeyPrompt((state) => state.question);
   if (!question) return null;
   const { hostKey, changed, answer } = question;
@@ -47,30 +49,28 @@ export function HostKeyDialog() {
             </p>
           ) : changed ? (
             <p>
-              The key presented by <strong>{target}</strong> does not match the one on record. The
-              server may have been reinstalled, or someone may be intercepting the connection.
-              Continue only if you know why the key changed.
+              {t("connect.theKeyPresentedBy")} <strong>{target}</strong>{" "}
+              {t("connect.doesNotMatchTheOne")}
             </p>
           ) : (
             <p>
-              <strong>{target}</strong> has not been seen before. Compare the fingerprint with the
-              one your server administrator gave you before continuing.
+              <strong>{target}</strong> {t("connect.hasNotBeenSeenBefore")}
             </p>
           )}
           <dl className="host-key-details">
             <dt>{certificate ? "Type" : "Key type"}</dt>
             <dd>{hostKey.algorithm}</dd>
-            <dt>Fingerprint</dt>
+            <dt>{t("connect.fingerprint")}</dt>
             <dd className="mono selectable">{hostKey.fingerprint}</dd>
           </dl>
         </div>
       </div>
       <div className="dialog-actions">
         <button type="button" className="button" onClick={() => answer(null)}>
-          Cancel
+          {t("common.cancel")}
         </button>
         <button type="button" className="button" onClick={() => answer(approvalOf(hostKey, false))}>
-          Connect once
+          {t("connect.connectOnce")}
         </button>
         <button
           type="button"

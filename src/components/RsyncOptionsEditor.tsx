@@ -11,6 +11,7 @@ import {
   type OptionField,
 } from "../lib/rsyncOptions";
 import type { OptionCheck, SyncDirection, SyncOptions } from "../lib/types";
+import { useT } from "../i18n";
 
 interface EditorProps {
   options: SyncOptions;
@@ -22,6 +23,7 @@ interface EditorProps {
 
 /** rsync's options, grouped as its manual groups them, each with the flag it stands for. */
 export function RsyncOptionsEditor({ options, direction, onChange, initiallyOpen }: EditorProps) {
+  const t = useT();
   const open = initiallyOpen ?? [OPTION_GROUPS[0].id];
   return (
     <div className="rsync-options">
@@ -31,7 +33,9 @@ export function RsyncOptionsEditor({ options, direction, onChange, initiallyOpen
           <details key={group.id} className="rsync-group" open={open.includes(group.id)}>
             <summary>
               <span>{group.title}</span>
-              {changed > 0 && <span className="rsync-group-count">{changed} changed</span>}
+              {changed > 0 && (
+                <span className="rsync-group-count">{t("rsync.changed", { changed })}</span>
+              )}
             </summary>
             <div className="rsync-fields">
               {group.fields.map((field) => (
@@ -185,6 +189,7 @@ interface NumberInputProps {
 }
 
 function NumberInput({ value, max, unit, label, disabled, optional, onChange }: NumberInputProps) {
+  const t = useT();
   const [typed, setTyped] = useState<string | null>(null);
   return (
     <span className="rsync-number">
@@ -194,7 +199,7 @@ function NumberInput({ value, max, unit, label, disabled, optional, onChange }: 
         max={max}
         step={1}
         value={typed ?? (value === null ? "" : String(value))}
-        placeholder={optional ? "None" : undefined}
+        placeholder={optional ? t("common.none") : undefined}
         aria-label={label}
         disabled={disabled}
         onChange={(event) => {
@@ -223,13 +228,14 @@ interface SizeInputProps {
 
 /** A size typed as rsync takes it, kept as typed while the box has focus. */
 function SizeInput({ value, label, disabled, onChange }: SizeInputProps) {
+  const t = useT();
   const [typed, setTyped] = useState<string | null>(null);
   const invalid = typed !== null && parseSize(typed) === undefined;
   return (
     <input
       className={`mono ${invalid ? "has-error" : ""}`}
       value={typed ?? formatSizeArgument(value)}
-      placeholder="No limit"
+      placeholder={t("rsync.noLimit")}
       aria-label={label}
       aria-invalid={invalid}
       spellCheck={false}

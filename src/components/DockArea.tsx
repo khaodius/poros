@@ -32,6 +32,7 @@ import { TabBar } from "./TabBar";
 import { TabContent } from "./TabContent";
 import { TAB_ICONS } from "./tabIcons";
 import { WindowSketch } from "./WindowSketch";
+import { useT } from "../i18n";
 
 const cssLength = ({ share, pixels }: Extent) => `calc(${share * 100}% + ${pixels}px)`;
 
@@ -84,6 +85,7 @@ interface Resizing {
  * where it would land.
  */
 export function DockArea() {
+  const t = useT();
   const root = useLayoutStore((state) => state.root);
   const activeGroupId = useLayoutStore((state) => state.activeGroupId);
   const commitSizes = useLayoutStore((state) => state.setSizes);
@@ -223,7 +225,7 @@ export function DockArea() {
             className={`dock-resizer is-${split.direction}`}
             role="separator"
             aria-orientation={split.direction === "row" ? "vertical" : "horizontal"}
-            title="Drag to resize, double-click to even out"
+            title={t("workspace.dragToResizeDoubleClick")}
             style={placementStyle(resizerPlacement(split, index, placements))}
             onPointerDown={(event) => startResize(split, index, event)}
             onDoubleClick={() =>

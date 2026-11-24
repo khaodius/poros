@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { PLACEHOLDERS, expandCommand, needsSelection, type CommandTarget } from "../lib/commands";
 import { useCommandStore } from "../state/commandStore";
 import { Dialog } from "./Dialog";
+import { useT } from "../i18n";
 
 interface RunCommandDialogProps {
   sessionId: string;
@@ -13,6 +14,7 @@ interface RunCommandDialogProps {
 let lastCommand = "";
 
 export function RunCommandDialog({ sessionId, target, onClose }: RunCommandDialogProps) {
+  const t = useT();
   const [command, setCommand] = useState(lastCommand);
   const [refresh, setRefresh] = useState(true);
   const trimmed = command.trim();
@@ -24,7 +26,7 @@ export function RunCommandDialog({ sessionId, target, onClose }: RunCommandDialo
     lastCommand = trimmed;
     onClose();
     useCommandStore.getState().show({
-      title: "Run a command",
+      title: t("automation.runACommand"),
       sessionId,
       directory: target.folder,
       commands: expandCommand(trimmed, target),
@@ -33,11 +35,11 @@ export function RunCommandDialog({ sessionId, target, onClose }: RunCommandDialo
   };
 
   return (
-    <Dialog title="Run a command on the server" onClose={onClose} width={560}>
+    <Dialog title={t("automation.runACommandOnThe")} onClose={onClose} width={560}>
       <form className="form" onSubmit={submit}>
         <label className="field">
           <span>
-            Command to run in <code>{target.folder}</code>
+            {t("automation.commandToRunIn")} <code>{target.folder}</code>
           </span>
           <input
             data-autofocus
@@ -45,7 +47,7 @@ export function RunCommandDialog({ sessionId, target, onClose }: RunCommandDialo
             value={command}
             spellCheck={false}
             autoCapitalize="off"
-            placeholder="du -sh {paths}"
+            placeholder={t("automation.duSh")}
             onChange={(event) => setCommand(event.target.value)}
           />
         </label>
@@ -65,21 +67,19 @@ export function RunCommandDialog({ sessionId, target, onClose }: RunCommandDialo
             checked={refresh}
             onChange={(event) => setRefresh(event.target.checked)}
           />
-          Refresh the server's folders when it finishes
+          {t("automation.refreshTheServersFoldersWhen")}
         </label>
-        {missingSelection && (
-          <p className="form-error">Select files or folders to fill in the placeholders.</p>
-        )}
+        {missingSelection && <p className="form-error">{t("automation.selectFilesOrFoldersTo")}</p>}
         <div className="dialog-actions">
           <button type="button" className="button" onClick={onClose}>
-            Cancel
+            {t("common.cancel")}
           </button>
           <button
             type="submit"
             className="button button-primary"
             disabled={!trimmed || missingSelection}
           >
-            Run
+            {t("automation.run")}
           </button>
         </div>
       </form>

@@ -1,8 +1,9 @@
 // How progress bars look: the fill, its color, thickness and shape, what moves on a bar while
 // its work runs, and the text a transfer's bar shows. Part of the appearance settings.
 
-import { formatDuration, formatSize } from "./format";
+import { formatDuration, formatPercent, formatSize } from "./format";
 import type { JobSnapshot } from "./types";
+import { t } from "../i18n";
 
 export type ProgressFill =
   | "solid"
@@ -205,10 +206,14 @@ const look = (change: Partial<ProgressLook>): ProgressLook => ({
 
 /** Named looks offered in one click. The first is how bars look until they are changed. */
 export const PROGRESS_PRESETS: ProgressPreset[] = [
-  { id: "classic", name: "Classic", look: look({}) },
+  { id: "classic", get name() {
+      return t("appearance.presetClassic");
+    }, look: look({}) },
   {
     id: "showcase",
-    name: "Gradient",
+    get name() {
+      return t("appearance.presetGradient");
+    },
     look: look({
       fill: "gradient",
       coloring: "direction",
@@ -220,22 +225,30 @@ export const PROGRESS_PRESETS: ProgressPreset[] = [
   },
   {
     id: "candy",
-    name: "Candy cane",
+    get name() {
+      return t("appearance.presetCandyCane");
+    },
     look: look({ fill: "candy", coloring: "direction", motion: "stripes", height: 10 }),
   },
   {
     id: "neon",
-    name: "Neon",
+    get name() {
+      return t("appearance.presetNeon");
+    },
     look: look({ fill: "neon", motion: "breathe", height: 8, label: "remaining" }),
   },
   {
     id: "comet",
-    name: "Comet",
+    get name() {
+      return t("appearance.presetComet");
+    },
     look: look({ fill: "line", coloring: "direction", motion: "comet", height: 3 }),
   },
   {
     id: "tide",
-    name: "Tide",
+    get name() {
+      return t("appearance.presetTide");
+    },
     look: look({
       fill: "wave",
       coloring: "direction",
@@ -248,12 +261,16 @@ export const PROGRESS_PRESETS: ProgressPreset[] = [
   },
   {
     id: "aurora",
-    name: "Aurora",
+    get name() {
+      return t("appearance.presetAurora");
+    },
     look: look({ fill: "aurora", motion: "sparkle", height: 8 }),
   },
   {
     id: "conveyor",
-    name: "Conveyor",
+    get name() {
+      return t("appearance.presetConveyor");
+    },
     look: look({
       fill: "chevrons",
       coloring: "direction",
@@ -264,12 +281,16 @@ export const PROGRESS_PRESETS: ProgressPreset[] = [
   },
   {
     id: "arcade",
-    name: "Arcade",
+    get name() {
+      return t("appearance.presetArcade");
+    },
     look: look({ fill: "blocks", motion: "scan", shape: "square", height: 10 }),
   },
   {
     id: "beads",
-    name: "Beads",
+    get name() {
+      return t("appearance.presetBeads");
+    },
     look: look({ fill: "dots", coloring: "direction", motion: "pulse", height: 8 }),
   },
 ];
@@ -293,15 +314,18 @@ export function progressLabel(
 ): string {
   switch (label) {
     case "percent":
-      return `${Math.floor(fraction * 100)}%`;
+      return formatPercent(Math.floor(fraction * 100));
     case "bytes":
       if (job.state === "done") return formatSize(job.size);
-      return `${formatSize(Math.min(job.transferred, job.size))} of ${formatSize(job.size)}`;
+      return t("transfers.sizeOfSize", {
+        transferred: formatSize(Math.min(job.transferred, job.size)),
+        size: formatSize(job.size),
+      });
     case "remaining": {
-      if (job.state === "done") return "Done";
+      if (job.state === "done") return t("transfers.done");
       if (job.state !== "running" || job.speed <= 0) return "";
       const left = Math.max(0, job.size - job.transferred);
-      return `${formatDuration(Math.ceil(left / job.speed))} left`;
+      return t("transfers.timeLeft", { duration: formatDuration(Math.ceil(left / job.speed)) });
     }
     case "none":
       return "";

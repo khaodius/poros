@@ -20,6 +20,7 @@ import {
   keepAlpha,
   previewColors,
   serializeTheme,
+  themeName,
   toInputColor,
   withColor,
   withoutColor,
@@ -49,12 +50,28 @@ import {
   SettingRow,
   SwitchSetting,
 } from "./settingsFields";
+import { t, useT, type MessageKey } from "../i18n";
 
 const TOKENS = new Map(COLOR_TOKENS.map((token) => [token.key, token]));
 const BASES: { value: ThemeBase; label: string }[] = [
-  { value: "dark", label: "Dark" },
-  { value: "light", label: "Light" },
-  { value: "system", label: "Follow the system" },
+  {
+    value: "dark",
+    get label() {
+      return t("appearance.dark");
+    },
+  },
+  {
+    value: "light",
+    get label() {
+      return t("appearance.light");
+    },
+  },
+  {
+    value: "system",
+    get label() {
+      return t("appearance.followTheSystem");
+    },
+  },
 ];
 /** The radius the stylesheet uses when neither the theme nor the settings set one. */
 const DEFAULT_RADIUS = 6;
@@ -73,9 +90,9 @@ const LOOK_KEYS = (Object.keys(DEFAULT_SETTINGS.appearance) as (keyof Appearance
     ].includes(key),
 );
 /** How the system's icons are described: whose they are depends on the system. */
-const SYSTEM_ICONS_HINT = navigator.userAgent.includes("Windows")
-  ? "File lists show the icons Windows Explorer uses for each type of file."
-  : "File lists show your desktop's icon theme, as your file manager does.";
+const SYSTEM_ICONS_HINT: MessageKey = navigator.userAgent.includes("Windows")
+  ? "appearance.systemIconsHintWindows"
+  : "appearance.systemIconsHintLinux";
 const DEFAULT_LOOK: Partial<Appearance> = Object.fromEntries(
   LOOK_KEYS.map((key) => [key, DEFAULT_SETTINGS.appearance[key]]),
 );
@@ -107,10 +124,11 @@ function missingPick(fonts: FontOption[] | null, kind: FontKind): string | undef
   if (!fonts || fonts.some((option) => option.name.toLowerCase() === pick.toLowerCase())) {
     return undefined;
   }
-  return `${pick} is free and made for screens; install it to see it here.`;
+  return t("appearance.recommendedFontMissing", { font: pick });
 }
 
 export function AppearanceSettings() {
+  const t = useT();
   const themeFilesList = useThemeStore((state) => state.files);
   const loadThemes = useThemeStore((state) => state.load);
   const appearance = useSettingsStore((state) => state.settings.appearance);
@@ -142,10 +160,10 @@ export function AppearanceSettings() {
   const importTheme = () =>
     run(async () => {
       const path = await openFileDialog({
-        title: "Import theme",
+        title: t("appearance.importTheme"),
         multiple: false,
         directory: false,
-        filters: [{ name: "Poros theme", extensions: ["json"] }],
+        filters: [{ name: t("appearance.themeFileType"), extensions: ["json"] }],
       });
       if (typeof path !== "string") return;
       const id = await themeFiles.importFile(path);
@@ -156,9 +174,9 @@ export function AppearanceSettings() {
   const exportTheme = () =>
     run(async () => {
       const path = await saveFileDialog({
-        title: "Export theme",
+        title: t("appearance.exportTheme"),
         defaultPath: `${active.theme.name.replace(/[^\w -]+/g, "").trim() || "theme"}.json`,
-        filters: [{ name: "Poros theme", extensions: ["json"] }],
+        filters: [{ name: t("appearance.themeFileType"), extensions: ["json"] }],
       });
       if (path) {
         await files.saveText(path, `${JSON.stringify(serializeTheme(active.theme), null, 2)}\n`);
@@ -176,7 +194,7 @@ export function AppearanceSettings() {
 
   return (
     <>
-      <SettingGroup title="Theme">
+      <SettingGroup title={t("appearance.theme")}>
         <div className="theme-grid">
           {allThemes(themeFilesList).map((entry) => (
             <ThemeCard
@@ -190,11 +208,11 @@ export function AppearanceSettings() {
         <div className="theme-actions">
           <button type="button" className="button" onClick={() => void importTheme()}>
             <Upload size={14} />
-            Import theme file
+            {t("appearance.importThemeFile")}
           </button>
           <button type="button" className="button" onClick={() => void exportTheme()}>
             <Download size={14} />
-            Export
+            {t("appearance.export")}
           </button>
           <button
             type="button"
@@ -202,12 +220,12 @@ export function AppearanceSettings() {
             onClick={() => void run(() => themeFiles.openFolder())}
           >
             <FolderOpen size={14} />
-            Open themes folder
+            {t("appearance.openThemesFolder")}
           </button>
           {!active.builtin && (
             <button type="button" className="button" onClick={() => void deleteTheme()}>
               <Trash2 size={14} />
-              Delete
+              {t("common.delete")}
             </button>
           )}
         </div>
@@ -221,14 +239,14 @@ export function AppearanceSettings() {
         {error && <p className="form-error">{error}</p>}
       </SettingGroup>
 
-      <SettingGroup title="Colors">
+      <SettingGroup title={t("appearance.colors")}>
         {active.builtin && (
           <p className="setting-note">
-            Changing a color saves a copy of {active.theme.name} as your own theme file.
+            {t("appearance.changingAColorSavesA", { name: themeName(active) })}
           </p>
         )}
         {!active.builtin && (
-          <SettingRow label="Name">
+          <SettingRow label={t("common.name")}>
             <input
               key={active.id}
               defaultValue={active.theme.name}
@@ -244,13 +262,13 @@ export function AppearanceSettings() {
         )}
         {!active.builtin && (
           <SelectSetting
-            label="Based on"
+            label={t("appearance.basedOn")}
             value={active.theme.base}
             options={BASES}
             onChange={(base) => void run(() => editActiveTheme((theme) => ({ ...theme, base })))}
           />
         )}
-        <SettingRow label="Accent">
+        <SettingRow label={t("appearance.accent")}>
           <div className="swatches">
             {ACCENT_PRESETS.map((preset) => (
               <button
@@ -258,7 +276,7 @@ export function AppearanceSettings() {
                 type="button"
                 className="swatch"
                 style={{ background: preset }}
-                aria-label={`Accent ${preset}`}
+                aria-label={t("appearance.accent2", { preset })}
                 aria-pressed={colors.accent === preset}
                 onClick={() => setColor("accent", preset)}
               >
@@ -267,7 +285,7 @@ export function AppearanceSettings() {
             ))}
             <ColorInput
               className="swatch-picker"
-              aria-label="Custom accent"
+              aria-label={t("appearance.customAccent")}
               value={toInputColor(colors.accent ?? applied.accent ?? "") ?? "#000000"}
               onPreview={(color) => previewColor("accent", color)}
               onCommit={(color) => setColor("accent", color)}
@@ -282,16 +300,16 @@ export function AppearanceSettings() {
                 onPreview={(color) => previewColor(key, color)}
                 onCommit={(color) => setColor(key, color)}
               />
-              <span>{TOKENS.get(key)?.label}</span>
-              {colors[key] && <span className="color-set" title="Set by this theme" />}
+              <span>{t(TOKENS.get(key)!.label)}</span>
+              {colors[key] && <span className="color-set" title={t("appearance.setByThisTheme")} />}
             </label>
           ))}
         </div>
         <details className="all-colors">
-          <summary>All colors</summary>
+          <summary>{t("appearance.allColors")}</summary>
           {COLOR_GROUPS.map((group) => (
             <div key={group} className="color-token-group">
-              <h4>{group}</h4>
+              <h4>{t(group)}</h4>
               {COLOR_TOKENS.filter((token) => token.group === group).map((token) => (
                 <ColorTokenRow
                   key={`${active.id}-${token.key}`}
@@ -313,36 +331,38 @@ export function AppearanceSettings() {
             onClick={() => void run(() => editActiveTheme((theme) => ({ ...theme, colors: {} })))}
           >
             <RotateCcw size={14} />
-            Reset colors to {active.theme.base === "light" ? "Light" : "Dark"}
+            {active.theme.base === "light"
+              ? t("appearance.resetColorsToLight")
+              : t("appearance.resetColorsToDark")}
           </button>
         )}
       </SettingGroup>
 
-      <SettingGroup title="Text">
-        <SettingRow label="Interface font" hint={missingPick(fonts, "ui")}>
+      <SettingGroup title={t("appearance.text")}>
+        <SettingRow label={t("appearance.interfaceFont")} hint={missingPick(fonts, "ui")}>
           <FontPicker
             kind="ui"
-            label="Interface font"
+            label={t("appearance.interfaceFont")}
             value={appearance.uiFont}
             fonts={fonts}
             onChange={(uiFont) => setAppearance({ uiFont })}
           />
         </SettingRow>
         <SettingRow
-          label="Monospace font"
-          hint={missingPick(fonts, "mono") ?? "Used for paths, permissions and the log."}
+          label={t("appearance.monospaceFont")}
+          hint={missingPick(fonts, "mono") ?? t("appearance.usedForPathsPermissionsAnd")}
         >
           <FontPicker
             kind="mono"
-            label="Monospace font"
+            label={t("appearance.monospaceFont")}
             value={appearance.monoFont}
             fonts={fonts}
             onChange={(monoFont) => setAppearance({ monoFont })}
           />
         </SettingRow>
         <RangeSetting
-          label="Font size"
-          hint="Ctrl and + or -, or Ctrl and the mouse wheel, change it anywhere."
+          label={t("appearance.fontSize")}
+          hint={t("appearance.fontSizeHint")}
           value={appearance.fontSize}
           min={FONT_SIZE_LIMITS.min}
           max={FONT_SIZE_LIMITS.max}
@@ -352,12 +372,14 @@ export function AppearanceSettings() {
         />
       </SettingGroup>
 
-      <SettingGroup title="Shape">
+      <SettingGroup title={t("appearance.shape")}>
         <RangeSetting
-          label="Corner roundness"
+          label={t("appearance.cornerRoundness")}
           hint={
             appearance.radius === null
-              ? `Following the theme${active.theme.radius === undefined ? "" : ` (${active.theme.radius} px)`}.`
+              ? active.theme.radius === undefined
+                ? t("appearance.followingTheTheme")
+                : t("appearance.followingTheThemeRadius", { radius: active.theme.radius })
               : undefined
           }
           value={appearance.radius ?? active.theme.radius ?? DEFAULT_RADIUS}
@@ -367,10 +389,10 @@ export function AppearanceSettings() {
           onPreview={(radius) => previewAppearance({ radius })}
           onCommit={(radius) => setAppearance({ radius })}
           onReset={appearance.radius === null ? undefined : () => setAppearance({ radius: null })}
-          resetLabel="Use the theme's roundness"
+          resetLabel={t("appearance.useTheThemesRoundness")}
         />
         <RangeSetting
-          label="File list row height"
+          label={t("appearance.fileListRowHeight")}
           value={appearance.rowHeight}
           min={ROW_HEIGHT_LIMITS.min}
           max={ROW_HEIGHT_LIMITS.max}
@@ -379,8 +401,8 @@ export function AppearanceSettings() {
           onCommit={(rowHeight) => setAppearance({ rowHeight })}
         />
         <SwitchSetting
-          label="Striped rows"
-          hint="Shades every other row in file lists."
+          label={t("appearance.stripedRows")}
+          hint={t("appearance.stripedRowsHint")}
           checked={appearance.stripedRows}
           onChange={(stripedRows) => setAppearance({ stripedRows })}
         />
@@ -392,36 +414,36 @@ export function AppearanceSettings() {
             onClick={() => setAppearance(DEFAULT_LOOK)}
           >
             <RotateCcw size={14} />
-            Reset fonts, sizes and shape
+            {t("appearance.resetFontsSizesAndShape")}
           </button>
         </div>
       </SettingGroup>
 
-      <SettingGroup title="Icons and scrolling">
+      <SettingGroup title={t("appearance.iconsAndScrolling")}>
         <SwitchSetting
-          label="System file icons"
-          hint={SYSTEM_ICONS_HINT}
+          label={t("appearance.systemFileIcons")}
+          hint={t(SYSTEM_ICONS_HINT)}
           checked={appearance.systemIcons}
           onChange={(systemIcons) => setAppearance({ systemIcons })}
         />
         <SwitchSetting
-          label="Smooth scrolling"
-          hint="The mouse wheel glides file lists, the log and other panels rather than jumping a step at a time."
+          label={t("appearance.smoothScrolling")}
+          hint={t("appearance.smoothScrollingHint")}
           checked={appearance.smoothScrolling}
           onChange={(smoothScrolling) => setAppearance({ smoothScrolling })}
         />
       </SettingGroup>
 
-      <SettingGroup title="Grouping">
+      <SettingGroup title={t("appearance.grouping")}>
         <SwitchSetting
-          label="Group local files by date"
-          hint="Puts files under Today, Yesterday, Earlier this week and so on, as Windows Explorer does. Click a heading to select what is under it, or its arrow to collapse it."
+          label={t("appearance.groupLocalFilesByDate")}
+          hint={t("appearance.groupLocalFilesByDateHint")}
           checked={appearance.groupLocalByDate}
           onChange={(groupLocalByDate) => setAppearance({ groupLocalByDate })}
         />
         <SwitchSetting
-          label="Group server files by date"
-          hint="The same for files on servers."
+          label={t("appearance.groupServerFilesByDate")}
+          hint={t("appearance.groupServerFilesByDateHint")}
           checked={appearance.groupRemoteByDate}
           onChange={(groupRemoteByDate) => setAppearance({ groupRemoteByDate })}
         />
@@ -452,6 +474,7 @@ function ColorTokenRow({
   onChange,
   onReset,
 }: ColorTokenRowProps) {
+  const t = useT();
   const [typed, setTyped] = useState<string | null>(null);
   const shown = value ?? applied;
   const picked = (color: string) => (token.translucent ? keepAlpha(color, shown) : color);
@@ -465,18 +488,18 @@ function ColorTokenRow({
   return (
     <div className="color-token">
       <ColorInput
-        aria-label={token.label}
+        aria-label={t(token.label)}
         value={toInputColor(shown) ?? "#000000"}
         onPreview={(color) => onPreview(picked(color))}
         onCommit={(color) => onChange(picked(color))}
       />
-      <span className="color-token-label">{token.label}</span>
+      <span className="color-token-label">{t(token.label)}</span>
       <input
         className={`color-token-value ${typed !== null && typed.trim() && !isColor(typed.trim()) ? "has-error" : ""}`}
         value={typed ?? value ?? ""}
         placeholder={applied}
         spellCheck={false}
-        aria-label={`${token.label} value`}
+        aria-label={t("appearance.value", { label: t(token.label) })}
         onChange={(event) => setTyped(event.target.value)}
         onBlur={commitTyped}
         onKeyDown={(event) => {
@@ -491,8 +514,8 @@ function ColorTokenRow({
       <button
         type="button"
         className="icon-button"
-        title="Use the base color"
-        aria-label={`Reset ${token.label.toLowerCase()}`}
+        title={t("appearance.useTheBaseColor")}
+        aria-label={t("appearance.resetColor", { label: t(token.label) })}
         disabled={value === undefined}
         onClick={onReset}
       >
@@ -511,6 +534,7 @@ function ThemeCard({
   selected: boolean;
   onSelect: () => void;
 }) {
+  const t = useT();
   const colors = previewColors(entry.theme, prefersDark());
   return (
     <button
@@ -533,8 +557,10 @@ function ThemeCard({
         </span>
       </span>
       <span className="theme-card-name">
-        {entry.theme.name}
-        {entry.problems.length > 0 && <span className="theme-card-warning"> (has problems)</span>}
+        {themeName(entry)}
+        {entry.problems.length > 0 && (
+          <span className="theme-card-warning"> {t("appearance.hasProblems")}</span>
+        )}
       </span>
     </button>
   );

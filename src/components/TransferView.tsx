@@ -35,6 +35,7 @@ import { useSettingsStore } from "../state/settingsStore";
 import { useTransferStore } from "../state/transferStore";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { ProgressBar } from "./ProgressBar";
+import { useT, t } from "../i18n";
 
 const ROW_HEIGHT = 28;
 
@@ -45,9 +46,15 @@ const DIRECTION_ICONS: Record<Direction, LucideIcon> = {
 };
 
 const EMPTY_MESSAGES: Record<TransferViewKind, string> = {
-  queue: "Drag files between tabs, or use Upload and Download in a file's menu.",
-  failed: "Transfers that fail after their retries end up here.",
-  completed: "Finished transfers are listed here.",
+  get queue() {
+    return t("transfers.dragFilesBetweenTabsOr");
+  },
+  get failed() {
+    return t("transfers.transfersThatFailAfterTheir");
+  },
+  get completed() {
+    return t("transfers.finishedTransfersAreListedHere");
+  },
 };
 
 /** `scheduleWaitText` names what the speed limit schedule holds the job for, when it does. */
@@ -101,6 +108,7 @@ export function TransferView({
   onSelectionChange,
   follow = false,
 }: TransferViewProps) {
+  const t = useT();
   const jobs = useViewJobs(view);
   const bars = useSettingsStore((state) => state.settings.appearance.progressBars);
   const limits = useTransferStore((state) => state.snapshot.stats.limits);
@@ -207,13 +215,14 @@ export function TransferView({
     const paths = selectedJobs.map((job) => job.source).join("\n");
     const common: MenuItem[] = [
       {
-        label: selectedJobs.length > 1 ? "Copy source paths" : "Copy source path",
+        label:
+          selectedJobs.length > 1 ? t("transfers.copySourcePaths") : t("transfers.copySourcePath"),
         icon: <ClipboardCopy size={14} />,
         onSelect: () => void navigator.clipboard.writeText(paths),
       },
       "separator",
       {
-        label: "Remove",
+        label: t("common.remove"),
         icon: <Trash2 size={14} />,
         danger: true,
         onSelect: () => void transfers.remove(selectedIds),
@@ -222,7 +231,7 @@ export function TransferView({
     if (view === "failed") {
       return [
         {
-          label: "Retry",
+          label: t("common.retry"),
           icon: <RotateCw size={14} />,
           onSelect: () => void transfers.resume(selectedIds),
         },
@@ -234,25 +243,25 @@ export function TransferView({
     const anyActive = selectedJobs.some((job) => job.state !== "paused");
     return [
       {
-        label: "Pause",
+        label: t("common.pause"),
         icon: <Pause size={14} />,
         disabled: !anyActive,
         onSelect: () => void transfers.pause(selectedIds),
       },
       {
-        label: "Resume",
+        label: t("common.resume"),
         icon: <Play size={14} />,
         disabled: !anyPaused,
         onSelect: () => void transfers.resume(selectedIds),
       },
       "separator",
       {
-        label: "Move to top",
+        label: t("transfers.moveToTop"),
         icon: <ArrowUpToLine size={14} />,
         onSelect: () => void transfers.move(selectedIds, true),
       },
       {
-        label: "Move to bottom",
+        label: t("transfers.moveToBottom"),
         icon: <ArrowDownToLine size={14} />,
         onSelect: () => void transfers.move(selectedIds, false),
       },
@@ -264,11 +273,11 @@ export function TransferView({
   return (
     <div className="transfer-view">
       <div className="transfer-header" role="row">
-        <span>Name</span>
-        <span className="align-end">Size</span>
-        <span>Progress</span>
-        <span className="align-end">Speed</span>
-        <span>Status</span>
+        <span>{t("common.name")}</span>
+        <span className="align-end">{t("common.size")}</span>
+        <span>{t("transfers.progress")}</span>
+        <span className="align-end">{t("transfers.speed")}</span>
+        <span>{t("transfers.status")}</span>
       </div>
       <div
         ref={scrollRef}
@@ -340,6 +349,7 @@ const TransferRow = memo(function TransferRow({
   onClick,
   onContextMenu,
 }: TransferRowProps) {
+  const t = useT();
   const progress = jobProgress(job);
   const DirectionIcon = DIRECTION_ICONS[job.direction];
   const status = statusText(job, scheduleWaitText);
@@ -350,7 +360,7 @@ const TransferRow = memo(function TransferRow({
       data-direction={job.direction}
       role="row"
       aria-selected={selected}
-      title={`${job.source}\nto ${job.target}`}
+      title={t("transfers.to", { source: job.source, target: job.target })}
       onClick={(event) => onClick(event, job)}
       onContextMenu={(event) => onContextMenu(event, job)}
     >

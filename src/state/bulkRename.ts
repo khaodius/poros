@@ -25,6 +25,7 @@ import { useLogStore } from "./logStore";
 import { track } from "./operationStore";
 import { saveSettingsSection, useSettingsStore } from "./settingsStore";
 import { useToastStore } from "./toastStore";
+import { t } from "../i18n";
 
 /** A bulk rename that stopped before it was done, for the user to read. */
 export interface RenameReport {
@@ -156,7 +157,7 @@ export async function runBulkRename(request: BulkRename): Promise<void> {
       "rename",
     );
     renamedPaths = summary.renamed.map((item) => item.path);
-    const count = `${summary.renamed.length} of ${pluralize(renames.length, "item")}`;
+    const count = t("rename.ofItems", { count: summary.renamed.length, count: renames.length });
     if (summary.failure || summary.stranded) {
       const { failure, stranded } = summary;
       write("error", `Renaming stopped in ${folder} with ${count} renamed`, sessionId);
@@ -175,9 +176,13 @@ export async function runBulkRename(request: BulkRename): Promise<void> {
       });
     } else if (summary.cancelled) {
       write("info", `Cancelled: ${title}, with ${count} renamed`, sessionId);
-      showToast("info", `Renaming cancelled. ${count} renamed.`);
+      showToast("info", t("rename.renamingCancelledRenamed", { count }));
     } else {
-      write("info", `Renamed ${pluralize(summary.renamed.length, "item")} in ${folder}`, sessionId);
+      write(
+        "info",
+        t("rename.renamedItemsIn", { count: summary.renamed.length, folder }),
+        sessionId,
+      );
     }
   } catch (caught) {
     const error = toAppError(caught);

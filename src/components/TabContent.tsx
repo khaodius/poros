@@ -10,6 +10,7 @@ import { ConnectionIcon } from "./ConnectionIcon";
 import { FilePane } from "./FilePane";
 import { RestoringPane } from "./RestoringPane";
 import { WelcomePanel } from "./WelcomePanel";
+import { useT } from "../i18n";
 
 // Loaded on first use, so the editor and terminal cost nothing until one opens.
 const EditorPane = lazy(() => import("./EditorPane"));
@@ -41,12 +42,13 @@ export const TabContent = memo(function TabContent({ tab, visible, active }: Tab
 });
 
 function LocalTab({ tab, visible, active }: TabContentProps) {
+  const t = useT();
   const path = tab.kind === "local" ? tab.path : undefined;
   const source = useMemo(() => startingAt(localSource, path), [path]);
   return (
     <FilePane
       tabId={tab.id}
-      title="Local"
+      title={t("workspace.local")}
       icon={<HardDrive size={15} />}
       source={source}
       visible={visible}
@@ -84,14 +86,15 @@ function RemoteTab({ tab, visible, active }: TabContentProps) {
 }
 
 function ClosedSession({ tabId }: { tabId: string }) {
+  const t = useT();
   const closeTab = useLayoutStore((state) => state.closeTab);
   return (
     <section className="pane">
       <div className="pane-empty">
         <Unplug size={36} className="pane-empty-icon" />
-        <p className="pane-empty-title">This session has ended</p>
+        <p className="pane-empty-title">{t("workspace.thisSessionHasEnded")}</p>
         <button type="button" className="button" onClick={() => closeTab(tabId)}>
-          Close tab
+          {t("workspace.closeTab")}
         </button>
       </div>
     </section>
@@ -104,6 +107,7 @@ function ClosedSession({ tabId }: { tabId: string }) {
  * unlocked vaults, so the overlay only has to leave.
  */
 function LostSession({ sessionId, reason }: { sessionId: string; reason?: string }) {
+  const t = useT();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const automatic = useAutoReconnect(sessionId);
@@ -122,7 +126,7 @@ function LostSession({ sessionId, reason }: { sessionId: string; reason?: string
   return (
     <div className="pane-overlay">
       <Unplug size={36} className="pane-empty-icon" />
-      <p className="pane-empty-title">Connection lost</p>
+      <p className="pane-empty-title">{t("workspace.connectionLost")}</p>
       {reason && <p className="pane-empty-detail">{reason}</p>}
       {automatic.active && (
         <p className="pane-empty-detail">
@@ -140,7 +144,7 @@ function LostSession({ sessionId, reason }: { sessionId: string; reason?: string
         </button>
         {automatic.active && (
           <button type="button" className="button" onClick={automatic.stop}>
-            Stop
+            {t("common.stop")}
           </button>
         )}
       </div>

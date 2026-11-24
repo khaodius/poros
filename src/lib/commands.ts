@@ -3,6 +3,7 @@
 
 import { formatDuration } from "./format";
 import type { CommandResult } from "./types";
+import { t } from "../i18n";
 
 export interface CommandTarget {
   /** The folder the pane shows, where the command runs. */
@@ -12,11 +13,36 @@ export interface CommandTarget {
 }
 
 export const PLACEHOLDERS: { placeholder: string; meaning: string }[] = [
-  { placeholder: "{path}", meaning: "each selected item's full path, running once per item" },
-  { placeholder: "{name}", meaning: "each selected item's name, running once per item" },
-  { placeholder: "{paths}", meaning: "the full paths of all selected items" },
-  { placeholder: "{names}", meaning: "the names of all selected items" },
-  { placeholder: "{folder}", meaning: "the folder shown" },
+  {
+    placeholder: "{path}",
+    get meaning() {
+      return t("automation.eachSelectedItemsFullPath");
+    },
+  },
+  {
+    placeholder: "{name}",
+    get meaning() {
+      return t("automation.eachSelectedItemsNameRunning");
+    },
+  },
+  {
+    placeholder: "{paths}",
+    get meaning() {
+      return t("automation.theFullPathsOfAll");
+    },
+  },
+  {
+    placeholder: "{names}",
+    get meaning() {
+      return t("automation.theNamesOfAllSelected");
+    },
+  },
+  {
+    placeholder: "{folder}",
+    get meaning() {
+      return t("automation.theFolderShown");
+    },
+  },
 ];
 
 const PLACEHOLDER_PATTERN = /\{(path|name|paths|names|folder)\}/g;

@@ -3,6 +3,7 @@
 // a file from just before midnight is Yesterday however few hours ago that was.
 
 import type { FileEntry } from "./types";
+import { t } from "../i18n";
 
 /** Newest first. */
 export const DATE_GROUPS = [
@@ -20,16 +21,36 @@ export const DATE_GROUPS = [
 export type DateGroup = (typeof DATE_GROUPS)[number];
 
 export const DATE_GROUP_LABELS: Record<DateGroup, string> = {
-  future: "In the future",
-  today: "Today",
-  yesterday: "Yesterday",
-  earlierThisWeek: "Earlier this week",
-  lastWeek: "Last week",
-  earlierThisMonth: "Earlier this month",
-  lastMonth: "Last month",
-  earlierThisYear: "Earlier this year",
-  longAgo: "A long time ago",
-  unknown: "Date unknown",
+  get future() {
+    return t("fileList.inTheFuture");
+  },
+  get today() {
+    return t("fileList.today");
+  },
+  get yesterday() {
+    return t("fileList.yesterday");
+  },
+  get earlierThisWeek() {
+    return t("fileList.earlierThisWeek");
+  },
+  get lastWeek() {
+    return t("fileList.lastWeek");
+  },
+  get earlierThisMonth() {
+    return t("fileList.earlierThisMonth");
+  },
+  get lastMonth() {
+    return t("fileList.lastMonth");
+  },
+  get earlierThisYear() {
+    return t("fileList.earlierThisYear");
+  },
+  get longAgo() {
+    return t("fileList.aLongTimeAgo");
+  },
+  get unknown() {
+    return t("fileList.dateUnknown");
+  },
 };
 
 export interface EntryGroup {

@@ -14,6 +14,7 @@ import {
 } from "../state/operationStore";
 import { Dialog } from "./Dialog";
 import { RenameReportDialog } from "./RenameReportDialog";
+import { useT, t } from "../i18n";
 
 /** The moves and copies running in this window, and the question when names are taken. */
 export function FileOperationsHost() {
@@ -36,6 +37,7 @@ export function FileOperationsHost() {
 }
 
 function OperationTray() {
+  const t = useT();
   const running = useOperationStore((state) => state.running);
   const [cancelling, setCancelling] = useState<ReadonlySet<string>>(new Set());
   const shown = running.filter((operation) => operation.shown);
@@ -65,7 +67,10 @@ function OperationTray() {
               <RenameDetail operation={operation} />
             ) : (
               <span className="operation-detail">
-                {pluralize(operation.files, "file")} done, {formatSize(operation.bytes)}
+                {t("pane.done", {
+                  t: t("pane.files", { count: operation.files }),
+                  size: formatSize(operation.bytes),
+                })}
               </span>
             )}
           </div>
@@ -160,21 +165,37 @@ function DeleteDetail({ operation }: { operation: RunningOperation }) {
 }
 
 const CHOICES: { choice: NameClash; label: string }[] = [
-  { choice: "skip", label: "Skip" },
-  { choice: "keepBoth", label: "Keep both" },
-  { choice: "replace", label: "Replace" },
+  {
+    choice: "skip",
+    get label() {
+      return t("common.skip");
+    },
+  },
+  {
+    choice: "keepBoth",
+    get label() {
+      return t("pane.keepBoth");
+    },
+  },
+  {
+    choice: "replace",
+    get label() {
+      return t("common.replace");
+    },
+  },
 ];
 const PREVIEW_NAMES = 5;
 
 function NameClashDialog({ question }: { question: NameClashQuestion }) {
+  const t = useT();
   const { names, total, folder, mode, answer } = question;
   const preview = names.slice(0, PREVIEW_NAMES);
   return (
-    <Dialog title="Names already taken" onClose={() => answer(null)} width={480}>
+    <Dialog title={t("pane.namesAlreadyTaken")} onClose={() => answer(null)} width={480}>
       <div className="confirm-body">
         {names.length === 1 ? (
           <p>
-            <strong>{names[0]}</strong> is already in <strong>{folder}</strong>.
+            <strong>{names[0]}</strong> {t("pane.isAlreadyIn")} <strong>{folder}</strong>.
           </p>
         ) : (
           <>
@@ -189,18 +210,20 @@ function NameClashDialog({ question }: { question: NameClashQuestion }) {
               {preview.map((name) => (
                 <li key={name}>{name}</li>
               ))}
-              {names.length > preview.length && <li>and {names.length - preview.length} more</li>}
+              {names.length > preview.length && (
+                <li>{t("pane.andMore", { value: names.length - preview.length })}</li>
+              )}
             </ul>
           </>
         )}
         <p>
           Replace overwrites files and merges folders. Keep both gives the new{" "}
-          {names.length === 1 ? "item a name" : "items names"} like <em>name (2)</em>.
+          {names.length === 1 ? "item a name" : "items names"} like <em>{t("pane.name2")}</em>.
         </p>
       </div>
       <div className="dialog-actions">
         <button type="button" className="button push-left" onClick={() => answer(null)}>
-          Cancel
+          {t("common.cancel")}
         </button>
         {CHOICES.map(({ choice, label }) => (
           <button

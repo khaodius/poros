@@ -3,6 +3,7 @@
 
 import type { PathStyle } from "./fileSource";
 import type { PlannedRename, Protocol, RenameGroup, RenameSummary } from "./types";
+import { t } from "../i18n";
 
 export type FindMode = "text" | "regex";
 /** The part of a name find and replace works on. */
@@ -124,12 +125,42 @@ export interface TemplateToken {
 }
 
 export const TEMPLATE_TOKENS: TemplateToken[] = [
-  { token: "{name}", meaning: "Name without the extension" },
-  { token: "{ext}", meaning: "Extension" },
-  { token: "{n}", meaning: "Counter" },
-  { token: "{date}", meaning: "Date modified" },
-  { token: "{time}", meaning: "Time modified" },
-  { token: "{parent}", meaning: "Name of the folder" },
+  {
+    token: "{name}",
+    get meaning() {
+      return t("rename.nameWithoutTheExtension");
+    },
+  },
+  {
+    token: "{ext}",
+    get meaning() {
+      return t("rename.extension");
+    },
+  },
+  {
+    token: "{n}",
+    get meaning() {
+      return t("rename.counter");
+    },
+  },
+  {
+    token: "{date}",
+    get meaning() {
+      return t("rename.dateModified");
+    },
+  },
+  {
+    token: "{time}",
+    get meaning() {
+      return t("rename.timeModified");
+    },
+  },
+  {
+    token: "{parent}",
+    get meaning() {
+      return t("rename.nameOfTheFolder");
+    },
+  },
 ];
 
 /** What a rename works from: an item as the folder lists it. */
@@ -675,7 +706,7 @@ function excessLength(name: string, target: NameTarget): number | null {
  */
 export function nameProblem(name: string, target: NameTarget): NameProblem | null {
   const invalid = (message: string): NameProblem => ({ problem: "invalid", message });
-  if (name === "") return { problem: "empty", message: "The name is empty" };
+  if (name === "") return { problem: "empty", message: t("rename.theNameIsEmpty") };
   if (name === "." || name === "..") return invalid(`"${name}" is not a name`);
   if (hasControlCharacter(name)) return invalid("Names cannot contain control characters");
   for (const character of target.forbidden) {
@@ -691,7 +722,11 @@ export function nameProblem(name: string, target: NameTarget): NameProblem | nul
   if (length !== null) {
     return {
       problem: "tooLong",
-      message: `The name is too long: ${length} of ${target.maxLength} ${target.lengthUnit}`,
+      message: t("rename.theNameIsTooLong", {
+        length,
+        maxLength: target.maxLength,
+        lengthUnit: target.lengthUnit,
+      }),
     };
   }
   return null;
@@ -1032,7 +1067,7 @@ export function renameOutcomes(
       return {
         ...rename,
         status: "stranded",
-        message: `Now named ${stranded.temporary}: ${stranded.message}`,
+        message: t("rename.nowNamed", { temporary: stranded.temporary, message: stranded.message }),
       };
     }
     if (failure?.from === rename.from) {

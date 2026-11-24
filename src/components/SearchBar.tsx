@@ -41,6 +41,7 @@ import {
 import type { OperationFailure, SearchKind } from "../lib/types";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { Dialog } from "./Dialog";
+import { useT } from "../i18n";
 
 interface SearchBarProps {
   form: SearchForm;
@@ -83,6 +84,7 @@ export function SearchBar({
   onClose,
   onLeave,
 }: SearchBarProps) {
+  const t = useT();
   const inputRef = useRef<HTMLInputElement>(null);
   const [menu, setMenu] = useState<OpenMenu | null>(null);
   const [editing, setEditing] = useState<RangeEditor>(null);
@@ -122,7 +124,7 @@ export function SearchBar({
     })),
     "separator",
     {
-      label: "Custom size...",
+      label: t("search.customSize"),
       checked: form.size.preset === "custom",
       onSelect: () => setEditing("size"),
     },
@@ -136,7 +138,7 @@ export function SearchBar({
     })),
     "separator",
     {
-      label: "Custom dates...",
+      label: t("search.customDates"),
       checked: form.date.preset === "custom",
       onSelect: () => setEditing("date"),
     },
@@ -151,12 +153,12 @@ export function SearchBar({
 
   const optionItems = (): MenuItem[] => [
     {
-      label: "Search hidden folders",
+      label: t("search.searchHiddenFolders"),
       checked: form.hidden,
       onSelect: () => change({ ...form, hidden: !form.hidden }),
     },
     {
-      label: "Follow links to folders",
+      label: t("search.followLinksToFolders"),
       checked: form.followLinks,
       onSelect: () => change({ ...form, followLinks: !form.followLinks }),
     },
@@ -181,13 +183,13 @@ export function SearchBar({
   return (
     <div className={`search-bar ${view ? "has-results" : ""}`} role="search">
       <form className="search-row" onSubmit={submit}>
-        <label className="search-field" title="Names to find: text, or a pattern with * and ?">
+        <label className="search-field" title={t("search.namesToFindTextOr")}>
           <FolderSearch size={14} aria-hidden />
           <input
             ref={inputRef}
             value={form.pattern}
             placeholder={`Search in ${baseName(root) || root}`}
-            aria-label="Name to search for"
+            aria-label={t("search.nameToSearchFor")}
             spellCheck={false}
             autoComplete="off"
             onChange={(event) => onChange({ ...form, pattern: event.target.value })}
@@ -215,8 +217,8 @@ export function SearchBar({
             <button
               type="button"
               className="icon-button"
-              title="Recent searches (Alt+Down)"
-              aria-label="Recent searches"
+              title={t("search.recentSearchesAltDown")}
+              aria-label={t("search.recentSearches")}
               onClick={(event) => openMenu(event, recentItems())}
             >
               <History size={13} />
@@ -225,8 +227,8 @@ export function SearchBar({
           <button
             type="button"
             className={`icon-button search-switch ${form.patternKind === "regex" ? "is-pressed" : ""}`}
-            title="Regular expression"
-            aria-label="Regular expression"
+            title={t("search.regularExpression")}
+            aria-label={t("search.regularExpression")}
             aria-pressed={form.patternKind === "regex"}
             onClick={() =>
               change({ ...form, patternKind: form.patternKind === "regex" ? "text" : "regex" })
@@ -237,8 +239,8 @@ export function SearchBar({
           <button
             type="button"
             className={`icon-button search-switch ${form.caseSensitive ? "is-pressed" : ""}`}
-            title="Match case"
-            aria-label="Match case"
+            title={t("search.matchCase")}
+            aria-label={t("search.matchCase")}
             aria-pressed={form.caseSensitive}
             onClick={() => change({ ...form, caseSensitive: !form.caseSensitive })}
           >
@@ -249,32 +251,32 @@ export function SearchBar({
           <FilterButton
             label={KIND_LABELS[form.kind]}
             narrows={form.kind !== "any"}
-            title="Kind"
+            title={t("search.kind")}
             onClick={(event) => openMenu(event, kindItems())}
           />
           <FilterButton
             label={describeSize(form.size)}
             narrows={sizeNarrows(form.size)}
-            title="Size"
+            title={t("common.size")}
             onClick={(event) => openMenu(event, sizeItems())}
           />
           <FilterButton
             label={describeDate(form.date)}
             narrows={dateNarrows(form.date)}
-            title="Date modified"
+            title={t("search.dateModified")}
             onClick={(event) => openMenu(event, dateItems())}
           />
           <FilterButton
             label={describeDepth(form.depth)}
             narrows={form.depth !== null}
-            title="How deep to search"
+            title={t("search.howDeepToSearch")}
             onClick={(event) => openMenu(event, depthItems())}
           />
           <button
             type="button"
             className={`icon-button search-options ${optionsCount > 0 ? "is-pressed" : ""}`}
-            title="Hidden folders and links"
-            aria-label="Hidden folders and links"
+            title={t("search.hiddenFoldersAndLinks")}
+            aria-label={t("search.hiddenFoldersAndLinks")}
             onClick={(event) => openMenu(event, optionItems())}
           >
             <SlidersHorizontal size={14} />
@@ -284,18 +286,18 @@ export function SearchBar({
           {searching ? (
             <button type="button" className="toolbar-action search-stop" onClick={onStop}>
               <CircleStop size={13} />
-              Stop
+              {t("common.stop")}
             </button>
           ) : (
             <button type="submit" className="toolbar-action search-go">
-              Search
+              {t("common.search")}
             </button>
           )}
           <button
             type="button"
             className="icon-button"
-            title="Close search (Esc)"
-            aria-label="Close search"
+            title={t("search.closeSearchEsc")}
+            aria-label={t("search.closeSearch")}
             onClick={onClose}
           >
             <X size={15} />
@@ -313,9 +315,9 @@ export function SearchBar({
       )}
       {editing === "size" && (
         <RangeDialog
-          title="Custom size"
-          firstLabel="At least"
-          secondLabel="At most"
+          title={t("search.customSize2")}
+          firstLabel={t("search.atLeast")}
+          secondLabel={t("search.atMost")}
           placeholder="500 KB, 2 GB"
           initial={[form.size.atLeast, form.size.atMost]}
           check={([atLeast, atMost]) => {
@@ -330,9 +332,9 @@ export function SearchBar({
       )}
       {editing === "date" && (
         <RangeDialog
-          title="Custom dates"
-          firstLabel="Changed on or after"
-          secondLabel="Changed on or before"
+          title={t("search.customDates2")}
+          firstLabel={t("search.changedOnOrAfter")}
+          secondLabel={t("search.changedOnOrBefore")}
           placeholder="2026-11-01"
           initial={[form.date.from, form.date.to]}
           check={([from, to]) => {
@@ -390,6 +392,7 @@ function SearchStatus({
   problem: string | null;
   onShowProblems: () => void;
 }) {
+  const t = useT();
   let tone: "plain" | "warning" | "danger" = "plain";
   let icon: ReactNode = null;
   let text: ReactNode;
@@ -400,8 +403,8 @@ function SearchStatus({
   } else if (!view) {
     text = `Press Enter to search ${baseName(root) || root} and the folders inside it`;
   } else {
-    const found = pluralize(view.entries.length, "result");
-    const folders = pluralize(view.folders, "folder");
+    const found = t("search.results", { count: view.entries.length });
+    const folders = t("search.folders", { count: view.folders });
     switch (view.status) {
       case "searching":
         icon = <LoaderCircle size={13} className="spin" aria-hidden />;
@@ -443,7 +446,7 @@ function SearchStatus({
       {unreadable > 0 && (
         <button type="button" className="link-button search-unreadable" onClick={onShowProblems}>
           <TriangleAlert size={12} aria-hidden />
-          {pluralize(unreadable, "folder")} could not be read
+          {t("search.couldNotBeRead", { t: t("search.folders", { count: unreadable }) })}
         </button>
       )}
     </div>
@@ -469,6 +472,7 @@ function RangeDialog({
   onApply: (values: [string, string]) => void;
   onClose: () => void;
 }) {
+  const t = useT();
   const [values, setValues] = useState(initial);
   const [error, setError] = useState<string | null>(null);
   const submit = (event: FormEvent) => {
@@ -504,14 +508,14 @@ function RangeDialog({
             </label>
           ))}
         </div>
-        <p className="field-hint">Leave a box empty to leave that end open.</p>
+        <p className="field-hint">{t("search.leaveABoxEmptyTo")}</p>
         {error && <p className="form-error">{error}</p>}
         <div className="dialog-actions">
           <button type="button" className="button" onClick={onClose}>
-            Cancel
+            {t("common.cancel")}
           </button>
           <button type="submit" className="button button-primary">
-            Apply
+            {t("common.apply")}
           </button>
         </div>
       </form>
@@ -528,13 +532,11 @@ function UnreadableDialog({
   count: number;
   onClose: () => void;
 }) {
+  const t = useT();
   const unlisted = count - failures.length;
   return (
-    <Dialog title="Folders that could not be read" onClose={onClose} width={520}>
-      <p>
-        The search went past {pluralize(count, "folder")} it could not read. What is inside them is
-        not in the results.
-      </p>
+    <Dialog title={t("search.foldersThatCouldNotBe")} onClose={onClose} width={520}>
+      <p>{t("search.theSearchWentPastIt", { t: t("search.folders", { count }) })}</p>
       <ul className="search-failures">
         {/* find can name one folder twice, so the place in the list tells them apart. */}
         {failures.map((failure, index) => (
@@ -546,10 +548,12 @@ function UnreadableDialog({
           </li>
         ))}
       </ul>
-      {unlisted > 0 && <p className="field-hint">and {formatCount(unlisted)} more</p>}
+      {unlisted > 0 && (
+        <p className="field-hint">{t("search.andMore", { count: formatCount(unlisted) })}</p>
+      )}
       <div className="dialog-actions">
         <button type="button" className="button button-primary" data-autofocus onClick={onClose}>
-          Close
+          {t("common.close")}
         </button>
       </div>
     </Dialog>

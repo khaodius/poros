@@ -1,4 +1,5 @@
 import type { CloudProvider, Protocol } from "./types";
+import { t } from "../i18n";
 
 export interface ProtocolInfo {
   value: Protocol;
@@ -13,46 +14,119 @@ export interface ProtocolInfo {
 export const PROTOCOLS: ProtocolInfo[] = [
   { value: "sftp", label: "SFTP", shortLabel: "SFTP", defaultPort: 22 },
   { value: "ftp", label: "FTP", shortLabel: "FTP", defaultPort: 21 },
-  { value: "ftps", label: "FTPS (explicit TLS)", shortLabel: "FTPS", defaultPort: 21 },
+  {
+    value: "ftps",
+    get label() {
+      return t("connect.ftpsExplicitTls");
+    },
+    shortLabel: "FTPS",
+    defaultPort: 21,
+  },
   {
     value: "ftpsImplicit",
-    label: "FTPS (implicit TLS)",
-    shortLabel: "FTPS implicit",
+    get label() {
+      return t("connect.ftpsImplicitTls");
+    },
+    get shortLabel() {
+      return t("connect.ftpsImplicit");
+    },
     defaultPort: 990,
   },
-  { value: "webDav", label: "WebDAV (HTTP)", shortLabel: "WebDAV", defaultPort: 80 },
-  { value: "webDavs", label: "WebDAV (HTTPS)", shortLabel: "WebDAVS", defaultPort: 443 },
-  { value: "s3", label: "S3 and compatible", shortLabel: "S3", defaultPort: 443 },
-  { value: "backblazeB2", label: "Backblaze B2", shortLabel: "Backblaze B2", defaultPort: 443 },
+  {
+    value: "webDav",
+    get label() {
+      return t("connect.webdavHttp");
+    },
+    get shortLabel() {
+      return t("connect.webdav");
+    },
+    defaultPort: 80,
+  },
+  {
+    value: "webDavs",
+    get label() {
+      return t("connect.webdavHttps");
+    },
+    get shortLabel() {
+      return t("connect.webdavs");
+    },
+    defaultPort: 443,
+  },
+  {
+    value: "s3",
+    get label() {
+      return t("connect.s3AndCompatible");
+    },
+    shortLabel: "S3",
+    defaultPort: 443,
+  },
+  {
+    value: "backblazeB2",
+    get label() {
+      return t("connect.backblazeB2");
+    },
+    get shortLabel() {
+      return t("connect.backblazeB2");
+    },
+    defaultPort: 443,
+  },
   {
     value: "googleDrive",
-    label: "Google Drive",
-    shortLabel: "Google Drive",
+    get label() {
+      return t("connect.googleDrive");
+    },
+    get shortLabel() {
+      return t("connect.googleDrive");
+    },
     defaultPort: 443,
     provider: "google",
   },
   {
     value: "oneDrive",
-    label: "OneDrive",
-    shortLabel: "OneDrive",
+    get label() {
+      return t("connect.onedrive");
+    },
+    get shortLabel() {
+      return t("connect.onedrive");
+    },
     defaultPort: 443,
     provider: "microsoft",
   },
-  { value: "box", label: "Box", shortLabel: "Box", defaultPort: 443, provider: "box" },
+  {
+    value: "box",
+    get label() {
+      return t("connect.box");
+    },
+    get shortLabel() {
+      return t("connect.box");
+    },
+    defaultPort: 443,
+    provider: "box",
+  },
 ];
 
 /** An unlocked vault's session. Opened from a server's pane, so no list to connect from has it. */
 const VAULT_PROTOCOL: ProtocolInfo = {
   value: "cryptomator",
-  label: "Cryptomator vault",
-  shortLabel: "Vault",
+  get label() {
+    return t("connect.cryptomatorVault");
+  },
+  get shortLabel() {
+    return t("connect.vault");
+  },
   defaultPort: 0,
 };
 
 export const PROVIDER_NAMES: Record<CloudProvider, string> = {
-  google: "Google",
-  microsoft: "Microsoft",
-  box: "Box",
+  get google() {
+    return t("connect.google");
+  },
+  get microsoft() {
+    return t("connect.microsoft");
+  },
+  get box() {
+    return t("connect.box");
+  },
 };
 
 export function protocolInfo(protocol: Protocol): ProtocolInfo {

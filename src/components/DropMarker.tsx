@@ -1,13 +1,24 @@
 import type { CSSProperties } from "react";
 import { Columns2, Layers, Rows2 } from "lucide-react";
 import type { DropSide } from "../lib/layout";
+import { t } from "../i18n";
 
 const DROP_LABELS: Record<DropSide, string> = {
-  center: "Merge as tab",
-  left: "Split left",
-  right: "Split right",
-  top: "Split up",
-  bottom: "Split down",
+  get center() {
+    return t("workspace.mergeAsTab");
+  },
+  get left() {
+    return t("workspace.splitLeft");
+  },
+  get right() {
+    return t("workspace.splitRight");
+  },
+  get top() {
+    return t("workspace.splitUp");
+  },
+  get bottom() {
+    return t("workspace.splitDown");
+  },
 };
 
 const DROP_ICONS: Record<DropSide, typeof Layers> = {

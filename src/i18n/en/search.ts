@@ -1,0 +1,68 @@
+import type { MessageArea } from "../catalog";
+
+export const search = {
+  // components/SearchBar
+  customSize: "Custom size...",
+  customDates: "Custom dates...",
+  searchHiddenFolders: "Search hidden folders",
+  followLinksToFolders: "Follow links to folders",
+  namesToFindTextOr: "Names to find: text, or a pattern with * and ?",
+  nameToSearchFor: "Name to search for",
+  recentSearchesAltDown: "Recent searches (Alt+Down)",
+  recentSearches: "Recent searches",
+  regularExpression: "Regular expression",
+  matchCase: "Match case",
+  kind: "Kind",
+  dateModified: "Date modified",
+  howDeepToSearch: "How deep to search",
+  hiddenFoldersAndLinks: "Hidden folders and links",
+  closeSearchEsc: "Close search (Esc)",
+  closeSearch: "Close search",
+  customSize2: "Custom size",
+  atLeast: "At least",
+  atMost: "At most",
+  customDates2: "Custom dates",
+  changedOnOrAfter: "Changed on or after",
+  changedOnOrBefore: "Changed on or before",
+  results: { one: "{count} result", other: "{count} results" },
+  folders: { one: "{count} folder", other: "{count} folders" },
+  foldersCouldNotBeRead: {
+    one: "{count} folder could not be read",
+    other: "{count} folders could not be read",
+  },
+  leaveABoxEmptyTo: "Leave a box empty to leave that end open.",
+  foldersThatCouldNotBe: "Folders that could not be read",
+  theSearchWentPastFolders: {
+    one: "The search went past {count} folder it could not read. What is inside them is not in the results.",
+    other:
+      "The search went past {count} folders it could not read. What is inside them is not in the results.",
+  },
+  andMore: "and {count} more",
+  // components/SearchBar
+  couldNotBeRead: "{t} could not be read",
+  theSearchWentPastIt:
+    "The search went past {t} it could not read. What is inside them is not in the results.",
+
+  // lib/search
+  anySize: "Any size",
+  empty: "Empty",
+  smallerThan1Mb: "Smaller than 1 MB",
+  n1MbTo100Mb: "1 MB to 100 MB",
+  largerThan100Mb: "Larger than 100 MB",
+  largerThan1Gb: "Larger than 1 GB",
+  anyTime: "Any time",
+  today: "Today",
+  yesterday: "Yesterday",
+  thisWeek: "This week",
+  thisMonth: "This month",
+  thisYear: "This year",
+  beforeThisYear: "Before this year",
+  allFoldersInside: "All folders inside",
+  thisFolderOnly: "This folder only",
+  oneLevelDown: "One level down",
+  twoLevelsDown: "Two levels down",
+  fourLevelsDown: "Four levels down",
+  filesAndFolders: "Files and folders",
+  filesOnly: "Files only",
+  foldersOnly: "Folders only",
+} as const satisfies MessageArea;

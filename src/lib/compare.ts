@@ -2,6 +2,7 @@
 // screen, where each run of changes starts, and which parts of a line to highlight.
 
 import type { CompareContent, CompareRow, CompareRowKind, Comparison, LineEnding } from "./types";
+import { t } from "../i18n";
 
 export type DisplayItem =
   | { kind: "row"; index: number }
@@ -122,8 +123,12 @@ export function segments(
 
 const LINE_ENDING_NAMES: Record<LineEnding, string> = {
   none: "none",
-  lf: "LF (Unix)",
-  crlf: "CRLF (Windows)",
+  get lf() {
+    return t("compare.lfUnix");
+  },
+  get crlf() {
+    return t("compare.crlfWindows");
+  },
   mixed: "mixed",
 };
 

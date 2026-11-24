@@ -39,6 +39,7 @@ import { rowKeyOf, useArriving, type FileSide } from "../state/fileFlight";
 import { FileIcon } from "./FileIcon";
 import { FolderCompareGlyph } from "./FolderCompareGlyph";
 import { COMPARE_CLASSES } from "./folderCompareMarks";
+import { useT, t } from "../i18n";
 
 /** Matches `--scrollbar-size`: the list always shows its vertical scrollbar. */
 const SCROLLBAR_GUTTER = 8;
@@ -107,7 +108,9 @@ interface Column {
 
 const NAME_COLUMN: Column = {
   key: "name",
-  label: "Name",
+  get label() {
+    return t("common.name");
+  },
   width: 180,
   render: (entry) => entry.name,
 };
@@ -324,6 +327,7 @@ const GroupRow = memo(function GroupRow({
   height,
   events,
 }: GroupRowProps) {
+  const t = useT();
   const label = DATE_GROUP_LABELS[group];
   const Chevron = collapsed ? ChevronRight : ChevronDown;
   const onArrow = (event: MouseEvent) => !!(event.target as Element).closest(".file-group-toggle");
@@ -347,7 +351,7 @@ const GroupRow = memo(function GroupRow({
     >
       <span
         className="file-group-toggle"
-        title={collapsed ? "Expand group" : "Collapse group"}
+        title={collapsed ? t("fileList.expandGroup") : t("fileList.collapseGroup")}
         aria-hidden
       >
         <Chevron size={14} />
@@ -369,6 +373,7 @@ const stopAtField = (event: SyntheticEvent) => event.stopPropagation();
  * Esc keeps the old name. The name before the extension is selected to start with.
  */
 export function RenameField({ entry, events }: { entry: FileEntry; events: RowEvents }) {
+  const t = useT();
   const inputRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState(entry.name);
   const [busy, setBusy] = useState(false);
@@ -414,7 +419,7 @@ export function RenameField({ entry, events }: { entry: FileEntry; events: RowEv
       value={name}
       readOnly={busy}
       spellCheck={false}
-      aria-label={`New name for ${entry.name}`}
+      aria-label={t("fileList.newNameFor", { name: entry.name })}
       onChange={(event) => setName(event.target.value)}
       onKeyDown={(event) => {
         event.stopPropagation();
@@ -496,6 +501,7 @@ export function FileList({
   heldPaths = NO_HELD_PATHS,
   ...actions
 }: FileListProps) {
+  const t = useT();
   const rootRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -536,13 +542,13 @@ export function FileList({
       folderOf
         ? {
             key: "folder",
-            label: "Folder",
+            label: t("common.folder"),
             width: FOLDER_COLUMN_WIDTH,
             render: folderOf,
             title: folderOf,
           }
         : null,
-    [folderOf],
+    [folderOf, t],
   );
   const widthNeeded = useMemo(() => {
     let total =
@@ -1162,8 +1168,8 @@ export function FileList({
                   className="column-resizer"
                   role="separator"
                   aria-orientation="vertical"
-                  aria-label={`Resize ${column.label}`}
-                  title="Drag to resize, double-click to fit"
+                  aria-label={t("fileList.resize", { label: column.label })}
+                  title={t("fileList.dragToResizeDoubleClick")}
                   onPointerDown={(event) => startColumnResize(event, column)}
                   onDoubleClick={() => fitColumn(column)}
                 />

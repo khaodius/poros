@@ -9,6 +9,7 @@ import type {
   OpenWith,
   SessionInfo,
 } from "./types";
+import { t } from "../i18n";
 
 /** Stands for the file in a program's arguments. Mirrored in command_line.rs. */
 export const FILE_PLACEHOLDER = "{file}";
@@ -74,13 +75,27 @@ export function programLabel(program: Pick<ExternalProgram, "name" | "command">)
 }
 
 export const EDIT_STATE_LABELS: Record<ExternalEditState, string> = {
-  downloading: "Downloading",
-  watching: "Watching for saves",
-  changed: "Saved, not uploaded",
-  waiting: "Waiting to upload",
-  conflict: "Changed on the server",
-  uploading: "Uploading",
-  failed: "Upload failed",
+  get downloading() {
+    return t("openWith.downloading");
+  },
+  get watching() {
+    return t("openWith.watchingForSaves");
+  },
+  get changed() {
+    return t("openWith.savedNotUploaded");
+  },
+  get waiting() {
+    return t("openWith.waitingToUpload");
+  },
+  get conflict() {
+    return t("openWith.changedOnTheServer2");
+  },
+  get uploading() {
+    return t("openWith.uploading");
+  },
+  get failed() {
+    return t("openWith.uploadFailed");
+  },
 };
 
 export function editStateLabel(edit: Pick<ExternalEdit, "state" | "blocked">): string {

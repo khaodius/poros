@@ -27,11 +27,27 @@ import { saveSettingsSection } from "../state/settingsStore";
 import { LimitScheduleWeek } from "./LimitScheduleWeek";
 import { CommitInput, SettingGroup, SwitchSetting } from "./settingsFields";
 import { Stepper } from "./Stepper";
+import { useT, t } from "../i18n";
 
 const MODE_OPTIONS: { value: LimitMode; label: string }[] = [
-  { value: "limited", label: "Limit to" },
-  { value: "unlimited", label: "Unlimited" },
-  { value: "paused", label: "Pause" },
+  {
+    value: "limited",
+    get label() {
+      return t("limits.limitTo");
+    },
+  },
+  {
+    value: "unlimited",
+    get label() {
+      return t("limits.unlimited");
+    },
+  },
+  {
+    value: "paused",
+    get label() {
+      return t("common.pause");
+    },
+  },
 ];
 /** What a limit starts at when switched to a number it never had. */
 const NEW_LIMIT_KIB = 500;
@@ -58,6 +74,7 @@ function ruleElement(ruleId: string): HTMLElement | null {
 
 /** The speed limit schedule in Settings > Transfers: a switch, the rules and the week they make. */
 export function LimitScheduleSettings({ transfers }: { transfers: TransferSettings }) {
+  const t = useT();
   const schedule = transfers.limitSchedule;
   const { rules } = schedule;
   const now = useMinute();
@@ -127,19 +144,14 @@ export function LimitScheduleSettings({ transfers }: { transfers: TransferSettin
   };
 
   return (
-    <SettingGroup title="Speed limit schedule" id={LIMIT_SCHEDULE_GROUP_ID}>
+    <SettingGroup title={t("limits.speedLimitSchedule")} id={LIMIT_SCHEDULE_GROUP_ID}>
       <SwitchSetting
-        label="Follow the schedule"
-        hint="Other limits, or a pause, at set times of the week in this computer's time. Where no rule applies, the limits above do."
+        label={t("limits.followTheSchedule")}
+        hint={t("limits.followTheScheduleHint")}
         checked={schedule.enabled}
         onChange={(enabled) => save({ ...schedule, enabled })}
       />
-      <p className="setting-note">
-        Where rules overlap, the one lower in the list wins. A pause holds transfers in that
-        direction, and they continue where they stopped when it ends. Folder sync, rsync updates and
-        scheduled tasks follow the schedule too, as does poros-cli unless it is given limits of its
-        own.
-      </p>
+      <p className="setting-note">{t("limits.whereRulesOverlapTheOne")}</p>
       {rules.length > 0 && (
         <ol className="limit-rules">
           {rules.map((rule, index) => (
@@ -170,13 +182,11 @@ export function LimitScheduleSettings({ transfers }: { transfers: TransferSettin
         onClick={add}
       >
         <Plus size={13} />
-        Add rule
+        {t("limits.addRule")}
       </button>
       <LimitScheduleWeek schedule={schedule} ordinary={ordinary} now={now} onPickRule={pickRule} />
       {!schedule.enabled && rules.length > 0 && (
-        <p className="setting-note">
-          The schedule is off: the week shows what its rules would do once it is on.
-        </p>
+        <p className="setting-note">{t("limits.theScheduleIsOffThe")}</p>
       )}
     </SettingGroup>
   );
@@ -203,6 +213,7 @@ function RuleEditor({
   onMove,
   onDelete,
 }: RuleEditorProps) {
+  const t = useT();
   const label = ruleLabel(rule.name, index);
   const editorId = `limit-rule-editor-${index}`;
   const toggleDay = (day: number) =>
@@ -228,7 +239,7 @@ function RuleEditor({
             className="limit-rule-summary"
             aria-expanded={open}
             aria-controls={open ? editorId : undefined}
-            title={open ? "Close the rule" : "Edit the rule"}
+            title={open ? t("limits.closeTheRule") : t("limits.editTheRule")}
             onClick={onToggle}
           >
             <span className="limit-rule-title">
@@ -249,8 +260,8 @@ function RuleEditor({
               type="button"
               className="icon-button"
               data-part="up"
-              title="Move up"
-              aria-label={`Move ${label} up`}
+              title={t("limits.moveUp")}
+              aria-label={t("limits.moveUp2", { label })}
               disabled={index === 0}
               onClick={() => onMove(-1, "up")}
             >
@@ -260,8 +271,8 @@ function RuleEditor({
               type="button"
               className="icon-button"
               data-part="down"
-              title="Move down, so it wins over the rules above"
-              aria-label={`Move ${label} down`}
+              title={t("limits.moveDownSoItWins")}
+              aria-label={t("limits.moveDown", { label })}
               disabled={index === count - 1}
               onClick={() => onMove(1, "down")}
             >
@@ -270,8 +281,8 @@ function RuleEditor({
             <button
               type="button"
               className="icon-button"
-              title="Delete rule"
-              aria-label={`Delete ${label}`}
+              title={t("limits.deleteRule")}
+              aria-label={t("limits.delete", { label })}
               onClick={onDelete}
             >
               <Trash2 size={14} />
@@ -283,14 +294,14 @@ function RuleEditor({
             <div className="limit-rule-line">
               <CommitInput
                 className="limit-rule-name"
-                label={`Name of ${label}`}
+                label={t("limits.nameOf", { label })}
                 value={rule.name}
-                placeholder={`Name, such as "Office hours"`}
+                placeholder={t("limits.nameSuchAsOfficeHours")}
                 onCommit={(name) => onChange({ name })}
               />
             </div>
             <div className="limit-rule-line">
-              <div className="toggle-group" role="group" aria-label="Days of the week">
+              <div className="toggle-group" role="group" aria-label={t("limits.daysOfTheWeek")}>
                 {WEEKDAY_NAMES.map((name, day) => {
                   const chosen = rule.days.includes(day);
                   return (
@@ -309,14 +320,14 @@ function RuleEditor({
               <span className="limit-rule-hours">
                 <input
                   type="time"
-                  aria-label="Start time"
+                  aria-label={t("limits.startTime")}
                   value={timeInputValue(rule.startMinute)}
                   onChange={(event) => setTime("startMinute", event.target.value)}
                 />
-                <span>to</span>
+                <span>{t("limits.to")}</span>
                 <input
                   type="time"
-                  aria-label="End time"
+                  aria-label={t("limits.endTime")}
                   value={timeInputValue(rule.endMinute)}
                   onChange={(event) => setTime("endMinute", event.target.value)}
                 />
@@ -343,10 +354,14 @@ function RuleEditor({
 
 /** One limit of a rule in its summary, with the arrow the status bar uses. */
 function LimitFact({ direction, limit }: { direction: "upload" | "download"; limit: RateLimit }) {
+  const t = useT();
   const Icon = direction === "upload" ? ArrowUp : ArrowDown;
   return (
     <span className={`limit-rule-fact is-${limit.mode}`}>
-      <Icon size={12} aria-label={direction === "upload" ? "Upload" : "Download"} />
+      <Icon
+        size={12}
+        aria-label={direction === "upload" ? t("common.upload") : t("common.download")}
+      />
       {describeLimit(limit)}
     </span>
   );

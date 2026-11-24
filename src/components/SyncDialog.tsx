@@ -34,6 +34,7 @@ import { useUiStore } from "../state/uiStore";
 import { Dialog } from "./Dialog";
 import { OptionCheckView, RsyncArgumentsField, RsyncOptionsEditor } from "./RsyncOptionsEditor";
 import { SyncPlanList } from "./SyncPlanList";
+import { useT } from "../i18n";
 
 interface Folders {
   localPath: string;
@@ -97,6 +98,7 @@ function refreshPanes(plan: SyncPlanView, comparedOn: string): void {
 }
 
 export function SyncDialog({ onClose, ...given }: SyncDialogProps) {
+  const t = useT();
   /** The defaults as the dialog opened; changes made here stay with this synchronization. */
   const [defaults] = useState(() => useSettingsStore.getState().settings.sync);
   const sessionEntries = useSessionStore((state) => state.sessions);
@@ -171,7 +173,7 @@ export function SyncDialog({ onClose, ...given }: SyncDialogProps) {
 
   const browseLocal = async () => {
     const selected = await openFileDialog({
-      title: "Choose the local folder",
+      title: t("sync.chooseTheLocalFolder"),
       directory: true,
       multiple: false,
       defaultPath: folders.localPath || undefined,
@@ -280,7 +282,7 @@ export function SyncDialog({ onClose, ...given }: SyncDialogProps) {
   const remote = session ? `${session.info.host}:${folders.remotePath.trim()}` : "";
 
   return (
-    <Dialog title="Synchronize folders" onClose={onClose} width={860}>
+    <Dialog title={t("sync.synchronizeFolders")} onClose={onClose} width={860}>
       {stage.step === "setup" && (
         <SetupForm
           folders={folders}
@@ -371,34 +373,35 @@ function SetupForm({
   onSchedule,
   onCancel,
 }: SetupFormProps) {
+  const t = useT();
   const chosen = DIRECTION_OPTIONS.find((option) => option.value === direction);
 
   return (
     <form className="form sync-form" onSubmit={onSubmit}>
       <div className="field">
-        <span>Local folder</span>
+        <span>{t("sync.localFolder")}</span>
         <div className="input-with-button">
           <input
             data-autofocus
             value={folders.localPath}
-            placeholder="The folder on this computer"
+            placeholder={t("sync.theFolderOnThisComputer")}
             spellCheck={false}
             onChange={(event) => onFolders({ localPath: event.target.value })}
           />
           <button type="button" className="button" onClick={onBrowse}>
-            <FolderOpen size={14} /> Browse
+            <FolderOpen size={14} /> {t("common.browse")}
           </button>
         </div>
       </div>
       <div className="form-row">
         <label className="field sync-server">
-          <span>Server</span>
+          <span>{t("sync.server")}</span>
           <select
             value={currentSessionId(folders.sessionId)}
             disabled={sessions.length === 0}
             onChange={(event) => onSession(event.target.value)}
           >
-            {sessions.length === 0 && <option value="">No SFTP server connected</option>}
+            {sessions.length === 0 && <option value="">{t("sync.noSftpServerConnected")}</option>}
             {sessions.map((session) => (
               <option key={session.id} value={session.id}>
                 {session.label}
@@ -407,10 +410,10 @@ function SetupForm({
           </select>
         </label>
         <label className="field grow">
-          <span>Server folder</span>
+          <span>{t("sync.serverFolder")}</span>
           <input
             value={folders.remotePath}
-            placeholder="/home/me/site"
+            placeholder={t("sync.homeMeSite")}
             spellCheck={false}
             onChange={(event) => onFolders({ remotePath: event.target.value })}
           />
@@ -418,7 +421,7 @@ function SetupForm({
       </div>
 
       <div className="field">
-        <span>Direction</span>
+        <span>{t("sync.direction")}</span>
         <div className="segmented" role="radiogroup">
           {DIRECTION_OPTIONS.map((option) => (
             <button
@@ -437,7 +440,7 @@ function SetupForm({
       </div>
 
       <div className="field">
-        <span>rsync options</span>
+        <span>{t("sync.rsyncOptions")}</span>
         <small className="field-hint">
           {siteName
             ? `Starting from the defaults in Settings, with the rsync arguments saved for ${siteName}. Changes here apply to this synchronization only.`
@@ -460,17 +463,13 @@ function SetupForm({
           type="button"
           className="button push-left"
           disabled={!onSchedule}
-          title={
-            onSchedule
-              ? "Run this synchronization at set times"
-              : "Fill in both folders of a saved connection to schedule this"
-          }
+          title={onSchedule ? t("sync.runThisSynchronizationAtSet") : t("sync.fillInBothFoldersOf")}
           onClick={onSchedule}
         >
-          <CalendarClock size={14} /> Schedule...
+          <CalendarClock size={14} /> {t("sync.schedule")}
         </button>
         <button type="button" className="button" onClick={onCancel}>
-          Cancel
+          {t("common.cancel")}
         </button>
         <button type="submit" className="button button-primary" disabled={!canCompare}>
           {options.dryRun ? "Compare (dry run)" : "Compare"}
@@ -487,6 +486,7 @@ function ComparingView({
   progress: SyncProgress | null;
   onStop: () => void;
 }) {
+  const t = useT();
   const comparing = progress?.stage === "comparing";
   const fraction = comparing && progress.toCompare > 0 ? progress.compared / progress.toCompare : 0;
   return (
@@ -494,7 +494,10 @@ function ComparingView({
       <LoaderCircle size={22} className="spin" />
       <p>
         {comparing
-          ? `Comparing contents: ${progress.compared} of ${pluralize(progress.toCompare, "file")}`
+          ? t("sync.comparingContentsOfFiles", {
+              compared: progress.compared,
+              count: progress.toCompare,
+            })
           : `Listing folders: ${progress?.localEntries ?? 0} local and ${progress?.remoteEntries ?? 0} server entries`}
       </p>
       {comparing && (
@@ -507,7 +510,7 @@ function ComparingView({
       )}
       <div className="dialog-actions">
         <button type="button" className="button" onClick={onStop}>
-          Stop
+          {t("common.stop")}
         </button>
       </div>
     </div>

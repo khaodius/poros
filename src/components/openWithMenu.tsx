@@ -9,6 +9,7 @@ import {
 } from "../state/externalEditStore";
 import { useSettingsStore } from "../state/settingsStore";
 import type { MenuItem } from "./ContextMenu";
+import { t } from "../i18n";
 
 /** Open and the Open with submenu for a file: its program, the programs set up, and others. */
 export function openMenuItems(target: OpenTarget, nearGroupId?: string): MenuItem[] {
@@ -16,13 +17,15 @@ export function openMenuItems(target: OpenTarget, nearGroupId?: string): MenuIte
   const preferred = programFor(target.name, programs);
   return [
     {
-      label: preferred ? `Open in ${programLabel(preferred)}` : "Open",
+      label: preferred
+        ? t("openWith.openIn", { programLabel: programLabel(preferred) })
+        : t("common.open"),
       icon: <SquareArrowOutUpRight size={14} />,
       shortcut: "Ctrl+Enter",
       onSelect: () => void openWithDefault(target),
     },
     {
-      label: "Open with",
+      label: t("openWith.openWith"),
       icon: <AppWindow size={14} />,
       items: [
         ...programs.map((program) => ({
@@ -31,23 +34,23 @@ export function openMenuItems(target: OpenTarget, nearGroupId?: string): MenuIte
         })),
         ...(programs.length > 0 ? ["separator" as const] : []),
         {
-          label: "Default program",
+          label: t("openWith.defaultProgram"),
           onSelect: () => void openFile(target, { kind: "default" }),
         },
         {
-          label: "Built-in editor",
+          label: t("openWith.builtInEditor"),
           icon: <FilePen size={14} />,
           shortcut: "F4",
           onSelect: () => void openFileWith(target, { kind: "builtIn" }, { nearGroupId }),
         },
         "separator",
         {
-          label: "Choose a program...",
+          label: t("openWith.chooseAProgram"),
           icon: <FolderOpen size={14} />,
           onSelect: () => void openFileWith(target, "choose"),
         },
         {
-          label: "Set up programs...",
+          label: t("openWith.setUpPrograms"),
           icon: <Settings2 size={14} />,
           onSelect: openProgramSettings,
         },

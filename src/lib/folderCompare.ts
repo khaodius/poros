@@ -10,6 +10,7 @@ import { normalizedPath } from "./path";
 import type { FolderCompareSettings } from "./settings";
 import { isDirLike } from "./sort";
 import type { CompareMode, FileEntry, FolderSummary, Protocol } from "./types";
+import { t } from "../i18n";
 
 const MINUTE = 60;
 const HOUR = 60 * MINUTE;
@@ -274,11 +275,21 @@ export interface RowCompare {
 }
 
 export const STATE_LABELS: Record<LegendState, string> = {
-  newer: "Newer here",
-  older: "Older here",
-  onlyHere: "Only here",
-  different: "Different",
-  identical: "Identical",
+  get newer() {
+    return t("compare.newerHere");
+  },
+  get older() {
+    return t("compare.olderHere");
+  },
+  get onlyHere() {
+    return t("compare.onlyHere");
+  },
+  get different() {
+    return t("compare.different");
+  },
+  get identical() {
+    return t("compare.identical");
+  },
 };
 
 /**
@@ -290,12 +301,42 @@ export type MarkedState = Exclude<CompareState, "passedOver"> | "differsInside";
 
 /** One mark per state, shared by every row in it, so rows are not drawn again for nothing. */
 const STATE_MARKS: Record<Exclude<CompareState, "passedOver">, RowCompare> = {
-  newer: { state: "newer", title: "Newer here" },
-  older: { state: "older", title: "Older here" },
-  onlyHere: { state: "onlyHere", title: "Only here" },
-  different: { state: "different", title: "Different, and neither is newer" },
-  identical: { state: "identical", title: "Identical" },
-  both: { state: "both", title: "On both sides. The contents are not compared." },
+  newer: {
+    state: "newer",
+    get title() {
+      return t("compare.newerHere");
+    },
+  },
+  older: {
+    state: "older",
+    get title() {
+      return t("compare.olderHere");
+    },
+  },
+  onlyHere: {
+    state: "onlyHere",
+    get title() {
+      return t("compare.onlyHere");
+    },
+  },
+  different: {
+    state: "different",
+    get title() {
+      return t("compare.differentAndNeitherIsNewer");
+    },
+  },
+  identical: {
+    state: "identical",
+    get title() {
+      return t("compare.identical");
+    },
+  },
+  both: {
+    state: "both",
+    get title() {
+      return t("compare.onBothSidesTheContents");
+    },
+  },
 };
 
 /** The folders both sides have below two compared folders, and what was found in each. */
@@ -392,16 +433,16 @@ export function describeSummary(summary: FolderSummary, side: "left" | "right"):
 function folderMark(summary: FolderSummary, side: "left" | "right"): RowCompare {
   const found = describeSummary(summary, side);
   if (differences(summary) > 0)
-    return { state: "differsInside", title: `Differs inside: ${found}` };
+    return { state: "differsInside", title: t("compare.differsInside", { found }) };
   if (summary.notCompared > 0) {
-    return { state: "both", title: `No differences found inside, but not all of it: ${found}` };
+    return { state: "both", title: t("compare.noDifferencesFoundInsideBut", { found }) };
   }
   return {
     state: "identical",
     title:
       summary.identical > 0
-        ? `Identical inside: ${pluralize(summary.identical, "file")}`
-        : "Identical inside: no files on either side",
+        ? t("compare.identicalInsideFiles", { count: summary.identical })
+        : t("compare.identicalInsideNoFilesOn"),
   };
 }
 

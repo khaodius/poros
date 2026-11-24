@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { useLatest } from "../hooks/useLatest";
 import { Dialog } from "./Dialog";
+import { useT } from "../i18n";
 
 interface ConfirmDialogProps {
   title: string;
@@ -25,6 +26,7 @@ export function ConfirmDialog({
   onConfirm,
   onClose,
 }: ConfirmDialogProps) {
+  const t = useT();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const latestOnClose = useLatest(onClose);
@@ -47,7 +49,7 @@ export function ConfirmDialog({
       {error && <p className="form-error">{error}</p>}
       <div className="dialog-actions">
         <button type="button" className="button" onClick={onClose} disabled={busy}>
-          Cancel
+          {t("common.cancel")}
         </button>
         <button
           type="button"

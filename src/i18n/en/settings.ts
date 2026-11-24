@@ -1,0 +1,184 @@
+import type { MessageArea } from "../catalog";
+
+export const settings = {
+  // components/SettingsDialog
+  settingsSections: "Settings sections",
+  queue: "Queue",
+  simultaneousTransfers: "Simultaneous transfers",
+  simultaneousTransfersHint: "How many files move at once.",
+  startTransfersAsSoonAs: "Start transfers as soon as they are queued",
+  startTransfersAsSoonAsHint: "Off: the queue waits until you press Start queue.",
+  whenTheTargetFileExists: "When the target file exists",
+  keepFinishedTransfersInThe: "Keep finished transfers in the list",
+  keepUnfinishedTransfersWhenPoros: "Keep unfinished transfers when Poros closes",
+  keepUnfinishedTransfersWhenPorosHint:
+    "They come back paused at the next start. Passwords are never saved with them.",
+  connections: "Connections",
+  giveEachTransferItsOwn: "Give each transfer its own connection",
+  giveEachTransferItsOwnHint:
+    "Off: transfers share the browsing connection, for servers that limit logins.",
+  splitLargeFilesAcrossConnections: "Split large files across connections",
+  splitLargeFilesAcrossConnectionsHint:
+    "Idle transfer slots join a large file and move different parts of it.",
+  splitFilesLargerThan: "Split files larger than",
+  connectionsPerFile: "Connections per file",
+  copyDirectlyBetweenFtpServers: "Copy directly between FTP servers (FXP)",
+  copyDirectlyBetweenFtpServersHint:
+    "Both servers must allow it. Otherwise, and between other servers, files stream through Poros.",
+  bandwidth: "Bandwidth",
+  uploadLimit: "Upload limit",
+  uploadLimitHint: "0 means unlimited. Shared by all transfers.",
+  downloadLimit: "Download limit",
+  buffers: "Buffers",
+  requestSize: "Request size",
+  requestSizeHint:
+    "Bytes per SFTP read or write. Most servers accept up to 255 KiB; some cap at 32.",
+  requestsInFlight: "Requests in flight",
+  requestsInFlightHint: "Outstanding requests per connection. Higher hides more network latency.",
+  files: "Files",
+  keepModificationTimes: "Keep modification times",
+  keepPermissions: "Keep permissions",
+  keepPermissionsHint: "Copies Unix permission bits. Has no effect for files from Windows.",
+  integrity: "Integrity",
+  writeToATemporaryName: "Write to a temporary name, then rename",
+  writeToATemporaryNameHint:
+    "A file appears under its name only once complete and checked, and a replaced file is never left half written. Uploads to FTP servers are written in place.",
+  verifyChecksums: "Verify checksums",
+  verifyChecksumsHint:
+    "Compares a SHA-256 of both copies after each file, computed on SFTP servers by their own sha256sum. SHA-1 and MD5 are never used for this, as they can be forged. Reads every file once more on both sides.",
+  readFilesBackWhenThe: "Read files back when the server cannot hash them",
+  readFilesBackWhenTheHint:
+    "On SFTP servers without sha256sum, and on FTP and WebDAV servers, each finished file is read back and hashed here. Doubles the traffic with those servers. Cloud storage is not read back.",
+  repairOnlyTheDamagedParts: "Repair only the damaged parts",
+  repairOnlyTheDamagedPartsHint:
+    "After a mismatch, each part of the file is compared on its own and only the parts that differ are sent again, up to half the file. Needs GNU split on the server, or reading back.",
+  checkTheTransferredPartBefore: "Check the transferred part before resuming",
+  checkTheTransferredPartBeforeHint:
+    "Compares what is already there with the source, part by part, and continues from the first part that differs. Where the server cannot hash parts of a file, the last 64 KiB are compared.",
+  flushToDiskBeforeFinishing: "Flush to disk before finishing",
+  flushToDiskBeforeFinishingHint:
+    "A file counts as done only once stored, so a power cut right after cannot lose it. On servers that support it; slows many small files.",
+  checkTimesAndPermissionsAfter: "Check times and permissions after setting them",
+  checkTimesAndPermissionsAfterHint:
+    "Reads them back once a file is in place and notes in the log any the server or file system did not keep.",
+  checkPublishedChecksumsAndSignatures: "Check published checksums and signatures",
+  checkPublishedChecksumsAndSignaturesHint:
+    "Downloads are compared with SHA256SUMS, name.sha256 and similar files beside them, with .minisig signatures, and through gpg with .asc and .sig ones. A file that fails is not saved.",
+  errors: "Errors",
+  retries: "Retries",
+  retriesHint: "For timeouts, failed checks and connections that drop again right away.",
+  waitBetweenRetries: "Wait between retries",
+  trustedMinisignKeys: "Trusted minisign keys",
+  onePublicKeyPerLine:
+    "One public key per line, as in a publisher's minisign.pub. Signatures by other keys are noted in the log and not checked.",
+  autoTuneReceiveBuffer: "Auto-tune receive buffer",
+  autoTuneReceiveBufferHint:
+    "The system grows the TCP receive window to suit the connection. Applies to new connections.",
+  receiveBufferSize: "Receive buffer size",
+  receiveBufferSizeHint: "SO_RCVBUF, used when auto-tuning is off.",
+  autoTuneSendBuffer: "Auto-tune send buffer",
+  autoTuneSendBufferHint:
+    "The system sizes the TCP send buffer to suit the connection. Applies to new connections.",
+  sendBufferSize: "Send buffer size",
+  sendBufferSizeHint: "SO_SNDBUF, used when auto-tuning is off.",
+  connectionTimeout: "Connection timeout",
+  keepaliveInterval: "Keepalive interval",
+  keepaliveIntervalHint: "0 turns keepalives off. Applies to new connections.",
+  compressTraffic: "Compress traffic",
+  compressTrafficHint:
+    "Helps text over slow links; slows already compressed files. Applies to new connections.",
+  reconnecting: "Reconnecting",
+  reconnectLostTabsAutomatically: "Reconnect lost tabs automatically",
+  reconnectLostTabsAutomaticallyHint:
+    "Tries again with growing delays, without asking for passwords already given.",
+  keepTryingFor: "Keep trying for",
+  keepTryingForHint:
+    "Tabs and transfers wait this long for a lost server; transfers keep their retries meanwhile. 0 gives up at once.",
+  savedConnections: "Saved connections",
+  saveQuickConnectionsAutomatically: "Save quick connections automatically",
+  saveQuickConnectionsAutomaticallyHint:
+    "Adds each new server you reach from the quick connect bar, without its password.",
+  proxy: "Proxy",
+  newSftpConnectionsReachTheir:
+    "New SFTP connections reach their server through this proxy, unless a connection is set to connect without it. With a jump host, only the connection to the jump host uses the proxy. FTP and cloud connections do not use it.",
+  type: "Type",
+  host: "Host",
+  proxyExampleCom: "proxy.example.com",
+  port: "Port",
+  username: "Username",
+  usernameHint: "Leave empty for a proxy without a login. SOCKS4 sends only the username.",
+  password: "Password",
+  passwordHint: "Kept in the system keychain.",
+  forget: "Forget",
+  lookUpServerNamesThrough: "Look up server names through the proxy",
+  lookUpServerNamesThroughHint:
+    "This computer's DNS never sees the names of the servers you connect to. HTTP proxies always do this.",
+  proxyPassword: "Proxy password",
+  saved: "Saved",
+  doubleClickingAFile: "Double-clicking a file",
+  transfersItToTheOther: "Transfers it to the other side",
+  opensItInTheBuilt: "Opens it in the built-in editor",
+  opensItInItsProgram: "Opens it in its program",
+  asksHowToOpenIt: "Asks how to open it",
+  doesNothing: "Does nothing",
+  showHiddenFilesInNew: "Show hidden files in new tabs",
+  foldersFirst: "Folders first",
+  foldersFirstHint: "Keeps folders above files whatever the sort order.",
+  dates: "Dates",
+  columns: "Columns",
+  columnsHint:
+    "Right-click a column heading to show or hide columns and change the sort. Drag the line before a heading to resize its column, or double-click the line to fit it.",
+  serverFolders: "Server folders",
+  showCachedListingsWhileRefreshing: "Show cached listings while refreshing",
+  showCachedListingsWhileRefreshingHint:
+    "A folder opened before shows at once as it was last seen, and updates when the server answers. Listings are kept in memory only, never on disk.",
+  loadNearbyFoldersAhead: "Load nearby folders ahead",
+  loadNearbyFoldersAheadHint:
+    "Lists the parent folder and the folder under the cursor while the server is idle, one at a time. Paused on FTP while transfers run.",
+  alsoOnCloudStorage: "Also on cloud storage",
+  alsoOnCloudStorageHint:
+    "Off: nothing is listed ahead on cloud storage, where requests are counted and limited.",
+  tabsAndWindows: "Tabs and windows",
+  askBeforeClosingATab: "Ask before closing a tab with queued transfers",
+  rememberTabsAndLayout: "Remember tabs and layout",
+  rememberTabsAndLayoutHint:
+    "Reopens the windows, panes and tabs open at the last exit, each at its folder.",
+  reconnectToServersOnStart: "Reconnect to servers on start",
+  reconnectToServersOnStartHint: "Off: reopened server tabs wait for you to connect them.",
+  useTheSystemTitleBar: "Use the system title bar",
+  useTheSystemTitleBarHint: "Off: the top bar holds the window buttons and drags the window.",
+  log: "Log",
+  linesToKeep: "Lines to keep",
+  showTimes: "Show times",
+  wrapLongLines: "Wrap long lines",
+  logEveryTransferredFile: "Log every transferred file",
+  logEveryTransferredFileHint: "Off: one summary line when the queue finishes.",
+  updates: "Updates",
+  checkForUpdatesWhenPoros: "Check for updates when Poros starts",
+  checkForUpdatesWhenPorosHint:
+    "Looks for a newer release on GitHub. Nothing is downloaded until you choose to install it.",
+  poros: "Poros {version}",
+  restartNow: "Restart now",
+  updating: "Updating...",
+  showUpdate: "Show update",
+  isNotAvailable: "{version} is not available: {message}",
+  installAnotherVersion: "Install another version",
+  version: "Version",
+  install: "Install",
+
+  // components/Stepper
+  decrease: "Decrease {label}",
+  increase: "Increase {label}",
+  // components/SettingsDialog
+  transfers: "Transfers",
+  sync: "Sync",
+  connection: "Connection",
+  cloudAccounts: "Cloud accounts",
+  automation: "Automation",
+  archives: "Archives",
+  interface: "Interface",
+  appearance: "Appearance",
+  overwriteIfTheSourceIs: "Overwrite if the source is newer",
+  overwriteIfSizeOrDate: "Overwrite if size or date differ",
+  keepBoth: "Keep both",
+} as const satisfies MessageArea;

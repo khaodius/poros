@@ -10,6 +10,7 @@ import {
   useRestoreStore,
 } from "../state/restoreActions";
 import { ConnectionIcon } from "./ConnectionIcon";
+import { useT } from "../i18n";
 
 /** What the tab shows once it is back, for a tab that needs its server first. */
 function reopens(tab: RestoringTab): string {
@@ -23,6 +24,7 @@ function reopens(tab: RestoringTab): string {
  * or its file is open.
  */
 export function RestoringPane({ tab }: { tab: RestoringTab }) {
+  const t = useT();
   const server = tab.restore.server;
   const key = serverKey(tab);
   const status = useRestoreStore((state) => state.servers[key]);
@@ -79,7 +81,7 @@ export function RestoringPane({ tab }: { tab: RestoringTab }) {
               onClick={() => signInToRestore(tab)}
             >
               <KeyRound size={14} />
-              Sign in
+              {t("workspace.signIn")}
             </button>
           )}
           {(phase === "failed" || phase === "waiting") && (
@@ -93,7 +95,7 @@ export function RestoringPane({ tab }: { tab: RestoringTab }) {
             </button>
           )}
           <button type="button" className="button" onClick={() => closeTab(tab.id)}>
-            Close tab
+            {t("workspace.closeTab")}
           </button>
         </div>
         <p className="pane-empty-detail">{reopens(tab)}</p>

@@ -13,11 +13,13 @@ import type { Protocol } from "../lib/types";
 import { quickConnect } from "../state/connectActions";
 import { useToastStore } from "../state/toastStore";
 import { useUiStore } from "../state/uiStore";
+import { useT } from "../i18n";
 
 const SERVER_PROTOCOLS = PROTOCOLS.filter((info) => !isCloud(info.value));
 const CLOUD_PROTOCOLS = PROTOCOLS.filter((info) => isCloud(info.value));
 
 export function QuickConnectBar() {
+  const t = useT();
   const [protocol, setProtocol] = useState<Protocol>("sftp");
   const [host, setHost] = useState("");
   const [username, setUsername] = useState("");
@@ -69,7 +71,7 @@ export function QuickConnectBar() {
       <select
         className="quick-protocol"
         value={protocol}
-        aria-label="Protocol"
+        aria-label={t("connect.protocol")}
         onChange={(event) => chooseProtocol(event.target.value as Protocol)}
       >
         {SERVER_PROTOCOLS.map((info) => (
@@ -77,7 +79,7 @@ export function QuickConnectBar() {
             {info.shortLabel}
           </option>
         ))}
-        <optgroup label="Cloud storage">
+        <optgroup label={t("connect.cloudStorage")}>
           {CLOUD_PROTOCOLS.map((info) => (
             <option key={info.value} value={info.value}>
               {info.shortLabel}...
@@ -88,16 +90,16 @@ export function QuickConnectBar() {
       <input
         className="quick-host"
         value={host}
-        placeholder="Host or user@host:port"
-        aria-label="Host"
+        placeholder={t("connect.hostOrUserHostPort")}
+        aria-label={t("connect.host")}
         spellCheck={false}
         autoCapitalize="off"
         onChange={(event) => setHost(event.target.value)}
       />
       <input
         value={username}
-        placeholder="Username"
-        aria-label="Username"
+        placeholder={t("connect.username")}
+        aria-label={t("connect.username")}
         spellCheck={false}
         autoCapitalize="off"
         onChange={(event) => setUsername(event.target.value)}
@@ -105,15 +107,15 @@ export function QuickConnectBar() {
       <input
         type="password"
         value={password}
-        placeholder="Password"
-        aria-label="Password"
+        placeholder={t("connect.password")}
+        aria-label={t("connect.password")}
         onChange={(event) => setPassword(event.target.value)}
       />
       <input
         className="quick-port"
         value={port}
         placeholder={String(defaultPort(protocol))}
-        aria-label="Port"
+        aria-label={t("connect.port")}
         inputMode="numeric"
         onChange={(event) => setPort(event.target.value.replace(/\D/g, ""))}
       />

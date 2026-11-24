@@ -13,6 +13,7 @@ import {
   storedPreviewShare,
   type PreviewSide,
 } from "../lib/previewLayout";
+import { useT } from "../i18n";
 
 interface PreviewSplitProps {
   /** The preview pane, or null while it is closed. */
@@ -26,6 +27,7 @@ interface PreviewSplitProps {
  * narrow for the two side by side, the preview goes below the list.
  */
 export function PreviewSplit({ preview, children }: PreviewSplitProps) {
+  const t = useT();
   const hostRef = useRef<HTMLDivElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const [side, setSide] = useState<PreviewSide>("side");
@@ -98,8 +100,8 @@ export function PreviewSplit({ preview, children }: PreviewSplitProps) {
             className="preview-resizer"
             role="separator"
             aria-orientation={side === "side" ? "vertical" : "horizontal"}
-            aria-label="Resize preview"
-            title="Drag to resize, double-click to reset"
+            aria-label={t("preview.resizePreview")}
+            title={t("preview.dragToResizeDoubleClick")}
             onPointerDown={startResize}
             onDoubleClick={() => commit(DEFAULT_PREVIEW_SHARE)}
           />

@@ -1,9 +1,11 @@
 import { AlertCircle, Info, X } from "lucide-react";
 import { useToastStore } from "../state/toastStore";
 import { UpdateNotice } from "./UpdateNotice";
+import { useT } from "../i18n";
 
 /** Notices in the window's bottom-right corner: an update being installed, under passing toasts. */
 export function Toasts() {
+  const t = useT();
   const toasts = useToastStore((state) => state.toasts);
   const dismiss = useToastStore((state) => state.dismiss);
   const hold = useToastStore((state) => state.hold);
@@ -23,7 +25,7 @@ export function Toasts() {
             <button
               type="button"
               className="icon-button"
-              aria-label="Dismiss"
+              aria-label={t("common.dismiss")}
               onClick={() => dismiss(toast.id)}
             >
               <X size={14} />

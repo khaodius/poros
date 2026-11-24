@@ -2,6 +2,7 @@ import { useMemo, type ReactNode } from "react";
 import { entriesStillListed } from "../lib/deletion";
 import type { DirListing, FileEntry } from "../lib/types";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { useT } from "../i18n";
 
 interface DeleteDialogProps {
   /** The entries picked to delete, as the listing had them then. */
@@ -29,6 +30,7 @@ export function DeleteDialog({
   onConfirm,
   onClose,
 }: DeleteDialogProps) {
+  const t = useT();
   const entries = useMemo(
     () => entriesStillListed(chosen, listing?.entries ?? []),
     [chosen, listing],
@@ -37,14 +39,14 @@ export function DeleteDialog({
     <ConfirmDialog
       title={
         entries.length === 0
-          ? "Nothing to delete"
+          ? t("dialogs.nothingToDelete")
           : entries.length === 1
-            ? "Delete item"
-            : `Delete ${entries.length} items`
+            ? t("dialogs.deleteItem")
+            : t("dialogs.deleteItems", { count: entries.length })
       }
-      confirmLabel="Delete"
+      confirmLabel={t("common.delete")}
       danger
-      waiting={checking ? "Checking the folder..." : undefined}
+      waiting={checking ? t("dialogs.checkingTheFolder") : undefined}
       disabled={entries.length === 0}
       onClose={onClose}
       onConfirm={() => onConfirm(entries)}

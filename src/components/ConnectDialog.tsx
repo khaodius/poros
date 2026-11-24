@@ -36,12 +36,21 @@ import { useSettingsStore } from "../state/settingsStore";
 import { useUiStore } from "../state/uiStore";
 import { Dialog } from "./Dialog";
 import { OptionCheckView, RsyncArgumentsField } from "./RsyncOptionsEditor";
+import { useT, t } from "../i18n";
 
 const AUTH_LABELS: Record<AuthChoice, string> = {
-  password: "Password",
-  publicKey: "Key file",
-  agent: "SSH agent",
-  oauth: "Browser sign-in",
+  get password() {
+    return t("connect.password");
+  },
+  get publicKey() {
+    return t("connect.keyFile");
+  },
+  get agent() {
+    return t("connect.sshAgent");
+  },
+  get oauth() {
+    return t("connect.browserSignIn");
+  },
 };
 
 interface ConnectDialogProps {
@@ -57,6 +66,7 @@ export function ConnectDialog({
   initialError,
   onClose,
 }: ConnectDialogProps) {
+  const t = useT();
   const connections = useSavedConnections((state) => state.connections);
   const saveConnection = useSavedConnections((state) => state.save);
   const removeConnection = useSavedConnections((state) => state.remove);
@@ -136,7 +146,7 @@ export function ConnectDialog({
   const browseForKey = async () => {
     // No extension filter: OpenSSH keys such as `id_ed25519` have none.
     const selected = await openFileDialog({
-      title: "Select private key",
+      title: t("connect.selectPrivateKey"),
       multiple: false,
       directory: false,
     });
@@ -214,17 +224,17 @@ export function ConnectDialog({
   };
 
   return (
-    <Dialog title="Connect" onClose={onClose} width={800}>
+    <Dialog title={t("common.connect")} onClose={onClose} width={800}>
       <div className="site-manager">
         <aside className="site-list">
           <div className="site-list-header">
-            <span>Saved connections</span>
+            <span>{t("connect.savedConnections")}</span>
             <span className="site-list-actions">
               <button
                 type="button"
                 className="icon-button"
-                title="Import from FileZilla, WinSCP and other apps"
-                aria-label="Import connections"
+                title={t("connect.importFromFilezillaWinscpAnd")}
+                aria-label={t("connect.importConnections")}
                 onClick={importConnections}
               >
                 <Import size={15} />
@@ -232,8 +242,8 @@ export function ConnectDialog({
               <button
                 type="button"
                 className="icon-button"
-                title="New connection"
-                aria-label="New connection"
+                title={t("connect.newConnection")}
+                aria-label={t("connect.newConnection")}
                 onClick={() => select(EMPTY_DRAFT)}
               >
                 <Plus size={15} />
@@ -242,9 +252,9 @@ export function ConnectDialog({
           </div>
           {connections.length === 0 ? (
             <p className="site-list-empty">
-              Connections you save appear here.{" "}
+              {t("connect.connectionsYouSaveAppearHere")}
               <button type="button" className="link-button" onClick={importConnections}>
-                Import them from another app
+                {t("connect.importThemFromAnotherApp")}
               </button>
             </p>
           ) : (
@@ -272,7 +282,7 @@ export function ConnectDialog({
         <form className="form site-form" onSubmit={submit}>
           <div className="form-row">
             <label className="field protocol">
-              <span>Protocol</span>
+              <span>{t("connect.protocol")}</span>
               <select
                 value={draft.protocol}
                 onChange={(event) => changeProtocol(event.target.value as Protocol)}
@@ -285,7 +295,7 @@ export function ConnectDialog({
               </select>
             </label>
             <label className="field grow">
-              <span>Name</span>
+              <span>{t("common.name")}</span>
               <input
                 value={draft.name}
                 placeholder={namePlaceholder}
@@ -297,7 +307,7 @@ export function ConnectDialog({
 
           {browser ? (
             <div className="field">
-              <span>Account</span>
+              <span>{t("connect.account")}</span>
               <CloudSignIn
                 key={draft.protocol}
                 protocol={draft.protocol}
@@ -319,10 +329,10 @@ export function ConnectDialog({
                       value={draft.host}
                       placeholder={
                         s3
-                          ? "Empty for Amazon S3"
+                          ? t("connect.emptyForAmazonS3")
                           : webDav
-                            ? "example.com or example.com/remote.php/dav"
-                            : "example.com"
+                            ? t("connect.exampleComOrExampleCom")
+                            : t("connect.exampleCom")
                       }
                       spellCheck={false}
                       autoCapitalize="off"
@@ -330,7 +340,7 @@ export function ConnectDialog({
                     />
                   </label>
                   <label className="field port">
-                    <span>Port</span>
+                    <span>{t("connect.port")}</span>
                     <input
                       value={draft.port}
                       inputMode="numeric"
@@ -341,9 +351,10 @@ export function ConnectDialog({
               )}
               {s3 && (
                 <small className="field-hint">
-                  For another service, enter its endpoint, such as{" "}
-                  <code>s3.eu-central-1.wasabisys.com</code>, or <code>http://localhost:9000</code>{" "}
-                  for a server without TLS.
+                  {t("connect.forAnotherServiceEnterIts")}
+                  <code>{t("connect.s3EuCentral1Wasabisys")}</code>
+                  {t("connect.or")} <code>{t("connect.httpLocalhost9000")}</code>
+                  {t("connect.forAServerWithoutTls")}
                 </small>
               )}
 
@@ -352,7 +363,9 @@ export function ConnectDialog({
                 <input
                   data-autofocus={b2 ? true : undefined}
                   value={draft.username}
-                  placeholder={ftp ? "anonymous" : webDav ? "Empty if the server needs none" : ""}
+                  placeholder={
+                    ftp ? t("connect.anonymous") : webDav ? t("connect.emptyIfTheServerNeeds") : ""
+                  }
                   spellCheck={false}
                   autoCapitalize="off"
                   onChange={(event) => update("username", event.target.value)}
@@ -363,7 +376,7 @@ export function ConnectDialog({
 
           {authChoices.length > 1 && (
             <div className="field">
-              <span>Authentication</span>
+              <span>{t("connect.authentication")}</span>
               <div className="segmented" role="radiogroup">
                 {authChoices.map((choice) => (
                   <button
@@ -387,7 +400,7 @@ export function ConnectDialog({
               <input
                 type="password"
                 value={draft.password}
-                placeholder={draft.hasSavedSecret ? "Saved in the system keychain" : ""}
+                placeholder={draft.hasSavedSecret ? t("connect.savedInTheSystemKeychain") : ""}
                 onChange={(event) => update("password", event.target.value)}
               />
             </label>
@@ -396,21 +409,19 @@ export function ConnectDialog({
           {draft.authChoice === "publicKey" && (
             <>
               <div className="field">
-                <span>Private key file</span>
+                <span>{t("connect.privateKeyFile")}</span>
                 <div className="input-with-button">
                   <input
                     value={draft.keyPath}
-                    placeholder="~/.ssh/id_ed25519 or C:\keys\server.ppk"
+                    placeholder={t("connect.sshIdEd25519OrC")}
                     spellCheck={false}
                     onChange={(event) => update("keyPath", event.target.value)}
                   />
                   <button type="button" className="button" onClick={browseForKey}>
-                    <FolderOpen size={14} /> Browse
+                    <FolderOpen size={14} /> {t("common.browse")}
                   </button>
                 </div>
-                <small className="field-hint">
-                  OpenSSH, PEM, PKCS#8 and PuTTY .ppk (v2 and v3) keys are supported.
-                </small>
+                <small className="field-hint">{t("connect.opensshPemPkcs8And")}</small>
               </div>
               <label className="field">
                 <span>Passphrase {needsPassphrase ? "" : "(if the key has one)"}</span>
@@ -418,7 +429,7 @@ export function ConnectDialog({
                   ref={passphraseRef}
                   type="password"
                   value={draft.passphrase}
-                  placeholder={draft.hasSavedSecret ? "Saved in the system keychain" : ""}
+                  placeholder={draft.hasSavedSecret ? t("connect.savedInTheSystemKeychain") : ""}
                   className={needsPassphrase ? "has-error" : ""}
                   onChange={(event) => update("passphrase", event.target.value)}
                 />
@@ -428,39 +439,39 @@ export function ConnectDialog({
 
           {draft.authChoice === "agent" && (
             <p className="field-hint">
-              Uses keys loaded in your SSH agent: <code>SSH_AUTH_SOCK</code> on Linux and macOS, the
-              OpenSSH Authentication Agent service or Pageant on Windows.
+              {t("connect.usesKeysLoadedInYour")} <code>SSH_AUTH_SOCK</code>{" "}
+              {t("connect.onLinuxAndMacosThe")}
             </p>
           )}
 
           {s3 && (
             <div className="form-row">
               <label className="field grow">
-                <span>Region</span>
+                <span>{t("connect.region")}</span>
                 <input
                   value={draft.s3Region}
-                  placeholder="From the endpoint, or us-east-1"
+                  placeholder={t("connect.fromTheEndpointOrUs")}
                   spellCheck={false}
                   autoCapitalize="off"
                   onChange={(event) => update("s3Region", event.target.value)}
                 />
               </label>
               <label className="field grow">
-                <span>Bucket address</span>
+                <span>{t("connect.bucketAddress")}</span>
                 <select
                   value={draft.s3Addressing}
                   onChange={(event) => update("s3Addressing", event.target.value as S3Addressing)}
                 >
-                  <option value="automatic">Automatic</option>
-                  <option value="path">Path (endpoint/bucket)</option>
-                  <option value="virtualHosted">Virtual-hosted (bucket.endpoint)</option>
+                  <option value="automatic">{t("connect.automatic")}</option>
+                  <option value="path">{t("connect.pathEndpointBucket")}</option>
+                  <option value="virtualHosted">{t("connect.virtualHostedBucketEndpoint")}</option>
                 </select>
               </label>
             </div>
           )}
 
           <label className="field">
-            <span>Remote folder (optional)</span>
+            <span>{t("connect.remoteFolderOptional")}</span>
             <input
               value={draft.initialPath}
               placeholder={folderPlaceholder}
@@ -471,15 +482,15 @@ export function ConnectDialog({
 
           {sftp && (
             <label className="field">
-              <span>Jump host</span>
+              <span>{t("connect.jumpHost")}</span>
               <select
                 value={draft.jumpConnectionId}
                 disabled={jumpHosts.length === 0 && !jumpHostMissing}
                 onChange={(event) => update("jumpConnectionId", event.target.value)}
               >
-                <option value="">None, connect straight to the server</option>
+                <option value="">{t("connect.noneConnectStraightToThe")}</option>
                 {jumpHostMissing && (
-                  <option value={draft.jumpConnectionId}>A deleted connection</option>
+                  <option value={draft.jumpConnectionId}>{t("connect.aDeletedConnection")}</option>
                 )}
                 {jumpHosts.map((connection) => (
                   <option key={connection.id} value={connection.id}>
@@ -487,10 +498,7 @@ export function ConnectDialog({
                   </option>
                 ))}
               </select>
-              <small className="field-hint">
-                Logs in to this saved connection first and reaches the server through it, like
-                ProxyJump in OpenSSH.
-              </small>
+              <small className="field-hint">{t("connect.logsInToThisSaved")}</small>
             </label>
           )}
 
@@ -521,7 +529,7 @@ export function ConnectDialog({
                   disabled={draft.authChoice === "agent"}
                   onChange={(event) => update("saveSecret", event.target.checked)}
                 />
-                Remember the {secretLabel} in the system keychain
+                {t("connect.rememberTheInTheSystem", { secretLabel })}
               </label>
             )}
             {ftp && (
@@ -531,7 +539,7 @@ export function ConnectDialog({
                   checked={draft.ftpActive}
                   onChange={(event) => update("ftpActive", event.target.checked)}
                 />
-                Active mode: the server opens data connections to this computer
+                {t("connect.activeModeTheServerOpens")}
               </label>
             )}
             {sftp && proxyEnabled && !draft.jumpConnectionId && (
@@ -541,7 +549,7 @@ export function ConnectDialog({
                   checked={draft.bypassProxy}
                   onChange={(event) => update("bypassProxy", event.target.checked)}
                 />
-                Connect without the proxy
+                {t("connect.connectWithoutTheProxy")}
               </label>
             )}
           </div>
@@ -559,7 +567,7 @@ export function ConnectDialog({
               </button>
             )}
             <button type="button" className="button" onClick={onClose}>
-              Cancel
+              {t("common.cancel")}
             </button>
             <button
               type="button"
@@ -597,6 +605,7 @@ function SiteRsyncFields({
   onRsyncPath,
   onSyncArguments,
 }: SiteRsyncFieldsProps) {
+  const t = useT();
   const defaults = useSettingsStore((state) => state.settings.sync);
   const transferRsync = useSettingsStore((state) => state.settings.transfers.rsyncPath);
   const [open, setOpen] = useState(() => rsyncPath.trim() !== "" || syncArguments.trim() !== "");
@@ -611,9 +620,9 @@ function SiteRsyncFields({
       open={open}
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <summary>rsync and synchronization</summary>
+      <summary>{t("connect.rsyncAndSynchronization")}</summary>
       <label className="field">
-        <span>rsync on the server</span>
+        <span>{t("connect.rsyncOnTheServer")}</span>
         <input
           className="mono"
           value={rsyncPath}
@@ -622,16 +631,13 @@ function SiteRsyncFields({
           autoCapitalize="off"
           onChange={(event) => onRsyncPath(event.target.value)}
         />
-        <small className="field-hint">
-          The command that starts rsync here, such as sudo rsync or /usr/local/bin/rsync. Blank uses
-          the one in the transfer settings.
-        </small>
+        <small className="field-hint">{t("connect.theCommandThatStartsRsync")}</small>
       </label>
       <RsyncArgumentsField
         value={syncArguments}
-        label="rsync arguments for folder synchronizations"
-        hint="Synchronizations with this server start from the defaults in Settings with these applied over them."
-        placeholder="--delete --chmod=D755,F644 --exclude=.git/"
+        label={t("connect.rsyncArgumentsForFolderSynchronizations")}
+        hint={t("connect.rsyncArgumentsForFolderSynchronizationsHint")}
+        placeholder={t("connect.deleteChmodD755F644Exclude")}
         onChange={onSyncArguments}
       />
       {syncArguments.trim() !== "" && <OptionCheckView check={check} />}

@@ -3,14 +3,19 @@
 
 import { withoutCutCharacter } from "./previewSniff";
 import type { TextEncoding } from "./types";
+import { t } from "../i18n";
 
 /** The names the editor gives the encodings. */
 export const TEXT_ENCODING_LABELS: Record<TextEncoding, string> = {
   utf8: "UTF-8",
-  utf8Bom: "UTF-8 with BOM",
+  get utf8Bom() {
+    return t("preview.utf8WithBom");
+  },
   utf16Le: "UTF-16 LE",
   utf16Be: "UTF-16 BE",
-  latin1: "Latin-1",
+  get latin1() {
+    return t("preview.latin1");
+  },
 };
 
 /** `String.fromCharCode` takes its characters as arguments, of which a call has a limit. */

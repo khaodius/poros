@@ -9,9 +9,11 @@ import { moveWindowFrom } from "../lib/windowDrag";
 import { useSettingsStore } from "../state/settingsStore";
 import { BottomPanel } from "./BottomPanel";
 import { DockArea } from "./DockArea";
+import { useT } from "../i18n";
 
 /** The docked panes above the transfer queue and log, split by a draggable bar. */
 export function Workspace() {
+  const t = useT();
   const systemTitleBar = useSettingsStore((state) => state.settings.interface.systemTitleBar);
   const [share, setShare] = useState(storedPanelShare);
   const containerRef = useRef<HTMLElement>(null);
@@ -78,7 +80,7 @@ export function Workspace() {
         className="workspace-resizer"
         role="separator"
         aria-orientation="horizontal"
-        title="Drag to resize, double-click to reset"
+        title={t("workspace.dragToResizeDoubleClickTo")}
         onPointerDown={startResize}
         onDoubleClick={() => commit(DEFAULT_PANEL_SHARE)}
       />

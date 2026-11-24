@@ -9,6 +9,7 @@ import { useLogStore } from "./logStore";
 import { saveSettingsSection, useSettingsStore } from "./settingsStore";
 import { useTransferStore } from "./transferStore";
 import { useUiStore } from "./uiStore";
+import { useT } from "../i18n";
 
 /** Where installing the update stands, once the user chose to install it. */
 export type InstallStage =
@@ -140,6 +141,7 @@ export async function installVersion(version: string): Promise<void> {
 
 /** What restarting now would interrupt, as sentences for the user. */
 export function useRestartWarnings(): string[] {
+  const t = useT();
   const pendingTransfers = useTransferStore(
     ({ snapshot }) => snapshot.stats.counts.queued + snapshot.stats.counts.running,
   );
@@ -149,14 +151,12 @@ export function useRestartWarnings(): string[] {
   const warnings: string[] = [];
   if (pendingTransfers > 0) {
     warnings.push(
-      `${pluralize(pendingTransfers, "transfer")} in the queue will stop when Poros restarts` +
+      t("updates.transfersInTheQueueWill", { count: pendingTransfers }) +
         (keepQueue ? " and come back paused." : "."),
     );
   }
   if (unsavedFiles > 0) {
-    warnings.push(
-      `Unsaved changes in ${pluralize(unsavedFiles, "file")} will be lost when Poros restarts.`,
-    );
+    warnings.push(t("updates.unsavedChangesInFilesWill", { count: unsavedFiles }));
   }
   const editsWarning = notUploadedWarning(edits);
   if (editsWarning) warnings.push(editsWarning);

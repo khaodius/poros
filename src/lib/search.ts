@@ -13,6 +13,7 @@ import type {
   SearchReport,
   SearchRequest,
 } from "./types";
+import { t } from "../i18n";
 
 /** As many results as a search brings before it stops; the backend allows more. */
 export const SEARCH_LIMIT = 10_000;
@@ -36,12 +37,54 @@ export const SIZE_PRESETS: readonly {
   min: number | null;
   max: number | null;
 }[] = [
-  { id: "any", label: "Any size", min: null, max: null },
-  { id: "empty", label: "Empty", min: null, max: 0 },
-  { id: "small", label: "Smaller than 1 MB", min: null, max: MIB - 1 },
-  { id: "medium", label: "1 MB to 100 MB", min: MIB, max: 100 * MIB },
-  { id: "large", label: "Larger than 100 MB", min: 100 * MIB + 1, max: null },
-  { id: "huge", label: "Larger than 1 GB", min: GIB + 1, max: null },
+  {
+    id: "any",
+    get label() {
+      return t("search.anySize");
+    },
+    min: null,
+    max: null,
+  },
+  {
+    id: "empty",
+    get label() {
+      return t("search.empty");
+    },
+    min: null,
+    max: 0,
+  },
+  {
+    id: "small",
+    get label() {
+      return t("search.smallerThan1Mb");
+    },
+    min: null,
+    max: MIB - 1,
+  },
+  {
+    id: "medium",
+    get label() {
+      return t("search.n1MbTo100Mb");
+    },
+    min: MIB,
+    max: 100 * MIB,
+  },
+  {
+    id: "large",
+    get label() {
+      return t("search.largerThan100Mb");
+    },
+    min: 100 * MIB + 1,
+    max: null,
+  },
+  {
+    id: "huge",
+    get label() {
+      return t("search.largerThan1Gb");
+    },
+    min: GIB + 1,
+    max: null,
+  },
 ];
 
 export interface SizeFilter {
@@ -55,13 +98,48 @@ export type DatePreset =
   "any" | "today" | "yesterday" | "week" | "month" | "year" | "older" | "custom";
 
 export const DATE_PRESETS: readonly { id: Exclude<DatePreset, "custom">; label: string }[] = [
-  { id: "any", label: "Any time" },
-  { id: "today", label: "Today" },
-  { id: "yesterday", label: "Yesterday" },
-  { id: "week", label: "This week" },
-  { id: "month", label: "This month" },
-  { id: "year", label: "This year" },
-  { id: "older", label: "Before this year" },
+  {
+    id: "any",
+    get label() {
+      return t("search.anyTime");
+    },
+  },
+  {
+    id: "today",
+    get label() {
+      return t("search.today");
+    },
+  },
+  {
+    id: "yesterday",
+    get label() {
+      return t("search.yesterday");
+    },
+  },
+  {
+    id: "week",
+    get label() {
+      return t("search.thisWeek");
+    },
+  },
+  {
+    id: "month",
+    get label() {
+      return t("search.thisMonth");
+    },
+  },
+  {
+    id: "year",
+    get label() {
+      return t("search.thisYear");
+    },
+  },
+  {
+    id: "older",
+    get label() {
+      return t("search.beforeThisYear");
+    },
+  },
 ];
 
 export interface DateFilter {
@@ -72,17 +150,48 @@ export interface DateFilter {
 }
 
 export const DEPTH_PRESETS: readonly { depth: number | null; label: string }[] = [
-  { depth: null, label: "All folders inside" },
-  { depth: 1, label: "This folder only" },
-  { depth: 2, label: "One level down" },
-  { depth: 3, label: "Two levels down" },
-  { depth: 5, label: "Four levels down" },
+  {
+    depth: null,
+    get label() {
+      return t("search.allFoldersInside");
+    },
+  },
+  {
+    depth: 1,
+    get label() {
+      return t("search.thisFolderOnly");
+    },
+  },
+  {
+    depth: 2,
+    get label() {
+      return t("search.oneLevelDown");
+    },
+  },
+  {
+    depth: 3,
+    get label() {
+      return t("search.twoLevelsDown");
+    },
+  },
+  {
+    depth: 5,
+    get label() {
+      return t("search.fourLevelsDown");
+    },
+  },
 ];
 
 export const KIND_LABELS: Record<SearchKind, string> = {
-  any: "Files and folders",
-  files: "Files only",
-  folders: "Folders only",
+  get any() {
+    return t("search.filesAndFolders");
+  },
+  get files() {
+    return t("search.filesOnly");
+  },
+  get folders() {
+    return t("search.foldersOnly");
+  },
 };
 
 export interface SearchForm {

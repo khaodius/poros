@@ -2,6 +2,7 @@
 // pane. A name alone decides nothing: a picture is one by its signature, text by its bytes.
 
 import type { TextEncoding } from "./types";
+import { t } from "../i18n";
 
 /** The pictures the web view decodes. */
 export type ImageFormat = "png" | "jpeg" | "gif" | "webp" | "bmp" | "ico" | "avif" | "svg";
@@ -21,7 +22,9 @@ export const IMAGE_FORMAT_LABELS: Record<ImageFormat, string> = {
   png: "PNG",
   jpeg: "JPEG",
   gif: "GIF",
-  webp: "WebP",
+  get webp() {
+    return t("preview.webp");
+  },
   bmp: "BMP",
   ico: "ICO",
   avif: "AVIF",

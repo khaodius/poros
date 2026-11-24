@@ -59,42 +59,139 @@ import {
   SwitchSetting,
   TextSetting,
 } from "./settingsFields";
+import { useT, t } from "../i18n";
 
 const SECTIONS: { id: SettingsSection; label: string; icon: LucideIcon }[] = [
-  { id: "transfers", label: "Transfers", icon: ArrowLeftRight },
-  { id: "sync", label: "Sync", icon: FolderSync },
-  { id: "connection", label: "Connection", icon: Network },
-  { id: "cloud", label: "Cloud accounts", icon: Cloud },
-  { id: "automation", label: "Automation", icon: Workflow },
-  { id: "archives", label: "Archives", icon: Package },
-  { id: "interface", label: "Interface", icon: LayoutPanelLeft },
-  { id: "appearance", label: "Appearance", icon: Palette },
-  { id: "log", label: "Log", icon: FileText },
-  { id: "updates", label: "Updates", icon: CircleArrowUp },
+  {
+    id: "transfers",
+    get label() {
+      return t("settings.transfers");
+    },
+    icon: ArrowLeftRight,
+  },
+  {
+    id: "sync",
+    get label() {
+      return t("settings.sync");
+    },
+    icon: FolderSync,
+  },
+  {
+    id: "connection",
+    get label() {
+      return t("settings.connection");
+    },
+    icon: Network,
+  },
+  {
+    id: "cloud",
+    get label() {
+      return t("settings.cloudAccounts");
+    },
+    icon: Cloud,
+  },
+  {
+    id: "automation",
+    get label() {
+      return t("settings.automation");
+    },
+    icon: Workflow,
+  },
+  {
+    id: "archives",
+    get label() {
+      return t("settings.archives");
+    },
+    icon: Package,
+  },
+  {
+    id: "interface",
+    get label() {
+      return t("settings.interface");
+    },
+    icon: LayoutPanelLeft,
+  },
+  {
+    id: "appearance",
+    get label() {
+      return t("settings.appearance");
+    },
+    icon: Palette,
+  },
+  {
+    id: "log",
+    get label() {
+      return t("settings.log");
+    },
+    icon: FileText,
+  },
+  {
+    id: "updates",
+    get label() {
+      return t("settings.updates");
+    },
+    icon: CircleArrowUp,
+  },
 ];
 
 /** 2026-10-06 14:05:09 local time, to show what each date format looks like. */
 const DATE_SAMPLE = new Date(2026, 9, 6, 14, 5, 9).getTime() / 1000;
 
 const EXISTS_ACTIONS: { value: ExistsAction; label: string }[] = [
-  { value: "ask", label: "Ask me" },
-  { value: "overwrite", label: "Overwrite" },
-  { value: "overwriteIfNewer", label: "Overwrite if the source is newer" },
-  { value: "overwriteIfDifferent", label: "Overwrite if size or date differ" },
-  { value: "resume", label: "Resume" },
-  { value: "rename", label: "Keep both" },
-  { value: "skip", label: "Skip" },
+  {
+    value: "ask",
+    get label() {
+      return t("common.askMe");
+    },
+  },
+  {
+    value: "overwrite",
+    get label() {
+      return t("common.overwrite");
+    },
+  },
+  {
+    value: "overwriteIfNewer",
+    get label() {
+      return t("settings.overwriteIfTheSourceIs");
+    },
+  },
+  {
+    value: "overwriteIfDifferent",
+    get label() {
+      return t("settings.overwriteIfSizeOrDate");
+    },
+  },
+  {
+    value: "resume",
+    get label() {
+      return t("common.resume");
+    },
+  },
+  {
+    value: "rename",
+    get label() {
+      return t("settings.keepBoth");
+    },
+  },
+  {
+    value: "skip",
+    get label() {
+      return t("common.skip");
+    },
+  },
 ];
 
 export function SettingsDialog({ section }: { section: SettingsSection }) {
+  const t = useT();
   const open = useUiStore((state) => state.open);
   const close = useUiStore((state) => state.close);
   const settings = useSettingsStore((state) => state.settings);
 
   return (
-    <Dialog title="Settings" onClose={close} width={860}>
+    <Dialog title={t("common.settings")} onClose={close} width={860}>
       <div className="settings">
-        <nav className="settings-nav" aria-label="Settings sections">
+        <nav className="settings-nav" aria-label={t("settings.settingsSections")}>
           {SECTIONS.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
@@ -126,60 +223,61 @@ export function SettingsDialog({ section }: { section: SettingsSection }) {
 }
 
 function TransferSettingsPage({ settings }: { settings: Settings }) {
+  const t = useT();
   const transfers = settings.transfers;
   const set = (change: Partial<Settings["transfers"]>) =>
     void saveSettingsSection("transfers", change);
   return (
     <>
-      <SettingGroup title="Queue">
+      <SettingGroup title={t("settings.queue")}>
         <NumberSetting
-          label="Simultaneous transfers"
-          hint="How many files move at once."
+          label={t("settings.simultaneousTransfers")}
+          hint={t("settings.simultaneousTransfersHint")}
           value={transfers.workers}
           min={1}
           max={MAX_WORKERS}
           onChange={(workers) => set({ workers })}
         />
         <SwitchSetting
-          label="Start transfers as soon as they are queued"
-          hint="Off: the queue waits until you press Start queue."
+          label={t("settings.startTransfersAsSoonAs")}
+          hint={t("settings.startTransfersAsSoonAsHint")}
           checked={transfers.autoStart}
           onChange={(autoStart) => set({ autoStart })}
         />
         <SelectSetting
-          label="When the target file exists"
+          label={t("settings.whenTheTargetFileExists")}
           value={transfers.existsAction}
           options={EXISTS_ACTIONS}
           onChange={(existsAction) => set({ existsAction })}
         />
         <SwitchSetting
-          label="Keep finished transfers in the list"
+          label={t("settings.keepFinishedTransfersInThe")}
           checked={transfers.keepCompleted}
           onChange={(keepCompleted) => set({ keepCompleted })}
         />
         <SwitchSetting
-          label="Keep unfinished transfers when Poros closes"
-          hint="They come back paused at the next start. Passwords are never saved with them."
+          label={t("settings.keepUnfinishedTransfersWhenPoros")}
+          hint={t("settings.keepUnfinishedTransfersWhenPorosHint")}
           checked={transfers.keepQueue}
           onChange={(keepQueue) => set({ keepQueue })}
         />
       </SettingGroup>
 
-      <SettingGroup title="Connections">
+      <SettingGroup title={t("settings.connections")}>
         <SwitchSetting
-          label="Give each transfer its own connection"
-          hint="Off: transfers share the browsing connection, for servers that limit logins."
+          label={t("settings.giveEachTransferItsOwn")}
+          hint={t("settings.giveEachTransferItsOwnHint")}
           checked={transfers.separateConnections}
           onChange={(separateConnections) => set({ separateConnections })}
         />
         <SwitchSetting
-          label="Split large files across connections"
-          hint="Idle transfer slots join a large file and move different parts of it."
+          label={t("settings.splitLargeFilesAcrossConnections")}
+          hint={t("settings.splitLargeFilesAcrossConnectionsHint")}
           checked={transfers.segmented}
           onChange={(segmented) => set({ segmented })}
         />
         <NumberSetting
-          label="Split files larger than"
+          label={t("settings.splitFilesLargerThan")}
           value={transfers.segmentThresholdMib}
           min={1}
           max={1024 * 1024}
@@ -188,7 +286,7 @@ function TransferSettingsPage({ settings }: { settings: Settings }) {
           onChange={(segmentThresholdMib) => set({ segmentThresholdMib })}
         />
         <NumberSetting
-          label="Connections per file"
+          label={t("settings.connectionsPerFile")}
           value={transfers.maxSegments}
           min={2}
           max={MAX_WORKERS}
@@ -196,17 +294,17 @@ function TransferSettingsPage({ settings }: { settings: Settings }) {
           onChange={(maxSegments) => set({ maxSegments })}
         />
         <SwitchSetting
-          label="Copy directly between FTP servers (FXP)"
-          hint="Both servers must allow it. Otherwise, and between other servers, files stream through Poros."
+          label={t("settings.copyDirectlyBetweenFtpServers")}
+          hint={t("settings.copyDirectlyBetweenFtpServersHint")}
           checked={transfers.fxp}
           onChange={(fxp) => set({ fxp })}
         />
       </SettingGroup>
 
-      <SettingGroup title="Bandwidth">
+      <SettingGroup title={t("settings.bandwidth")}>
         <NumberSetting
-          label="Upload limit"
-          hint="0 means unlimited. Shared by all transfers."
+          label={t("settings.uploadLimit")}
+          hint={t("settings.uploadLimitHint")}
           value={transfers.uploadLimitKib}
           min={0}
           max={10 * 1024 * 1024}
@@ -214,8 +312,8 @@ function TransferSettingsPage({ settings }: { settings: Settings }) {
           onChange={(uploadLimitKib) => set({ uploadLimitKib })}
         />
         <NumberSetting
-          label="Download limit"
-          hint="0 means unlimited. Shared by all transfers."
+          label={t("settings.downloadLimit")}
+          hint={t("settings.uploadLimitHint")}
           value={transfers.downloadLimitKib}
           min={0}
           max={10 * 1024 * 1024}
@@ -226,10 +324,10 @@ function TransferSettingsPage({ settings }: { settings: Settings }) {
 
       <LimitScheduleSettings transfers={transfers} />
 
-      <SettingGroup title="Buffers">
+      <SettingGroup title={t("settings.buffers")}>
         <NumberSetting
-          label="Request size"
-          hint="Bytes per SFTP read or write. Most servers accept up to 255 KiB; some cap at 32."
+          label={t("settings.requestSize")}
+          hint={t("settings.requestSizeHint")}
           value={transfers.requestSizeKib}
           min={4}
           max={255}
@@ -237,8 +335,8 @@ function TransferSettingsPage({ settings }: { settings: Settings }) {
           onChange={(requestSizeKib) => set({ requestSizeKib })}
         />
         <NumberSetting
-          label="Requests in flight"
-          hint="Outstanding requests per connection. Higher hides more network latency."
+          label={t("settings.requestsInFlight")}
+          hint={t("settings.requestsInFlightHint")}
           value={transfers.requestsInFlight}
           min={1}
           max={256}
@@ -247,68 +345,68 @@ function TransferSettingsPage({ settings }: { settings: Settings }) {
         <SocketBufferSettings connection={settings.connection} />
       </SettingGroup>
 
-      <SettingGroup title="Files">
+      <SettingGroup title={t("settings.files")}>
         <SwitchSetting
-          label="Keep modification times"
+          label={t("settings.keepModificationTimes")}
           checked={transfers.preserveTimestamps}
           onChange={(preserveTimestamps) => set({ preserveTimestamps })}
         />
         <SwitchSetting
-          label="Keep permissions"
-          hint="Copies Unix permission bits. Has no effect for files from Windows."
+          label={t("settings.keepPermissions")}
+          hint={t("settings.keepPermissionsHint")}
           checked={transfers.preservePermissions}
           onChange={(preservePermissions) => set({ preservePermissions })}
         />
       </SettingGroup>
 
-      <SettingGroup title="Integrity">
+      <SettingGroup title={t("settings.integrity")}>
         <SwitchSetting
-          label="Write to a temporary name, then rename"
-          hint="A file appears under its name only once complete and checked, and a replaced file is never left half written. Uploads to FTP servers are written in place."
+          label={t("settings.writeToATemporaryName")}
+          hint={t("settings.writeToATemporaryNameHint")}
           checked={transfers.temporaryFiles}
           onChange={(temporaryFiles) => set({ temporaryFiles })}
         />
         <SwitchSetting
-          label="Verify checksums"
-          hint="Compares a SHA-256 of both copies after each file, computed on SFTP servers by their own sha256sum. SHA-1 and MD5 are never used for this, as they can be forged. Reads every file once more on both sides."
+          label={t("settings.verifyChecksums")}
+          hint={t("settings.verifyChecksumsHint")}
           checked={transfers.verifyChecksums}
           onChange={(verifyChecksums) => set({ verifyChecksums })}
         />
         <SwitchSetting
-          label="Read files back when the server cannot hash them"
-          hint="On SFTP servers without sha256sum, and on FTP and WebDAV servers, each finished file is read back and hashed here. Doubles the traffic with those servers. Cloud storage is not read back."
+          label={t("settings.readFilesBackWhenThe")}
+          hint={t("settings.readFilesBackWhenTheHint")}
           checked={transfers.readBack}
           disabled={!transfers.verifyChecksums}
           onChange={(readBack) => set({ readBack })}
         />
         <SwitchSetting
-          label="Repair only the damaged parts"
-          hint="After a mismatch, each part of the file is compared on its own and only the parts that differ are sent again, up to half the file. Needs GNU split on the server, or reading back."
+          label={t("settings.repairOnlyTheDamagedParts")}
+          hint={t("settings.repairOnlyTheDamagedPartsHint")}
           checked={transfers.repairParts}
           disabled={!transfers.verifyChecksums}
           onChange={(repairParts) => set({ repairParts })}
         />
         <SwitchSetting
-          label="Check the transferred part before resuming"
-          hint="Compares what is already there with the source, part by part, and continues from the first part that differs. Where the server cannot hash parts of a file, the last 64 KiB are compared."
+          label={t("settings.checkTheTransferredPartBefore")}
+          hint={t("settings.checkTheTransferredPartBeforeHint")}
           checked={transfers.verifyResume}
           onChange={(verifyResume) => set({ verifyResume })}
         />
         <SwitchSetting
-          label="Flush to disk before finishing"
-          hint="A file counts as done only once stored, so a power cut right after cannot lose it. On servers that support it; slows many small files."
+          label={t("settings.flushToDiskBeforeFinishing")}
+          hint={t("settings.flushToDiskBeforeFinishingHint")}
           checked={transfers.flushToDisk}
           onChange={(flushToDisk) => set({ flushToDisk })}
         />
         <SwitchSetting
-          label="Check times and permissions after setting them"
-          hint="Reads them back once a file is in place and notes in the log any the server or file system did not keep."
+          label={t("settings.checkTimesAndPermissionsAfter")}
+          hint={t("settings.checkTimesAndPermissionsAfterHint")}
           checked={transfers.checkMetadata}
           onChange={(checkMetadata) => set({ checkMetadata })}
         />
         <SwitchSetting
-          label="Check published checksums and signatures"
-          hint="Downloads are compared with SHA256SUMS, name.sha256 and similar files beside them, with .minisig signatures, and through gpg with .asc and .sig ones. A file that fails is not saved."
+          label={t("settings.checkPublishedChecksumsAndSignatures")}
+          hint={t("settings.checkPublishedChecksumsAndSignaturesHint")}
           checked={transfers.checkPublished}
           onChange={(checkPublished) => set({ checkPublished })}
         />
@@ -319,17 +417,17 @@ function TransferSettingsPage({ settings }: { settings: Settings }) {
         />
       </SettingGroup>
 
-      <SettingGroup title="Errors">
+      <SettingGroup title={t("settings.errors")}>
         <NumberSetting
-          label="Retries"
-          hint="For timeouts, failed checks and connections that drop again right away."
+          label={t("settings.retries")}
+          hint={t("settings.retriesHint")}
           value={transfers.retryAttempts}
           min={0}
           max={20}
           onChange={(retryAttempts) => set({ retryAttempts })}
         />
         <NumberSetting
-          label="Wait between retries"
+          label={t("settings.waitBetweenRetries")}
           value={transfers.retryDelaySecs}
           min={0}
           max={600}
@@ -351,6 +449,7 @@ function MinisignKeysSetting({
   disabled: boolean;
   onCommit: (keys: string[]) => void;
 }) {
+  const t = useT();
   const [typed, setTyped] = useState<string | null>(null);
   const text = keys.join("\n");
   const commit = () => {
@@ -360,15 +459,12 @@ function MinisignKeysSetting({
   return (
     <div className={`setting-textarea ${disabled ? "is-disabled" : ""}`}>
       <div className="setting-text">
-        <span className="setting-label">Trusted minisign keys</span>
-        <span className="setting-hint">
-          One public key per line, as in a publisher&apos;s minisign.pub. Signatures by other keys
-          are noted in the log and not checked.
-        </span>
+        <span className="setting-label">{t("settings.trustedMinisignKeys")}</span>
+        <span className="setting-hint">{t("settings.onePublicKeyPerLine")}</span>
       </div>
       <textarea
         value={typed ?? text}
-        aria-label="Trusted minisign keys"
+        aria-label={t("settings.trustedMinisignKeys")}
         placeholder="RWQ..."
         rows={3}
         spellCheck={false}
@@ -382,19 +478,20 @@ function MinisignKeysSetting({
 
 /** TCP socket buffers, kept with the connection settings since every connection uses them. */
 function SocketBufferSettings({ connection }: { connection: Settings["connection"] }) {
+  const t = useT();
   const set = (change: Partial<Settings["connection"]>) =>
     void saveSettingsSection("connection", change);
   return (
     <>
       <SwitchSetting
-        label="Auto-tune receive buffer"
-        hint="The system grows the TCP receive window to suit the connection. Applies to new connections."
+        label={t("settings.autoTuneReceiveBuffer")}
+        hint={t("settings.autoTuneReceiveBufferHint")}
         checked={connection.autoTuneReceiveBuffer}
         onChange={(autoTuneReceiveBuffer) => set({ autoTuneReceiveBuffer })}
       />
       <NumberSetting
-        label="Receive buffer size"
-        hint="SO_RCVBUF, used when auto-tuning is off."
+        label={t("settings.receiveBufferSize")}
+        hint={t("settings.receiveBufferSizeHint")}
         value={connection.receiveBufferKib}
         min={SOCKET_BUFFER_LIMITS.min}
         max={SOCKET_BUFFER_LIMITS.max}
@@ -403,14 +500,14 @@ function SocketBufferSettings({ connection }: { connection: Settings["connection
         onChange={(receiveBufferKib) => set({ receiveBufferKib })}
       />
       <SwitchSetting
-        label="Auto-tune send buffer"
-        hint="The system sizes the TCP send buffer to suit the connection. Applies to new connections."
+        label={t("settings.autoTuneSendBuffer")}
+        hint={t("settings.autoTuneSendBufferHint")}
         checked={connection.autoTuneSendBuffer}
         onChange={(autoTuneSendBuffer) => set({ autoTuneSendBuffer })}
       />
       <NumberSetting
-        label="Send buffer size"
-        hint="SO_SNDBUF, used when auto-tuning is off."
+        label={t("settings.sendBufferSize")}
+        hint={t("settings.sendBufferSizeHint")}
         value={connection.sendBufferKib}
         min={SOCKET_BUFFER_LIMITS.min}
         max={SOCKET_BUFFER_LIMITS.max}
@@ -423,6 +520,7 @@ function SocketBufferSettings({ connection }: { connection: Settings["connection
 }
 
 function ConnectionSettingsPage({ settings }: { settings: Settings }) {
+  const t = useT();
   const connection = settings.connection;
   const set = (change: Partial<Settings["connection"]>) =>
     void saveSettingsSection("connection", change);
@@ -430,7 +528,7 @@ function ConnectionSettingsPage({ settings }: { settings: Settings }) {
     <>
       <SettingGroup title="SSH">
         <NumberSetting
-          label="Connection timeout"
+          label={t("settings.connectionTimeout")}
           value={connection.timeoutSecs}
           min={3}
           max={300}
@@ -438,8 +536,8 @@ function ConnectionSettingsPage({ settings }: { settings: Settings }) {
           onChange={(timeoutSecs) => set({ timeoutSecs })}
         />
         <NumberSetting
-          label="Keepalive interval"
-          hint="0 turns keepalives off. Applies to new connections."
+          label={t("settings.keepaliveInterval")}
+          hint={t("settings.keepaliveIntervalHint")}
           value={connection.keepaliveSecs}
           min={0}
           max={3600}
@@ -447,22 +545,22 @@ function ConnectionSettingsPage({ settings }: { settings: Settings }) {
           onChange={(keepaliveSecs) => set({ keepaliveSecs })}
         />
         <SwitchSetting
-          label="Compress traffic"
-          hint="Helps text over slow links; slows already compressed files. Applies to new connections."
+          label={t("settings.compressTraffic")}
+          hint={t("settings.compressTrafficHint")}
           checked={connection.compression}
           onChange={(compression) => set({ compression })}
         />
       </SettingGroup>
-      <SettingGroup title="Reconnecting">
+      <SettingGroup title={t("settings.reconnecting")}>
         <SwitchSetting
-          label="Reconnect lost tabs automatically"
-          hint="Tries again with growing delays, without asking for passwords already given."
+          label={t("settings.reconnectLostTabsAutomatically")}
+          hint={t("settings.reconnectLostTabsAutomaticallyHint")}
           checked={connection.autoReconnect}
           onChange={(autoReconnect) => set({ autoReconnect })}
         />
         <NumberSetting
-          label="Keep trying for"
-          hint="Tabs and transfers wait this long for a lost server; transfers keep their retries meanwhile. 0 gives up at once."
+          label={t("settings.keepTryingFor")}
+          hint={t("settings.keepTryingForHint")}
           value={settings.transfers.reconnectMinutes}
           min={0}
           max={MAX_RECONNECT_MINUTES}
@@ -473,10 +571,10 @@ function ConnectionSettingsPage({ settings }: { settings: Settings }) {
         />
       </SettingGroup>
       <ProxySettingsGroup proxy={connection.proxy} />
-      <SettingGroup title="Saved connections">
+      <SettingGroup title={t("settings.savedConnections")}>
         <SwitchSetting
-          label="Save quick connections automatically"
-          hint="Adds each new server you reach from the quick connect bar, without its password."
+          label={t("settings.saveQuickConnectionsAutomatically")}
+          hint={t("settings.saveQuickConnectionsAutomaticallyHint")}
           checked={settings.interface.saveQuickConnections}
           onChange={(saveQuickConnections) =>
             void saveSettingsSection("interface", { saveQuickConnections })
@@ -488,13 +586,19 @@ function ConnectionSettingsPage({ settings }: { settings: Settings }) {
 }
 
 const PROXY_KINDS: { value: ProxyKind; label: string }[] = [
-  { value: "none", label: "None" },
+  {
+    value: "none",
+    get label() {
+      return t("common.none");
+    },
+  },
   { value: "socks5", label: "SOCKS5" },
   { value: "socks4", label: "SOCKS4" },
   { value: "http", label: "HTTP (CONNECT)" },
 ];
 
 function ProxySettingsGroup({ proxy }: { proxy: ProxySettings }) {
+  const t = useT();
   const set = (change: Partial<ProxySettings>) =>
     void saveSettingsSection("connection", { proxy: { ...proxy, ...change } });
   const off = proxy.kind === "none";
@@ -503,14 +607,10 @@ function ProxySettingsGroup({ proxy }: { proxy: ProxySettings }) {
       .setProxyPassword(password)
       .catch((caught) => useToastStore.getState().show("error", toAppError(caught).message));
   return (
-    <SettingGroup title="Proxy">
-      <p className="setting-note">
-        New SFTP connections reach their server through this proxy, unless a connection is set to
-        connect without it. With a jump host, only the connection to the jump host uses the proxy.
-        FTP and cloud connections do not use it.
-      </p>
+    <SettingGroup title={t("settings.proxy")}>
+      <p className="setting-note">{t("settings.newSftpConnectionsReachTheir")}</p>
       <SelectSetting
-        label="Type"
+        label={t("settings.type")}
         value={proxy.kind}
         options={PROXY_KINDS}
         onChange={(kind) =>
@@ -522,14 +622,14 @@ function ProxySettingsGroup({ proxy }: { proxy: ProxySettings }) {
         }
       />
       <TextSetting
-        label="Host"
+        label={t("settings.host")}
         value={proxy.host}
-        placeholder="proxy.example.com"
+        placeholder={t("settings.proxyExampleCom")}
         disabled={off}
         onCommit={(host) => set({ host })}
       />
       <NumberSetting
-        label="Port"
+        label={t("settings.port")}
         value={proxy.port}
         min={1}
         max={65535}
@@ -537,25 +637,25 @@ function ProxySettingsGroup({ proxy }: { proxy: ProxySettings }) {
         onChange={(port) => set({ port })}
       />
       <TextSetting
-        label="Username"
-        hint="Leave empty for a proxy without a login. SOCKS4 sends only the username."
+        label={t("settings.username")}
+        hint={t("settings.usernameHint")}
         value={proxy.username}
         disabled={off}
         onCommit={(username) => set({ username })}
       />
-      <SettingRow label="Password" hint="Kept in the system keychain." disabled={off}>
+      <SettingRow label={t("settings.password")} hint={t("settings.passwordHint")} disabled={off}>
         <span className="input-with-button">
           <ProxyPasswordInput hasPassword={proxy.hasPassword} disabled={off} onSave={setPassword} />
           {proxy.hasPassword && (
             <button type="button" className="button" disabled={off} onClick={() => setPassword("")}>
-              Forget
+              {t("settings.forget")}
             </button>
           )}
         </span>
       </SettingRow>
       <SwitchSetting
-        label="Look up server names through the proxy"
-        hint="This computer's DNS never sees the names of the servers you connect to. HTTP proxies always do this."
+        label={t("settings.lookUpServerNamesThrough")}
+        hint={t("settings.lookUpServerNamesThroughHint")}
         checked={proxy.kind === "http" || proxy.remoteDns}
         disabled={off || proxy.kind === "http"}
         onChange={(remoteDns) => set({ remoteDns })}
@@ -573,6 +673,7 @@ function ProxyPasswordInput({
   disabled: boolean;
   onSave: (password: string) => void;
 }) {
+  const t = useT();
   const [typed, setTyped] = useState("");
   const save = () => {
     if (typed) onSave(typed);
@@ -582,8 +683,8 @@ function ProxyPasswordInput({
     <input
       type="password"
       value={typed}
-      aria-label="Proxy password"
-      placeholder={hasPassword ? "Saved" : ""}
+      aria-label={t("settings.proxyPassword")}
+      placeholder={hasPassword ? t("settings.saved") : ""}
       disabled={disabled}
       onChange={(event) => setTyped(event.target.value)}
       onBlur={save}
@@ -595,37 +696,38 @@ function ProxyPasswordInput({
 }
 
 function InterfaceSettingsPage({ settings }: { settings: Settings }) {
+  const t = useT();
   const options = settings.interface;
   const set = (change: Partial<Settings["interface"]>) =>
     void saveSettingsSection("interface", change);
   return (
     <>
-      <SettingGroup title="Files">
+      <SettingGroup title={t("settings.files")}>
         <SelectSetting
-          label="Double-clicking a file"
+          label={t("settings.doubleClickingAFile")}
           value={options.doubleClickFile}
           options={[
-            { value: "transfer", label: "Transfers it to the other side" },
-            { value: "edit", label: "Opens it in the built-in editor" },
-            { value: "open", label: "Opens it in its program" },
-            { value: "ask", label: "Asks how to open it" },
-            { value: "nothing", label: "Does nothing" },
+            { value: "transfer", label: t("settings.transfersItToTheOther") },
+            { value: "edit", label: t("settings.opensItInTheBuilt") },
+            { value: "open", label: t("settings.opensItInItsProgram") },
+            { value: "ask", label: t("settings.asksHowToOpenIt") },
+            { value: "nothing", label: t("settings.doesNothing") },
           ]}
           onChange={(doubleClickFile) => set({ doubleClickFile })}
         />
         <SwitchSetting
-          label="Show hidden files in new tabs"
+          label={t("settings.showHiddenFilesInNew")}
           checked={options.showHiddenFiles}
           onChange={(showHiddenFiles) => set({ showHiddenFiles })}
         />
         <SwitchSetting
-          label="Folders first"
-          hint="Keeps folders above files whatever the sort order."
+          label={t("settings.foldersFirst")}
+          hint={t("settings.foldersFirstHint")}
           checked={options.foldersFirst}
           onChange={(foldersFirst) => set({ foldersFirst })}
         />
         <SelectSetting
-          label="Dates"
+          label={t("settings.dates")}
           value={options.dateFormat}
           options={DATE_FORMATS.map((format) => ({
             value: format,
@@ -633,10 +735,7 @@ function InterfaceSettingsPage({ settings }: { settings: Settings }) {
           }))}
           onChange={(dateFormat) => set({ dateFormat })}
         />
-        <SettingRow
-          label="Columns"
-          hint="Right-click a column heading to show or hide columns and change the sort. Drag the line before a heading to resize its column, or double-click the line to fit it."
-        >
+        <SettingRow label={t("settings.columns")} hint={t("settings.columnsHint")}>
           <div className="column-toggles">
             {DETAIL_COLUMNS.map((column) => {
               const shown = !options.hiddenColumns.includes(column);
@@ -661,23 +760,23 @@ function InterfaceSettingsPage({ settings }: { settings: Settings }) {
           </div>
         </SettingRow>
       </SettingGroup>
-      <SettingGroup title="Server folders">
+      <SettingGroup title={t("settings.serverFolders")}>
         <SwitchSetting
-          label="Show cached listings while refreshing"
-          hint="A folder opened before shows at once as it was last seen, and updates when the server answers. Listings are kept in memory only, never on disk."
+          label={t("settings.showCachedListingsWhileRefreshing")}
+          hint={t("settings.showCachedListingsWhileRefreshingHint")}
           checked={options.cachedListings}
           onChange={(cachedListings) => set({ cachedListings })}
         />
         <SwitchSetting
-          label="Load nearby folders ahead"
-          hint="Lists the parent folder and the folder under the cursor while the server is idle, one at a time. Paused on FTP while transfers run."
+          label={t("settings.loadNearbyFoldersAhead")}
+          hint={t("settings.loadNearbyFoldersAheadHint")}
           checked={options.prefetchListings}
           disabled={!options.cachedListings}
           onChange={(prefetchListings) => set({ prefetchListings })}
         />
         <SwitchSetting
-          label="Also on cloud storage"
-          hint="Off: nothing is listed ahead on cloud storage, where requests are counted and limited."
+          label={t("settings.alsoOnCloudStorage")}
+          hint={t("settings.alsoOnCloudStorageHint")}
           checked={options.prefetchOnCloud}
           disabled={!options.cachedListings || !options.prefetchListings}
           onChange={(prefetchOnCloud) => set({ prefetchOnCloud })}
@@ -685,28 +784,28 @@ function InterfaceSettingsPage({ settings }: { settings: Settings }) {
       </SettingGroup>
       <ExternalEditorSettings settings={settings} />
       <PreviewSettingsGroup settings={settings} />
-      <SettingGroup title="Tabs and windows">
+      <SettingGroup title={t("settings.tabsAndWindows")}>
         <SwitchSetting
-          label="Ask before closing a tab with queued transfers"
+          label={t("settings.askBeforeClosingATab")}
           checked={options.confirmCloseWithTransfers}
           onChange={(confirmCloseWithTransfers) => set({ confirmCloseWithTransfers })}
         />
         <SwitchSetting
-          label="Remember tabs and layout"
-          hint="Reopens the windows, panes and tabs open at the last exit, each at its folder."
+          label={t("settings.rememberTabsAndLayout")}
+          hint={t("settings.rememberTabsAndLayoutHint")}
           checked={options.rememberLayout}
           onChange={(rememberLayout) => set({ rememberLayout })}
         />
         <SwitchSetting
-          label="Reconnect to servers on start"
-          hint="Off: reopened server tabs wait for you to connect them."
+          label={t("settings.reconnectToServersOnStart")}
+          hint={t("settings.reconnectToServersOnStartHint")}
           checked={options.reconnectOnStart}
           disabled={!options.rememberLayout}
           onChange={(reconnectOnStart) => set({ reconnectOnStart })}
         />
         <SwitchSetting
-          label="Use the system title bar"
-          hint="Off: the top bar holds the window buttons and drags the window."
+          label={t("settings.useTheSystemTitleBar")}
+          hint={t("settings.useTheSystemTitleBarHint")}
           checked={options.systemTitleBar}
           onChange={(systemTitleBar) => set({ systemTitleBar })}
         />
@@ -716,30 +815,31 @@ function InterfaceSettingsPage({ settings }: { settings: Settings }) {
 }
 
 function LogSettingsPage({ settings }: { settings: Settings }) {
+  const t = useT();
   const log = settings.log;
   const set = (change: Partial<Settings["log"]>) => void saveSettingsSection("log", change);
   return (
-    <SettingGroup title="Log">
+    <SettingGroup title={t("settings.log")}>
       <NumberSetting
-        label="Lines to keep"
+        label={t("settings.linesToKeep")}
         value={log.maxLines}
         min={LOG_LINE_LIMITS.min}
         max={LOG_LINE_LIMITS.max}
         onChange={(maxLines) => set({ maxLines })}
       />
       <SwitchSetting
-        label="Show times"
+        label={t("settings.showTimes")}
         checked={log.timestamps}
         onChange={(timestamps) => set({ timestamps })}
       />
       <SwitchSetting
-        label="Wrap long lines"
+        label={t("settings.wrapLongLines")}
         checked={log.wrapLines}
         onChange={(wrapLines) => set({ wrapLines })}
       />
       <SwitchSetting
-        label="Log every transferred file"
-        hint="Off: one summary line when the queue finishes."
+        label={t("settings.logEveryTransferredFile")}
+        hint={t("settings.logEveryTransferredFileHint")}
         checked={settings.transfers.logEachFile}
         onChange={(logEachFile) => void saveSettingsSection("transfers", { logEachFile })}
       />
@@ -748,6 +848,7 @@ function LogSettingsPage({ settings }: { settings: Settings }) {
 }
 
 function UpdateSettingsPage({ settings }: { settings: Settings }) {
+  const t = useT();
   const openDialog = useUiStore((state) => state.open);
   const update = useUpdateStore((state) => state.update);
   const target = useUpdateStore((state) => state.target);
@@ -772,21 +873,24 @@ function UpdateSettingsPage({ settings }: { settings: Settings }) {
             : "The version you are running"));
 
   return (
-    <SettingGroup title="Updates">
+    <SettingGroup title={t("settings.updates")}>
       <SwitchSetting
-        label="Check for updates when Poros starts"
-        hint="Looks for a newer release on GitHub. Nothing is downloaded until you choose to install it."
+        label={t("settings.checkForUpdatesWhenPoros")}
+        hint={t("settings.checkForUpdatesWhenPorosHint")}
         checked={settings.updates.checkOnStart}
         onChange={(checkOnStart) => void saveSettingsSection("updates", { checkOnStart })}
       />
-      <SettingRow label={`Poros ${formatVersion(__APP_VERSION__)}`} hint={status}>
+      <SettingRow
+        label={t("settings.poros", { version: formatVersion(__APP_VERSION__) })}
+        hint={status}
+      >
         {install?.stage === "ready" ? (
           <button type="button" className="button" onClick={() => void restartToUpdate()}>
-            Restart now
+            {t("settings.restartNow")}
           </button>
         ) : isInstalling(install) ? (
           <button type="button" className="button" disabled>
-            Updating...
+            {t("settings.updating")}
           </button>
         ) : update && !checking ? (
           <button
@@ -796,7 +900,7 @@ function UpdateSettingsPage({ settings }: { settings: Settings }) {
               openDialog({ kind: "update", returnTo: { kind: "settings", section: "updates" } })
             }
           >
-            Show update
+            {t("settings.showUpdate")}
           </button>
         ) : (
           <button
@@ -822,6 +926,7 @@ type VersionList =
 
 /** Lists the releases only when asked, since that asks GitHub, then installs the one picked. */
 function OtherVersionSetting() {
+  const t = useT();
   const install = useUpdateStore((state) => state.install);
   const closeDialogs = useUiStore((state) => state.close);
   const [list, setList] = useState<VersionList>({ status: "unlisted" });
@@ -848,7 +953,12 @@ function OtherVersionSetting() {
       // Settings was closed stays open.
       if (useUiStore.getState().dialog?.kind === "settings") closeDialogs();
     } catch (caught) {
-      setFindError(`${formatVersion(picked)} is not available: ${toAppError(caught).message}`);
+      setFindError(
+        t("settings.isNotAvailable", {
+          version: formatVersion(picked),
+          message: toAppError(caught).message,
+        }),
+      );
       setFinding(false);
     }
   };
@@ -861,13 +971,13 @@ function OtherVersionSetting() {
         : (findError ?? `Switch to another release from ${formatVersion(OLDEST_INSTALLABLE)} on.`);
 
   return (
-    <SettingRow label="Install another version" hint={hint}>
+    <SettingRow label={t("settings.installAnotherVersion")} hint={hint}>
       {list.status === "listed" ? (
         list.versions.length > 0 && (
           <div className="version-picker">
             <select
               value={picked}
-              aria-label="Version"
+              aria-label={t("settings.version")}
               onChange={(event) => setPicked(event.target.value)}
             >
               {list.versions.map((version) => (
@@ -882,7 +992,7 @@ function OtherVersionSetting() {
               disabled={finding || isInstalling(install)}
               onClick={() => void installPicked()}
             >
-              Install
+              {t("settings.install")}
             </button>
           </div>
         )

@@ -1,8 +1,18 @@
+import { dateTimeFormat, formatNumber, t } from "../i18n";
 import type { DateFormat } from "./settings";
 import type { FileEntry } from "./types";
 
 const UNITS = ["B", "KB", "MB", "GB", "TB", "PB"];
 
+/** Digits as the language writes them, without grouping, as sizes have always been shown. */
+const SIZE_DIGITS: Intl.NumberFormatOptions = { useGrouping: false };
+const SIZE_DECIMALS: Intl.NumberFormatOptions = {
+  useGrouping: false,
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+};
+
+/** `1.5 KB` in English, `1,5 KB` in German. The units stay as they are in every language. */
 export function formatSize(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return "";
   let value = bytes;
@@ -11,26 +21,30 @@ export function formatSize(bytes: number): string {
     value /= 1024;
     unit++;
   }
-  return unit === 0 ? `${value} B` : `${value.toFixed(1)} ${UNITS[unit]}`;
+  return unit === 0
+    ? `${formatNumber(value, SIZE_DIGITS)} B`
+    : `${formatNumber(value, SIZE_DECIMALS)} ${UNITS[unit]}`;
+}
+
+/** A whole percentage, `62%` in English, `62 %` in German. */
+export function formatPercent(percent: number): string {
+  return formatNumber(percent / 100, { style: "percent", maximumFractionDigits: 0 });
 }
 
 function pad(value: number): string {
   return value < 10 ? `0${value}` : String(value);
 }
 
-const localeDateTime = new Intl.DateTimeFormat(undefined, {
-  dateStyle: "medium",
-  timeStyle: "short",
-});
+const LOCALE_DATE_TIME: Intl.DateTimeFormatOptions = { dateStyle: "medium", timeStyle: "short" };
 
 /**
- * Local time as `YYYY-MM-DD HH:MM` (sortable and the same in every locale), with seconds, or in
- * the system's own style.
+ * Local time as `YYYY-MM-DD HH:MM` (sortable and the same in every language), with seconds, or
+ * in the style of the interface's language.
  */
 export function formatDate(epochSeconds: number | null, format: DateFormat = "minutes"): string {
   if (epochSeconds === null) return "";
   const date = new Date(epochSeconds * 1000);
-  if (format === "locale") return localeDateTime.format(date);
+  if (format === "locale") return dateTimeFormat(LOCALE_DATE_TIME).format(date);
   const day = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
   const time = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
   return format === "seconds" ? `${day} ${time}:${pad(date.getSeconds())}` : `${day} ${time}`;
@@ -62,19 +76,17 @@ export function formatVersion(version: string): string {
   return patch === "0" ? `v${major}.${minor}` : `v${major}.${minor}.${patch}`;
 }
 
-export function pluralize(count: number, singular: string, plural = `${singular}s`): string {
-  return `${count} ${count === 1 ? singular : plural}`;
-}
-
 export function formatSpeed(bytesPerSecond: number): string {
   return `${formatSize(Math.max(0, Math.round(bytesPerSecond)))}/s`;
 }
 
-/** `45s`, `2m 5s`, `1h 2m`. */
+/** `45s`, `2m 5s`, `1h 2m` in English; each language writes its own units. */
 export function formatDuration(totalSeconds: number): string {
   const seconds = Math.max(0, Math.round(totalSeconds));
-  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 60) return t("common.durationSeconds", { seconds });
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+  if (minutes < 60) {
+    return t("common.durationMinutes", { minutes, seconds: seconds % 60 });
+  }
+  return t("common.durationHours", { hours: Math.floor(minutes / 60), minutes: minutes % 60 });
 }

@@ -41,14 +41,30 @@ import { useSettingsStore } from "../state/settingsStore";
 import { Dialog } from "./Dialog";
 import { OptionCheckView, RsyncArgumentsField, RsyncOptionsEditor } from "./RsyncOptionsEditor";
 import { Stepper } from "./Stepper";
+import { useT, t } from "../i18n";
 
 type SyncTaskAction = Extract<TaskAction, { type: "sync" }>;
 type CommandTaskAction = Extract<TaskAction, { type: "command" }>;
 
 const TRIGGER_KINDS: { value: Trigger["type"]; label: string }[] = [
-  { value: "daily", label: "On days" },
-  { value: "every", label: "Repeat" },
-  { value: "once", label: "Once" },
+  {
+    value: "daily",
+    get label() {
+      return t("schedule.onDays");
+    },
+  },
+  {
+    value: "every",
+    get label() {
+      return t("schedule.repeat");
+    },
+  },
+  {
+    value: "once",
+    get label() {
+      return t("schedule.once");
+    },
+  },
 ];
 
 /** Tasks synchronize and run commands over SSH, so only SFTP connections can run them. */
@@ -94,6 +110,7 @@ interface SchedulerDialogProps {
 }
 
 export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps) {
+  const t = useT();
   const tasks = useScheduleStore((state) => state.tasks);
   const connections = useSavedConnections((state) => state.connections);
   const [draft, setDraft] = useState<ScheduledTask>(() => initialDraft ?? blankTask());
@@ -233,25 +250,23 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
   };
 
   return (
-    <Dialog title="Scheduled tasks" onClose={onClose} width={880}>
+    <Dialog title={t("schedule.scheduledTasks")} onClose={onClose} width={880}>
       <div className="site-manager task-manager">
         <aside className="site-list">
           <div className="site-list-header">
-            <span>Tasks</span>
+            <span>{t("schedule.tasks")}</span>
             <button
               type="button"
               className="icon-button"
-              title="New task"
-              aria-label="New task"
+              title={t("schedule.newTask")}
+              aria-label={t("schedule.newTask")}
               onClick={() => select(blankTask())}
             >
               <Plus size={15} />
             </button>
           </div>
           {tasks.length === 0 ? (
-            <p className="site-list-empty">
-              Tasks run while Poros is open. Ones you save appear here.
-            </p>
+            <p className="site-list-empty">{t("schedule.tasksRunWhilePorosIs")}</p>
           ) : (
             <ul>
               {tasks.map((task) => (
@@ -282,11 +297,11 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
         <form className="form site-form task-form" onSubmit={submit}>
           <div className="form-row">
             <label className="field grow">
-              <span>Name</span>
+              <span>{t("common.name")}</span>
               <input
                 data-autofocus
                 value={draft.name}
-                placeholder={suggested || "Shown in the list of tasks"}
+                placeholder={suggested || t("schedule.shownInTheListOf")}
                 spellCheck={false}
                 onChange={(event) => update({ name: event.target.value })}
               />
@@ -297,13 +312,13 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
                 checked={draft.enabled}
                 onChange={(event) => update({ enabled: event.target.checked })}
               />
-              Turned on
+              {t("schedule.turnedOn")}
             </label>
           </div>
 
           <div className="form-row">
             <div className="field">
-              <span>Task</span>
+              <span>{t("schedule.task")}</span>
               <div className="segmented" role="radiogroup">
                 {(
                   [
@@ -325,7 +340,7 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
               </div>
             </div>
             <label className="field grow">
-              <span>Saved connection</span>
+              <span>{t("schedule.savedConnection")}</span>
               <select
                 value={draft.action.connectionId}
                 onChange={(event) => chooseConnection(event.target.value)}
@@ -354,10 +369,7 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
             </p>
           )}
           {!unusable && connection?.authType === "password" && !connection.saveSecret && (
-            <p className="warning-text">
-              This connection's password is not saved in the system keychain, so the task cannot log
-              in. Save it in the connection's settings.
-            </p>
+            <p className="warning-text">{t("schedule.thisConnectionsPasswordIsNot")}</p>
           )}
 
           {draft.action.type === "sync" ? (
@@ -374,7 +386,7 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
               checked={draft.runMissed}
               onChange={(event) => update({ runMissed: event.target.checked })}
             />
-            If Poros is closed at the time, run when it next starts
+            {t("schedule.ifPorosIsClosedAt")}
           </label>
 
           {saved && <TaskStatus task={saved} />}
@@ -391,7 +403,7 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
               </button>
             )}
             <button type="button" className="button" onClick={onClose}>
-              Close
+              {t("common.close")}
             </button>
             <button
               type="button"
@@ -420,6 +432,7 @@ function TaskIcon({ task }: { task: TaskView }) {
 }
 
 function TaskStatus({ task }: { task: TaskView }) {
+  const t = useT();
   const dateFormat = useSettingsStore((state) => state.settings.interface.dateFormat);
   const next = !task.enabled
     ? "Turned off"
@@ -429,18 +442,18 @@ function TaskStatus({ task }: { task: TaskView }) {
   return (
     <div className="task-status">
       <span>
-        <strong>Next run</strong> {next}
+        <strong>{t("schedule.nextRun")}</strong> {next}
       </span>
       {task.running ? (
         <span>
-          <LoaderCircle size={13} className="spin" /> Running now
+          <LoaderCircle size={13} className="spin" /> {t("schedule.runningNow")}
         </span>
       ) : (
         task.lastRun && (
           <span className={task.lastRun.succeeded ? "" : "task-failed"}>
             {task.lastRun.succeeded ? <CircleCheck size={13} /> : <CircleAlert size={13} />}
-            <strong>Last run</strong> {formatDate(task.lastRun.finished, dateFormat)}:{" "}
-            {task.lastRun.message}
+            <strong>{t("schedule.lastRun")}</strong> {formatDate(task.lastRun.finished, dateFormat)}
+            : {task.lastRun.message}
           </span>
         )
       )}
@@ -456,6 +469,7 @@ interface SyncFieldsProps {
 }
 
 function SyncFields({ action, host, onChange }: SyncFieldsProps) {
+  const t = useT();
   const options = useMemo(() => taskOptions(action), [action]);
   const check = useOptionCheck(options, [action.arguments], action.direction);
   const direction = DIRECTION_OPTIONS.find((option) => option.value === action.direction);
@@ -463,7 +477,7 @@ function SyncFields({ action, host, onChange }: SyncFieldsProps) {
 
   const browse = async () => {
     const selected = await openFileDialog({
-      title: "Choose the local folder",
+      title: t("schedule.chooseTheLocalFolder"),
       directory: true,
       multiple: false,
       defaultPath: action.localPath || undefined,
@@ -475,24 +489,24 @@ function SyncFields({ action, host, onChange }: SyncFieldsProps) {
     <>
       <div className="form-row">
         <div className="field grow">
-          <span>Local folder</span>
+          <span>{t("schedule.localFolder")}</span>
           <div className="input-with-button">
             <input
               value={action.localPath}
-              placeholder="The folder on this computer"
+              placeholder={t("schedule.theFolderOnThisComputer")}
               spellCheck={false}
               onChange={(event) => onChange({ localPath: event.target.value })}
             />
             <button type="button" className="button" onClick={() => void browse()}>
-              <FolderOpen size={14} /> Browse
+              <FolderOpen size={14} /> {t("common.browse")}
             </button>
           </div>
         </div>
         <label className="field grow">
-          <span>Server folder</span>
+          <span>{t("schedule.serverFolder")}</span>
           <input
             value={action.remotePath}
-            placeholder="/home/me/site"
+            placeholder={t("schedule.homeMeSite")}
             spellCheck={false}
             onChange={(event) => onChange({ remotePath: event.target.value })}
           />
@@ -500,7 +514,7 @@ function SyncFields({ action, host, onChange }: SyncFieldsProps) {
       </div>
 
       <div className="field">
-        <span>Direction</span>
+        <span>{t("schedule.direction")}</span>
         <div className="segmented" role="radiogroup">
           {DIRECTION_OPTIONS.map((option) => (
             <button
@@ -522,13 +536,13 @@ function SyncFields({ action, host, onChange }: SyncFieldsProps) {
         </div>
         {direction && (
           <small className="field-hint">
-            {direction.hint} Conflicts are left alone and reported.
+            {t("schedule.conflictsAreLeftAloneAnd", { hint: direction.hint })}
           </small>
         )}
       </div>
 
       <div className="field">
-        <span>rsync options</span>
+        <span>{t("schedule.rsyncOptions")}</span>
         <RsyncOptionsEditor
           options={options}
           direction={action.direction}
@@ -538,7 +552,7 @@ function SyncFields({ action, host, onChange }: SyncFieldsProps) {
       </div>
       <RsyncArgumentsField
         value={action.arguments}
-        hint="Typed as on rsync's command line; they apply over the options above each time the task runs."
+        hint={t("schedule.typedAsOnRsyncsCommand")}
         onChange={(value) => onChange({ arguments: value })}
       />
       <OptionCheckView
@@ -559,24 +573,25 @@ interface CommandFieldsProps {
 }
 
 function CommandFields({ action, onChange }: CommandFieldsProps) {
+  const t = useT();
   return (
     <div className="form-row">
       <label className="field grow">
-        <span>Command</span>
+        <span>{t("schedule.command")}</span>
         <input
           className="mono"
           value={action.command}
-          placeholder="./backup.sh"
+          placeholder={t("schedule.backupSh")}
           spellCheck={false}
           autoCapitalize="off"
           onChange={(event) => onChange({ command: event.target.value })}
         />
       </label>
       <label className="field grow">
-        <span>In folder (optional)</span>
+        <span>{t("schedule.inFolderOptional")}</span>
         <input
           value={action.directory ?? ""}
-          placeholder="The login folder"
+          placeholder={t("schedule.theLoginFolder")}
           spellCheck={false}
           onChange={(event) => onChange({ directory: event.target.value })}
         />
@@ -591,9 +606,10 @@ interface TriggerFieldsProps {
 }
 
 function TriggerFields({ trigger, onChange }: TriggerFieldsProps) {
+  const t = useT();
   return (
     <div className="field">
-      <span>When</span>
+      <span>{t("schedule.when")}</span>
       <div className="trigger-row">
         <div className="segmented" role="radiogroup">
           {TRIGGER_KINDS.map((kind) => (
@@ -611,7 +627,7 @@ function TriggerFields({ trigger, onChange }: TriggerFieldsProps) {
         </div>
         {trigger.type === "once" && (
           <DateTimeInput
-            label="Date and time"
+            label={t("schedule.dateAndTime")}
             value={trigger.at}
             onChange={(at) => onChange({ ...trigger, at })}
           />
@@ -652,6 +668,7 @@ function IntervalFields({
   trigger: Extract<Trigger, { type: "every" }>;
   onChange: (trigger: Trigger) => void;
 }) {
+  const t = useT();
   const { amount, unit } = splitInterval(trigger.minutes);
   const perUnit = INTERVAL_UNITS.find((option) => option.value === unit)?.minutes ?? 1;
   const changeInterval = (nextAmount: number, nextUnit: IntervalUnit) =>
@@ -661,17 +678,17 @@ function IntervalFields({
     });
   return (
     <>
-      <span className="trigger-label">every</span>
+      <span className="trigger-label">{t("schedule.every")}</span>
       <Stepper
         value={amount}
         min={1}
         max={Math.floor(MAX_INTERVAL_MINUTES / perUnit)}
-        label="Repeat every"
+        label={t("schedule.repeatEvery")}
         onChange={(next) => changeInterval(next, unit)}
       />
       <select
         value={unit}
-        aria-label="Unit"
+        aria-label={t("schedule.unit")}
         onChange={(event) => changeInterval(amount, event.target.value as IntervalUnit)}
       >
         {INTERVAL_UNITS.map((option) => (
@@ -680,9 +697,9 @@ function IntervalFields({
           </option>
         ))}
       </select>
-      <span className="trigger-label">from</span>
+      <span className="trigger-label">{t("schedule.from")}</span>
       <DateTimeInput
-        label="Starting"
+        label={t("schedule.starting")}
         value={trigger.start}
         onChange={(start) => onChange({ ...trigger, start })}
       />
@@ -697,6 +714,7 @@ function DailyFields({
   trigger: Extract<Trigger, { type: "daily" }>;
   onChange: (trigger: Trigger) => void;
 }) {
+  const t = useT();
   const toggleDay = (day: number) => {
     const chosen = trigger.weekdays.includes(day);
     // At least one day stays chosen.
@@ -710,17 +728,17 @@ function DailyFields({
   };
   return (
     <>
-      <span className="trigger-label">at</span>
+      <span className="trigger-label">{t("schedule.at")}</span>
       <input
         type="time"
-        aria-label="Time of day"
+        aria-label={t("schedule.timeOfDay")}
         value={timeInputValue(trigger.minuteOfDay)}
         onChange={(event) => {
           const minuteOfDay = minuteOfDayFrom(event.target.value);
           if (minuteOfDay !== null) onChange({ ...trigger, minuteOfDay });
         }}
       />
-      <div className="toggle-group" role="group" aria-label="Days of the week">
+      <div className="toggle-group" role="group" aria-label={t("schedule.daysOfTheWeek")}>
         {WEEKDAY_NAMES.map((name, day) => {
           const chosen = trigger.weekdays.includes(day);
           return (

@@ -13,6 +13,7 @@ import { isDirLike } from "../lib/sort";
 import { useDragStore, type DragPayload, type DropTarget } from "../state/dragStore";
 import { dropAction } from "../state/fileOperations";
 import { TAB_ICONS } from "./tabIcons";
+import { t } from "../i18n";
 
 const POINTER_OFFSET = { x: 14, y: 12 };
 
@@ -27,14 +28,16 @@ function hintFor(payload: DragPayload, target: DropTarget | null, copy: boolean)
       return { icon: Ban, text: action.reason, blocked: true };
     case "transfer": {
       const folder = baseName(action.folder);
-      if (action.direction === "upload") return { icon: Upload, text: `Upload to ${folder}` };
-      if (action.direction === "download") return { icon: Download, text: `Download to ${folder}` };
-      return { icon: ArrowLeftRight, text: `Copy to ${folder}` };
+      if (action.direction === "upload")
+        return { icon: Upload, text: t("workspace.uploadTo", { folder }) };
+      if (action.direction === "download")
+        return { icon: Download, text: t("workspace.downloadTo", { folder }) };
+      return { icon: ArrowLeftRight, text: t("workspace.copyTo", { folder }) };
     }
     case "place":
       return action.mode === "copy"
-        ? { icon: Copy, text: `Copy to ${baseName(action.folder)}` }
-        : { icon: FolderInput, text: `Move to ${baseName(action.folder)}` };
+        ? { icon: Copy, text: t("workspace.copyTo2", { baseName: baseName(action.folder) }) }
+        : { icon: FolderInput, text: t("workspace.moveTo", { baseName: baseName(action.folder) }) };
   }
 }
 

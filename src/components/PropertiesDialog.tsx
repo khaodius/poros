@@ -32,6 +32,7 @@ import { useLogStore } from "../state/logStore";
 import { track, useOperationStore } from "../state/operationStore";
 import { useSettingsStore } from "../state/settingsStore";
 import { Dialog } from "./Dialog";
+import { t, useT } from "../i18n";
 
 interface PropertiesDialogProps {
   sessionId: string;
@@ -78,13 +79,13 @@ function describeChange(
   folder: string,
 ): string {
   const parts = [
-    summary.changed > 0 && `permissions of ${pluralize(summary.changed, "item")}`,
+    summary.changed > 0 && t("dialogs.permissionsOfItems", { count: summary.changed }),
     owner && `owner to ${owner}`,
     group && `group to ${group}`,
   ].filter(Boolean);
   const links =
     summary.skippedLinks > 0
-      ? `; ${pluralize(summary.skippedLinks, "link")} kept their own permissions`
+      ? t("dialogs.linksKeptTheirOwnPermissions", { count: summary.skippedLinks })
       : "";
   return `Changed ${parts.join(", ") || "nothing"} in ${folder}${links}`;
 }
@@ -127,6 +128,7 @@ export function PropertiesDialog({
   onClose,
   onApplied,
 }: PropertiesDialogProps) {
+  const t = useT();
   const dateFormat = useSettingsStore((state) => state.settings.interface.dateFormat);
   const latestOnClose = useLatest(onClose);
   const single = entries.length === 1 ? entries[0] : null;
@@ -213,7 +215,7 @@ export function PropertiesDialog({
     }
     setError(null);
     setFailures([]);
-    const what = single ? single.name : pluralize(entries.length, "item");
+    const what = single ? single.name : t("dialogs.items", { count: entries.length });
     try {
       const summary = await applying.run(`Changing permissions of ${what}`, (operationId) =>
         fileOperations.setPermissions({
@@ -247,13 +249,16 @@ export function PropertiesDialog({
   const sizeText = () => {
     if (usage) {
       const parts = [
-        pluralize(usage.files, "file"),
-        usage.folders > 0 && pluralize(usage.folders, "folder"),
+        t("dialogs.files", { count: usage.files }),
+        usage.folders > 0 && t("dialogs.folders", { count: usage.folders }),
       ].filter(Boolean);
       return `${formatSize(usage.bytes)} (${parts.join(", ")})`;
     }
     if (measuring.progress) {
-      return `Counting: ${pluralize(measuring.progress.files, "file")}, ${formatSize(measuring.progress.bytes)}`;
+      return t("dialogs.countingFiles", {
+        count: measuring.progress.files,
+        size: formatSize(measuring.progress.bytes),
+      });
     }
     if (folders.length + links === 0) {
       return formatSize(files.reduce((total, entry) => total + entry.size, 0));
@@ -266,7 +271,11 @@ export function PropertiesDialog({
 
   return (
     <Dialog
-      title={single ? `Properties of ${single.name}` : `Properties of ${entries.length} items`}
+      title={
+        single
+          ? t("dialogs.propertiesOf", { name: single.name })
+          : t("dialogs.propertiesOfItems", { count: entries.length })
+      }
       onClose={onClose}
       width={500}
     >
@@ -274,12 +283,12 @@ export function PropertiesDialog({
         <dl className="properties-facts">
           {!single && (
             <>
-              <dt>Items</dt>
+              <dt>{t("dialogs.items2")}</dt>
               <dd>
                 {[
-                  folders.length > 0 && pluralize(folders.length, "folder"),
-                  files.length > 0 && pluralize(files.length, "file"),
-                  links > 0 && pluralize(links, "link"),
+                  folders.length > 0 && t("dialogs.folders", { count: folders.length }),
+                  files.length > 0 && t("dialogs.files", { count: files.length }),
+                  links > 0 && t("dialogs.links", { count: links }),
                 ]
                   .filter(Boolean)
                   .join(", ")}
@@ -288,39 +297,39 @@ export function PropertiesDialog({
           )}
           {single && (
             <>
-              <dt>Type</dt>
+              <dt>{t("dialogs.type")}</dt>
               <dd>{kindLabel(single)}</dd>
             </>
           )}
-          <dt>Location</dt>
+          <dt>{t("dialogs.location")}</dt>
           <dd className="selectable">{folder}</dd>
           {details?.linkTarget && (
             <>
-              <dt>Points to</dt>
+              <dt>{t("dialogs.pointsTo")}</dt>
               <dd className="selectable">{details.linkTarget}</dd>
             </>
           )}
-          <dt>Size</dt>
+          <dt>{t("common.size")}</dt>
           <dd>
             {size}
             {!usage && !measuring.busy && folders.length + links > 0 && (
               <button type="button" className="button button-small" onClick={calculate}>
-                Calculate
+                {t("dialogs.calculate")}
               </button>
             )}
             {measuring.busy && (
               <button type="button" className="button button-small" onClick={measuring.cancel}>
-                Stop
+                {t("common.stop")}
               </button>
             )}
           </dd>
           {single && (
             <>
-              <dt>Modified</dt>
+              <dt>{t("dialogs.modified")}</dt>
               <dd>{formatDate(single.modified, dateFormat)}</dd>
               {details?.accessed !== undefined && details.accessed !== null && (
                 <>
-                  <dt>Accessed</dt>
+                  <dt>{t("dialogs.accessed")}</dt>
                   <dd>{formatDate(details.accessed, dateFormat)}</dd>
                 </>
               )}
@@ -333,7 +342,7 @@ export function PropertiesDialog({
             <span>Owner{single ? id(details?.uid) : ""}</span>
             <input
               value={owner}
-              placeholder={originals.owner ? undefined : "Mixed, unchanged"}
+              placeholder={originals.owner ? undefined : t("dialogs.mixedUnchanged")}
               spellCheck={false}
               onChange={(event) => setOwner(event.target.value)}
             />
@@ -342,7 +351,7 @@ export function PropertiesDialog({
             <span>Group{single ? id(details?.gid) : ""}</span>
             <input
               value={group}
-              placeholder={originals.group ? undefined : "Mixed, unchanged"}
+              placeholder={originals.group ? undefined : t("dialogs.mixedUnchanged")}
               spellCheck={false}
               onChange={(event) => setGroup(event.target.value)}
             />
@@ -351,7 +360,7 @@ export function PropertiesDialog({
 
         {hasPermissions && (
           <fieldset className="permissions">
-            <legend>Permissions</legend>
+            <legend>{t("dialogs.permissions")}</legend>
             {bothMasks && (
               <div className="segmented" role="tablist">
                 {(["folders", "files"] as const).map((kind) => (
@@ -383,10 +392,7 @@ export function PropertiesDialog({
           </label>
         )}
         {links > 0 && hasPermissions && (
-          <p className="field-hint">
-            Links have no permissions of their own, so they keep theirs. Owner and group changes
-            apply to the links themselves.
-          </p>
+          <p className="field-hint">{t("dialogs.linksHaveNoPermissionsOf")}</p>
         )}
 
         {error && <p className="form-error">{error}</p>}
@@ -404,7 +410,9 @@ export function PropertiesDialog({
                 </li>
               ))}
               {failures.length > SHOWN_FAILURES && (
-                <li>and {failures.length - SHOWN_FAILURES} more, listed in the log</li>
+                <li>
+                  {t("dialogs.andMoreListedInThe", { value: failures.length - SHOWN_FAILURES })}
+                </li>
               )}
             </ul>
           </div>
@@ -414,7 +422,7 @@ export function PropertiesDialog({
           {applying.busy && (
             <span className="field-hint push-left">
               {applying.progress && applying.progress.files > 0
-                ? `Changed ${pluralize(applying.progress.files, "item")}`
+                ? t("dialogs.changedItems", { count: applying.progress.files })
                 : "Applying..."}
             </span>
           )}
@@ -468,6 +476,7 @@ function TriStateBox({
 
 /** Read, write and execute for owner, group and others, the special bits, and the octal. */
 function PermissionGrid({ states, onChange }: PermissionGridProps) {
+  const t = useT();
   const [octalDraft, setOctalDraft] = useState<string | null>(null);
   const toggle = (bit: number) => {
     setOctalDraft(null);
@@ -526,11 +535,11 @@ function PermissionGrid({ states, onChange }: PermissionGridProps) {
       </div>
       <div className="permission-summary">
         <label className="field">
-          <span>Octal</span>
+          <span>{t("dialogs.octal")}</span>
           <input
             className="permission-octal"
             value={octalDraft ?? toOctal(states) ?? ""}
-            placeholder="Mixed"
+            placeholder={t("dialogs.mixed")}
             inputMode="numeric"
             maxLength={4}
             spellCheck={false}
@@ -538,7 +547,7 @@ function PermissionGrid({ states, onChange }: PermissionGridProps) {
             onBlur={() => setOctalDraft(null)}
           />
         </label>
-        <code className="permission-symbolic" title="Question marks are left as each item has them">
+        <code className="permission-symbolic" title={t("dialogs.questionMarksAreLeftAs")}>
           {symbolic(states)}
         </code>
       </div>

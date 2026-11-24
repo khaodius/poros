@@ -2,6 +2,7 @@
 // first bytes in the backend, which mirrors these names in src-tauri/src/file_ops/archive.
 
 import type { ArchiveFormat, Extractor } from "./types";
+import { t } from "../i18n";
 
 /** Name endings, each before any it ends with, so `.tar.gz` wins over `.gz`. */
 const ENDINGS: [string, ArchiveFormat][] = [
@@ -74,7 +75,9 @@ export const FORMAT_NAMES: Record<ArchiveFormat, string> = {
   gzip: "gzip",
   bzip2: "bzip2",
   xz: "xz",
-  zstd: "Zstandard",
+  get zstd() {
+    return t("archives.zstandard");
+  },
   lzma: "LZMA",
   iso: "ISO",
   cab: "CAB",

@@ -13,6 +13,7 @@ import { track } from "./operationStore";
 import type { PaneHandle } from "./paneRegistry";
 import { useSettingsStore } from "./settingsStore";
 import { useToastStore } from "./toastStore";
+import { t } from "../i18n";
 
 /** The entries a pane can offer to extract: files whose names say they are archives. */
 export function archivesAmong(entries: readonly FileEntry[]): FileEntry[] {
@@ -38,7 +39,7 @@ export async function extractArchives(
   const write = useLogStore.getState().write;
   const showToast = useToastStore.getState().show;
   if (location.kind === "local" && settings.choice === CUSTOM_EXTRACTOR && !settings.program) {
-    showToast("info", "Name the program that extracts archives in Settings > Archives.");
+    showToast("info", t("archives.nameTheProgramThatExtracts"));
     return;
   }
   const extractor = location.kind === "local" ? extractorOf(settings) : undefined;
@@ -46,13 +47,12 @@ export async function extractArchives(
     const title = `Extracting ${archive.name}`;
     try {
       const summary = await track(
-        title,
+        t("archives.extracting", { name: archive.name }),
         (operationId) =>
           fileOperations.extract({ operationId, location, path: archive.path, into, extractor }),
         "extract",
       );
-      const items =
-        summary.placed.length > 1 ? ` (${pluralize(summary.placed.length, "item")})` : "";
+      const items = summary.placed.length > 1 ? ` (${summary.placed.length} items)` : "";
       write(
         "info",
         `Extracted ${archive.name} to ${summary.destination}${items} with ${summary.tool}`,

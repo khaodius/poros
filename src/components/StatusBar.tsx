@@ -15,10 +15,12 @@ import {
   type InstallStage,
 } from "../state/updateStore";
 import { LimitScheduleStatus } from "./LimitScheduleStatus";
+import { useT } from "../i18n";
 
 const APP_VERSION = formatVersion(__APP_VERSION__);
 
 function useActiveSessionText(): { text: string; tone: "connected" | "lost" | "disconnected" } {
+  const t = useT();
   const activeSessionId = useLayoutStore((state) => {
     const group = findGroup(state.root, state.activeGroupId);
     const tab = group?.tabs.find((candidate) => candidate.id === group.activeTabId);
@@ -32,11 +34,12 @@ function useActiveSessionText(): { text: string; tone: "connected" | "lost" | "d
     (state) => Object.values(state.sessions).filter((session) => !session.info.vault).length,
   );
   if (entry?.status === "lost") {
-    return { text: `Connection to ${entry.info.label} lost`, tone: "lost" };
+    return { text: t("workspace.connectionToLost", { label: entry.info.label }), tone: "lost" };
   }
-  if (entry) return { text: `Connected to ${entry.info.label}`, tone: "connected" };
-  if (count > 0) return { text: `${pluralize(count, "server")} connected`, tone: "connected" };
-  return { text: "Not connected", tone: "disconnected" };
+  if (entry)
+    return { text: t("workspace.connectedTo", { label: entry.info.label }), tone: "connected" };
+  if (count > 0) return { text: t("workspace.serversConnected", { count }), tone: "connected" };
+  return { text: t("workspace.notConnected"), tone: "disconnected" };
 }
 
 /** The newer version found by the last check, unless the user skipped it. */
@@ -48,6 +51,7 @@ function useOfferedUpdate(): string | null {
 
 /** The update the last check found, or how an install goes; opens the dialog or the notice. */
 function UpdateStatus() {
+  const t = useT();
   const offeredUpdate = useOfferedUpdate();
   const version = useUpdateStore((state) => state.target?.version ?? null);
   const install = useUpdateStore((state) => state.install);
@@ -68,7 +72,7 @@ function UpdateStatus() {
       onClick={() => openDialog({ kind: "update" })}
     >
       <CircleArrowUp size={12} />
-      Update to {formatVersion(offeredUpdate)}
+      {t("workspace.updateTo", { version: formatVersion(offeredUpdate) })}
     </button>
   );
 }
@@ -91,6 +95,7 @@ function describeInstall(install: InstallStage, version: string): string {
 }
 
 export function StatusBar() {
+  const t = useT();
   const session = useActiveSessionText();
   const stats = useTransferStore((state) => state.snapshot.stats);
   const pending = stats.counts.queued + stats.counts.running;
@@ -106,23 +111,25 @@ export function StatusBar() {
         <ExternalEditsStatus />
         {pending > 0 && (
           <span className="status-item status-queue">
-            {pluralize(pending, "transfer")} left
+            {t("workspace.transfers", { count: pending })} left
             {stats.remainingBytes > 0 && `, ${formatSize(stats.remainingBytes)}`}
             {remaining !== null && `, about ${formatDuration(remaining)}`}
             {stats.queuePaused && " (paused)"}
           </span>
         )}
         <LimitScheduleStatus />
-        <span className="status-item status-speed" title="Upload speed">
+        <span className="status-item status-speed" title={t("workspace.uploadSpeed")}>
           <ArrowUp size={12} className={stats.uploadSpeed > 0 ? "is-moving" : ""} />
           {formatSpeed(stats.uploadSpeed)}
         </span>
-        <span className="status-item status-speed" title="Download speed">
+        <span className="status-item status-speed" title={t("workspace.downloadSpeed")}>
           <ArrowDown size={12} className={stats.downloadSpeed > 0 ? "is-moving" : ""} />
           {formatSpeed(stats.downloadSpeed)}
         </span>
         <UpdateStatus />
-        <span className="status-item status-version">Poros {APP_VERSION}</span>
+        <span className="status-item status-version">
+          {t("workspace.poros2", { value: APP_VERSION })}
+        </span>
       </span>
     </footer>
   );

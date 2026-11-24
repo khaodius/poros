@@ -150,6 +150,7 @@ import { ShareDialog } from "./ShareDialog";
 import { VaultUnlockCard } from "./VaultUnlockCard";
 import { serverCommandsMenu } from "./commandMenu";
 import { shareMenuItem } from "./shareMenu";
+import { useT } from "../i18n";
 
 type PaneDialog =
   | { type: "newFolder" }
@@ -278,6 +279,7 @@ export function FilePane({
   active,
   overlay,
 }: FilePaneProps) {
+  const t = useT();
   const showHiddenByDefault = useSettingsStore((state) => state.settings.interface.showHiddenFiles);
   const doubleClickFile = useSettingsStore((state) => state.settings.interface.doubleClickFile);
   const foldersFirst = useSettingsStore((state) => state.settings.interface.foldersFirst);
@@ -843,7 +845,7 @@ export function FilePane({
     const self = getPane(tabId);
     const folder = entry && isDirLike(entry) ? entry.path : inResults ? null : pane.listing?.path;
     if (!folder && inResults) {
-      showToast("info", "To paste, open a folder or right-click one in the results.");
+      showToast("info", t("pane.toPasteOpenAFolder"));
       return;
     }
     if (self && folder) void paste(self, folder);
@@ -890,7 +892,9 @@ export function FilePane({
     // Synchronization runs over SSH.
     const synchronizable = source.kind === "local" || protocol === "sftp";
     return {
-      label: synchronizable ? "Synchronize folder..." : `Synchronize folder (${needsSftp})`,
+      label: synchronizable
+        ? t("pane.synchronizeFolder")
+        : t("pane.synchronizeFolder2", { needsSftp }),
       icon: <FolderSync size={14} />,
       disabled: !folder || !synchronizable,
       onSelect: () =>
@@ -924,23 +928,28 @@ export function FilePane({
   const columns = availableColumns(pane.listing?.entries ?? []);
 
   const sortMenu = (): MenuItem => ({
-    label: "Sort by",
+    label: t("pane.sortBy"),
     icon: <ArrowUpDown size={14} />,
     items: [
       ...(["name", ...(inResults ? ["folder"] : []), ...columns] as SortKey[]).map((key) => ({
-        label: key === "name" ? "Name" : key === "folder" ? "Folder" : COLUMN_LABELS[key],
+        label:
+          key === "name"
+            ? t("common.name")
+            : key === "folder"
+              ? t("common.folder")
+              : COLUMN_LABELS[key],
         checked: pane.sort.key === key,
         onSelect: () => pane.setSort({ key, direction: pane.sort.direction }),
       })),
       "separator",
       ...([1, -1] as const).map((direction) => ({
-        label: direction === 1 ? "Ascending" : "Descending",
+        label: direction === 1 ? t("pane.ascending") : t("pane.descending"),
         checked: pane.sort.direction === direction,
         onSelect: () => pane.setSort({ key: pane.sort.key, direction }),
       })),
       "separator",
       {
-        label: "Folders first",
+        label: t("pane.foldersFirst"),
         checked: foldersFirst,
         onSelect: () => void saveSettingsSection("interface", { foldersFirst: !foldersFirst }),
       },
@@ -949,22 +958,22 @@ export function FilePane({
 
   // Explorer's Group by menu, for the one grouping Poros has.
   const groupMenu = (): MenuItem => ({
-    label: "Group by",
+    label: t("pane.groupBy"),
     icon: <ListTree size={14} />,
     items: [
       ...([true, false] as const).map((grouped) => ({
-        label: grouped ? "Date modified" : "None",
+        label: grouped ? t("pane.dateModified") : t("common.none"),
         checked: groupByDate === grouped,
         onSelect: () => void saveSettingsSection("appearance", { [groupSetting]: grouped }),
       })),
       "separator",
       {
-        label: "Collapse all groups",
+        label: t("pane.collapseAllGroups"),
         disabled: !pane.groups || pane.collapsedGroups.size === pane.groups.length,
         onSelect: () => pane.setAllGroupsCollapsed(true),
       },
       {
-        label: "Expand all groups",
+        label: t("pane.expandAllGroups"),
         disabled: !pane.groups || pane.collapsedGroups.size === 0,
         onSelect: () => pane.setAllGroupsCollapsed(false),
       },
@@ -989,7 +998,7 @@ export function FilePane({
         })),
         "separator",
         {
-          label: "Reset column widths",
+          label: t("pane.resetColumnWidths"),
           icon: <RotateCcw size={14} />,
           disabled: Object.keys(columnWidths).length === 0,
           onSelect: () => void saveSettingsSection("interface", { columnWidths: {} }),
@@ -1007,7 +1016,7 @@ export function FilePane({
     }
     if (!worksHere) {
       return {
-        label: `Compare files (${needsSftp})`,
+        label: t("pane.compareFiles", { needsSftp }),
         icon: <FileDiff size={14} />,
         disabled: true,
         onSelect: () => undefined,
@@ -1015,7 +1024,7 @@ export function FilePane({
     }
     if (targets.length === 2) {
       return {
-        label: "Compare the two files",
+        label: t("pane.compareTheTwoFiles"),
         icon: <FileDiff size={14} />,
         onSelect: () =>
           setDialog({
@@ -1028,8 +1037,8 @@ export function FilePane({
     const other = counterpartFile(tabId);
     return {
       label: other
-        ? `Compare with ${other.entry.name}`
-        : "Compare files (select a file in another tab)",
+        ? t("pane.compareWith", { name: other.entry.name })
+        : t("pane.compareFilesSelectAFile"),
       icon: <FileDiff size={14} />,
       disabled: !other,
       onSelect: () =>
@@ -1044,34 +1053,35 @@ export function FilePane({
 
   const clipboardMenuItems = (entry: FileEntry | null, targets: FileEntry[]): MenuItem[] => [
     {
-      label: "Cut",
+      label: t("common.cut"),
       icon: <Scissors size={14} />,
       shortcut: "Ctrl+X",
       disabled: targets.length === 0,
       onSelect: () => cutOrCopy("move", targets),
     },
     {
-      label: "Copy",
+      label: t("common.copy"),
       icon: <Copy size={14} />,
       shortcut: "Ctrl+C",
       disabled: targets.length === 0,
       onSelect: () => cutOrCopy("copy", targets),
     },
     {
-      label: entry && isDirLike(entry) ? `Paste into ${entry.name}` : "Paste",
+      label:
+        entry && isDirLike(entry) ? t("pane.pasteInto", { name: entry.name }) : t("common.paste"),
       icon: <ClipboardPaste size={14} />,
       shortcut: "Ctrl+V",
       disabled: !clip,
       onSelect: () => pasteInto(entry),
     },
     {
-      label: worksHere ? "Move to..." : `Move to (${needsSftp})`,
+      label: worksHere ? t("pane.moveTo") : t("pane.moveTo2", { needsSftp }),
       icon: <FolderInput size={14} />,
       disabled: targets.length === 0 || !worksHere,
       onSelect: () => setDialog({ type: "placeTo", mode: "move", entries: targets }),
     },
     {
-      label: worksHere ? "Copy to..." : `Copy to (${needsSftp})`,
+      label: worksHere ? t("pane.copyTo") : t("pane.copyTo2", { needsSftp }),
       icon: <CopyPlus size={14} />,
       disabled: targets.length === 0 || !worksHere,
       onSelect: () => setDialog({ type: "placeTo", mode: "copy", entries: targets }),
@@ -1085,7 +1095,7 @@ export function FilePane({
     if (!worksHere) {
       return [
         {
-          label: `Extract (${needsSftp})`,
+          label: t("pane.extract", { needsSftp }),
           icon: <PackageOpen size={14} />,
           disabled: true,
           onSelect: () => undefined,
@@ -1101,7 +1111,10 @@ export function FilePane({
     });
     return [
       {
-        label: archives.length > 1 ? `Extract ${archives.length} archives here` : "Extract here",
+        label:
+          archives.length > 1
+            ? t("pane.extractArchivesHere", { count: archives.length })
+            : t("pane.extractHere"),
         icon: <PackageOpen size={14} />,
         onSelect: () => void extractArchives(self, archives, "here"),
       },
@@ -1111,8 +1124,8 @@ export function FilePane({
             {
               label:
                 archives.length > 1
-                  ? "Extract each to its own folder"
-                  : `Extract to "${unpackedName(first.name)}${separator}"`,
+                  ? t("pane.extractEachToItsOwn")
+                  : t("pane.extractTo", { unpackedName: unpackedName(first.name), separator }),
               icon: <FolderOutput size={14} />,
               onSelect: () => void extractArchives(self, archives, "folder"),
             },
@@ -1125,7 +1138,7 @@ export function FilePane({
     const folder = !inResults ? shown : targets.length > 0 ? sharedFolder(targets, style) : shown;
     if (folder === null) {
       return {
-        label: "Commands (items in one folder only)",
+        label: t("pane.commandsItemsInOneFolder"),
         icon: <SquareTerminal size={14} />,
         disabled: true,
         onSelect: () => undefined,
@@ -1150,7 +1163,7 @@ export function FilePane({
       ...(entry && isDirLike(entry)
         ? [
             {
-              label: "Open",
+              label: t("common.open"),
               icon: <FolderOpen size={14} />,
               shortcut: "Enter",
               onSelect: () => pane.open(entry),
@@ -1161,7 +1174,7 @@ export function FilePane({
         ? [
             ...openMenuItems(openTarget(entry), ownGroup()),
             {
-              label: "Edit",
+              label: t("common.edit"),
               icon: <FilePen size={14} />,
               shortcut: "F4",
               onSelect: () => edit(entry),
@@ -1171,7 +1184,7 @@ export function FilePane({
       ...(inResults && entry && targets.length === 1
         ? [
             {
-              label: "Go to folder",
+              label: t("pane.goToFolder"),
               icon: <LocateFixed size={14} />,
               onSelect: () => goToFolder(entry),
             },
@@ -1180,7 +1193,7 @@ export function FilePane({
       ...((entry && isDirLike(entry) && targets.length === 1) || (!entry && !inResults)
         ? [
             {
-              label: "Search in this folder",
+              label: t("pane.searchInThisFolder"),
               icon: <FolderSearch size={14} />,
               shortcut: entry ? undefined : "Ctrl+Shift+F",
               onSelect: () => openSearch(entry?.path),
@@ -1189,7 +1202,7 @@ export function FilePane({
         : []),
       ...(extract.length > 0 ? ["separator" as const, ...extract, "separator" as const] : []),
       {
-        label: inResults ? "Search again" : "Refresh",
+        label: inResults ? t("pane.searchAgain") : t("common.refresh"),
         icon: <RefreshCw size={14} />,
         shortcut: "F5",
         onSelect: () => (inResults ? runSearch() : void pane.refresh()),
@@ -1198,13 +1211,13 @@ export function FilePane({
         ? []
         : [
             {
-              label: "New folder",
+              label: t("pane.newFolder"),
               icon: <FolderPlus size={14} />,
               shortcut: "F7",
               onSelect: openNewFolder,
             },
             {
-              label: "New file",
+              label: t("pane.newFile"),
               icon: <FilePlus size={14} />,
               shortcut: "Shift+F4",
               onSelect: openNewFile,
@@ -1213,7 +1226,7 @@ export function FilePane({
       ...(canMakeVault
         ? [
             {
-              label: "New vault...",
+              label: t("pane.newVault"),
               icon: <ShieldPlus size={14} />,
               disabled: sign !== "none",
               onSelect: openNewVault,
@@ -1223,7 +1236,7 @@ export function FilePane({
       ...(lockable
         ? [
             {
-              label: "Lock vault",
+              label: t("pane.lockVault"),
               icon: <Lock size={14} />,
               onSelect: () => void requestLockVault(lockable),
             },
@@ -1240,7 +1253,7 @@ export function FilePane({
       ...clipboardMenuItems(entry, targets),
       "separator",
       {
-        label: "Rename",
+        label: t("common.rename"),
         icon: <Pencil size={14} />,
         shortcut: "F2",
         disabled: targets.length === 0,
@@ -1248,7 +1261,7 @@ export function FilePane({
           targets.length === 1 ? setRenaming(targets[0].path) : openBulkRename(targets),
       },
       {
-        label: targets.length > 1 ? "Copy paths" : "Copy path",
+        label: targets.length > 1 ? t("pane.copyPaths") : t("pane.copyPath"),
         icon: <ClipboardCopy size={14} />,
         onSelect: () => copyPaths(targets),
       },
@@ -1257,7 +1270,7 @@ export function FilePane({
       ...(source.kind === "remote" && targets.length > 0
         ? [
             {
-              label: overSftp ? "Properties" : `Properties (${needsSftp})`,
+              label: overSftp ? t("pane.properties") : t("pane.properties2", { needsSftp }),
               icon: <Info size={14} />,
               shortcut: overSftp ? "Alt+Enter" : undefined,
               disabled: !overSftp,
@@ -1267,7 +1280,10 @@ export function FilePane({
         : []),
       "separator",
       {
-        label: targets.length > 1 ? `Delete ${targets.length} items` : "Delete",
+        label:
+          targets.length > 1
+            ? t("pane.deleteItems", { count: targets.length })
+            : t("common.delete"),
         icon: <Trash2 size={14} />,
         shortcut: "Del",
         danger: true,
@@ -1322,18 +1338,18 @@ export function FilePane({
               <button
                 type="button"
                 className="toolbar-action"
-                title="Lock vault"
+                title={t("pane.lockVault")}
                 onClick={() => void requestLockVault(sessionId)}
               >
                 <Lock size={14} />
-                Lock
+                {t("pane.lock")}
               </button>
               <span className="toolbar-divider" />
             </>
           )}
           {unsaved && sessionId && (
             <ToolbarButton
-              label="Save this connection"
+              label={t("pane.saveThisConnection")}
               onClick={() => openDialog({ kind: "saveConnection", sessionId })}
             >
               <Bookmark size={15} />
@@ -1341,35 +1357,39 @@ export function FilePane({
           )}
           {sessionId && overSftp && (
             <ToolbarButton
-              label="Open terminal"
+              label={t("pane.openTerminal")}
               onClick={() => openTerminal(sessionId, ownGroup())}
             >
               <SquareTerminal size={15} />
             </ToolbarButton>
           )}
-          <ToolbarButton label="Back (Alt+Left)" onClick={pane.goBack} disabled={!pane.canGoBack}>
+          <ToolbarButton
+            label={t("pane.backAltLeft")}
+            onClick={pane.goBack}
+            disabled={!pane.canGoBack}
+          >
             <ArrowLeft size={15} />
           </ToolbarButton>
           <ToolbarButton
-            label="Forward (Alt+Right)"
+            label={t("pane.forwardAltRight")}
             onClick={pane.goForward}
             disabled={!pane.canGoForward}
           >
             <ArrowRight size={15} />
           </ToolbarButton>
-          <ToolbarButton label="Up (Backspace)" onClick={pane.goUp} disabled={!pane.canGoUp}>
+          <ToolbarButton label={t("pane.upBackspace")} onClick={pane.goUp} disabled={!pane.canGoUp}>
             <ArrowUp size={15} />
           </ToolbarButton>
-          <ToolbarButton label="Home (Alt+Home)" onClick={pane.goHome}>
+          <ToolbarButton label={t("pane.homeAltHome")} onClick={pane.goHome}>
             <Home size={15} />
           </ToolbarButton>
           {source.roots && (
-            <ToolbarButton label="Drives" onClick={(event) => void showDriveMenu(event)}>
+            <ToolbarButton label={t("pane.drives")} onClick={(event) => void showDriveMenu(event)}>
               <HardDrive size={15} />
             </ToolbarButton>
           )}
           <ToolbarButton
-            label={inResults ? "Search again (F5)" : "Refresh (F5)"}
+            label={inResults ? t("pane.searchAgainF5") : t("pane.refreshF5")}
             onClick={() => (inResults ? runSearch() : void pane.refresh())}
             disabled={!pane.listing && !pane.failedPath}
           >
@@ -1380,14 +1400,14 @@ export function FilePane({
           </ToolbarButton>
           <span className="toolbar-divider" />
           <ToolbarButton
-            label="New folder (F7)"
+            label={t("pane.newFolderF7")}
             onClick={openNewFolder}
             disabled={!pane.listing || lockedCard || inResults}
           >
             <FolderPlus size={15} />
           </ToolbarButton>
           <ToolbarButton
-            label="New file (Shift+F4)"
+            label={t("pane.newFileShiftF4")}
             onClick={openNewFile}
             disabled={!pane.listing || lockedCard || inResults}
           >
@@ -1395,7 +1415,7 @@ export function FilePane({
           </ToolbarButton>
           {canMakeVault && (
             <ToolbarButton
-              label="New vault"
+              label={t("pane.newVault2")}
               onClick={openNewVault}
               disabled={!pane.listing || sign !== "none"}
             >
@@ -1403,14 +1423,16 @@ export function FilePane({
             </ToolbarButton>
           )}
           <ToolbarButton
-            label={pane.showHidden ? "Hide hidden files (Ctrl+H)" : "Show hidden files (Ctrl+H)"}
+            label={
+              pane.showHidden ? t("pane.hideHiddenFilesCtrlH") : t("pane.showHiddenFilesCtrlH")
+            }
             onClick={pane.toggleHidden}
             pressed={pane.showHidden}
           >
             {pane.showHidden ? <Eye size={15} /> : <EyeOff size={15} />}
           </ToolbarButton>
           <ToolbarButton
-            label={searchBarShown ? "Close search (Ctrl+Shift+F)" : "Search (Ctrl+Shift+F)"}
+            label={searchBarShown ? t("pane.closeSearchCtrlShiftF") : t("pane.searchCtrlShiftF")}
             onClick={() => (searchBarShown ? closeSearch() : openSearch())}
             pressed={searchBarShown}
             disabled={!pane.listing || lockedCard}
@@ -1418,7 +1440,7 @@ export function FilePane({
             <FolderSearch size={15} />
           </ToolbarButton>
           <ToolbarButton
-            label={`Compare folders (${COMPARE_FOLDERS_SHORTCUT})`}
+            label={t("pane.compareFolders", { value: COMPARE_FOLDERS_SHORTCUT })}
             onClick={folderCompare.toggle}
             pressed={folderCompare.comparing}
             disabled={!pane.listing && !folderCompare.comparing}
@@ -1426,7 +1448,7 @@ export function FilePane({
             <GitCompareArrows size={15} />
           </ToolbarButton>
           <ToolbarButton
-            label={`Preview (F3), focus it (${FOCUS_PREVIEW_SHORTCUT})`}
+            label={t("pane.previewF3FocusIt", { value: FOCUS_PREVIEW_SHORTCUT })}
             onClick={switchPreview}
             pressed={previewOpen}
           >
@@ -1439,10 +1461,10 @@ export function FilePane({
         {vault && (
           <span
             className="vault-chip"
-            title={`Files here are encrypted in the vault ${vault.name} before they reach the server`}
+            title={t("pane.filesHereAreEncryptedIn", { name: vault.name })}
           >
             <ShieldCheck size={13} />
-            Encrypted
+            {t("pane.encrypted")}
           </span>
         )}
         <PathBar
@@ -1458,8 +1480,8 @@ export function FilePane({
           <input
             ref={filterRef}
             value={pane.filter}
-            placeholder="Filter"
-            title="Filter this folder (Ctrl+F)"
+            placeholder={t("pane.filter")}
+            title={t("pane.filterThisFolderCtrlF")}
             spellCheck={false}
             onChange={(event) => pane.setFilter(event.target.value)}
             onKeyDown={(event) => {
@@ -1473,7 +1495,7 @@ export function FilePane({
             <button
               type="button"
               className="icon-button"
-              aria-label="Clear filter"
+              aria-label={t("pane.clearFilter")}
               onClick={() => pane.setFilter("")}
             >
               <X size={12} />
@@ -1512,30 +1534,28 @@ export function FilePane({
           {sign === "locked" && (
             <p className="pane-notice">
               <LockKeyhole size={13} />
-              <span>This folder is a locked Cryptomator vault.</span>
+              <span>{t("pane.thisFolderIsALocked")}</span>
               <button type="button" className="link-button" onClick={() => setRevealedVault(null)}>
-                Unlock
+                {t("pane.unlock")}
               </button>
             </p>
           )}
           {sign === "outdated" && (
             <p className="pane-notice">
               <Info size={13} />
-              <span>
-                This vault uses an older Cryptomator format. Open it once in Cryptomator 1.6 or
-                later to upgrade it.
-              </span>
+              <span>{t("pane.thisVaultUsesAnOlder")}</span>
             </p>
           )}
           {pane.stale === "outdated" && (
             <p className="pane-notice pane-notice-warning" role="status">
               <TriangleAlert size={13} />
               <span>
-                Could not refresh this folder: {pane.error?.message.trim().replace(/\.+$/, "")}.
-                This listing may be out of date.
+                {t("pane.couldNotRefreshThisFolder", {
+                  replace: pane.error?.message.trim().replace(/\.+$/, ""),
+                })}
               </span>
               <button type="button" className="link-button" onClick={() => void pane.refresh()}>
-                Try again
+                {t("common.tryAgain")}
               </button>
             </p>
           )}
@@ -1607,7 +1627,7 @@ export function FilePane({
                 inResults
                   ? searchEmptyMessage(searchView)
                   : identicalHidden > 0
-                    ? "Everything here is identical in both panes"
+                    ? t("pane.everythingHereIsIdenticalIn")
                     : undefined
               }
             />
@@ -1629,16 +1649,16 @@ export function FilePane({
                     disabled={pane.loading}
                     onClick={() => void pane.refresh()}
                   >
-                    Try again
+                    {t("common.tryAgain")}
                   </button>
                 )}
                 <button type="button" className="button" onClick={pane.goHome}>
-                  Go to home folder
+                  {t("pane.goToHomeFolder")}
                 </button>
               </div>
             </>
           ) : (
-            <p className="pane-empty-detail">Loading...</p>
+            <p className="pane-empty-detail">{t("common.loading")}</p>
           )}
         </div>
       )}
@@ -1653,7 +1673,7 @@ export function FilePane({
         </span>
         {selected.length > 0 && (
           <span>
-            {pluralize(selected.length, "selected", "selected")}
+            {t("pane.selected", { count: selected.length })}
             {selectedSize > 0 && ` (${formatSize(selectedSize)})`}
           </span>
         )}
@@ -1665,9 +1685,9 @@ export function FilePane({
 
       {dialog?.type === "newFolder" && pane.listing && (
         <PromptDialog
-          title="New folder"
-          label={`Create in ${pane.listing.path}`}
-          confirmLabel="Create"
+          title={t("pane.newFolder")}
+          label={t("pane.createIn", { path: pane.listing.path })}
+          confirmLabel={t("pane.create")}
           onClose={closeDialog(dialog)}
           onSubmit={async (name) => {
             const created = await source.mkdir(pane.listing!.path, name);
@@ -1679,10 +1699,10 @@ export function FilePane({
 
       {dialog?.type === "newFile" && pane.listing && (
         <PromptDialog
-          title="New file"
-          label={`Create in ${pane.listing.path}`}
+          title={t("pane.newFile")}
+          label={t("pane.createIn", { path: pane.listing.path })}
           placeholder={dialog.example}
-          confirmLabel="Create"
+          confirmLabel={t("pane.create")}
           onClose={closeDialog(dialog)}
           onSubmit={async (name) => {
             const created = await source.makeFile(pane.listing!.path, name);
@@ -1702,14 +1722,14 @@ export function FilePane({
 
       {dialog?.type === "placeTo" && pane.listing && (
         <PromptDialog
-          title={dialog.mode === "move" ? "Move to" : "Copy to"}
+          title={dialog.mode === "move" ? t("pane.moveTo3") : t("pane.copyTo3")}
           label={`Folder to ${dialog.mode} ${
             dialog.entries.length === 1
               ? dialog.entries[0].name
-              : pluralize(dialog.entries.length, "item")
+              : t("pane.items", { count: dialog.entries.length })
           } into`}
           initialValue={pane.listing.path}
-          confirmLabel={dialog.mode === "move" ? "Move" : "Copy"}
+          confirmLabel={dialog.mode === "move" ? t("pane.move") : t("common.copy")}
           onClose={closeDialog(dialog)}
           onSubmit={async (folder) => {
             const self = getPane(tabId);
@@ -1807,6 +1827,7 @@ export function FilePane({
 }
 
 function DeleteSummary({ entries, where }: { entries: FileEntry[]; where: string }) {
+  const t = useT();
   const folders = entries.filter((entry) => entry.kind === "dir").length;
   const preview = entries.slice(0, 5);
   return (
@@ -1816,19 +1837,19 @@ function DeleteSummary({ entries, where }: { entries: FileEntry[]; where: string
         {entries.length === 1 ? (
           <strong>{entries[0].name}</strong>
         ) : (
-          pluralize(entries.length, "item")
+          t("pane.items", { count: entries.length })
         )}{" "}
         from the {where} side? This cannot be undone.
       </p>
-      {folders > 0 && (
-        <p className="warning-text">Folders are deleted with everything inside them.</p>
-      )}
+      {folders > 0 && <p className="warning-text">{t("pane.foldersAreDeletedWithEverything")}</p>}
       {entries.length > 1 && (
         <ul className="delete-preview">
           {preview.map((entry) => (
             <li key={entry.path}>{entry.name}</li>
           ))}
-          {entries.length > preview.length && <li>and {entries.length - preview.length} more</li>}
+          {entries.length > preview.length && (
+            <li>{t("pane.andMore", { value: entries.length - preview.length })}</li>
+          )}
         </ul>
       )}
     </>

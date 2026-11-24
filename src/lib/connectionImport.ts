@@ -1,4 +1,5 @@
 import type { ImportEntry, ImportSource } from "./types";
+import { t } from "../i18n";
 
 export interface ImportSourceText {
   label: string;
@@ -8,39 +9,57 @@ export interface ImportSourceText {
 
 export const IMPORT_SOURCES: Record<ImportSource, ImportSourceText> = {
   fileZilla: {
-    label: "FileZilla",
+    get label() {
+      return t("connect.filezilla");
+    },
     files: "sitemanager.xml, or a file exported from the Site Manager (File > Export).",
   },
   winScp: {
-    label: "WinSCP",
+    get label() {
+      return t("connect.winscp");
+    },
     files: "WinSCP.ini, or a file from Tools > Export/Backup Configuration.",
   },
   smartFtp: {
-    label: "SmartFTP",
+    get label() {
+      return t("connect.smartftp");
+    },
     files: "the list from Favorites > Tools > Export, or .xml favorites from older versions.",
   },
   cyberduck: {
-    label: "Cyberduck and Mountain Duck",
+    get label() {
+      return t("connect.cyberduckAndMountainDuck");
+    },
     files: "their bookmark files (.duck).",
   },
   putty: {
-    label: "PuTTY and KiTTY",
+    get label() {
+      return t("connect.puttyAndKitty");
+    },
     files: "a .reg export of their Sessions registry key, or PuTTY's session files.",
   },
   mobaXterm: {
-    label: "MobaXterm",
+    get label() {
+      return t("connect.mobaxterm");
+    },
     files: "MobaXterm.ini, or a .mxtsessions file from Sessions > Export.",
   },
   openSsh: {
-    label: "OpenSSH config",
+    get label() {
+      return t("connect.opensshConfig");
+    },
     files: "an ssh config file, such as ~/.ssh/config.",
   },
   fileManager: {
-    label: "GNOME Files and KDE Dolphin",
+    get label() {
+      return t("connect.gnomeFilesAndKdeDolphin");
+    },
     files: "gtk-3.0/bookmarks or user-places.xbel.",
   },
   urlList: {
-    label: "List of addresses",
+    get label() {
+      return t("connect.listOfAddresses");
+    },
     files: "a text file with one sftp:// or ftp:// address per line.",
   },
 };

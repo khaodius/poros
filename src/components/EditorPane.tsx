@@ -40,6 +40,7 @@ import { useLayoutStore } from "../state/layoutStore";
 import { forgetListingOf } from "../state/listings";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
+import { useT, t } from "../i18n";
 
 interface EditorPaneProps {
   tab: EditorTab;
@@ -59,10 +60,14 @@ interface Baseline extends Format {
 
 const ENCODING_LABELS: Record<TextEncoding, string> = {
   utf8: "UTF-8",
-  utf8Bom: "UTF-8 with BOM",
+  get utf8Bom() {
+    return t("editor.utf8WithBom");
+  },
   utf16Le: "UTF-16 LE",
   utf16Be: "UTF-16 BE",
-  latin1: "Latin-1",
+  get latin1() {
+    return t("editor.latin1");
+  },
 };
 const LINE_ENDING_LABELS: Record<TextLineEnding, string> = { lf: "LF", crlf: "CRLF" };
 const WRAP_STORAGE_KEY = "poros.editor.wrap";
@@ -113,6 +118,7 @@ const DEFAULT_FORMAT: Format = { encoding: "utf8", lineEnding: "lf" };
 
 /** A text editor for one local or server file. Ctrl+S saves; server files upload on save. */
 export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
+  const t = useT();
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const baselineRef = useRef<Baseline | null>(null);
@@ -336,7 +342,7 @@ export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
     }));
   const lineEndingMenu = () =>
     (Object.keys(LINE_ENDING_LABELS) as TextLineEnding[]).map((lineEnding): MenuItem => ({
-      label: lineEnding === "lf" ? "LF (Linux, macOS)" : "CRLF (Windows)",
+      label: lineEnding === "lf" ? t("editor.lfLinuxMacos") : t("editor.crlfWindows"),
       checked: format.lineEnding === lineEnding,
       onSelect: () => changeFormat({ lineEnding }),
     }));
@@ -348,11 +354,11 @@ export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
         <div className="pane-title">
           <FileText size={15} />
           <span title={tab.path}>{tab.name}</span>
-          {unsaved && <span className="editor-unsaved-mark" title="Unsaved changes" />}
+          {unsaved && <span className="editor-unsaved-mark" title={t("editor.unsavedChanges")} />}
         </div>
         <div className="pane-toolbar">
           <EditorButton
-            label="Find and replace (Ctrl+F)"
+            label={t("editor.findAndReplaceCtrlF")}
             disabled={!ready}
             onClick={() => viewRef.current && openSearchPanel(viewRef.current)}
           >
@@ -366,7 +372,7 @@ export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
             <RotateCw size={15} />
           </EditorButton>
           <EditorButton
-            label="Save (Ctrl+S)"
+            label={t("editor.saveCtrlS")}
             disabled={!ready || saving}
             onClick={() => void save(false)}
           >
@@ -397,13 +403,13 @@ export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
               className="button"
               onClick={() => setReloads((count) => count + 1)}
             >
-              Reload theirs
+              {t("editor.reloadTheirs")}
             </button>
           )}
           <button
             type="button"
             className="icon-button"
-            aria-label="Dismiss"
+            aria-label={t("common.dismiss")}
             onClick={() => setConflict(null)}
           >
             <X size={13} />
@@ -413,14 +419,14 @@ export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
       {saveError && (
         <div className="editor-banner is-error" role="alert">
           <TriangleAlert size={14} />
-          <span className="selectable">Could not save: {saveError}</span>
+          <span className="selectable">{t("editor.couldNotSave", { saveError })}</span>
           <button type="button" className="button" onClick={() => void save(false)}>
-            Try again
+            {t("common.tryAgain")}
           </button>
           <button
             type="button"
             className="icon-button"
-            aria-label="Dismiss"
+            aria-label={t("common.dismiss")}
             onClick={() => setSaveError(null)}
           >
             <X size={13} />
@@ -430,18 +436,20 @@ export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
 
       <div className="editor-body">
         <div className="editor-host" ref={hostRef} />
-        {phase === "loading" && <p className="editor-placeholder">Opening {tab.name}...</p>}
+        {phase === "loading" && (
+          <p className="editor-placeholder">{t("editor.opening", { name: tab.name })}</p>
+        )}
         {phase === "failed" && (
           <div className="pane-empty editor-placeholder">
             <FileText size={36} className="pane-empty-icon" />
-            <p className="pane-empty-title">Could not open {tab.name}</p>
+            <p className="pane-empty-title">{t("editor.couldNotOpen", { name: tab.name })}</p>
             <p className="pane-empty-detail selectable">{loadError}</p>
             <button
               type="button"
               className="button"
               onClick={() => setReloads((count) => count + 1)}
             >
-              Try again
+              {t("common.tryAgain")}
             </button>
           </div>
         )}
@@ -461,7 +469,7 @@ export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
             <button
               type="button"
               className="editor-status-button"
-              title="Encoding used when saving"
+              title={t("editor.encodingUsedWhenSaving")}
               onClick={(event) => showMenu(event, encodingMenu())}
             >
               {ENCODING_LABELS[format.encoding]}
@@ -469,7 +477,7 @@ export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
             <button
               type="button"
               className="editor-status-button"
-              title="Line endings used when saving"
+              title={t("editor.lineEndingsUsedWhenSaving")}
               onClick={(event) => showMenu(event, lineEndingMenu())}
             >
               {LINE_ENDING_LABELS[format.lineEnding]}
@@ -477,7 +485,7 @@ export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
             <button
               type="button"
               className={`editor-status-button ${wrap ? "is-on" : ""}`}
-              title={wrap ? "Stop wrapping long lines" : "Wrap long lines"}
+              title={wrap ? t("editor.stopWrappingLongLines") : t("editor.wrapLongLines")}
               aria-pressed={wrap}
               onClick={toggleWrap}
             >
@@ -492,13 +500,13 @@ export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
       )}
       {confirmReload && (
         <ConfirmDialog
-          title={`Reload ${tab.name}?`}
-          confirmLabel="Discard and reload"
+          title={t("editor.reload", { name: tab.name })}
+          confirmLabel={t("editor.discardAndReload")}
           danger
           onConfirm={async () => setReloads((count) => count + 1)}
           onClose={() => setConfirmReload(false)}
         >
-          <p>Your unsaved changes will be lost.</p>
+          <p>{t("editor.yourUnsavedChangesWillBe")}</p>
         </ConfirmDialog>
       )}
     </section>
