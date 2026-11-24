@@ -872,10 +872,7 @@ mod tests {
             Ok(info) => info,
             Err(error) => {
                 let host_key = error.host_key.expect("only the host key may be unknown");
-                let approval = HostKeyApproval {
-                    fingerprint: host_key.fingerprint,
-                    remember: true,
-                };
+                let approval = HostKeyApproval::of(&host_key, true);
                 manager
                     .connect(profile(), Some(approval), "main")
                     .await

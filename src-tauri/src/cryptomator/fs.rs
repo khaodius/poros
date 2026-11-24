@@ -910,7 +910,7 @@ impl RemoteFileSystem for VaultFs {
         protocol::validate_name(new_name)?;
         let keys = self.keys()?;
         let server = self.server();
-        let names = self.relative(path)?;
+        let names = self.relative(&protocol::normalize_exact(&self.resolve(path))?)?;
         let Some((name, parent)) = names.split_last() else {
             return Err(AppError::invalid(
                 "Lock the vault to rename its folder on the server",
@@ -949,7 +949,7 @@ impl RemoteFileSystem for VaultFs {
         let keys = self.keys()?;
         let server = self.server();
         let resolved: Vec<String> = paths.iter().map(|path| self.resolve(path)).collect();
-        for path in protocol::outermost(&resolved) {
+        for path in protocol::outermost(&resolved)? {
             let names = self.relative(&path)?;
             let Some((name, parent)) = names.split_last() else {
                 return Err(AppError::invalid(

@@ -304,10 +304,8 @@ async fn connect_directly(
     number: usize,
     compress: bool,
 ) -> AppResult<WorkerConnection> {
-    let approval = (!login.host_key_fingerprint.is_empty()).then(|| HostKeyApproval {
-        fingerprint: login.host_key_fingerprint.clone(),
-        remember: false,
-    });
+    let approval = (!login.host_key_fingerprint.is_empty())
+        .then(|| HostKeyApproval::for_server(&login.profile, &login.host_key_fingerprint));
     let mut profile = login.profile.clone();
     profile.compression |= compress;
     let connection_id = if compress {
