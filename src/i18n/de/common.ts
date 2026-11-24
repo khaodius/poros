@@ -10,6 +10,7 @@ export const common = {
 
   // components/ArchiveSettings
   browse: "Durchsuchen",
+  listSeparator: ", ",
 
   // components/AutomationSettings
   refresh: "Aktualisieren",
@@ -45,14 +46,14 @@ export const common = {
   discard: "Verwerfen",
   open: "Öffnen",
 
-  // components/DrivesGoing
-  listSeparator: ", ",
-
   // components/EditorPane
   dismiss: "Ausblenden",
 
   // components/ExternalEditDialogs
   upload: "Hochladen",
+
+  // components/ExternalEditorSettings
+  minutesUnit: "min",
 
   // components/FileList
   folder: "Ordner",
@@ -83,12 +84,14 @@ export const common = {
 
   // components/PropertiesDialog
   apply: "Übernehmen",
+  ok: "OK",
 
   // components/SearchBar
   search: "Suchen",
 
   // components/SettingsDialog
   askMe: "Nachfragen",
+  secondsUnit: "s",
 
   // components/SyncPlanList
   path: "Pfad",

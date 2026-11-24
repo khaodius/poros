@@ -24,7 +24,7 @@ export const archives = {
     "Es wurde kein Programm zum Entpacken von Archiven gefunden. Installieren Sie 7-Zip oder geben Sie oben ein Programm an.",
   onServers: "Auf Servern",
   archivesOnAnSftpServer:
-    "Archive auf einem SFTP-Server werden auf dem Server entpackt, mit den Programmen, die er hat. Poros sucht beim ersten Mal nach {programs} und verwendet für jedes Format das Programm, das es am besten öffnet. Server, die nur SFTP erlauben, können nicht entpacken. Laden Sie das Archiv dann herunter, um es hier zu entpacken.",
+    "Archive auf einem SFTP-Server werden auf dem Server entpackt, mit den Programmen, die er hat. Poros sucht beim ersten Mal nach {programs} und {lastProgram} und verwendet für jedes Format das Programm, das es am besten öffnet. Server, die nur SFTP erlauben, können nicht entpacken. Laden Sie das Archiv dann herunter, um es hier zu entpacken.",
   programsFileType: "Programme",
 
   // lib/archives

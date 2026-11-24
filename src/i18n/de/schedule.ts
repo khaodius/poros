@@ -88,6 +88,7 @@ export const schedule = {
   filesAndFoldersOnThe: "Dateien und Ordner auf dem Server",
   filesAndFoldersOnThis: "Dateien und Ordner auf diesem Computer",
   inAFolderOfIts: "In einem eigenen Ordner (optional)",
+  subfolderExample: "sicherung-{date}",
   intoTheFolderOnThe: "In den Ordner auf dem Server",
   intoTheFolderOnThis: "In den Ordner auf diesem Computer",
   itemsToCopy: "Zu kopierende Elemente",
