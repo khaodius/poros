@@ -212,8 +212,9 @@ describe("Quitting with saves not uploaded", () => {
     expect(useExternalEditStore.getState().exiting).toEqual(["index"]);
     expect(commands()).not.toContain("app_exit");
 
+    // No drive is mounted either.
     invoke.mockImplementation(async (command: string) =>
-      command === "external_edit_unsaved" ? [] : undefined,
+      command === "external_edit_unsaved" || command.startsWith("mount_") ? [] : undefined,
     );
     await performNow("close");
     expect(commands()).toContain("app_exit");

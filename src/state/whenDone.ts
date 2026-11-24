@@ -17,8 +17,8 @@ import {
 import { system, toAppError } from "../lib/ipc";
 import type { QueueFinished } from "../lib/types";
 import { askToSave, unsavedEditorTabs } from "./editorActions";
-import { editsHoldExit } from "./externalEditStore";
 import { useLogStore } from "./logStore";
+import { quitWaits } from "./quitGuard";
 import { saveSettingsSection, useSettingsStore } from "./settingsStore";
 import { useToastStore } from "./toastStore";
 
@@ -46,9 +46,10 @@ export async function performNow(action: CountdownAction): Promise<void> {
   cancelCountdown();
   try {
     if (action === "close") {
-      // Saves in other programs that have not reached their servers, and files with unsaved
-      // changes, are asked about first; Poros closes once they are, as when the user quits.
-      if (await editsHoldExit()) return;
+      // Saves in other programs that have not reached their servers, drives in use and files
+      // with unsaved changes are asked about first; Poros closes once they are, as when the
+      // user quits.
+      if (await quitWaits()) return;
       const unsaved = unsavedEditorTabs();
       if (unsaved.length > 0)
         askToSave(

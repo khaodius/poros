@@ -14,6 +14,7 @@ import {
   useUpdateStore,
   type InstallStage,
 } from "../state/updateStore";
+import { DriveStatus } from "./DriveStatus";
 import { LimitScheduleStatus } from "./LimitScheduleStatus";
 
 const APP_VERSION = formatVersion(__APP_VERSION__);
@@ -103,6 +104,7 @@ export function StatusBar() {
         {session.text}
       </span>
       <span className="status-right">
+        <DriveStatus />
         <ExternalEditsStatus />
         {pending > 0 && (
           <span className="status-item status-queue">

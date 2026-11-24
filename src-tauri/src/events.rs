@@ -14,6 +14,10 @@ pub const SYNC_PROGRESS_EVENT: &str = "poros://sync-progress";
 pub const QUEUE_FINISHED_EVENT: &str = "poros://queue-finished";
 pub const COMMAND_OUTPUT_EVENT: &str = "poros://command-output";
 pub const FILE_OPERATION_EVENT: &str = "poros://file-operation";
+/// A drive was mounted or unmounted, or one of its uploads failed.
+pub const MOUNTS_EVENT: &str = "poros://mounts";
+/// Folders a mounted drive changed on a server, whose remembered listings are out of date.
+pub const DRIVE_CHANGES_EVENT: &str = "poros://drive-changes";
 /// The files open in other programs, whenever one of them changes.
 #[cfg(feature = "gui")]
 pub const EXTERNAL_EDIT_EVENT: &str = "poros://external-edit";
@@ -132,6 +136,14 @@ impl Events {
 
     pub fn file_operation(&self, progress: &crate::file_ops::OperationProgress) {
         self.emit(FILE_OPERATION_EVENT, progress);
+    }
+
+    pub fn mounts_changed(&self) {
+        self.emit(MOUNTS_EVENT, ());
+    }
+
+    pub fn drive_changed(&self, changes: impl Serialize + Clone) {
+        self.emit(DRIVE_CHANGES_EVENT, changes);
     }
 
     #[cfg(feature = "gui")]

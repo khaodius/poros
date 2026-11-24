@@ -115,13 +115,19 @@ fn is_truthy(value: &str) -> bool {
 async fn run(cli: Cli) -> Exit {
     let json = cli.global.json;
     let interrupt = CancellationToken::new();
+    let force = CancellationToken::new();
+    let finishes = cli.command.finishes_on_interrupt();
     {
-        let interrupt = interrupt.clone();
+        let (interrupt, force) = (interrupt.clone(), force.clone());
         tokio::spawn(async move {
             let mut signals = StopSignals::new();
             if signals.next().await {
                 interrupt.cancel();
-                // A second one ends the run at once.
+                // A command finishing its work stops waiting for it on the second.
+                if finishes && signals.next().await {
+                    force.cancel();
+                }
+                // Another one ends the run at once.
                 if signals.next().await {
                     std::process::exit(Exit::Interrupted.code().into());
                 }
@@ -129,7 +135,7 @@ async fn run(cli: Cli) -> Exit {
         });
     }
     let needs_connection = cli.command.needs_connection();
-    let context = match Context::new(cli.global, interrupt.clone()) {
+    let context = match Context::new(cli.global, interrupt.clone(), force.clone()) {
         Ok(context) => context,
         Err(error) => return report(&error, json),
     };
@@ -143,6 +149,9 @@ async fn run(cli: Cli) -> Exit {
         outcome = work => outcome,
         _ = async {
             interrupt.cancelled().await;
+            if finishes {
+                force.cancelled().await;
+            }
             tokio::time::sleep(INTERRUPT_GRACE).await;
         } => Err(AppError::cancelled()),
     };

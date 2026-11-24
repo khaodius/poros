@@ -14,6 +14,8 @@ pub struct RawEntry {
     pub permissions: Option<u32>,
     pub owner: Option<String>,
     pub group: Option<String>,
+    /// Where a symbolic link leads, where the listing says.
+    pub link_target: Option<String>,
 }
 
 impl RawEntry {
@@ -50,6 +52,7 @@ pub fn parse_mlsd_line(line: &str) -> Option<RawEntry> {
         permissions: None,
         owner: None,
         group: None,
+        link_target: None,
     };
     let mut owner_id = None;
     let mut group_id = None;
@@ -59,12 +62,17 @@ pub fn parse_mlsd_line(line: &str) -> Option<RawEntry> {
         };
         match key.to_ascii_lowercase().as_str() {
             "type" => {
-                let value = value.to_ascii_lowercase();
-                entry.kind = match value.as_str() {
+                let lowered = value.to_ascii_lowercase();
+                entry.kind = match lowered.as_str() {
                     "file" => EntryKind::File,
                     "dir" => EntryKind::Dir,
                     "cdir" | "pdir" => return None,
                     other if other.starts_with("os.unix=slink") || other == "os.unix=symlink" => {
+                        // `OS.unix=slink:/srv` names the target after the colon.
+                        entry.link_target = value
+                            .split_once(':')
+                            .map(|(_, target)| target.to_string())
+                            .filter(|target| !target.is_empty());
                         EntryKind::Symlink
                     }
                     _ => EntryKind::Other,
@@ -147,9 +155,12 @@ fn parse_unix_line(line: &str, now: i64) -> Option<RawEntry> {
     let size_index = date_index.checked_sub(1)?;
     let size: u64 = fields[size_index].0.parse().ok()?;
     let name = line.get(name_start + 1..)?;
-    let name = match kind {
-        EntryKind::Symlink => name.split(" -> ").next().unwrap_or(name),
-        _ => name,
+    let (name, link_target) = match kind {
+        EntryKind::Symlink => match name.split_once(" -> ") {
+            Some((name, target)) => (name, Some(target.to_string())),
+            None => (name, None),
+        },
+        _ => (name, None),
     };
     if name.is_empty() {
         return None;
@@ -164,6 +175,7 @@ fn parse_unix_line(line: &str, now: i64) -> Option<RawEntry> {
         permissions: mode_from_symbolic(mode_text),
         owner,
         group,
+        link_target: link_target.filter(|target| !target.is_empty()),
     })
 }
 
@@ -290,6 +302,7 @@ fn parse_dos_line(line: &str) -> Option<RawEntry> {
         permissions: None,
         owner: None,
         group: None,
+        link_target: None,
     })
 }
 
@@ -320,6 +333,11 @@ mod tests {
         assert_eq!(entries[1].owner.as_deref(), Some("alice"));
         assert_eq!(entries[1].group.as_deref(), Some("staff"));
         assert_eq!(entries[2].kind, EntryKind::Symlink);
+        assert_eq!(entries[2].link_target.as_deref(), Some("/srv"));
+        assert_eq!(entries[1].link_target, None);
+        let unsaid = parse_mlsd("type=OS.unix=symlink;modify=20240101000000; where\r\n");
+        assert_eq!(unsaid[0].kind, EntryKind::Symlink);
+        assert_eq!(unsaid[0].link_target, None);
     }
 
     /// A name with a slash, like `.` and `..`, would stand for another folder than the entry.
@@ -364,6 +382,8 @@ mod tests {
         assert_eq!(entries[1].owner.as_deref(), Some("ftp"));
         assert_eq!(entries[2].name, "link");
         assert_eq!(entries[2].kind, EntryKind::Symlink);
+        assert_eq!(entries[2].link_target.as_deref(), Some("target"));
+        assert_eq!(entries[0].link_target, None);
         assert_eq!(entries[3].name, "nogroup");
         assert_eq!(entries[3].group, None);
         assert_eq!(entries[3].permissions, Some(0o4755 | 0o1000));
