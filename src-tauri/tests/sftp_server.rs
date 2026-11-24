@@ -2767,6 +2767,7 @@ async fn runs_commands_on_the_server() {
         &session,
         "pwd; printf 'one\\ntwo'; printf oops >&2; exit 3",
         Some(&folder),
+        &[],
         &CancellationToken::new(),
         |stream, text| match stream {
             OutputStream::Stdout => stdout.push_str(text),
@@ -2787,7 +2788,7 @@ async fn runs_commands_on_the_server() {
         stopper.cancel();
     });
     let started = Instant::now();
-    let stopped = remote_command::run_on(&session, "sleep 30", None, &stop, |_, _| {})
+    let stopped = remote_command::run_on(&session, "sleep 30", None, &[], &stop, |_, _| {})
         .await
         .unwrap();
     assert!(stopped.stopped);
@@ -2846,6 +2847,7 @@ async fn a_command_cut_off_by_a_lost_connection_is_not_reported_as_finished() {
         &session,
         "sleep 30",
         None,
+        &[],
         &CancellationToken::new(),
         |_, _| {},
     )

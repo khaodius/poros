@@ -23,7 +23,7 @@ export function CommandOutputDialog() {
   }, [output]);
 
   if (!run) return null;
-  const single = run.commands.length === 1 ? run.commands[0] : null;
+  const single = run.commands.length === 1 ? run.commands[0].display : null;
 
   return (
     <Dialog title={run.title} onClose={dismiss} width={720}>
