@@ -173,7 +173,9 @@ export const remote = {
     call<string>("remote_make_file", { sessionId, parent, name }),
   rename: (sessionId: string, path: string, newName: string) =>
     call<string>("remote_rename", { sessionId, path, newName }),
-  remove: (sessionId: string, paths: string[]) => call<void>("remote_delete", { sessionId, paths }),
+  /** `withVersions`: buckets among `paths` to delete with their older versions and deleted files. */
+  remove: (sessionId: string, paths: string[], withVersions: readonly string[] = []) =>
+    call<void>("remote_delete", { sessionId, paths, withVersions }),
 };
 
 /** Cryptomator vaults kept in a folder of a session's server. */

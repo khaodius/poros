@@ -60,20 +60,22 @@ export function learnVersioning(sessionId: string, path: string): void {
 }
 
 /**
- * How many of `entries` are S3 buckets that may keep older versions and deleted files, which
- * deleting a bucket removes with it. B2 always deleted a bucket's versions with it.
+ * The paths of `entries` that are S3 buckets that may keep older versions and deleted files,
+ * which deleting a bucket removes with it. B2 always deleted a bucket's versions with it.
  */
 export function bucketsKeepingVersions(
   sessionId: string | undefined,
   protocol: Protocol | undefined,
   entries: readonly FileEntry[],
-): number {
-  if (!sessionId || protocol !== "s3") return 0;
+): string[] {
+  if (!sessionId || protocol !== "s3") return [];
   const { known } = useVersioningStore.getState();
-  return entries.filter((entry) => {
-    const key = isBucket(entry.path) ? versioningKey(sessionId, entry.path) : null;
-    return key !== null && keepsVersions(known[key]);
-  }).length;
+  return entries
+    .filter((entry) => {
+      const key = isBucket(entry.path) ? versioningKey(sessionId, entry.path) : null;
+      return key !== null && keepsVersions(known[key]);
+    })
+    .map((entry) => entry.path);
 }
 
 function folderOf(path: string): string {

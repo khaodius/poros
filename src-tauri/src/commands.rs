@@ -284,10 +284,21 @@ pub async fn remote_delete(
     sessions: State<'_, Arc<SessionManager>>,
     session_id: String,
     paths: Vec<String>,
+    with_versions: Option<Vec<String>>,
 ) -> AppResult<()> {
     let files = sessions.get(&session_id).await?.files();
-    // The page says before deleting a bucket that its versions go with it.
-    versions::delete(files.as_ref(), &paths, true).await
+    // Only the buckets whose confirmation said their versions go with them lose them.
+    let with_versions = with_versions.unwrap_or_default();
+    let (purged, plain): (Vec<String>, Vec<String>) = paths
+        .into_iter()
+        .partition(|path| with_versions.contains(path));
+    if !plain.is_empty() {
+        files.delete(&plain).await?;
+    }
+    if !purged.is_empty() {
+        versions::delete(files.as_ref(), &purged, true).await?;
+    }
+    Ok(())
 }
 
 #[tauri::command]

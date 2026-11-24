@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { remoteSource } from "../lib/fileSource";
 import { listingScope } from "../lib/listingCache";
 import type { DirListing, FileEntry, ObjectVersion, SessionInfo } from "../lib/types";
 import { listingShare } from "./listings";
@@ -118,12 +119,29 @@ describe("deleting buckets", () => {
     hidden: false,
   });
 
-  it("counts the S3 buckets not known to keep no versions", () => {
+  it("names the S3 buckets not known to keep no versions", () => {
     useVersioningStore.setState({ known: { "s1\nplain": "off", "s1\nkept": "enabled" } });
     const entries = ["/kept", "/plain", "/unasked", "/kept/inside"].map(folder);
-    expect(bucketsKeepingVersions("s1", "s3", entries)).toBe(2);
-    expect(bucketsKeepingVersions("s1", "s3", [folder("/plain")])).toBe(0);
-    expect(bucketsKeepingVersions("s1", "backblazeB2", entries)).toBe(0);
-    expect(bucketsKeepingVersions(undefined, "s3", entries)).toBe(0);
+    expect(bucketsKeepingVersions("s1", "s3", entries)).toEqual(["/kept", "/unasked"]);
+    expect(bucketsKeepingVersions("s1", "s3", [folder("/plain")])).toEqual([]);
+    expect(bucketsKeepingVersions("s1", "backblazeB2", entries)).toEqual([]);
+    expect(bucketsKeepingVersions(undefined, "s3", entries)).toEqual([]);
+  });
+
+  it("deletes with their versions only the buckets it is told of", async () => {
+    invoke.mockReset();
+    invoke.mockResolvedValue(undefined);
+    await remoteSource(info, null).remove(["/kept", "/plain"], ["/kept"]);
+    expect(invoke).toHaveBeenCalledWith("remote_delete", {
+      sessionId: "s1",
+      paths: ["/kept", "/plain"],
+      withVersions: ["/kept"],
+    });
+    await remoteSource(info, null).remove(["/plain"]);
+    expect(invoke).toHaveBeenLastCalledWith("remote_delete", {
+      sessionId: "s1",
+      paths: ["/plain"],
+      withVersions: [],
+    });
   });
 });

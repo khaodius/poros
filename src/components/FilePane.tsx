@@ -153,7 +153,8 @@ type PaneDialog =
   | { type: "newFolder" }
   | { type: "newFile"; example: string }
   | { type: "newVault" }
-  | { type: "delete"; entries: FileEntry[] }
+  /** `withVersions`: the buckets the dialog says go with their versions, as it opened. */
+  | { type: "delete"; entries: FileEntry[]; withVersions: ReadonlySet<string> }
   | { type: "placeTo"; mode: PlaceMode; entries: FileEntry[] }
   | { type: "properties"; entries: FileEntry[] }
   | { type: "share"; entries: FileEntry[] }
@@ -739,10 +740,18 @@ export function FilePane({
       entries,
     });
   };
+  /** Asks before deleting. Only the buckets its confirmation names lose their versions: one
+   * learned as keeping none, and switched on elsewhere since, is refused as not empty. */
+  const confirmDelete = (entries: FileEntry[]) =>
+    setDialog({
+      type: "delete",
+      entries,
+      withVersions: new Set(bucketsKeepingVersions(sessionId, protocol, entries)),
+    });
   const openDelete = () => {
     const kept = live(selected);
     const deleted = selected.filter((entry) => deletions.has(entry.path));
-    if (kept.length > 0) setDialog({ type: "delete", entries: kept });
+    if (kept.length > 0) confirmDelete(kept);
     else if (deleted.length > 0) setDialog({ type: "purgeDeleted", entries: deleted });
   };
 
@@ -1283,7 +1292,7 @@ export function FilePane({
         shortcut: "Del",
         danger: true,
         disabled: targets.length === 0,
-        onSelect: () => setDialog({ type: "delete", entries: targets }),
+        onSelect: () => confirmDelete(targets),
       },
     ];
   };
@@ -1793,7 +1802,7 @@ export function FilePane({
             <DeleteSummary
               entries={entries}
               where={where}
-              buckets={bucketsKeepingVersions(sessionId, protocol, entries)}
+              buckets={entries.filter((entry) => dialog.withVersions.has(entry.path)).length}
             />
           )}
           onClose={closeDialog(dialog)}
@@ -1812,7 +1821,10 @@ export function FilePane({
               });
               return;
             }
-            await source.remove(removed);
+            await source.remove(
+              removed,
+              removed.filter((path) => dialog.withVersions.has(path)),
+            );
             writeLog("info", `Deleted ${pluralize(entries.length, `${where} item`)} in ${folder}`);
             if (inResults) await resultsChanged(entries, [], next, true);
             else await pane.refresh(next);
