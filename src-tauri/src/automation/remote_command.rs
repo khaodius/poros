@@ -23,7 +23,7 @@ use crate::ssh::exec::{self, shell_quote, CommandLine, ScriptInput};
 /// Output lines copied to the log per run; the output window has the rest.
 const MAX_LOGGED_LINES: usize = 200;
 /// Login shells that take a command and its positional parameters the way `sh` does.
-const POSIX_SHELLS: &str = "sh|bash|dash|ash|ksh|ksh93|mksh|lksh|pdksh|oksh|zsh|yash|posh|busybox";
+const POSIX_SHELLS: &str = "sh|bash|dash|ash|ksh|ksh93|mksh|lksh|pdksh|oksh|zsh|yash|posh";
 /// More than this in the arguments together could pass what the server takes for one command.
 const MAX_ARGUMENT_BYTES: usize = 1024 * 1024;
 
@@ -292,10 +292,23 @@ fn check_command(command: &str, directory: Option<&str>, arguments: &[String]) -
 /// user wrote it, and each argument as an argument, never as text to read. A login shell that
 /// does not take positional parameters as `sh` does gets no command with arguments; `sh` runs
 /// that itself.
+///
+/// The script is also Bourne shell, for servers whose `sh` is one (Solaris 10): no `$(...)`, no
+/// `${name##pattern}`, and no `--` for `cd`.
 fn command_script(command: &str, directory: Option<&str>, arguments: &[String]) -> String {
     let mut script = String::new();
     if let Some(folder) = directory {
-        script.push_str(&format!("cd -- {} || exit 1\n", shell_quote(folder)));
+        let entered = if folder.starts_with('-') {
+            format!("./{folder}")
+        } else {
+            folder.to_string()
+        };
+        script.push_str(&format!("cd {} || exit 1\n", shell_quote(&entered)));
+        // The folder as `"$PWD"`, exactly, for every login shell, also those that do not keep
+        // `PWD` themselves.
+        if folder.starts_with('/') {
+            script.push_str(&format!("PWD={}; export PWD\n", shell_quote(folder)));
+        }
     }
     let command = shell_quote(command);
     if arguments.is_empty() {
@@ -307,8 +320,9 @@ fn command_script(command: &str, directory: Option<&str>, arguments: &[String]) 
         .map(|argument| format!(" {}", shell_quote(argument)))
         .collect();
     script.push_str(&format!(
-        "case ${{SHELL##*/}} in\n\
-         {POSIX_SHELLS}) exec \"$SHELL\" -c {command} \"${{SHELL##*/}}\"{arguments} ;;\n\
+        "login_shell=`expr \"//$SHELL\" : '.*/\\(.*\\)'`\n\
+         case $login_shell in\n\
+         {POSIX_SHELLS}) exec \"$SHELL\" -c {command} \"$login_shell\"{arguments} ;;\n\
          esac\n\
          exec sh -c {command} sh{arguments}"
     ));
@@ -379,13 +393,18 @@ mod tests {
         (output.stdout, output.status.code())
     }
 
-    /// A stand-in for fish: it says it ran and with what, and runs nothing.
+    /// A stand-in for a login shell such as fish: it says it ran and with what, and runs nothing.
     #[cfg(unix)]
-    fn fake_shell(folder: &std::path::Path) -> std::path::PathBuf {
+    fn fake_shell(folder: &std::path::Path, name: &str) -> std::path::PathBuf {
+        fake_program(folder, name, &format!("printf '%s\\0' {name} \"$@\""))
+    }
+
+    #[cfg(unix)]
+    fn fake_program(folder: &std::path::Path, name: &str, script: &str) -> std::path::PathBuf {
         use std::os::unix::fs::PermissionsExt;
 
-        let path = folder.join("fish");
-        std::fs::write(&path, "#!/bin/sh\nprintf '%s\\0' fish \"$@\"\n").unwrap();
+        let path = folder.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         path
     }
@@ -415,9 +434,11 @@ mod tests {
             assert_eq!(status, Some(0));
             assert_eq!(printed_words(&output), expected("bash"));
         }
-        // Any other login shell, or none known, has `sh` run it.
-        let fish = fake_shell(root.path());
-        for login_shell in [Some(fish.as_path()), None] {
+        // Any other login shell, or none known, has `sh` run it. busybox is no shell by that
+        // name, only as `sh` or `ash`.
+        let fish = fake_shell(root.path(), "fish");
+        let busybox = fake_shell(root.path(), "busybox");
+        for login_shell in [Some(fish.as_path()), Some(busybox.as_path()), None] {
             let (output, status) =
                 run_as_server(command, Some(&folder_text), &arguments, login_shell);
             assert_eq!(status, Some(0));
@@ -432,7 +453,7 @@ mod tests {
         use crate::ssh::exec::tests::printed_words;
 
         let root = tempfile::tempdir().unwrap();
-        let fish = fake_shell(root.path());
+        let fish = fake_shell(root.path(), "fish");
         let command = r"echo (pwd); set x 1; and echo \' $x";
         let folder = root.path().to_string_lossy().into_owned();
         let (output, status) = run_as_server(command, Some(&folder), &[], Some(&fish));
@@ -443,6 +464,51 @@ mod tests {
         let (output, status) = run_as_server(command, Some(&missing), &[], Some(&fish));
         assert_eq!(status, Some(1));
         assert!(output.is_empty());
+    }
+
+    /// A command in a folder, such as one whose only placeholder is the folder, finds it as
+    /// `"$PWD"`, exactly, in whatever login shell runs it.
+    #[cfg(unix)]
+    #[test]
+    fn the_folder_is_pwd_in_the_login_shell() {
+        use crate::ssh::exec::tests::printed_words;
+
+        let root = tempfile::tempdir().unwrap();
+        let folder = root.path().join("it's a $(folder)\n");
+        std::fs::create_dir(&folder).unwrap();
+        let folder_text = folder.to_string_lossy().into_owned();
+        let bash = std::path::Path::new("/bin/bash");
+        if bash.exists() {
+            let command = r#"printf '%s\0' "$PWD""#;
+            let (output, status) = run_as_server(command, Some(&folder_text), &[], Some(bash));
+            assert_eq!(status, Some(0));
+            assert_eq!(printed_words(&output), std::slice::from_ref(&folder_text));
+        }
+        // Exported, for login shells that do not set it themselves.
+        let environment = fake_program(root.path(), "csh", "exec env");
+        let (output, status) = run_as_server("pwd", Some(&folder_text), &[], Some(&environment));
+        assert_eq!(status, Some(0));
+        let printed = String::from_utf8(output).unwrap();
+        assert!(
+            printed.contains(&format!("\nPWD={folder_text}\n")),
+            "{printed}"
+        );
+    }
+
+    /// Where `sh` is the Bourne shell (Solaris 10), the scripts still run.
+    #[test]
+    fn scripts_keep_to_the_bourne_shell() {
+        let names = ["a".to_string()];
+        for script in [
+            command_script("ls", Some("/srv"), &names),
+            command_script("ls", Some("/srv"), &[]),
+            command_script("ls", None, &names),
+        ] {
+            for modern in ["$(", "##", "cd --"] {
+                assert!(!script.contains(modern), "{modern} in {script}");
+            }
+        }
+        assert!(command_script("ls", Some("-x"), &[]).starts_with("cd './-x' || exit 1\nexec "));
     }
 
     #[test]

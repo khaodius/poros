@@ -2,10 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   commandSucceeded,
   describeResult,
-  expandCommand,
   needsSelection,
   prepareCommands,
-  shellArgument,
   shellQuote,
 } from "./commands";
 
@@ -17,6 +15,14 @@ const target = {
   ],
 };
 
+/** The command that runs for one item named `a b`. */
+function commandFor(template: string): string {
+  return prepareCommands(template, {
+    folder: "/srv",
+    items: [{ path: "/srv/a b", name: "a b" }],
+  })[0].command;
+}
+
 describe("shellQuote", () => {
   it("makes one word of anything", () => {
     expect(shellQuote("plain")).toBe("'plain'");
@@ -26,73 +32,7 @@ describe("shellQuote", () => {
   });
 });
 
-describe("shellArgument", () => {
-  it("keeps names that start with a dash from reading as options", () => {
-    expect(shellArgument("-rf")).toBe("'./-rf'");
-    expect(shellArgument("--checkpoint-action=exec=sh x.sh")).toBe(
-      "'./--checkpoint-action=exec=sh x.sh'",
-    );
-    expect(shellArgument("-it's")).toBe("'./-it'\\''s'");
-    expect(shellArgument("a-b")).toBe("'a-b'");
-    expect(shellArgument("/srv/site/-rf")).toBe("'/srv/site/-rf'");
-    expect(shellArgument("")).toBe("''");
-  });
-});
-
-describe("expandCommand", () => {
-  it("runs once per item for {path} and {name}", () => {
-    expect(expandCommand("chmod 644 {path}", target)).toEqual([
-      "chmod 644 '/srv/site/index.html'",
-      "chmod 644 '/srv/site/it'\\''s here'",
-    ]);
-    expect(expandCommand("gzip -k {name}", target)).toEqual([
-      "gzip -k 'index.html'",
-      "gzip -k 'it'\\''s here'",
-    ]);
-  });
-
-  it("runs once with every item for {paths} and {names}", () => {
-    expect(expandCommand("du -sh {paths}", target)).toEqual([
-      "du -sh '/srv/site/index.html' '/srv/site/it'\\''s here'",
-    ]);
-    expect(expandCommand("tar -czf backup.tgz {names}", target)).toEqual([
-      "tar -czf backup.tgz 'index.html' 'it'\\''s here'",
-    ]);
-  });
-
-  it("never passes a selected name as an option", () => {
-    const dashed = {
-      folder: "/srv/site",
-      items: [
-        { path: "/srv/site/-rf", name: "-rf" },
-        {
-          path: "/srv/site/--checkpoint-action=exec=sh x.sh",
-          name: "--checkpoint-action=exec=sh x.sh",
-        },
-      ],
-    };
-    expect(expandCommand("rm {name}", dashed)).toEqual([
-      "rm './-rf'",
-      "rm './--checkpoint-action=exec=sh x.sh'",
-    ]);
-    expect(expandCommand("tar -cf backup.tar {names}", dashed)).toEqual([
-      "tar -cf backup.tar './-rf' './--checkpoint-action=exec=sh x.sh'",
-    ]);
-    expect(expandCommand("rm {path}", dashed)).toEqual([
-      "rm '/srv/site/-rf'",
-      "rm '/srv/site/--checkpoint-action=exec=sh x.sh'",
-    ]);
-    expect(expandCommand("ls {paths}", dashed)).toEqual([
-      "ls '/srv/site/-rf' '/srv/site/--checkpoint-action=exec=sh x.sh'",
-    ]);
-  });
-
-  it("fills in the folder and leaves other braces to the shell", () => {
-    expect(expandCommand("ls {folder} ${HOME} {other}", { ...target, items: [] })).toEqual([
-      "ls '/srv/site' ${HOME} {other}",
-    ]);
-  });
-
+describe("needsSelection", () => {
   it("knows which commands need a selection", () => {
     expect(needsSelection("du -sh {paths}")).toBe(true);
     expect(needsSelection("rm {name}")).toBe(true);
@@ -110,6 +50,59 @@ describe("prepareCommands", () => {
       { path: "/srv/up'loads/$(reboot)\n`id`", name: "$(reboot)\n`id`" },
     ],
   };
+
+  it("runs once per item for {path} and {name}", () => {
+    expect(prepareCommands("chmod 644 {path}", target)).toEqual([
+      {
+        display: "chmod 644 \"${1}\" with $1 = '/srv/site/index.html'",
+        command: 'chmod 644 "${1}"',
+        arguments: ["/srv/site/index.html"],
+      },
+      {
+        display: "chmod 644 \"${1}\" with $1 = '/srv/site/it'\\''s here'",
+        command: 'chmod 644 "${1}"',
+        arguments: ["/srv/site/it's here"],
+      },
+    ]);
+    expect(prepareCommands("gzip -k {name}", target).map((run) => run.arguments)).toEqual([
+      ["index.html"],
+      ["it's here"],
+    ]);
+  });
+
+  it("runs once with every item for {paths} and {names}", () => {
+    expect(prepareCommands("du -sh {paths}", target)).toEqual([
+      {
+        display:
+          "du -sh \"${1}\" \"${2}\" with $1 = '/srv/site/index.html', $2 = '/srv/site/it'\\''s here'",
+        command: 'du -sh "${1}" "${2}"',
+        arguments: ["/srv/site/index.html", "/srv/site/it's here"],
+      },
+    ]);
+    const [run] = prepareCommands("tar -czf backup.tgz {names}", target);
+    expect(run.arguments).toEqual(["index.html", "it's here"]);
+  });
+
+  it("never passes a selected name as an option", () => {
+    const dashed = {
+      folder: "/srv/site",
+      items: [
+        { path: "/srv/site/-rf", name: "-rf" },
+        {
+          path: "/srv/site/--checkpoint-action=exec=sh x.sh",
+          name: "--checkpoint-action=exec=sh x.sh",
+        },
+      ],
+    };
+    expect(prepareCommands("rm {name}", dashed).map((run) => run.arguments)).toEqual([
+      ["./-rf"],
+      ["./--checkpoint-action=exec=sh x.sh"],
+    ]);
+    expect(prepareCommands("ls {paths}", dashed)[0].arguments).toEqual([
+      "/srv/site/-rf",
+      "/srv/site/--checkpoint-action=exec=sh x.sh",
+    ]);
+  });
 
   it("sends names as arguments, never inside the command", () => {
     const runs = prepareCommands("chmod 644 {path} && ls -l {names} {folder}", hostile);
@@ -129,9 +122,6 @@ describe("prepareCommands", () => {
     for (const run of runs) {
       for (const item of hostile.items) expect(run.command).not.toContain(item.name);
     }
-    expect(runs[1].display).toBe(
-      expandCommand("chmod 644 {path} && ls -l {names} {folder}", hostile)[1],
-    );
   });
 
   it("gives a repeated placeholder the same parameters", () => {
@@ -144,20 +134,66 @@ describe("prepareCommands", () => {
   });
 
   it("keeps each name one word inside the user's own quotes", () => {
-    const target = { folder: "/srv", items: [{ path: "/srv/a b", name: "a b" }] };
-    const command = (template: string) => prepareCommands(template, target)[0].command;
-    expect(command('echo "file: {name}"')).toBe('echo "file: ${1}"');
-    expect(command("echo 'file: {name}'")).toBe("echo 'file: '\"${1}\"''");
-    expect(command('echo "$(basename "{path}")"')).toBe('echo "$(basename "${1}")"');
-    expect(command('echo "it\\"s {name}"')).toBe('echo "it\\"s ${1}"');
-    expect(command("echo \\' {name}")).toBe('echo \\\' "${1}"');
-    expect(command('du -sh "{paths}"')).toBe('du -sh "${1}"');
+    expect(commandFor('echo "file: {name}"')).toBe('echo "file: ${1}"');
+    expect(commandFor("echo 'file: {name}'")).toBe("echo 'file: '\"${1}\"''");
+    expect(commandFor('echo "$(basename "{path}")"')).toBe('echo "$(basename "${1}")"');
+    expect(commandFor('echo "it\\"s {name}"')).toBe('echo "it\\"s ${1}"');
+    expect(commandFor("echo \\' {name}")).toBe('echo \\\' "${1}"');
+    expect(commandFor('du -sh "{paths}"')).toBe('du -sh "${1}"');
+  });
+
+  it("keeps a name one word in backticks, inside double quotes or not", () => {
+    expect(commandFor('echo "`md5sum {name}`"')).toBe('echo "`md5sum "${1}"`"');
+    expect(commandFor('tar czf "/backup/`basename {name}`.tgz" {name}')).toBe(
+      'tar czf "/backup/`basename "${1}"`.tgz" "${1}"',
+    );
+    expect(commandFor("echo `ls {name}` {name}")).toBe('echo `ls "${1}"` "${1}"');
+    expect(commandFor('echo "`date` {name}"')).toBe('echo "`date` ${1}"');
+    expect(commandFor("echo \"`echo '{name}'`\"")).toBe("echo \"`echo ''\"${1}\"''`\"");
+  });
+
+  it("follows parentheses and case patterns inside $(...)", () => {
+    expect(commandFor('echo "$(cd /tmp && (ls) | grep {name})"')).toBe(
+      'echo "$(cd /tmp && (ls) | grep "${1}")"',
+    );
+    expect(commandFor('echo "$(case x in a) echo {name};; esac) {name}"')).toBe(
+      'echo "$(case x in a) echo "${1}";; esac) ${1}"',
+    );
+    expect(commandFor('echo "$(case x in (a) echo {name};; esac) {name}"')).toBe(
+      'echo "$(case x in (a) echo "${1}";; esac) ${1}"',
+    );
+    expect(commandFor('echo "$((1 + 2)) {name}"')).toBe('echo "$((1 + 2)) ${1}"');
+    expect(commandFor('echo "$(echo ")") {name}"')).toBe('echo "$(echo ")") ${1}"');
+    // A word that only holds "case" is no case statement.
+    expect(commandFor('echo "$(echo suitcase) {name}"')).toBe('echo "$(echo suitcase) ${1}"');
+  });
+
+  it("reads past comments", () => {
+    expect(commandFor("ls {name} # it's here\necho {name}")).toBe(
+      'ls "${1}" # it\'s here\necho "${1}"',
+    );
+    expect(commandFor('echo "$(ls # (it\'s)\n) {name}"')).toBe('echo "$(ls # (it\'s)\n) ${1}"');
+    // Inside a word, # starts no comment.
+    expect(commandFor("echo a#b'{name}'")).toBe("echo a#b''\"${1}\"''");
+  });
+
+  it("runs a command with only {folder} in the folder, as written for the login shell", () => {
+    expect(prepareCommands("git -C {folder} pull", { folder: "/srv/up'loads", items: [] })).toEqual(
+      [{ display: 'git -C "$PWD" pull', command: 'git -C "$PWD" pull', arguments: [] }],
+    );
+    expect(commandFor('echo "in {folder}"')).toBe('echo "in $PWD"');
+    expect(commandFor("echo 'in {folder}'")).toBe("echo 'in '\"$PWD\"''");
+    // With selected items, the folder is an argument like them.
+    const [run] = prepareCommands("cp {names} {folder}/old", target);
+    expect(run.command).toBe('cp "${1}" "${2}" "${3}"/old');
+    expect(run.arguments).toEqual(["index.html", "it's here", "/srv/site"]);
   });
 
   it("runs a command without placeholders as written, with no arguments", () => {
     expect(prepareCommands("uptime; echo $HOME", { ...target, items: [] })).toEqual([
       { display: "uptime; echo $HOME", command: "uptime; echo $HOME", arguments: [] },
     ]);
+    expect(commandFor("ls ${HOME} {other}")).toBe("ls ${HOME} {other}");
   });
 });
 

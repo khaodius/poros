@@ -1,5 +1,11 @@
 import { useState, type FormEvent } from "react";
-import { PLACEHOLDERS, needsSelection, prepareCommands, type CommandTarget } from "../lib/commands";
+import {
+  PLACEHOLDER_ADVICE,
+  PLACEHOLDERS,
+  needsSelection,
+  prepareCommands,
+  type CommandTarget,
+} from "../lib/commands";
 import { useCommandStore } from "../state/commandStore";
 import { Dialog } from "./Dialog";
 
@@ -59,6 +65,7 @@ export function RunCommandDialog({ sessionId, target, onClose }: RunCommandDialo
             </div>
           ))}
         </dl>
+        <p className="field-hint">{PLACEHOLDER_ADVICE}</p>
         <label className="check">
           <input
             type="checkbox"

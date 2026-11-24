@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { CalendarClock, Plus, Trash2 } from "lucide-react";
 import { WHEN_DONE_LABELS } from "../lib/automation";
-import { PLACEHOLDERS } from "../lib/commands";
+import { PLACEHOLDER_ADVICE, PLACEHOLDERS } from "../lib/commands";
 import {
   WHEN_DONE_ACTIONS,
   type AutomationSettings,
@@ -85,6 +85,7 @@ export function AutomationSettingsPage({ settings }: { settings: Settings }) {
             </div>
           ))}
         </dl>
+        <p className="setting-note">{PLACEHOLDER_ADVICE}</p>
         <CommandList commands={automation.commands} onChange={(commands) => set({ commands })} />
       </SettingGroup>
 

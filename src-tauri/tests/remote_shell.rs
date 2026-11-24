@@ -1030,6 +1030,15 @@ async fn commands_get_hostile_names_as_arguments_and_written_commands_run_in_fis
         format!("{} in {HOSTILE_FOLDER}\n", BYSTANDERS.len())
     );
     assert_eq!(fixture.exec_lines().await, [SCRIPT_LINE, in_folder]);
+    fixture.forget_exec_lines().await;
+
+    // A command whose only placeholder is {folder} gets "$PWD" for it, and fish runs it.
+    let folder_only = "for entry in \"$PWD\"/*; echo (basename $entry); end";
+    let (status, stdout, stderr) =
+        run(folder_only, Some(fixture.path(HOSTILE_FOLDER)), Vec::new()).await;
+    assert_eq!(status, Some(0), "{stderr}");
+    assert_eq!(stdout, format!("{}\n", BYSTANDERS.join("\n")));
+    assert_eq!(fixture.exec_lines().await, [SCRIPT_LINE, folder_only]);
     fixture.assert_nothing_ran().await;
     fixture.close().await;
 }

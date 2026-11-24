@@ -1,7 +1,7 @@
 // Commands run on the server from the context menu. The server is sent the command with each
 // placeholder turned into positional parameters ("${1}" and on) and the selected names apart, as
 // the arguments, so that no shell ever reads a name as part of the command and no file name can
-// act as an option. What the user sees is the command with the names filled in and quoted.
+// act as an option. What the user sees is that command and what each parameter stands for.
 
 import { formatDuration } from "./format";
 import type { CommandResult } from "./types";
@@ -21,6 +21,13 @@ export const PLACEHOLDERS: { placeholder: string; meaning: string }[] = [
   { placeholder: "{folder}", meaning: "the folder shown" },
 ];
 
+/**
+ * Said under the placeholders: each is one word to the command, but a shell the command starts
+ * reads its own command string, names and all.
+ */
+export const PLACEHOLDER_ADVICE =
+  'Keep placeholders out of a command string another shell reads, such as bash -c "..." or ssh host "...": that shell would read a name as part of its command.';
+
 const PLACEHOLDER_PATTERN = /\{(path|name|paths|names|folder)\}/g;
 const PER_ITEM_PATTERN = /\{(path|name)\}/;
 const SELECTION_PATTERN = /\{(path|name|paths|names)\}/;
@@ -38,11 +45,6 @@ function safeArgument(text: string): string {
   return text.startsWith("-") ? `./${text}` : text;
 }
 
-/** Quotes a file name or path as one shell word that commands cannot read as an option. */
-export function shellArgument(text: string): string {
-  return shellQuote(safeArgument(text));
-}
-
 /** The command works on selected items, so it cannot run without any. */
 export function needsSelection(template: string): boolean {
   return SELECTION_PATTERN.test(template);
@@ -50,7 +52,7 @@ export function needsSelection(template: string): boolean {
 
 /** One run of a command. */
 export interface PreparedCommand {
-  /** The command with the names filled in and quoted, to show. */
+  /** What runs, with what each positional parameter stands for, to show. */
   display: string;
   /** What the server runs: the command with placeholders turned into positional parameters. */
   command: string;
@@ -60,65 +62,127 @@ export interface PreparedCommand {
 
 type Quoting = "none" | "single" | "double";
 
-/** Where `sh` is while it reads a command: inside nested `$(...)` and double quotes, or not. */
-interface QuoteState {
-  frames: ("command" | "double")[];
-  single: boolean;
+/** A part of a command that `sh` reads on its own terms. */
+interface Frame {
+  /** The command itself or `$(...)`; backticks; or double quotes. */
+  kind: "command" | "backticks" | "double";
+  /** Parentheses opened in it and not closed yet, such as a subshell's. */
+  open: number;
+  /** `case` statements begun in it and not ended yet, whose patterns end with `)`. */
+  cases: number;
 }
 
-/** Moves `state` past `text`, as `sh` reads it. */
-function readPast(state: QuoteState, text: string): void {
-  for (let index = 0; index < text.length; index++) {
-    const character = text[index];
-    if (state.single) {
-      if (character === "'") state.single = false;
-      continue;
-    }
-    if (character === "\\") {
-      index++;
-      continue;
-    }
-    if (character === "$" && text[index + 1] === "(") {
-      state.frames.push("command");
-      index++;
-      continue;
-    }
-    if (state.frames[state.frames.length - 1] === "double") {
-      if (character === '"') state.frames.pop();
-    } else if (character === "'") {
-      state.single = true;
-    } else if (character === '"') {
-      state.frames.push("double");
-    } else if (character === ")" && state.frames.length > 1) {
-      state.frames.pop();
-    }
-  }
+/** What can stand before a word: there `#` starts a comment, and `case` and `esac` are words. */
+const BEFORE_WORD = /[\s;&|()`]/;
+
+function startsWord(text: string, index: number): boolean {
+  return index === 0 || BEFORE_WORD.test(text[index - 1]);
 }
 
-function quotingOf(state: QuoteState): Quoting {
-  if (state.single) return "single";
-  return state.frames[state.frames.length - 1] === "double" ? "double" : "none";
+function isWord(text: string, index: number, word: string): boolean {
+  if (!startsWord(text, index) || !text.startsWith(word, index)) return false;
+  const after = text[index + word.length];
+  return after === undefined || BEFORE_WORD.test(after);
+}
+
+function frame(kind: Frame["kind"]): Frame {
+  return { kind, open: 0, cases: 0 };
 }
 
 /**
- * Positional parameters `positions` as they belong where a placeholder stands: each quoted on
- * its own, bare inside the user's double quotes, and out of the user's single quotes.
+ * How `sh` reads each of `spots`, the placeholders in `template` in order: inside the user's
+ * single quotes, inside double quotes, or neither, which is the command itself, `$(...)` or
+ * backticks, inside double quotes or not.
  */
-function reference(positions: number[], quoting: Quoting): string {
-  const bare = positions.map((position) => `\${${position}}`);
-  const quoted = bare.map((parameter) => `"${parameter}"`).join(" ");
-  if (quoting === "double") return bare.join(" ");
+function quotingAt(template: string, spots: { index: number; length: number }[]): Quoting[] {
+  const frames: Frame[] = [frame("command")];
+  const found: Quoting[] = [];
+  let single = false;
+  let comment = false;
+  let spot = 0;
+  for (let index = 0; index < template.length; index++) {
+    const top = frames[frames.length - 1];
+    if (spots[spot]?.index === index) {
+      found.push(single ? "single" : top.kind === "double" ? "double" : "none");
+      index += spots[spot].length - 1;
+      spot++;
+      continue;
+    }
+    const character = template[index];
+    if (comment) {
+      comment = character !== "\n";
+      continue;
+    }
+    if (single) {
+      single = character !== "'";
+      continue;
+    }
+    if (character === "\\") {
+      if (spots[spot]?.index !== index + 1) index++;
+      continue;
+    }
+    if (character === "`") {
+      if (top.kind === "backticks") frames.pop();
+      else frames.push(frame("backticks"));
+    } else if (character === "$" && template[index + 1] === "(") {
+      frames.push(frame("command"));
+      index++;
+    } else if (top.kind === "double") {
+      if (character === '"') frames.pop();
+    } else if (character === "'") {
+      single = true;
+    } else if (character === '"') {
+      frames.push(frame("double"));
+    } else if (character === "#" && startsWord(template, index)) {
+      comment = true;
+    } else if (character === "(") {
+      top.open++;
+    } else if (character === ")") {
+      if (top.open > 0) top.open--;
+      else if (top.cases === 0 && top.kind === "command" && frames.length > 1) frames.pop();
+    } else if (isWord(template, index, "case")) {
+      top.cases++;
+      index += "case".length - 1;
+    } else if (isWord(template, index, "esac")) {
+      top.cases = Math.max(0, top.cases - 1);
+      index += "esac".length - 1;
+    }
+  }
+  return found;
+}
+
+/**
+ * Parameters as they belong where a placeholder stands: each quoted on its own, bare inside the
+ * user's double quotes, and out of the user's single quotes.
+ */
+function reference(parameters: string[], quoting: Quoting): string {
+  const quoted = parameters.map((parameter) => `"${parameter}"`).join(" ");
+  if (quoting === "double") return parameters.join(" ");
   if (quoting === "single") return `'${quoted}'`;
   return quoted;
+}
+
+/** What runs, and what each positional parameter stands for. */
+function describeCommand(command: string, values: string[]): string {
+  if (values.length === 0) return command;
+  const meanings = values.map((value, index) => `$${index + 1} = ${shellQuote(value)}`);
+  return `${command} with ${meanings.join(", ")}`;
 }
 
 /**
  * The runs of a command: one per item when the template has {path} or {name}, else one. Each
  * value a placeholder stands for becomes one argument, so a name stays one word whatever it holds.
+ * A command that names no selected item gets no arguments: it runs in the folder, so {folder} is
+ * "$PWD" there, and the login shell runs it as it does a command without placeholders.
  */
 export function prepareCommands(template: string, target: CommandTarget): PreparedCommand[] {
-  const displays = expandCommand(template, target);
-  const prepare = (display: string, item?: CommandTarget["items"][number]): PreparedCommand => {
+  const matches = [...template.matchAll(PLACEHOLDER_PATTERN)];
+  const quoting = quotingAt(
+    template,
+    matches.map((match) => ({ index: match.index, length: match[0].length })),
+  );
+  const folderOnly = !needsSelection(template);
+  const prepare = (item?: CommandTarget["items"][number]): PreparedCommand => {
     const values = (key: string): string[] => {
       switch (key) {
         case "path":
@@ -134,51 +198,27 @@ export function prepareCommands(template: string, target: CommandTarget): Prepar
       }
     };
     const parameters: string[] = [];
-    const positions = new Map<string, number[]>();
-    const state: QuoteState = { frames: ["command"], single: false };
+    const references = new Map<string, string[]>();
     let command = "";
     let read = 0;
-    for (const match of template.matchAll(PLACEHOLDER_PATTERN)) {
-      const before = template.slice(read, match.index);
-      readPast(state, before);
-      command += before;
+    matches.forEach((match, index) => {
+      command += template.slice(read, match.index);
       const key = match[1];
-      let taken = positions.get(key);
+      let taken = references.get(key);
       if (!taken) {
-        taken = values(key).map((value) => parameters.push(value));
-        positions.set(key, taken);
+        taken =
+          key === "folder" && folderOnly
+            ? ["$PWD"]
+            : values(key).map((value) => `\${${parameters.push(value)}}`);
+        references.set(key, taken);
       }
-      command += reference(taken, quotingOf(state));
+      command += reference(taken, quoting[index]);
       read = match.index + match[0].length;
-    }
-    command += template.slice(read);
-    return { display, command, arguments: parameters };
-  };
-  return PER_ITEM_PATTERN.test(template)
-    ? target.items.map((item, index) => prepare(displays[index], item))
-    : [prepare(displays[0])];
-}
-
-/** The commands as they read with the names filled in: one per item for {path} or {name}. */
-export function expandCommand(template: string, target: CommandTarget): string[] {
-  const allPaths = target.items.map((item) => shellArgument(item.path)).join(" ");
-  const allNames = target.items.map((item) => shellArgument(item.name)).join(" ");
-  const fill = (item?: CommandTarget["items"][number]) =>
-    template.replace(PLACEHOLDER_PATTERN, (_match, key: string) => {
-      switch (key) {
-        case "path":
-          return item ? shellArgument(item.path) : "";
-        case "name":
-          return item ? shellArgument(item.name) : "";
-        case "paths":
-          return allPaths;
-        case "names":
-          return allNames;
-        default:
-          return shellArgument(target.folder);
-      }
     });
-  return PER_ITEM_PATTERN.test(template) ? target.items.map(fill) : [fill()];
+    command += template.slice(read);
+    return { display: describeCommand(command, parameters), command, arguments: parameters };
+  };
+  return PER_ITEM_PATTERN.test(template) ? target.items.map((item) => prepare(item)) : [prepare()];
 }
 
 /** A command with no exit status, as after a dropped connection, is not known to have worked. */
