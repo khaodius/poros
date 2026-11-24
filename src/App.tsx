@@ -7,6 +7,7 @@ import { CommandOutputDialog } from "./components/CommandOutputDialog";
 import { ConflictDialog } from "./components/ConflictDialog";
 import { ConnectDialog } from "./components/ConnectDialog";
 import { DragGhost } from "./components/DragGhost";
+import { ExternalEditsHost } from "./components/ExternalEditDialogs";
 import { FileFlights } from "./components/FileFlights";
 import { FileOperationsHost } from "./components/FileOperationsHost";
 import { HostKeyDialog } from "./components/HostKeyDialog";
@@ -50,7 +51,6 @@ import {
   windows,
 } from "./lib/ipc";
 import { findGroup, group, welcomeTab } from "./lib/layout";
-import { busyDrives } from "./lib/mounts";
 import { DEFAULT_SETTINGS, FONT_SIZE_LIMITS } from "./lib/settings";
 import { dragWindowFrom } from "./lib/windowDrag";
 import { matchWindowCorners } from "./lib/windowCorners";
@@ -61,11 +61,11 @@ import { hitTest, useDragStore, type DragPayload } from "./state/dragStore";
 import { useLayoutStore } from "./state/layoutStore";
 import { startSharingListings } from "./state/listings";
 import { useLogStore } from "./state/logStore";
-import { useMountStore } from "./state/mountStore";
 import { activePane } from "./state/paneRegistry";
+import { quitWaits } from "./state/quitGuard";
 import { askToSave, unsavedEditorTabs } from "./state/editorActions";
 import { useSavedConnections } from "./state/savedConnectionsStore";
-import { reloadSchedules } from "./state/scheduleStore";
+import { reloadSchedules, useScheduleStore } from "./state/scheduleStore";
 import { useSessionStore } from "./state/sessionStore";
 import { saveSettingsSection, useSettingsStore } from "./state/settingsStore";
 import { adoptHandoff, isMainWindow, receiveTabs, requestCloseTab } from "./state/tabActions";
@@ -97,6 +97,12 @@ function startApp(): Promise<void> {
         .catch((caught) => reportError("Could not read saved connections", caught)),
       useThemeStore.getState().load(),
       useTransferStore.getState().load(),
+      // What scheduled runs finish from now on is compared with this, to forget the listings
+      // of folders they change. Every window looks, for the sessions of its own tabs.
+      useScheduleStore
+        .getState()
+        .load()
+        .catch((caught) => reportError("Could not read scheduled tasks", caught)),
     ]);
     if (isMainWindow()) {
       const restored = await restoreWorkspace();
@@ -274,20 +280,16 @@ function useSystemFileDrops() {
   }, []);
 }
 
-/** Keeps the tabs for the next start and asks about unsaved files, and about drives in use when
- * Poros quits, before the window closes. */
+/** Keeps the tabs for the next start and asks about unsaved files before the window closes, and
+ * when Poros quits first about files saved in other programs and drives in use. */
 function useCloseGuard() {
   useEffect(() => {
     const subscription = getCurrentWindow().onCloseRequested(async (event) => {
       await saveWorkspaceNow();
-      if (isMainWindow()) {
-        await useMountStore.getState().load();
-        const drives = busyDrives(useMountStore.getState().drives);
-        if (drives.length > 0) {
-          event.preventDefault();
-          useUiStore.getState().open({ kind: "quit", drives });
-          return;
-        }
+      // Closing the main window quits, which ends editing in other programs and unmounts drives.
+      if (isMainWindow() && (await quitWaits())) {
+        event.preventDefault();
+        return;
       }
       const unsaved = unsavedEditorTabs();
       if (unsaved.length === 0) return;
@@ -542,6 +544,7 @@ export function App() {
       {ready && <AppliedTheme />}
       <AppDialog />
       <ConflictDialog />
+      <ExternalEditsHost />
       <FileOperationsHost />
       <HostKeyDialog />
       <CommandOutputDialog />

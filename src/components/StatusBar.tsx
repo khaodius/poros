@@ -1,12 +1,13 @@
 import { ArrowDown, ArrowUp, CircleArrowUp } from "lucide-react";
 import { formatDuration, formatSize, formatSpeed, formatVersion, pluralize } from "../lib/format";
 import { findGroup } from "../lib/layout";
-import { secondsRemaining } from "../lib/transfers";
+import { secondsRemaining, showsPaused } from "../lib/transfers";
 import { useLayoutStore } from "../state/layoutStore";
 import { serverEntry, useSessionStore } from "../state/sessionStore";
 import { useSettingsStore } from "../state/settingsStore";
 import { useTransferStore } from "../state/transferStore";
 import { useUiStore } from "../state/uiStore";
+import { ExternalEditsStatus } from "./ExternalEditsStatus";
 import {
   percentDownloaded,
   showUpdateNotice,
@@ -104,12 +105,13 @@ export function StatusBar() {
       </span>
       <span className="status-right">
         <DriveStatus />
+        <ExternalEditsStatus />
         {pending > 0 && (
           <span className="status-item status-queue">
             {pluralize(pending, "transfer")} left
             {stats.remainingBytes > 0 && `, ${formatSize(stats.remainingBytes)}`}
             {remaining !== null && `, about ${formatDuration(remaining)}`}
-            {stats.queuePaused && " (paused)"}
+            {showsPaused(stats) && " (paused)"}
           </span>
         )}
         <LimitScheduleStatus />

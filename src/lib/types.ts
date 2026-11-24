@@ -282,6 +282,10 @@ export interface JobSnapshot {
   direct?: boolean;
   /** Queued while its server is out of reach after a dropped connection. */
   reconnecting?: boolean;
+  /** What queued the job when it was not the user: a scheduled task's name. */
+  label?: string;
+  /** A scheduled run follows it, so it goes while transfers wait for Start. */
+  unattended?: boolean;
 }
 
 export interface QueueCounts {
@@ -300,6 +304,10 @@ export interface TransferStats {
   uploadSpeed: number;
   downloadSpeed: number;
   queuePaused: boolean;
+  /** Paused only until the user presses Start; the files of scheduled runs go on. */
+  heldForStart: boolean;
+  /** Files of scheduled runs are going or waiting their turn. */
+  unattendedRunning: boolean;
   /** The speed limits in force, and the rule of the schedule that set them. */
   limits: LimitStatus;
 }
@@ -847,7 +855,29 @@ export type TaskAction =
       /** rsync arguments applied over the options. */
       arguments: string;
     } & SyncOptions)
-  | { type: "command"; connectionId: string; command: string; directory?: string | null };
+  | { type: "command"; connectionId: string; command: string; directory?: string | null }
+  | {
+      type: "transfer";
+      /** The server written to, or read from by a download. */
+      connectionId: string;
+      /** The server a copy between two servers reads from. */
+      sourceConnectionId?: string | null;
+      direction: Direction;
+      items: TaskItem[];
+      /** The folder the items go into: on the server, or on this computer for a download. */
+      destination: string;
+      /** Never "ask": no one is there to answer. */
+      exists: ExistsAction;
+      /** A folder inside the destination named from the time of each run, or empty. */
+      subfolder: string;
+    };
+
+/** A file or folder a transfer task copies; a folder goes with everything in it. */
+export interface TaskItem {
+  path: string;
+  /** As it was when it was added, for the icon. A run looks again. */
+  isDir?: boolean;
+}
 
 export interface LastRun {
   /** Seconds since the Unix epoch. */
@@ -855,6 +885,11 @@ export interface LastRun {
   finished: number;
   succeeded: boolean;
   message: string;
+  /**
+   * Written as a run begins, a failure that its end replaces: true while the run goes on, or
+   * when the process running it ended before it could say how the run went.
+   */
+  underWay?: boolean;
 }
 
 export interface ScheduledTask {
@@ -1263,6 +1298,120 @@ export interface PreviewPlacement {
  */
 export type UpdateProgress =
   { stage: "downloading"; received: number; total: number | null } | { stage: "installing" };
+
+/** What to open a file with. Mirrored in src-tauri/src/external_editor/mod.rs. */
+export type OpenWith =
+  | { kind: "default" }
+  /** A program from Settings > Interface > Open with. */
+  | { kind: "program"; id: string }
+  /** A program picked for this one file. */
+  | { kind: "custom"; command: string };
+
+export interface ExternalOpenRequest {
+  sessionId: string;
+  path: string;
+  with: OpenWith;
+  /** The user agreed to open a file of a type that runs, in the program named. */
+  confirmedExecutable?: boolean;
+}
+
+export type ExternalEditState =
+  | "downloading"
+  /** Open in its program, with nothing to upload. */
+  | "watching"
+  /** Saved, and waiting for the user to say it should be uploaded. */
+  | "changed"
+  /** An upload waits for the server or for the transfer queue. */
+  | "waiting"
+  /** The server's copy changed since it was downloaded. */
+  | "conflict"
+  | "uploading"
+  | "failed";
+
+/** The two copies of a file whose server copy changed. */
+export interface ExternalEditConflict {
+  serverSize: number | null;
+  /** Seconds since the Unix epoch. */
+  serverModified: number | null;
+  /** The file is gone from the server. */
+  deleted: boolean;
+  localSize: number;
+  /** Milliseconds since the Unix epoch. */
+  localModified: number | null;
+}
+
+/** A server file open in another program. */
+export interface ExternalEdit {
+  id: string;
+  name: string;
+  remotePath: string;
+  /** The session uploads go through now, which changes when a tab reconnects. */
+  sessionId: string;
+  /** The server's label. */
+  server: string;
+  inVault: boolean;
+  /** Saves are still uploaded once the tab is closed; a vault's are not, as it locks. */
+  outlivesSession: boolean;
+  localPath: string;
+  /** What the file was opened with; empty for a file taken up from an earlier run. */
+  program: string;
+  state: ExternalEditState;
+  transferred: number;
+  size: number;
+  /** Why an upload failed or waits. */
+  detail?: string;
+  conflict?: ExternalEditConflict;
+  /** Downloaded but not opened, because its content is a program's. */
+  blocked: boolean;
+  uploads: number;
+  /** Milliseconds since the Unix epoch. */
+  lastUpload?: number;
+}
+
+export type ExternalOpenOutcome =
+  | { kind: "opening"; edit: ExternalEdit }
+  /** The file was open already; its working copy opens again. */
+  | { kind: "alreadyOpen"; edit: ExternalEdit }
+  /** A file on this computer was handed to its program; nothing follows it. */
+  | { kind: "opened" }
+  /** A file of a type that runs: nothing was downloaded until the user names an editor. */
+  | { kind: "needsConfirmation"; name: string };
+
+/** Told once, by the window in use. */
+export type ExternalEditNotice =
+  | { kind: "uploaded"; editId: string; name: string; renamedTo: string | null }
+  | { kind: "uploadFailed"; editId: string; name: string; message: string }
+  | { kind: "conflict"; editId: string; name: string }
+  | { kind: "saved"; editId: string; name: string }
+  | { kind: "blocked"; editId: string; name: string }
+  | { kind: "openFailed"; name: string; message: string }
+  | { kind: "ended"; name: string; message: string };
+
+export interface ExternalEditsUpdate {
+  edits: ExternalEdit[];
+  notice?: ExternalEditNotice;
+}
+
+/** What to do when the server's copy changed. */
+export type ExternalResolution = "overwrite" | "keepBoth" | "cancel";
+
+/** A working copy an earlier run left with changes the server never got. */
+export interface ExternalLeftover {
+  id: string;
+  name: string;
+  remotePath: string;
+  /** The server's label. */
+  server: string;
+  /** The server's own protocol, also for a file in a vault on it. */
+  protocol: Protocol;
+  host: string;
+  port: number;
+  username: string;
+  vaultRoot?: string;
+  size: number;
+  /** Milliseconds since the Unix epoch. */
+  modified?: number;
+}
 
 /** Mirrored in src-tauri/src/search/pattern.rs. */
 export type SearchPatternKind = "text" | "regex";

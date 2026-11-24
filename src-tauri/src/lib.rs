@@ -16,6 +16,8 @@ pub mod drag_out;
 pub mod editor;
 pub mod error;
 pub mod events;
+#[cfg(feature = "gui")]
+pub mod external_editor;
 pub mod file_ops;
 pub mod file_preview;
 #[cfg(feature = "gui")]
@@ -72,6 +74,7 @@ use {
     drag_out::DragOut,
     editor::EditorManager,
     events::Events,
+    external_editor::ExternalEditManager,
     file_ops::FileOperations,
     file_preview::FilePreviews,
     mount::manager::{MountManager, SPOOL_FOLDER},
@@ -156,6 +159,12 @@ pub fn run() {
             let drag_out = DragOut::new(app.path().app_cache_dir()?.join("drag-out"));
             transfers.keep_out_of_saved_queue(drag_out.staging_root().to_path_buf());
             transfers.keep_queue_in(config_dir.join("transfers.json"));
+            app.manage(ExternalEditManager::new(
+                app.path().app_cache_dir()?.join("editing"),
+                transfers.files(),
+                events.clone(),
+                settings.get().editing,
+            ));
             app.manage(transfers);
             app.manage(drag_out);
             app.manage(SyncManager::new(sessions.clone(), events.clone()));
@@ -374,6 +383,20 @@ pub fn run() {
             commands::editor_adopt,
             commands::editor_save,
             commands::editor_close,
+            commands::external_edit_open,
+            commands::external_open_local,
+            commands::external_edit_list,
+            commands::external_edit_upload,
+            commands::external_edit_resolve,
+            commands::external_edit_reopen,
+            commands::external_edit_reveal,
+            commands::external_edit_stop,
+            commands::external_edit_unsaved,
+            commands::external_edit_flush,
+            commands::external_edit_leftovers,
+            commands::external_edit_recover,
+            commands::external_edit_reveal_leftover,
+            commands::external_edit_discard_leftover,
             commands::file_preview_read,
             commands::file_preview_list,
             commands::file_preview_cancel,
@@ -442,18 +465,27 @@ pub fn run() {
             handle.state::<PendingUpdate>().note_quit();
         }
         RunEvent::Exit => {
-            handle.state::<TransferManager>().save_queue();
-            let sessions = handle.state::<Arc<SessionManager>>();
-            let terminals = handle.state::<TerminalManager>();
-            let mounts = handle.state::<Arc<MountManager>>();
-            tauri::async_runtime::block_on(async {
-                // First, so what programs wrote to a drive is kept before its session goes.
-                mounts.unmount_all().await;
-                terminals.close_all().await;
-                sessions.disconnect_all().await;
-            });
+            shut_down(handle);
             handle.state::<PendingUpdate>().install_on_exit();
         }
         _ => {}
+    });
+}
+
+/// What Poros does on its way out, however it goes: the queue is saved, files open in other
+/// programs are kept for the next run or removed, and terminals and connections are closed.
+/// Running it again finds nothing left to do.
+#[cfg(feature = "gui")]
+pub(crate) fn shut_down(handle: &tauri::AppHandle) {
+    handle.state::<TransferManager>().save_queue();
+    handle.state::<ExternalEditManager>().shutdown();
+    let sessions = handle.state::<Arc<SessionManager>>();
+    let terminals = handle.state::<TerminalManager>();
+    let mounts = handle.state::<Arc<MountManager>>();
+    tauri::async_runtime::block_on(async {
+        // First, so what programs wrote to a drive is kept before its session goes.
+        mounts.unmount_all().await;
+        terminals.close_all().await;
+        sessions.disconnect_all().await;
     });
 }

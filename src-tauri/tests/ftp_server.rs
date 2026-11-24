@@ -16,14 +16,19 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
-use poros_lib::error::ErrorKind;
+use poros_lib::automation::runner::{self, SignIn, TaskContext};
+use poros_lib::automation::schedule::Trigger;
+use poros_lib::automation::task::{ScheduledTask, TaskAction, TaskItem};
+use poros_lib::connections::{AuthType, ConnectionStore, SavedConnection, SecretStore};
+use poros_lib::error::{AppResult, ErrorKind};
 use poros_lib::events::Events;
 use poros_lib::model::{EntryKind, LinkTarget};
 use poros_lib::protocol::{Protocol, RemoteFileSystem, WriteRequest};
 use poros_lib::remote_path;
 use poros_lib::session::{SessionInfo, SessionManager};
-use poros_lib::settings::TransferSettings;
+use poros_lib::settings::{ConnectionSettings, TransferSettings};
 use poros_lib::ssh::{AuthMethod, ConnectProfile, HostKeyApproval, Route};
+use poros_lib::sync::SyncManager;
 use poros_lib::tls::CERTIFICATE_ALGORITHM;
 use poros_lib::transfer::{
     Direction, EnqueueRequest, ExistsAction, JobSnapshot, JobState, TransferItem, TransferList,
@@ -999,6 +1004,64 @@ async fn resumes_interrupted_transfers() {
     fixture.close().await;
 }
 
+/// A write and a read that start partway through a file, in passive and active mode, on
+/// plain and encrypted connections.
+#[tokio::test]
+async fn continues_files_from_an_offset_in_every_mode() {
+    for server in every_ftp_server() {
+        for ftp_active in [false, true] {
+            let mut fixture = Fixture::new();
+            let index = fixture
+                .open_with(
+                    ConnectProfile {
+                        ftp_active,
+                        ..profile(&server, &server.password)
+                    },
+                    "offset",
+                )
+                .await;
+            let Connected { files, remote, .. } = fixture.at(index);
+            let mode = format!("port {}, active {ftp_active}", server.port);
+            let path = remote_path::join(remote, "partial.bin");
+            let offset = 123_457;
+            // A marked start shows that the part already on the server is kept.
+            let mut expected = pattern(300_000, 12);
+            expected[..100].fill(0);
+            write_remote(files, &path, &expected[..offset]).await;
+
+            let mut stream = files
+                .clone()
+                .open_write(WriteRequest {
+                    path: path.clone(),
+                    offset: offset as u64,
+                    size: expected.len() as u64,
+                    modified: None,
+                    permissions: None,
+                })
+                .await
+                .unwrap();
+            for chunk in expected[offset..].chunks(100_000) {
+                stream.write(Bytes::copy_from_slice(chunk)).await.unwrap();
+            }
+            stream.finish().await.unwrap();
+            assert_eq!(read_remote(files, &path).await, expected, "{mode}");
+
+            let mut rest = files
+                .clone()
+                .open_read(&path, offset as u64..expected.len() as u64)
+                .await
+                .unwrap();
+            let mut received = Vec::new();
+            while let Some(chunk) = rest.next_chunk().await.unwrap() {
+                received.extend_from_slice(&chunk);
+            }
+            rest.finish().await.unwrap();
+            assert_eq!(received, expected[offset..], "{mode}");
+            fixture.close().await;
+        }
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn transfer_conflicts_follow_the_settings() {
     let Some(server) = plain_server() else { return };
@@ -1571,5 +1634,192 @@ async fn opposite_relays_share_browsing_connections() {
             );
         }
     }
+    fixture.close().await;
+}
+
+/// Secrets kept in memory, standing in for the system keychain.
+#[derive(Default)]
+struct MemorySecrets(std::sync::Mutex<std::collections::HashMap<String, String>>);
+
+impl SecretStore for MemorySecrets {
+    fn get(&self, account: &str) -> AppResult<Option<String>> {
+        Ok(self.0.lock().unwrap().get(account).cloned())
+    }
+
+    fn set(&self, account: &str, secret: &str) -> AppResult<()> {
+        self.0
+            .lock()
+            .unwrap()
+            .insert(account.to_string(), secret.to_string());
+        Ok(())
+    }
+
+    fn delete(&self, account: &str) -> AppResult<()> {
+        self.0.lock().unwrap().remove(account);
+        Ok(())
+    }
+}
+
+/// Saves `server` as a connection that keeps its password, as the app's site manager would.
+fn save_connection(store: &ConnectionStore, server: &Server, name: &str) -> String {
+    store
+        .save(
+            SavedConnection {
+                id: String::new(),
+                protocol: server.protocol,
+                name: name.into(),
+                host: "127.0.0.1".into(),
+                port: server.port,
+                username: server.user.clone(),
+                auth_type: AuthType::Password,
+                key_path: None,
+                remote_path: None,
+                save_secret: true,
+                last_used: None,
+                ftp_active: false,
+                bypass_proxy: false,
+                jump_connection_id: None,
+                rsync_path: None,
+                sync_arguments: None,
+                s3: Default::default(),
+            },
+            Some(server.password.clone()),
+        )
+        .unwrap()
+        .id
+}
+
+/// A task as the scheduler would hand it over for a run.
+fn scheduled(action: TaskAction) -> ScheduledTask {
+    ScheduledTask {
+        id: "task".into(),
+        name: "Mirror".into(),
+        enabled: true,
+        trigger: Trigger::Every {
+            minutes: 60,
+            start: 0,
+        },
+        action,
+        run_missed: true,
+        next_run: None,
+        last_run: None,
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn scheduled_transfers_upload_to_ftp_and_copy_between_servers() {
+    let (Some(first), Some(second)) = (plain_server(), second_server()) else {
+        return;
+    };
+    let mut fixture = Fixture::new();
+    let from = fixture.open(&first, "task-from").await;
+    let to = fixture.open(&second, "task-to").await;
+    let store_dir = tempfile::tempdir().unwrap();
+    let connections = Arc::new(ConnectionStore::new(
+        store_dir.path().join("connections.json"),
+        Box::<MemorySecrets>::default(),
+    ));
+    let first_id = save_connection(&connections, &first, "first");
+    let second_id = save_connection(&connections, &second, "second");
+    let sync = SyncManager::new(fixture.manager.clone(), Events::default());
+    let transfers = fixture.transfers(transfer_settings());
+    let events = Events::default();
+    let context = TaskContext {
+        sessions: &fixture.manager,
+        connections,
+        connection_settings: ConnectionSettings::default(),
+        cloud_settings: Default::default(),
+        sync: &sync,
+        transfers: &transfers,
+        events: &events,
+        sign_in: SignIn::default(),
+        keep_ended_jobs: true,
+    };
+
+    // Up to the first server, into a folder named from the day.
+    let site = fixture.local.path().join("site");
+    write_tree(&site, 300_000);
+    let upload = scheduled(TaskAction::Transfer {
+        connection_id: first_id.clone(),
+        source_connection_id: None,
+        direction: Direction::Upload,
+        items: vec![TaskItem {
+            path: site.to_string_lossy().into_owned(),
+            is_dir: true,
+        }],
+        destination: fixture.at(from).remote.clone(),
+        exists: ExistsAction::Overwrite,
+        subfolder: "{year}/week-{week}".into(),
+    });
+    let uploaded = runner::perform(&upload, &context).await.unwrap();
+    assert!(uploaded.succeeded, "{}", uploaded.message);
+    let now = chrono::Local::now();
+    let dated = format!(
+        "{}/{}/week-{}",
+        fixture.at(from).remote,
+        now.format("%Y"),
+        now.format("%V")
+    );
+    assert!(
+        uploaded.message.starts_with("6 files uploaded (")
+            && uploaded.message.ends_with(&format!(" to {dated}")),
+        "{}",
+        uploaded.message
+    );
+    assert_eq!(
+        read_remote_tree(&fixture.at(from).files, &format!("{dated}/site")).await,
+        read_tree(&site)
+    );
+
+    // From the first server to the second, each signed in to with its own saved password.
+    let copy = scheduled(TaskAction::Transfer {
+        connection_id: second_id,
+        source_connection_id: Some(first_id),
+        direction: Direction::Relay,
+        items: vec![
+            TaskItem {
+                path: format!("{dated}/site/nested"),
+                is_dir: true,
+            },
+            TaskItem {
+                path: format!("{dated}/site/a.txt"),
+                is_dir: false,
+            },
+        ],
+        destination: fixture.at(to).remote.clone(),
+        exists: ExistsAction::Overwrite,
+        subfolder: String::new(),
+    });
+    let copied = runner::perform(&copy, &context).await.unwrap();
+    assert!(copied.succeeded, "{}", copied.message);
+    assert_eq!(
+        copied.message,
+        format!("4 files copied (3.1 MB) to {}", fixture.at(to).remote)
+    );
+    assert_eq!(
+        read_remote_tree(
+            &fixture.at(to).files,
+            &format!("{}/nested", fixture.at(to).remote)
+        )
+        .await,
+        read_tree(&site.join("nested"))
+    );
+    assert_eq!(
+        read_remote(
+            &fixture.at(to).files,
+            &format!("{}/a.txt", fixture.at(to).remote)
+        )
+        .await,
+        pattern(1024, 1)
+    );
+    let jobs = transfers.list().jobs;
+    assert!(jobs
+        .iter()
+        .all(|job| job.label.as_deref() == Some("Mirror") && job.state == JobState::Done));
+    assert!(jobs
+        .iter()
+        .any(|job| job.direction == Direction::Relay && job.source_session_id.is_some()));
+
+    drop(transfers);
     fixture.close().await;
 }

@@ -23,6 +23,11 @@ const MAX_RECONNECT_MINUTES: u32 = 24 * 60;
 const MAX_PROXY_FIELD_CHARS: usize = 255;
 const MAX_MINISIGN_KEYS: usize = 64;
 const MAX_MINISIGN_KEY_CHARS: usize = 512;
+const MAX_EXTERNAL_PROGRAMS: usize = 64;
+const MAX_PROGRAM_FIELD_CHARS: usize = 1024;
+const MAX_PROGRAM_PATTERNS: usize = 32;
+const MAX_PATTERN_CHARS: usize = 64;
+pub const MAX_KEEP_WORKING_COPY_MINUTES: u32 = 24 * 60;
 /// Raised when a release turns on checks that settings saved before it had off by default, so
 /// they come on once for everyone, and stay as the user sets them after that.
 pub const INTEGRITY_REVISION: u32 = 1;
@@ -324,12 +329,96 @@ impl CloudSettings {
     }
 }
 
+/// A program server files can be opened in, listed under Open with.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ExternalProgram {
+    pub id: String,
+    pub name: String,
+    /// The program file, or a name found on the PATH. Taken whole, never split.
+    pub command: String,
+    /// Split into arguments; `{file}` stands for the file, which goes last when left out.
+    pub arguments: String,
+    /// File name patterns such as `*.psd` that Open hands to this program.
+    pub patterns: Vec<String>,
+}
+
+/// How files open in other programs: the programs offered, and what becomes of the working
+/// copy of a server file that one of them edits.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct EditingSettings {
+    pub programs: Vec<ExternalProgram>,
+    /// Uploads a working copy each time its program saves it; off asks first.
+    pub upload_on_save: bool,
+    /// Minutes a working copy is kept after its program closes.
+    pub keep_minutes: u32,
+}
+
+impl Default for EditingSettings {
+    fn default() -> Self {
+        Self {
+            programs: Vec::new(),
+            upload_on_save: true,
+            keep_minutes: 10,
+        }
+    }
+}
+
+impl EditingSettings {
+    fn sanitize(&mut self) {
+        // Commands and arguments become a process's arguments, so each stays on one line.
+        let one_line = |text: &str| -> String {
+            text.lines()
+                .next()
+                .unwrap_or("")
+                .trim()
+                .chars()
+                .filter(|character| !character.is_control())
+                .take(MAX_PROGRAM_FIELD_CHARS)
+                .collect()
+        };
+        let mut seen = std::collections::HashSet::new();
+        let mut programs = Vec::new();
+        for (index, program) in self.programs.iter().enumerate() {
+            let command = one_line(&program.command);
+            if command.is_empty() || programs.len() == MAX_EXTERNAL_PROGRAMS {
+                continue;
+            }
+            let mut id = one_line(&program.id);
+            if id.is_empty() || !seen.insert(id.clone()) {
+                id = format!("program-{}", index + 1);
+                seen.insert(id.clone());
+            }
+            let patterns = program
+                .patterns
+                .iter()
+                .map(|pattern| one_line(pattern))
+                .filter(|pattern| {
+                    !pattern.is_empty() && pattern.chars().count() <= MAX_PATTERN_CHARS
+                })
+                .take(MAX_PROGRAM_PATTERNS)
+                .collect();
+            programs.push(ExternalProgram {
+                id,
+                name: one_line(&program.name),
+                command,
+                arguments: one_line(&program.arguments),
+                patterns,
+            });
+        }
+        self.programs = programs;
+        self.keep_minutes = self.keep_minutes.min(MAX_KEEP_WORKING_COPY_MINUTES);
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Settings {
     pub transfers: TransferSettings,
     pub connection: ConnectionSettings,
     pub cloud: CloudSettings,
+    pub editing: EditingSettings,
     pub interface: serde_json::Value,
     pub appearance: serde_json::Value,
     pub log: serde_json::Value,
@@ -347,6 +436,7 @@ impl Default for Settings {
             transfers: TransferSettings::default(),
             connection: ConnectionSettings::default(),
             cloud: CloudSettings::default(),
+            editing: EditingSettings::default(),
             interface: empty(),
             appearance: empty(),
             log: empty(),
@@ -374,6 +464,7 @@ impl Settings {
         self.transfers.sanitize();
         self.connection.sanitize();
         self.cloud.sanitize();
+        self.editing.sanitize();
         for section in [
             &mut self.interface,
             &mut self.appearance,
@@ -606,6 +697,34 @@ mod tests {
         cloud.microsoft_tenant = "common/../evil?x=1".into();
         cloud.sanitize();
         assert!(cloud.microsoft_tenant.is_empty());
+    }
+
+    #[test]
+    fn external_programs_are_tidied_and_settings_saved_before_them_load() {
+        let saved_before: Settings =
+            serde_json::from_str(r#"{"transfers": {"workers": 2}}"#).unwrap();
+        let defaults = saved_before.sanitize().editing;
+        assert!(defaults.programs.is_empty());
+        assert!(defaults.upload_on_save);
+        assert_eq!(defaults.keep_minutes, 10);
+
+        let parsed: Settings = serde_json::from_str(
+            r#"{"editing": {"keepMinutes": 999999, "uploadOnSave": false, "programs": [
+                {"id": "gimp", "name": " GIMP ", "command": " /usr/bin/gimp \nrm -rf ~",
+                 "arguments": "--new-instance {file}", "patterns": [" *.psd ", "", "*.xcf"]},
+                {"id": "gimp", "name": "Twin", "command": "gimp"},
+                {"id": "empty", "name": "No command", "command": "  "}
+            ]}}"#,
+        )
+        .unwrap();
+        let editing = parsed.sanitize().editing;
+        assert!(!editing.upload_on_save);
+        assert_eq!(editing.keep_minutes, MAX_KEEP_WORKING_COPY_MINUTES);
+        assert_eq!(editing.programs.len(), 2);
+        assert_eq!(editing.programs[0].name, "GIMP");
+        assert_eq!(editing.programs[0].command, "/usr/bin/gimp");
+        assert_eq!(editing.programs[0].patterns, vec!["*.psd", "*.xcf"]);
+        assert_eq!(editing.programs[1].id, "program-2");
     }
 
     #[test]

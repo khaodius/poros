@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use super::batch::JobBatch;
 use super::conflict::ExistsAction;
 use super::options::JobOptions;
 use super::queue::{Direction, JobKind, JobSpec, JobState, ResumePoint, Unfinished};
@@ -99,6 +100,10 @@ struct SavedJob {
     stale_partial: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     options: Option<JobOptions>,
+    /// The scheduled task that queued the job. What the task does with a file that exists is
+    /// kept as the job's `resolution`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
 }
 
 impl From<&ConnectProfile> for SavedServer {
@@ -234,10 +239,13 @@ fn snapshot(shared: &Shared) -> Option<(SavedQueue, &Path)> {
             ancestors: spec.ancestors.to_vec(),
             failed: job.state == JobState::Failed,
             error: job.error,
-            resolution: job.resolution,
+            resolution: job
+                .resolution
+                .or(spec.batch.as_ref().and_then(|batch| batch.exists_action)),
             resume: job.resume,
             stale_partial: job.stale_partial,
             options: spec.options.as_deref().cloned(),
+            label: spec.batch.as_ref().map(|batch| batch.label.clone()),
         });
     }
     saved.jobs = jobs;
@@ -344,6 +352,11 @@ pub(super) fn restore(shared: &Shared, file: &Path) -> usize {
                 size: job.size,
                 ancestors: job.ancestors.into(),
                 options: job.options.map(Arc::new),
+                // No one follows it any more, but a folder still hands the task's name and its
+                // way with files that exist on to what it holds.
+                batch: job
+                    .label
+                    .map(|label| JobBatch::restored(label, job.resolution)),
             },
             state: if job.failed {
                 JobState::Failed

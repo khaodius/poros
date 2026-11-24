@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { schedules } from "../lib/ipc";
 import type { ScheduledTask, TaskView } from "../lib/types";
+import { forgetWhatRunsChanged } from "./scheduleActions";
 
 interface ScheduleState {
   tasks: TaskView[];
@@ -16,7 +17,11 @@ export const useScheduleStore = create<ScheduleState>((set, get) => ({
   tasks: [],
   loaded: false,
   load: async () => {
-    set({ tasks: await schedules.list(), loaded: true });
+    const tasks = await schedules.list();
+    const { loaded, tasks: before } = get();
+    set({ tasks, loaded: true });
+    // Runs that finished since the last look, here or in poros-cli, changed folders on servers.
+    if (loaded) forgetWhatRunsChanged(before, tasks);
   },
   save: async (task) => {
     const saved = await schedules.save(task);

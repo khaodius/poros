@@ -18,6 +18,9 @@ pub const FILE_OPERATION_EVENT: &str = "poros://file-operation";
 pub const MOUNTS_EVENT: &str = "poros://mounts";
 /// Folders a mounted drive changed on a server, whose remembered listings are out of date.
 pub const DRIVE_CHANGES_EVENT: &str = "poros://drive-changes";
+/// The files open in other programs, whenever one of them changes.
+#[cfg(feature = "gui")]
+pub const EXTERNAL_EDIT_EVENT: &str = "poros://external-edit";
 /// Records kept for the main window while it loads; later ones past this are dropped.
 const MAX_STARTUP_RECORDS: usize = 500;
 
@@ -141,6 +144,11 @@ impl Events {
 
     pub fn drive_changed(&self, changes: impl Serialize + Clone) {
         self.emit(DRIVE_CHANGES_EVENT, changes);
+    }
+
+    #[cfg(feature = "gui")]
+    pub fn external_edits(&self, update: &crate::external_editor::EditsUpdate) {
+        self.emit(EXTERNAL_EDIT_EVENT, update);
     }
 
     pub fn store_changed(&self, store: Store) {

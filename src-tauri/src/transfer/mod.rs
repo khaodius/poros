@@ -3,6 +3,7 @@
 //! a large file to move separate parts of it at once. SFTP has a pipelined path of its own;
 //! other protocols, and copies between two servers, stream through `RemoteFileSystem`.
 
+mod batch;
 mod conflict;
 mod copy;
 mod delta;
@@ -15,6 +16,7 @@ mod pieces;
 mod published;
 mod queue;
 mod scheduled_limits;
+mod single;
 mod streamed;
 mod verify;
 mod worker;
@@ -28,6 +30,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
+pub use batch::{BatchTally, JobBatch};
 pub use conflict::ExistsAction;
 pub use limit_schedule::{
     clock_time, LimitMode, LimitRule, LimitSchedule, Limits, PauseEnds, RateLimit,
@@ -38,6 +41,7 @@ pub use queue::{
     ChangedDirectory, Direction, JobId, JobKind, JobSnapshot, JobState, QueueCounts, Side,
 };
 pub use scheduled_limits::{ActiveRule, LimitClock, LimitStatus};
+pub use single::{FileQueue, JobProgress, TransferRoute};
 #[cfg(feature = "gui")]
 pub(crate) use worker::is_partial_name;
 pub(crate) use worker::{ensure_remote_folders, keep_local_backup, keep_remote_backup};
@@ -114,6 +118,12 @@ pub struct TransferStats {
     pub upload_speed: u64,
     pub download_speed: u64,
     pub queue_paused: bool,
+    /// Paused only until the user presses Start, as transfers that do not start on their own
+    /// are; the files of scheduled runs go on.
+    pub held_for_start: bool,
+    /// Files of scheduled runs are going or waiting their turn, which they do even while the
+    /// queue waits for Start.
+    pub unattended_running: bool,
     /// The speed limits in force, and the rule of the schedule that set them.
     pub limits: LimitStatus,
 }
@@ -358,13 +368,16 @@ impl Shared {
         self.settings.read().unwrap().clone()
     }
 
-    /// The job writes into a folder that is not kept between runs.
+    /// The job writes into a folder that is not kept between runs, or belongs to a part of
+    /// the app that queues it again itself.
     fn is_unsaved(&self, spec: &JobSpec) -> bool {
-        self.unsaved_folders
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|folder| downloads_into(spec, folder))
+        spec.options.as_ref().is_some_and(|options| options.quiet)
+            || self
+                .unsaved_folders
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|folder| downloads_into(spec, folder))
     }
 
     fn target(&self, session_id: &str) -> AppResult<Arc<SessionTarget>> {
@@ -385,6 +398,16 @@ impl Shared {
             .unwrap()
             .entry(session.id.clone())
             .or_insert_with(|| Arc::new(SessionTarget::for_session(session)));
+    }
+
+    /// Keeps a target a caller held on to for a session that may have closed since, as
+    /// [`Self::register`] keeps one for an open session, and under the same lock.
+    fn keep_target(&self, _queue: &Queue, target: &Arc<SessionTarget>) {
+        self.targets
+            .lock()
+            .unwrap()
+            .entry(target.session_id.clone())
+            .or_insert_with(|| target.clone());
     }
 
     /// Forgets the servers of sessions that no job in the queue involves any more.
@@ -531,6 +554,18 @@ impl TransferWatch {
         }
     }
 
+    /// Waits until every job of `batch` has finished or left the queue, folders and all they
+    /// held included, and says how they ended.
+    pub async fn wait_for_batch(&self, batch: &Arc<JobBatch>) -> BatchTally {
+        loop {
+            let tally = self.shared.queue.lock().unwrap().batch_tally(batch);
+            if tally.unfinished == 0 || self.shared.stopping.load(Ordering::Relaxed) {
+                return tally;
+            }
+            tokio::time::sleep(TICK).await;
+        }
+    }
+
     /// How the downloads into `folder` and below it stand.
     pub fn downloads_into(&self, folder: &Path) -> FolderProgress {
         let queue = self.shared.queue.lock().unwrap();
@@ -644,7 +679,7 @@ impl TransferManager {
     }
 
     pub async fn enqueue(&self, request: EnqueueRequest) -> AppResult<usize> {
-        let specs = self.specs_for(&request).await?;
+        let specs = self.specs_for(&request, None).await?;
         self.add_jobs(specs, Placement::Last);
         Ok(request.items.len())
     }
@@ -652,9 +687,42 @@ impl TransferManager {
     /// Queues jobs ahead of everything else, starting them even when transfers wait for Start:
     /// a drag out of Poros waits on them.
     pub async fn enqueue_first(&self, request: EnqueueRequest) -> AppResult<()> {
-        let specs = self.specs_for(&request).await?;
+        let specs = self.specs_for(&request, None).await?;
         self.add_jobs(specs, Placement::First);
         Ok(())
+    }
+
+    /// Queues jobs as one batch for a caller that follows them with
+    /// `TransferWatch::wait_for_batch`, such as a scheduled task. They start even when
+    /// transfers wait for Start, since no one is there to press it, and leave the user's own
+    /// waiting jobs waiting. A queue the user has paused takes none of them, so the caller is
+    /// not kept waiting for as long as it stays paused: `false` then.
+    pub async fn enqueue_batch(
+        &self,
+        request: EnqueueRequest,
+        batch: Arc<JobBatch>,
+    ) -> AppResult<bool> {
+        let NewJobs { specs, sessions } = self.specs_for(&request, Some(batch)).await?;
+        {
+            let mut queue = self.shared.queue.lock().unwrap();
+            if queue.paused_by_user() {
+                return Ok(false);
+            }
+            for session in &sessions {
+                self.shared.register(&queue, session);
+            }
+            for spec in specs {
+                queue.add(spec);
+            }
+        }
+        self.shared.work.notify_waiters();
+        Ok(true)
+    }
+
+    /// Whether the user has paused the whole queue, which holds back even the jobs of a batch.
+    /// A queue that only waits for Start is not paused in this sense.
+    pub fn is_paused(&self) -> bool {
+        self.shared.queue.lock().unwrap().paused_by_user()
     }
 
     /// Leaves out of the saved queue the jobs writing into `folder`, which holds files only for
@@ -663,7 +731,11 @@ impl TransferManager {
         self.shared.unsaved_folders.lock().unwrap().push(folder);
     }
 
-    async fn specs_for(&self, request: &EnqueueRequest) -> AppResult<NewJobs> {
+    async fn specs_for(
+        &self,
+        request: &EnqueueRequest,
+        batch: Option<Arc<JobBatch>>,
+    ) -> AppResult<NewJobs> {
         let session = self.shared.sessions.get(&request.session_id).await?;
         let source_session = match (request.direction, &request.source_session_id) {
             (Direction::Relay, Some(source_id)) => Some(self.shared.sessions.get(source_id).await?),
@@ -700,6 +772,7 @@ impl TransferManager {
                 size: if item.is_dir { 0 } else { item.size },
                 ancestors: Arc::from([]),
                 options: None,
+                batch: batch.clone(),
             });
         }
         let mut sessions = vec![session];
@@ -713,13 +786,24 @@ impl TransferManager {
         session_id: &str,
         files: Vec<FileTransfer>,
     ) -> AppResult<Vec<JobId>> {
+        self.enqueue_files_in(session_id, files, None).await
+    }
+
+    /// `enqueue_files` for files that may belong to a batch, which start even while transfers
+    /// wait for Start.
+    pub async fn enqueue_files_in(
+        &self,
+        session_id: &str,
+        files: Vec<FileTransfer>,
+        batch: Option<Arc<JobBatch>>,
+    ) -> AppResult<Vec<JobId>> {
         let session = self.shared.sessions.get(session_id).await?;
         let auto_start = self.shared.settings().auto_start;
         let ids = {
             let mut queue = self.shared.queue.lock().unwrap();
             self.shared.register(&queue, &session);
-            if !auto_start && queue.counts().is_idle() {
-                queue.paused = true;
+            if !auto_start && batch.as_ref().is_none_or(|batch| !batch.unattended) {
+                queue.hold_for_start();
             }
             let ids: Vec<JobId> = files
                 .into_iter()
@@ -736,6 +820,7 @@ impl TransferManager {
                         size: file.size,
                         ancestors: Arc::from([]),
                         options: file.options,
+                        batch: batch.clone(),
                     };
                     queue.add_resolved(spec, file.resolution)
                 })
@@ -759,8 +844,8 @@ impl TransferManager {
         let auto_start = self.shared.settings().auto_start;
         {
             let mut queue = self.shared.queue.lock().unwrap();
-            if placement == Placement::Last && !auto_start && queue.counts().is_idle() {
-                queue.paused = true;
+            if placement == Placement::Last && !auto_start {
+                queue.hold_for_start();
             }
             for session in &sessions {
                 self.shared.register(&queue, session);
@@ -780,11 +865,8 @@ impl TransferManager {
             sequence: queue.sequence,
             jobs: queue.snapshots(),
             stats: TransferStats {
-                counts: queue.counts(),
-                remaining_bytes: queue.remaining_bytes(),
-                queue_paused: queue.paused,
                 limits,
-                ..Default::default()
+                ..queue.stats()
             },
         }
     }
@@ -858,6 +940,11 @@ impl TransferManager {
 
     pub fn clear(&self, states: &[JobState]) {
         self.update_queue(|queue| queue.clear(states));
+    }
+
+    /// Takes the jobs of `batch` that have ended off the queue, once it has been counted.
+    pub fn clear_batch(&self, batch: &Arc<JobBatch>) {
+        self.update_queue(|queue| queue.clear_batch(batch));
     }
 
     pub fn move_to(&self, ids: &[JobId], to_top: bool) {
@@ -1024,19 +1111,16 @@ async fn report_progress(shared: Weak<Shared>) {
             let mut queue = shared.queue.lock().unwrap();
             queue.sample_progress(now);
             let (jobs, removed, changed_directories) = queue.take_changes();
-            let counts = queue.counts();
-            if counts.is_idle() {
+            let stats = TransferStats {
+                upload_speed: per_second(uploaded - oldest_uploaded),
+                download_speed: per_second(downloaded - oldest_downloaded),
+                limits,
+                ..queue.stats()
+            };
+            if stats.counts.is_idle() {
                 queue.conflict_override = None;
                 queue.forget_outages();
             }
-            let stats = TransferStats {
-                counts,
-                remaining_bytes: queue.remaining_bytes(),
-                upload_speed: per_second(uploaded - oldest_uploaded),
-                download_speed: per_second(downloaded - oldest_downloaded),
-                queue_paused: queue.paused,
-                limits,
-            };
             if stats.counts.is_idle() {
                 shared.forget_unused_targets(&queue);
             }
@@ -1387,6 +1471,7 @@ mod tests {
             size: 10,
             ancestors: Arc::from([]),
             options: None,
+            batch: None,
         };
         // Large enough that writing the queue takes a while.
         let mut queued = 20_000;
@@ -1437,6 +1522,7 @@ mod tests {
             size: 10,
             ancestors: Arc::from([]),
             options: None,
+            batch: None,
         };
         // Under one lock, so no worker gets to the jobs.
         let ids: Vec<JobId> = {

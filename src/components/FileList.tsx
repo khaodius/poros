@@ -74,6 +74,8 @@ export interface FileListActions {
   onRenameCancel: () => void;
   /** F4 on a row: opens the file in the editor. */
   onEdit: (entry: FileEntry) => void;
+  /** Ctrl+Enter on a file: opens it in its own program. */
+  onOpenExternally: (entry: FileEntry) => void;
   onNewFolder: () => void;
   onNewFile: () => void;
   onEditPath: () => void;
@@ -740,6 +742,8 @@ export function FileList({
         case "Enter":
           if (event.altKey) {
             if (pane.selection.size > 0) actions.onProperties();
+          } else if (primary && cursorEntry && !isDirLike(cursorEntry)) {
+            actions.onOpenExternally(cursorEntry);
           } else if (cursorEntry) {
             openEntry(cursorEntry);
           }

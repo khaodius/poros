@@ -4,8 +4,9 @@
 //! the exit status says how it went (see `exit::TABLE`).
 //!
 //! It reads the app's settings, saved connections and trusted host keys from the app's config
-//! folder but writes nothing there, except a host key it is told to remember and a cloud
-//! sign-in the provider renewed. Its transfer queue is its own and is never saved.
+//! folder but writes nothing there, except a host key it is told to remember, a cloud sign-in
+//! the provider renewed, and what `schedule` does to the app's scheduled tasks. Its transfer
+//! queue is its own and is never saved.
 
 mod args;
 mod batch;
@@ -74,6 +75,36 @@ pub fn main() -> ExitCode {
     exit.into()
 }
 
+/// Ctrl+C, and on Unix the SIGTERM a service manager, a shutdown or `kill` sends: either stops
+/// the command the same way, so a scheduled run under a systemd timer is written down as
+/// stopped.
+struct StopSignals {
+    #[cfg(unix)]
+    terminate: Option<tokio::signal::unix::Signal>,
+}
+
+impl StopSignals {
+    fn new() -> Self {
+        Self {
+            #[cfg(unix)]
+            terminate: tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .ok(),
+        }
+    }
+
+    /// Waits for the next signal. False when signals cannot be listened for.
+    async fn next(&mut self) -> bool {
+        #[cfg(unix)]
+        if let Some(terminate) = self.terminate.as_mut() {
+            return tokio::select! {
+                interrupted = tokio::signal::ctrl_c() => interrupted.is_ok(),
+                terminated = terminate.recv() => terminated.is_some(),
+            };
+        }
+        tokio::signal::ctrl_c().await.is_ok()
+    }
+}
+
 fn is_truthy(value: &str) -> bool {
     !matches!(
         value.trim().to_ascii_lowercase().as_str(),
@@ -89,14 +120,15 @@ async fn run(cli: Cli) -> Exit {
     {
         let (interrupt, force) = (interrupt.clone(), force.clone());
         tokio::spawn(async move {
-            if tokio::signal::ctrl_c().await.is_ok() {
+            let mut signals = StopSignals::new();
+            if signals.next().await {
                 interrupt.cancel();
                 // A command finishing its work stops waiting for it on the second.
-                if finishes && tokio::signal::ctrl_c().await.is_ok() {
+                if finishes && signals.next().await {
                     force.cancel();
                 }
-                // Another Ctrl+C ends the run at once.
-                if tokio::signal::ctrl_c().await.is_ok() {
+                // Another one ends the run at once.
+                if signals.next().await {
                     std::process::exit(Exit::Interrupted.code().into());
                 }
             }

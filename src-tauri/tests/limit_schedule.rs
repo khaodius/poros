@@ -15,8 +15,8 @@ use poros_lib::session::{SessionInfo, SessionManager};
 use poros_lib::settings::TransferSettings;
 use poros_lib::ssh::{AuthMethod, ConnectProfile, HostKeyApproval, Route};
 use poros_lib::transfer::{
-    Direction, EnqueueRequest, ExistsAction, JobSnapshot, JobState, LimitClock, LimitRule,
-    LimitSchedule, RateLimit, TransferItem, TransferList, TransferManager,
+    Direction, EnqueueRequest, ExistsAction, JobBatch, JobSnapshot, JobState, LimitClock,
+    LimitRule, LimitSchedule, RateLimit, TransferItem, TransferList, TransferManager,
 };
 
 /// The window label sessions belong to.
@@ -535,6 +535,81 @@ async fn ignoring_the_schedule_lets_a_held_upload_go() {
         })
         .await;
         assert_eq!(limits.rule, None);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_paused_window_holds_a_scheduled_run_that_does_not_wait_for_start() {
+    with_fixture(Protocol::Sftp, "scheduled", |fixture| async move {
+        fixture.set_clock(monday(12, 30, 0));
+        let quiet_hour = rule(
+            "Quiet hour",
+            (12, 13),
+            RateLimit::PAUSED,
+            RateLimit::UNLIMITED,
+        );
+        let transfers = fixture.transfers(TransferSettings {
+            auto_start: false,
+            ..scheduled(vec![quiet_hour])
+        });
+        // The user's file waits for Start.
+        fixture.upload(&transfers, "by-hand.bin", 1000).await;
+        let size = MEBIBYTE / 4;
+        let source = fixture.local.path().join("nightly.bin");
+        std::fs::write(&source, pattern(size, 7)).unwrap();
+        let queued = transfers
+            .enqueue_batch(
+                EnqueueRequest {
+                    session_id: fixture.session.id.clone(),
+                    source_session_id: None,
+                    direction: Direction::Upload,
+                    target_directory: fixture.remote.clone(),
+                    items: vec![TransferItem {
+                        path: source.to_string_lossy().into_owned(),
+                        name: "nightly.bin".into(),
+                        is_dir: false,
+                        size,
+                    }],
+                },
+                JobBatch::new("Nightly", None),
+            )
+            .await
+            .unwrap();
+        assert!(queued);
+
+        // A scheduled run passes the wait for Start, but not the window that pauses uploads.
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let list = transfers.list();
+        assert!(list
+            .jobs
+            .iter()
+            .all(|job| job.state == JobState::Queued && job.transferred == 0));
+        let stats = &list.stats;
+        assert!(stats.queue_paused && stats.held_for_start && !stats.unattended_running);
+        assert_eq!(fixture.remote_size("nightly.bin").await, None);
+
+        // Ignore schedule lets it go; the user's file still waits for Start.
+        transfers.ignore_limit_schedule(true);
+        let nightly = wait_for("the scheduled upload", || {
+            transfers
+                .list()
+                .jobs
+                .into_iter()
+                .find(|job| job.name == "nightly.bin" && job.state == JobState::Done)
+        })
+        .await;
+        assert!(nightly.unattended);
+        assert_eq!(fixture.remote_size("nightly.bin").await, Some(size));
+        let list = transfers.list();
+        let by_hand = list
+            .jobs
+            .iter()
+            .find(|job| job.name == "by-hand.bin")
+            .unwrap();
+        assert_eq!(by_hand.state, JobState::Queued);
+        assert!(!by_hand.unattended);
+        assert!(list.stats.held_for_start && !list.stats.unattended_running);
     })
     .await;
 }

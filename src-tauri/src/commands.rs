@@ -20,6 +20,9 @@ use crate::editor::{
 };
 use crate::error::{AppError, AppResult};
 use crate::events::{Events, LogLevel, LogRecord, Store};
+use crate::external_editor::{
+    EditView, ExternalEditManager, LeftoverView, OpenOutcome, OpenRequest, OpenWith, Resolution,
+};
 use crate::file_ops::archive::{self, ExtractSummary, InstalledTool};
 use crate::file_ops::{
     CompareRequest, Comparison, DeleteRequest, DeleteSummary, Details, ExtractRequest,
@@ -513,11 +516,13 @@ pub fn settings_get(settings: State<'_, SettingsStore>) -> Settings {
 pub fn settings_set(
     settings: State<'_, SettingsStore>,
     transfers: State<'_, TransferManager>,
+    external: State<'_, ExternalEditManager>,
     events: State<'_, Events>,
     value: Settings,
 ) -> AppResult<Settings> {
     let saved = settings.set(value)?;
     transfers.configure(saved.transfers.clone());
+    external.configure(saved.editing.clone());
     events.store_changed(Store::Settings);
     Ok(saved)
 }
@@ -754,6 +759,110 @@ pub async fn editor_save(
 pub async fn editor_close(editor: State<'_, EditorManager>, document_id: String) -> AppResult<()> {
     editor.close(&document_id).await;
     Ok(())
+}
+
+#[tauri::command]
+pub async fn external_edit_open(
+    external: State<'_, ExternalEditManager>,
+    request: OpenRequest,
+) -> AppResult<OpenOutcome> {
+    external.open(request).await
+}
+
+#[tauri::command]
+pub async fn external_open_local(
+    external: State<'_, ExternalEditManager>,
+    path: String,
+    with: OpenWith,
+) -> AppResult<OpenOutcome> {
+    external.open_local(&path, &with).await
+}
+
+#[tauri::command]
+pub fn external_edit_list(external: State<'_, ExternalEditManager>) -> Vec<EditView> {
+    external.list()
+}
+
+#[tauri::command]
+pub fn external_edit_upload(external: State<'_, ExternalEditManager>, id: String) -> AppResult<()> {
+    external.upload(&id)
+}
+
+#[tauri::command]
+pub fn external_edit_resolve(
+    external: State<'_, ExternalEditManager>,
+    id: String,
+    resolution: Resolution,
+) -> AppResult<()> {
+    external.resolve(&id, resolution)
+}
+
+#[tauri::command]
+pub fn external_edit_reopen(
+    external: State<'_, ExternalEditManager>,
+    id: String,
+    with: Option<OpenWith>,
+) -> AppResult<()> {
+    external.reopen(&id, with.as_ref())
+}
+
+#[tauri::command]
+pub fn external_edit_reveal(external: State<'_, ExternalEditManager>, id: String) -> AppResult<()> {
+    external.reveal(&id)
+}
+
+#[tauri::command]
+pub fn external_edit_stop(external: State<'_, ExternalEditManager>, id: String) -> AppResult<()> {
+    external.stop(&id)
+}
+
+#[tauri::command]
+pub async fn external_edit_unsaved(
+    external: State<'_, ExternalEditManager>,
+) -> AppResult<Vec<EditView>> {
+    Ok(external.unsaved().await)
+}
+
+#[tauri::command]
+pub async fn external_edit_flush(
+    external: State<'_, ExternalEditManager>,
+    ids: Vec<String>,
+) -> AppResult<Vec<EditView>> {
+    Ok(external.flush(&ids).await)
+}
+
+#[tauri::command]
+pub async fn external_edit_leftovers(
+    external: State<'_, ExternalEditManager>,
+) -> AppResult<Vec<LeftoverView>> {
+    let external = external.inner().clone();
+    Ok(tokio::task::spawn_blocking(move || external.leftovers()).await?)
+}
+
+#[tauri::command]
+pub async fn external_edit_recover(
+    external: State<'_, ExternalEditManager>,
+    id: String,
+    session_id: String,
+) -> AppResult<EditView> {
+    external.recover(&id, &session_id).await
+}
+
+#[tauri::command]
+pub fn external_edit_reveal_leftover(
+    external: State<'_, ExternalEditManager>,
+    id: String,
+) -> AppResult<()> {
+    external.reveal_leftover(&id)
+}
+
+#[tauri::command]
+pub async fn external_edit_discard_leftover(
+    external: State<'_, ExternalEditManager>,
+    id: String,
+) -> AppResult<()> {
+    let external = external.inner().clone();
+    tokio::task::spawn_blocking(move || external.discard_leftover(&id)).await?
 }
 
 /// Answers with the file's size and time, then the bytes read, as one binary block. A read is
@@ -1198,12 +1307,8 @@ pub async fn update_find_release(webview: Webview, version: String) -> AppResult
 }
 
 #[tauri::command]
-pub fn update_restart(
-    app: AppHandle,
-    pending: State<'_, PendingUpdate>,
-    transfers: State<'_, TransferManager>,
-) -> AppResult<()> {
-    update::restart(&app, &pending, &transfers)
+pub fn update_restart(app: AppHandle, pending: State<'_, PendingUpdate>) -> AppResult<()> {
+    update::restart(&app, &pending)
 }
 
 #[tauri::command]

@@ -283,7 +283,7 @@ describe("what the windows show", () => {
       pauseEnds: { upload: at(23, 13), download: null, relay: at(23, 13) },
     });
     const job = { state: "queued", direction: "upload" } as const;
-    const running = { limits: quietHour, queuePaused: false };
+    const running = { limits: quietHour, queuePaused: false, heldForStart: false };
     expect(scheduleWait(job, running, now)).toBe(
       "Waiting for the speed limit schedule until 13:00",
     );
@@ -298,6 +298,16 @@ describe("what the windows show", () => {
     );
     // A paused queue waits for Start queue, so the end of the window is not promised.
     expect(scheduleWait(job, { ...running, queuePaused: true }, now)).toBeNull();
+    // One that only waits for Start does so for the user's files, while a scheduled run's
+    // still waits for the schedule alone.
+    const waitingForStart = { ...running, queuePaused: true, heldForStart: true };
+    expect(scheduleWait(job, waitingForStart, now)).toBeNull();
+    expect(scheduleWait({ ...job, unattended: true }, waitingForStart, now)).toBe(
+      "Waiting for the speed limit schedule until 13:00",
+    );
+    expect(
+      scheduleWait({ ...job, unattended: true }, { ...running, queuePaused: true }, now),
+    ).toBeNull();
   });
 
   it("names the limits a rule sets in the status bar", () => {

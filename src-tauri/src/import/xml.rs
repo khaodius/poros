@@ -7,6 +7,10 @@ use quick_xml::Reader;
 
 use crate::error::{AppError, AppResult};
 
+/// Deeper than any site file nests. Walking the tree, and dropping it, takes a step of the
+/// stack per level, so a deeper file could overflow it.
+const MAX_DEPTH: usize = 64;
+
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Element {
     /// Without any namespace prefix.
@@ -57,6 +61,12 @@ pub fn parse(text: &str) -> AppResult<Element> {
             .read_event()
             .map_err(|error| AppError::invalid(format!("The file is not valid XML: {error}")))?;
         match event {
+            // The stack holds the root besides the open elements.
+            Event::Start(_) if stack.len() > MAX_DEPTH => {
+                return Err(AppError::invalid(
+                    "The file nests its elements too deeply to be a list of sites",
+                ))
+            }
             Event::Start(start) => stack.push(element(&start)),
             Event::Empty(start) => {
                 let empty = element(&start);
@@ -156,5 +166,17 @@ mod tests {
     #[test]
     fn rejects_what_is_not_xml() {
         assert!(parse("just words").is_err());
+    }
+
+    #[test]
+    fn refuses_elements_nested_deeper_than_any_site_file() {
+        let nested =
+            |depth: usize| format!("{}{}", "<Folder>".repeat(depth), "</Folder>".repeat(depth));
+        match parse(&nested(100_000)) {
+            Err(error) => assert_eq!(error.kind, crate::error::ErrorKind::InvalidInput),
+            Ok(_) => panic!("a file nested 100000 levels deep was read"),
+        }
+        assert!(parse(&nested(MAX_DEPTH)).is_ok());
+        assert!(parse(&nested(MAX_DEPTH + 1)).is_err());
     }
 }

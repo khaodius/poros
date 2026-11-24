@@ -8,7 +8,8 @@ interface QuitDialogProps {
   onClose: () => void;
 }
 
-/** Asks before Poros quits while drives are in use, as closing their tab does. */
+/** Asks before Poros quits while drives are in use, as closing their tab does. Asked after the
+ * question about files saved in other programs, and goes on to files with unsaved changes. */
 export function QuitDialog({ drives, onClose }: QuitDialogProps) {
   const quit = () => {
     onClose();

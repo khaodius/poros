@@ -16,6 +16,7 @@ import {
   ArrowUp,
   ArrowUpDown,
   Bookmark,
+  CalendarClock,
   ClipboardCopy,
   ClipboardPaste,
   Copy,
@@ -91,6 +92,7 @@ import { useClipboardStore } from "../state/clipboardStore";
 import { beginDrag, useDragStore, type DropHandler } from "../state/dragStore";
 import { dragFilesOut } from "../state/dragOut";
 import { openInEditor } from "../state/editorActions";
+import { openWithDefault, useExternalEditStore, type OpenTarget } from "../state/externalEditStore";
 import {
   deleteOnServer,
   dropAction,
@@ -103,6 +105,7 @@ import {
 import { useLayoutStore } from "../state/layoutStore";
 import { useLogStore } from "../state/logStore";
 import { requestMount } from "../state/mountActions";
+import { scheduleBlocker, scheduleFiles } from "../state/scheduleActions";
 import {
   getPane,
   lastActivePane,
@@ -139,6 +142,7 @@ import { FileList, type MenuPosition } from "./FileList";
 import { FolderCompareBar } from "./FolderCompareBar";
 import { COMPARE_FOLDERS_SHORTCUT, folderCompareMenuItems } from "./folderCompareMenu";
 import { NewVaultDialog } from "./NewVaultDialog";
+import { openMenuItems } from "./openWithMenu";
 import { PanePreview } from "./PanePreview";
 import { PathBar } from "./PathBar";
 import { PreviewSplit } from "./PreviewSplit";
@@ -822,6 +826,16 @@ export function FilePane({
     void openInEditor(location, ownGroup());
   };
 
+  const openTarget = (entry: FileEntry): OpenTarget =>
+    source.kind === "remote" && sessionId
+      ? { side: "remote", sessionId, path: entry.path, name: entry.name }
+      : { side: "local", path: entry.path, name: entry.name };
+
+  /** Open: the file's own program, with Ctrl+Enter. */
+  const openExternally = (entry: FileEntry) => {
+    if (!isDirLike(entry)) void openWithDefault(openTarget(entry));
+  };
+
   const cutOrCopy = (mode: PlaceMode, entries: FileEntry[]) => {
     const self = getPane(tabId);
     if (self) putOnClipboard(mode, self, entries);
@@ -845,6 +859,12 @@ export function FilePane({
   const activateFile = (entry: FileEntry) => {
     if (doubleClickFile === "transfer") transferToOtherSide(tabId, [entry]);
     else if (doubleClickFile === "edit") edit(entry);
+    else if (doubleClickFile === "open") openExternally(entry);
+    else if (doubleClickFile === "ask") {
+      useExternalEditStore.setState({
+        prompt: { kind: "choose", target: openTarget(entry), nearGroupId: ownGroup() },
+      });
+    }
   };
 
   const transferMenuItem = (targets: FileEntry[]): MenuItem => {
@@ -858,6 +878,18 @@ export function FilePane({
       icon: upload ? <Upload size={14} /> : <Download size={14} />,
       disabled: !destination || targets.length === 0,
       onSelect: () => transferToOtherSide(tabId, targets),
+    };
+  };
+
+  /** Makes a scheduled task that copies the files to the other side, as the item above does. */
+  const scheduleMenuItem = (targets: FileEntry[]): MenuItem => {
+    const label = source.kind === "local" ? "Schedule upload" : "Schedule download";
+    const blocker = scheduleBlocker(tabId);
+    return {
+      label: blocker ? `${label} (${blocker})` : `${label}...`,
+      icon: <CalendarClock size={14} />,
+      disabled: blocker !== null,
+      onSelect: () => scheduleFiles(tabId, targets),
     };
   };
 
@@ -1129,7 +1161,9 @@ export function FilePane({
           )
         : null;
     return [
-      ...(targets.length > 0 ? [transferMenuItem(targets), "separator" as const] : []),
+      ...(targets.length > 0
+        ? [transferMenuItem(targets), scheduleMenuItem(targets), "separator" as const]
+        : []),
       ...(entry && isDirLike(entry)
         ? [
             {
@@ -1142,6 +1176,7 @@ export function FilePane({
         : []),
       ...(entry && !isDirLike(entry)
         ? [
+            ...openMenuItems(openTarget(entry), ownGroup()),
             {
               label: "Edit",
               icon: <FilePen size={14} />,
@@ -1580,6 +1615,7 @@ export function FilePane({
               onRenameSubmit={renameEntry}
               onRenameCancel={() => setRenaming(null)}
               onEdit={edit}
+              onOpenExternally={openExternally}
               onNewFolder={openNewFolder}
               onNewFile={openNewFile}
               onEditPath={() => setPathEditRequest((count) => count + 1)}

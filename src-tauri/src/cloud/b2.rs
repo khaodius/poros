@@ -552,7 +552,13 @@ impl B2Fs {
             let page = self
                 .list_page(bucket_id, prefix, false, start.as_deref(), PAGE_SIZE, path)
                 .await?;
-            files.extend(page.files.into_iter().filter(B2File::is_file));
+            // Only a broken service lists names outside the prefix asked for, and renaming or
+            // deleting a folder must not touch them.
+            files.extend(
+                page.files
+                    .into_iter()
+                    .filter(|file| file.is_file() && file.file_name.starts_with(prefix)),
+            );
             match page.next_file_name {
                 Some(next) => start = Some(next),
                 None => return Ok(files),

@@ -3,6 +3,8 @@
 //! itself when the server drops it for being idle.
 
 mod control;
+#[cfg(test)]
+mod fake_server;
 pub mod fxp;
 mod listing;
 
@@ -184,12 +186,14 @@ impl FtpFs {
         Ok((control, home, certificate))
     }
 
-    /// The control connection, reopened if the server dropped it. Under `waiting_briefly` it is
-    /// waited for only as long as that allows.
+    /// The control connection, reopened if the server dropped it or an earlier request left
+    /// it out of step. Under `waiting_briefly` it is waited for only as long as that allows.
     async fn connection(&self) -> AppResult<ControlGuard> {
         let mut guard = take_connection(self.control.clone()).await?;
         if let Some(control) = guard.as_mut() {
-            if control.idle_for() > STALE_AFTER && control.noop().await.is_err() {
+            let unusable = control.is_out_of_step()
+                || (control.idle_for() > STALE_AFTER && control.noop().await.is_err());
+            if unusable {
                 *guard = None;
             }
         }
@@ -331,7 +335,9 @@ async fn keep_alive(control: Weak<Mutex<Option<Control>>>, interval: Duration) {
             continue;
         };
         if let Some(connection) = guard.as_mut() {
-            if connection.idle_for() >= interval && connection.noop().await.is_err() {
+            let unusable = connection.is_out_of_step()
+                || (connection.idle_for() >= interval && connection.noop().await.is_err());
+            if unusable {
                 *guard = None;
             }
         }
@@ -736,7 +742,186 @@ impl Drop for FtpWriter {
 
 #[cfg(test)]
 mod tests {
+    use super::fake_server::{Behavior, FakeServer};
     use super::*;
+
+    const PATH: &str = "/large.bin";
+    const OFFSET: usize = 1000;
+
+    fn contents() -> Vec<u8> {
+        (0..5000u32).map(|index| (index % 251) as u8).collect()
+    }
+
+    /// The ways a data connection opens, each with its own commands before a transfer.
+    #[derive(Debug, Clone, Copy)]
+    enum DataMode {
+        ExtendedPassive,
+        Passive,
+        Active,
+    }
+
+    const EVERY_DATA_MODE: [DataMode; 3] = [
+        DataMode::ExtendedPassive,
+        DataMode::Passive,
+        DataMode::Active,
+    ];
+
+    async fn connect(mode: DataMode) -> (FakeServer, Arc<FtpFs>) {
+        let server = FakeServer::start(Behavior {
+            refuses_extended_passive: matches!(mode, DataMode::Passive),
+            ..Behavior::default()
+        })
+        .await;
+        let profile = ConnectProfile {
+            ftp_active: matches!(mode, DataMode::Active),
+            ..server.profile()
+        };
+        let files = server.connect(&profile).await;
+        server.take_commands();
+        (server, files)
+    }
+
+    async fn read_range(files: &Arc<FtpFs>, range: Range<u64>) -> Vec<u8> {
+        let mut stream = files.clone().open_read(PATH, range).await.unwrap();
+        let mut received = Vec::new();
+        while let Some(chunk) = stream.next_chunk().await.unwrap() {
+            received.extend_from_slice(&chunk);
+        }
+        stream.finish().await.unwrap();
+        received
+    }
+
+    /// The data connection is set up first, and nothing comes between the restart position
+    /// and the transfer it is for.
+    fn assert_restarts_right_before(transfer: &str, commands: &[String], mode: DataMode) {
+        let [.., restart, last] = commands else {
+            panic!("{mode:?}: {commands:?}");
+        };
+        assert_eq!(
+            (restart.as_str(), last.as_str()),
+            (format!("REST {OFFSET}").as_str(), transfer),
+            "{mode:?}: {commands:?}"
+        );
+        assert!(commands.len() > 2, "{mode:?}: {commands:?}");
+    }
+
+    /// The scripted server forgets a restart position at any other command, as RFC 959 lets
+    /// servers do, so a position sent before the data connection is set up reads from the
+    /// start of the file.
+    #[tokio::test]
+    async fn a_download_continues_where_it_stopped_on_a_strict_server() {
+        for mode in EVERY_DATA_MODE {
+            let (server, files) = connect(mode).await;
+            let contents = contents();
+            server.put_file(PATH, &contents);
+            let received = read_range(&files, OFFSET as u64..contents.len() as u64).await;
+            assert_eq!(received, contents[OFFSET..], "{mode:?}");
+            let commands = server.take_commands();
+            assert_restarts_right_before(&format!("RETR {PATH}"), &commands, mode);
+        }
+    }
+
+    /// What checks and segmented downloads read: a range that ends before the file does.
+    #[tokio::test]
+    async fn a_ranged_read_starts_at_its_offset_on_a_strict_server() {
+        for mode in EVERY_DATA_MODE {
+            let (server, files) = connect(mode).await;
+            let contents = contents();
+            server.put_file(PATH, &contents);
+            let end = OFFSET + 1500;
+            let received = read_range(&files, OFFSET as u64..end as u64).await;
+            assert_eq!(received, contents[OFFSET..end], "{mode:?}");
+            // The connection is in step again once the rest of the file is called off.
+            let stat = files.stat(PATH).await.unwrap().unwrap();
+            assert_eq!(stat.size, contents.len() as u64, "{mode:?}");
+        }
+    }
+
+    /// A `PASV` reply that names an address on this computer, as a hostile server could to
+    /// have an upload written to a service only this computer reaches. The data connection
+    /// goes to the server itself, where the scripted server listens.
+    #[tokio::test]
+    async fn a_passive_address_on_this_computer_is_not_followed() {
+        let server = FakeServer::start(Behavior {
+            refuses_extended_passive: true,
+            passive_address: Some(std::net::Ipv4Addr::new(127, 0, 0, 2)),
+            ..Behavior::default()
+        })
+        .await;
+        let files = server.connect(&server.profile()).await;
+        let contents = contents();
+        server.put_file(PATH, &contents);
+        let received = read_range(&files, 0..contents.len() as u64).await;
+        assert_eq!(received, contents);
+    }
+
+    /// A listing over the size limit fails while the server still owes the reply that ends
+    /// it. The next request must not take that reply for its own: here `SIZE` would read it
+    /// as a refusal, and the `CWD` after it would read the size as a folder it entered.
+    #[tokio::test]
+    async fn a_listing_over_the_limit_leaves_the_next_request_its_own_reply() {
+        let server = FakeServer::start(Behavior {
+            listing_padding: 65 * 1024 * 1024,
+            ..Behavior::default()
+        })
+        .await;
+        let files = server.connect(&server.profile()).await;
+        server.put_file("/notes.txt", b"abc");
+        let error = files.list_dir("/").await.unwrap_err();
+        assert_eq!(error.kind, ErrorKind::Ftp, "{}", error.message);
+        let stat = files.stat("/notes.txt").await.unwrap().unwrap();
+        assert!(!stat.is_dir);
+        assert_eq!(stat.size, 3);
+        let listing = files.list_dir("/").await.unwrap_err();
+        assert_eq!(listing.kind, ErrorKind::Ftp, "{}", listing.message);
+    }
+
+    /// A request dropped while it waits for the server, as cancelling does, leaves its reply
+    /// on the way. The next request must not take that reply for its own.
+    #[tokio::test]
+    async fn a_cancelled_request_leaves_the_next_request_its_own_reply() {
+        let server = FakeServer::start(Behavior {
+            slow_command: Some(("SIZE", Duration::from_millis(300))),
+            ..Behavior::default()
+        })
+        .await;
+        let files = server.connect(&server.profile()).await;
+        server.put_file("/short.txt", b"abc");
+        server.put_file("/long.txt", b"abcdefgh");
+        let cancelled =
+            tokio::time::timeout(Duration::from_millis(50), files.stat("/short.txt")).await;
+        assert!(cancelled.is_err(), "the request ended by itself");
+        let stat = files.stat("/long.txt").await.unwrap().unwrap();
+        assert_eq!(stat.size, 8);
+    }
+
+    #[tokio::test]
+    async fn an_upload_continues_where_it_stopped_on_a_strict_server() {
+        for mode in EVERY_DATA_MODE {
+            let (server, files) = connect(mode).await;
+            let contents = contents();
+            server.put_file(PATH, &contents[..OFFSET]);
+            let mut stream = files
+                .clone()
+                .open_write(WriteRequest {
+                    path: PATH.to_string(),
+                    offset: OFFSET as u64,
+                    size: contents.len() as u64,
+                    modified: None,
+                    permissions: None,
+                })
+                .await
+                .unwrap();
+            stream
+                .write(Bytes::copy_from_slice(&contents[OFFSET..]))
+                .await
+                .unwrap();
+            stream.finish().await.unwrap();
+            assert_eq!(server.file(PATH), Some(contents), "{mode:?}");
+            let commands = server.take_commands();
+            assert_restarts_right_before(&format!("STOR {PATH}"), &commands, mode);
+        }
+    }
 
     fn patience(bound: Duration) -> Patience {
         Patience {
