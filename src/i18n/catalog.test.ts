@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Translation } from "./catalog";
-import { checkTranslation, pluralCategoriesOf } from "./check";
+import { checkTranslation, KNOWN_PLURAL_CATEGORIES, pluralCategoriesOf } from "./check";
 import { ENGLISH, TRANSLATIONS } from "./index";
 
 /** A copy of English under another tag, which each case below spoils in one way. */
@@ -120,4 +120,21 @@ describe("pluralCategoriesOf", () => {
     expect(pluralCategoriesOf("ja")).toEqual(["other"]);
     expect(pluralCategoriesOf("zh-Hans")).toEqual(["other"]);
   });
+
+  it("asks the engine about languages it does not know", () => {
+    expect(pluralCategoriesOf("en-GB")).toEqual(["one", "other"]);
+  });
+
+  it.each(Object.entries(KNOWN_PLURAL_CATEGORIES))(
+    "agrees with the engine's rules for %s",
+    (locale, known) => {
+      const rules = new Intl.PluralRules(locale);
+      // An older ICU may know fewer forms, never others.
+      for (const category of rules.resolvedOptions().pluralCategories) {
+        expect(known).toContain(category);
+      }
+      const samples = [0, 1, 2, 5, 21, 100, 1000, 1_000_000, 0.5, 1.5];
+      for (const count of samples) expect(known).toContain(rules.select(count));
+    },
+  );
 });

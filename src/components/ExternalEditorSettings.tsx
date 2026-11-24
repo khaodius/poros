@@ -54,7 +54,7 @@ export function ExternalEditorSettings({ settings }: { settings: Settings }) {
         value={editing.keepMinutes}
         min={0}
         max={MAX_KEEP_WORKING_COPY_MINUTES}
-        unit="min"
+        unit={t("common.minutesUnit")}
         onChange={(keepMinutes) => set({ keepMinutes })}
       />
     </SettingGroup>

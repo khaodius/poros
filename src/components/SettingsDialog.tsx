@@ -432,13 +432,16 @@ function TransferSettingsPage({ settings }: { settings: Settings }) {
           value={transfers.retryDelaySecs}
           min={0}
           max={600}
-          unit="s"
+          unit={t("common.secondsUnit")}
           onChange={(retryDelaySecs) => set({ retryDelaySecs })}
         />
       </SettingGroup>
     </>
   );
 }
+
+/** How every minisign public key starts, as a hint of what to paste. */
+const MINISIGN_KEY_START = "RWQ...";
 
 /** One minisign public key per line, saved when the box loses focus. */
 function MinisignKeysSetting({
@@ -466,7 +469,7 @@ function MinisignKeysSetting({
       <textarea
         value={typed ?? text}
         aria-label={t("settings.trustedMinisignKeys")}
-        placeholder="RWQ..."
+        placeholder={MINISIGN_KEY_START}
         rows={3}
         spellCheck={false}
         disabled={disabled}
@@ -533,7 +536,7 @@ function ConnectionSettingsPage({ settings }: { settings: Settings }) {
           value={connection.timeoutSecs}
           min={3}
           max={300}
-          unit="s"
+          unit={t("common.secondsUnit")}
           onChange={(timeoutSecs) => set({ timeoutSecs })}
         />
         <NumberSetting
@@ -542,7 +545,7 @@ function ConnectionSettingsPage({ settings }: { settings: Settings }) {
           value={connection.keepaliveSecs}
           min={0}
           max={3600}
-          unit="s"
+          unit={t("common.secondsUnit")}
           onChange={(keepaliveSecs) => set({ keepaliveSecs })}
         />
         <SwitchSetting
@@ -565,7 +568,7 @@ function ConnectionSettingsPage({ settings }: { settings: Settings }) {
           value={settings.transfers.reconnectMinutes}
           min={0}
           max={MAX_RECONNECT_MINUTES}
-          unit="min"
+          unit={t("common.minutesUnit")}
           onChange={(reconnectMinutes) =>
             void saveSettingsSection("transfers", { reconnectMinutes })
           }

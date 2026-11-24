@@ -6,6 +6,7 @@
 // `components/FileFlights.tsx`.
 
 import { create } from "zustand";
+import { formatNumber } from "../i18n";
 import {
   boxCenter,
   intersects,
@@ -352,7 +353,7 @@ export function playFlight(
   const plan = planFlight({ sources, landing, count: subjects.length, random: randomFor() });
   addFlight({
     icons: subjects.map((subject, index) => ({ subject, path: plan.icons[index] })),
-    badge: entries.length > 1 ? { text: entries.length.toLocaleString(), path: plan.badge } : null,
+    badge: entries.length > 1 ? { text: formatNumber(entries.length), path: plan.badge } : null,
     landing,
     target,
     follow: null,
@@ -491,7 +492,7 @@ function launch(ready: ReadyArrival[]): void {
     const plan = planFlight({ sources, landing, count: subjects.length, random: randomFor() });
     addFlight({
       icons: subjects.map((subject, index) => ({ subject, path: plan.icons[index] })),
-      badge: { text: group.length.toLocaleString(), path: plan.badge },
+      badge: { text: formatNumber(group.length), path: plan.badge },
       landing,
       target,
       follow: row,

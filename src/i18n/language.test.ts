@@ -1,10 +1,14 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS, sanitizeSettings } from "../lib/settings";
 import { formatDate, formatDuration, formatPercent, formatSize, formatSpeed } from "../lib/format";
 import type { Translation } from "./catalog";
 import {
+  dateTimeFormat,
+  dateWordFormat,
   ENGLISH,
   formatList,
+  formatLocale,
+  formatLocaleFor,
   formatNumber,
   midSentence,
   resolveLanguage,
@@ -14,6 +18,7 @@ import {
   translationForSystem,
   useLanguageStore,
 } from "./index";
+import { weekdayName } from "../lib/schedule";
 import { createTranslate } from "./runtime";
 
 function catalog(locale: string, name: string): Translation {
@@ -97,7 +102,16 @@ describe("the Language setting", () => {
   });
 });
 
+/** The computer's language, as the system reports it to the page. */
+function onComputerIn(language: string) {
+  vi.stubGlobal("navigator", { language });
+}
+
+afterEach(() => vi.unstubAllGlobals());
+
 describe("formats in the active language", () => {
+  beforeEach(() => onComputerIn("en-US"));
+
   it("writes numbers, sizes, speeds and percentages in English", () => {
     show(ENGLISH);
     expect(formatNumber(1234567.5)).toBe("1,234,567.5");
@@ -140,5 +154,67 @@ describe("formats in the active language", () => {
     expect(midSentence("Files only")).toBe("files only");
     show(GERMAN);
     expect(midSentence("Nur Dateien")).toBe("Nur Dateien");
+  });
+});
+
+describe("formatLocaleFor", () => {
+  it("keeps the computer's formats under the English interface", () => {
+    expect(formatLocaleFor("en", "en-GB")).toBe("en-GB");
+    expect(formatLocaleFor("en", "it-IT")).toBe("it-IT");
+    expect(formatLocaleFor("en", "sv-se")).toBe("sv-SE");
+  });
+
+  it("keeps the computer's region when it speaks the interface's language", () => {
+    expect(formatLocaleFor("de", "de-AT")).toBe("de-AT");
+    expect(formatLocaleFor("de", "de-CH")).toBe("de-CH");
+    expect(formatLocaleFor("zh-Hans", "zh-CN")).toBe("zh-CN");
+  });
+
+  it("uses the translation's formats on a computer in another language or script", () => {
+    expect(formatLocaleFor("de", "en-US")).toBe("de");
+    expect(formatLocaleFor("zh-Hans", "zh-TW")).toBe("zh-Hans");
+  });
+
+  it("uses the translation's formats when the computer gives no usable tag", () => {
+    expect(formatLocaleFor("en", undefined)).toBe("en");
+    expect(formatLocaleFor("de", "")).toBe("de");
+    expect(formatLocaleFor("en", "C")).toBe("en");
+  });
+});
+
+describe("formats of the user's region", () => {
+  const moment = new Date(2026, 4, 14, 18, 30).getTime() / 1000;
+
+  it("writes British dates under the English interface on an en-GB computer", () => {
+    onComputerIn("en-GB");
+    setLanguage("en");
+    expect(formatLocale()).toBe("en-GB");
+    expect(formatDate(moment, "locale")).toBe("14 May 2026, 18:30");
+    expect(formatNumber(1234567.5)).toBe("1,234,567.5");
+    // Words follow the interface.
+    expect(formatList(["a", "b", "c"])).toBe("a, b, and c");
+  });
+
+  it("writes Italian numbers and dates under the English interface on an it-IT computer", () => {
+    onComputerIn("it-IT");
+    setLanguage("en");
+    expect(formatNumber(1234567.5)).toBe("1.234.567,5");
+    expect(formatSize(1536)).toBe("1,5 KB");
+    expect(formatDate(moment, "locale")).toBe("14 mag 2026, 18:30");
+    // Italian groups numbers from five digits on.
+    expect(useLanguageStore.getState().translate("drives.driveCount", { count: 12345 })).toBe(
+      "12.345 drives",
+    );
+    expect(weekdayName(0)).toBe("Mon");
+  });
+
+  it("writes Austrian formats under German on a de-AT computer, words in German", () => {
+    onComputerIn("de-AT");
+    show(GERMAN);
+    expect(formatLocale()).toBe("de-AT");
+    expect(formatNumber(1234567.5)).toBe(new Intl.NumberFormat("de-AT").format(1234567.5));
+    expect(dateTimeFormat({ dateStyle: "medium" }).resolvedOptions().locale).toBe("de-AT");
+    expect(dateWordFormat({ weekday: "short" }).resolvedOptions().locale).toBe("de");
+    expect(formatList(["a", "b", "c"])).toBe("a, b und c");
   });
 });

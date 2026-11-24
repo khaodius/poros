@@ -57,6 +57,13 @@ export function describeCheckError(message: string): string {
     : t("updates.couldNotCheckForUpdates", { message });
 }
 
+/** The same in English, for the log. */
+function checkErrorForLog(message: string): string {
+  return message === MISSING_MANIFEST
+    ? "The latest release on GitHub does not offer in-app updates yet"
+    : `Could not check for updates: ${message}`;
+}
+
 /** How much of the download is done, from 0 to 100, or null while its size is unknown. */
 export function percentDownloaded(received: number, total: number | null): number | null {
   if (!total) return null;
@@ -89,9 +96,9 @@ export async function checkForUpdates(trigger: "start" | "manual"): Promise<void
       ui.open({ kind: "update" });
     }
   } catch (caught) {
-    const checkError = describeCheckError(toAppError(caught).message);
-    useUpdateStore.setState({ checkError });
-    if (trigger === "start") useLogStore.getState().write("warn", checkError);
+    const { message } = toAppError(caught);
+    useUpdateStore.setState({ checkError: describeCheckError(message) });
+    if (trigger === "start") useLogStore.getState().write("warn", checkErrorForLog(message));
   } finally {
     useUpdateStore.setState({ checking: false });
   }

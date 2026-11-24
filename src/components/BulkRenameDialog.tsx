@@ -205,10 +205,11 @@ export function BulkRenameDialog({
 
   // Typing stays quick with tens of thousands of items: the preview follows a moment behind.
   const previewedRules = useDeferredValue(rules);
-  const preview = useMemo(
-    () => previewRenames(selection, previewedRules, target ?? assumedTarget),
-    [selection, previewedRules, target, assumedTarget],
-  );
+  const preview = useMemo(() => {
+    // The problems it finds are written in the interface's language, so they follow it.
+    void t;
+    return previewRenames(selection, previewedRules, target ?? assumedTarget);
+  }, [selection, previewedRules, target, assumedTarget, t]);
   const changedCount = preview.rows.length - preview.unchanged;
   const filterCounts: Record<PreviewFilter, number> = {
     all: preview.rows.length,
@@ -285,11 +286,11 @@ export function BulkRenameDialog({
   const tableRow = (index: number): RenameTableRow => {
     const row = preview.rows[shownRows ? shownRows[index] : index];
     if (row.status === "problem") {
-      return { ...row, tone: "bad", status: row.message ?? "Cannot be renamed" };
+      return { ...row, tone: "bad", status: row.message ?? t("rename.cannotBeRenamed") };
     }
     return row.status === "unchanged"
-      ? { ...row, tone: "dim", status: "Unchanged" }
-      : { ...row, tone: "plain", status: "Ready" };
+      ? { ...row, tone: "dim", status: t("rename.nameUnchanged") }
+      : { ...row, tone: "plain", status: t("rename.ready") };
   };
 
   const templateActive = templateIsActive(rules.template);

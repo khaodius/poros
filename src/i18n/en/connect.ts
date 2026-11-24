@@ -121,6 +121,7 @@ export const connect = {
   importCountConnections: { one: "Import {count} connection", other: "Import {count} connections" },
   foundFiles: "Found {files}",
   notFoundInChoose: "Not found in {places}. {choose}",
+  placeOrPlace: "{first} or {second}",
   keepThePasswordsInTheKeychain: {
     one: "Keep the {count} password in the system keychain",
     other: "Keep the {count} passwords in the system keychain",
