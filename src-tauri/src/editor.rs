@@ -1,6 +1,7 @@
 //! Text files open in the editor. A document remembers where its file lives, and for a file on
 //! an SFTP server how to reach the server, so it still saves after its session was closed or
-//! dropped. Files on FTP servers and cloud drives go through their session.
+//! dropped. Files on FTP servers and cloud drives go through their session, or through a session
+//! that took its place on the same machine, as after a reconnect.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -282,18 +283,26 @@ impl EditorManager {
         Ok(SaveOutcome::Saved { stamp })
     }
 
-    /// Runs a request on the file's session. For an SFTP file it falls back to a connection of
-    /// the document's own once that session is closed or its connection has dropped; FTP
-    /// sessions reconnect by themselves and cloud drives have no connection to lose.
+    /// Runs a request on the file's session. Once that is gone, an SFTP file goes through a
+    /// connection of the document's own, which takes the route the file was opened over, and
+    /// only when that cannot connect through a session that stands in for its own. Other files
+    /// go through the session that took the place of theirs, such as a reconnect's: FTP sessions
+    /// reconnect by themselves and cloud drives have no connection to lose.
     async fn on_remote(
         &self,
         document: &Document,
         remote: &RemoteOrigin,
         request: Request<'_>,
     ) -> AppResult<Reply> {
+        let sftp = remote.target.protocol() == Protocol::Sftp;
         let mut own = remote.own_connection.lock().await;
         if own.is_none() {
-            match self.sessions.get(&remote.target.session_id).await {
+            let session = if sftp {
+                self.sessions.get(&remote.target.session_id).await
+            } else {
+                self.sessions.reach(&remote.target).await
+            };
+            match session {
                 Ok(session) => match session.sftp() {
                     Ok(fs) => match perform(fs, &document.path, &request).await {
                         Err(error) if error.is_connection_lost() => {}
@@ -301,7 +310,7 @@ impl EditorManager {
                     },
                     Err(_) => return perform_on(session.files(), &document.path, &request).await,
                 },
-                Err(error) if remote.target.protocol() != Protocol::Sftp => return Err(error),
+                Err(error) if !sftp => return Err(error),
                 Err(_) => {}
             }
         }
@@ -317,8 +326,21 @@ impl EditorManager {
         if let Some(stale) = own.take() {
             stale.close().await;
         }
-        let connection = own.insert(self.connect(document, remote).await?);
-        perform(&connection.fs, &document.path, &request).await
+        let refusal = match self.connect(document, remote).await {
+            Ok(connection) => {
+                let connection = own.insert(connection);
+                return perform(&connection.fs, &document.path, &request).await;
+            }
+            Err(error) if error.kind == ErrorKind::HostKeyChanged => return Err(error),
+            Err(error) => error,
+        };
+        match self.sessions.reach(&remote.target).await {
+            Ok(session) => match session.sftp() {
+                Ok(fs) => perform(fs, &document.path, &request).await,
+                Err(_) => Err(refusal),
+            },
+            Err(_) => Err(refusal),
+        }
     }
 
     async fn connect(

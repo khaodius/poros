@@ -2,8 +2,14 @@ import { create } from "zustand";
 import { forgetRemoteSource } from "../lib/fileSource";
 import { remote, vaults } from "../lib/ipc";
 import { allTabs, isRestoring, type SavedServer } from "../lib/layout";
-import type { ConnectProfile, HostKeyApproval, SessionInfo, VaultInfo } from "../lib/types";
-import { serverSessionId, vaultSessions } from "../lib/vaults";
+import type {
+  AppError,
+  ConnectProfile,
+  HostKeyApproval,
+  SessionInfo,
+  VaultInfo,
+} from "../lib/types";
+import { serverSessionId, sessionFamily, vaultSessions } from "../lib/vaults";
 import { useLayoutStore } from "./layoutStore";
 import { forgetListing, listingsLeft } from "./listings";
 import { getPane } from "./paneRegistry";
@@ -84,11 +90,40 @@ function tabsShowing(sessionIds: readonly string[]) {
   );
 }
 
-/** Shows the session that replaces `previousId` in the tabs that showed it, where they were. */
+/** Sessions of this window that a reconnect replaced, each with the one that took its place. */
+const replacedBy = new Map<string, string>();
+
+/**
+ * Sessions of this window a reconnect is under way for, each true once it was closed meanwhile
+ * rather than handed to another window.
+ */
+const reconnecting = new Map<string, boolean>();
+
+/**
+ * The session that stands for `sessionId` now, for what still names a session a reconnect
+ * replaced, such as transfers queued before it: the one its reconnects led to, or itself.
+ */
+export function currentSessionId(sessionId: string): string {
+  let current = sessionId;
+  for (let next = replacedBy.get(current); next !== undefined; next = replacedBy.get(current)) {
+    current = next;
+  }
+  return current;
+}
+
+/**
+ * Shows the session that replaces `previousId` in the tabs that showed it, where they were. The
+ * editors and terminals opened from it go on with the new session too.
+ */
 function moveTabs(previousId: string, sessionId: string): void {
   for (const tab of tabsShowing([previousId])) {
     const path = getPane(tab.id)?.path() ?? tab.path;
     useLayoutStore.getState().replaceTab(tab.id, { id: tab.id, kind: "remote", sessionId, path });
+  }
+  for (const tab of allTabs(useLayoutStore.getState().root)) {
+    if (tab.kind !== "editor" && tab.kind !== "terminal") continue;
+    if (isRestoring(tab) || tab.sessionId !== previousId) continue;
+    useLayoutStore.getState().replaceTab(tab.id, { ...tab, sessionId });
   }
 }
 
@@ -103,10 +138,32 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   reconnect: async (sessionId, approval) => {
     const previous = get().sessions[sessionId];
-    const info = await remote.reconnect(sessionId, approval);
-    await remote.disconnect(sessionId).catch(() => undefined);
+    // The backend moves the server's unlocked vaults over to the session it opens.
+    const movesVaults = vaultSessions(get().sessions, sessionId).length > 0;
+    const shown = () => Boolean(get().sessions[sessionId]);
+    reconnecting.set(sessionId, false);
+    let info: SessionInfo;
+    let closedMeanwhile: boolean;
+    try {
+      info = await remote.reconnect(sessionId, approval);
+      if (shown()) await remote.disconnect(sessionId).catch(() => undefined);
+    } finally {
+      closedMeanwhile = reconnecting.get(sessionId) ?? false;
+      reconnecting.delete(sessionId);
+    }
+    if (!shown()) {
+      // Its tabs closed, or went to another window, while it reconnected: none would show it.
+      // Gone to another window, the old session goes on there while the vaults moved to the new
+      // one, which is left open so they are not locked under that window.
+      if (closedMeanwhile || !movesVaults) await remote.disconnect(info.id).catch(() => undefined);
+      throw {
+        kind: "sessionNotFound",
+        message: "Its tab was closed meanwhile.",
+      } satisfies AppError;
+    }
     forgetRemoteSource(sessionId);
     forgetSessionPreviews(sessionId);
+    replacedBy.set(sessionId, info.id);
     // What the server showed is remembered for the session that replaces this one, which is on
     // the same connection; only what was kept for this session alone goes with it.
     if (previous) listingsLeft([previous], false);
@@ -152,6 +209,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   disconnect: async (sessionId) => {
+    if (reconnecting.has(sessionId)) reconnecting.set(sessionId, true);
     const closing = leavingWith(get().sessions, sessionId);
     get().release(sessionId);
     // Closed for good, so the listings remembered for them have no session left to show them.
@@ -205,6 +263,24 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 export function serverEntry(sessions: Sessions, sessionId: string): SessionEntry | undefined {
   const entry = sessions[sessionId] as SessionEntry | undefined;
   return entry && sessions[serverSessionId(entry.info)];
+}
+
+/**
+ * Closes the session of a server, with its vaults, once no tab of this window uses it any more,
+ * as when the last editor or terminal tab it was connected again for after a restart closes.
+ */
+export function disconnectUnused(sessionId: string): void {
+  const { sessions, disconnect } = useSessionStore.getState();
+  if (!sessions[sessionId]) return;
+  const family = sessionFamily(sessions, sessionId);
+  const used = allTabs(useLayoutStore.getState().root).some(
+    (tab) =>
+      (tab.kind === "remote" || tab.kind === "editor" || tab.kind === "terminal") &&
+      !isRestoring(tab) &&
+      tab.sessionId !== undefined &&
+      family.includes(tab.sessionId),
+  );
+  if (!used) void disconnect(family[0]);
 }
 
 /** A profile safe to hand to another window: the backend still holds the secrets. */
