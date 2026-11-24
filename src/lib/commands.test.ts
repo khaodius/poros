@@ -111,7 +111,10 @@ describe("describeResult", () => {
     expect(describeResult({ ...result, exitStatus: null, signal: "TERM" })).toBe(
       "Ended by signal TERM after 2s",
     );
-    expect(commandSucceeded({ ...result, exitStatus: null })).toBe(true);
+    expect(describeResult({ ...result, exitStatus: null })).toBe(
+      "Ended without an exit status after 2s",
+    );
+    expect(commandSucceeded({ ...result, exitStatus: null })).toBe(false);
     expect(commandSucceeded({ ...result, signal: "KILL" })).toBe(false);
   });
 });

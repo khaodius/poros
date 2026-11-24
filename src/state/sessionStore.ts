@@ -13,6 +13,7 @@ import { serverSessionId, sessionFamily, vaultSessions } from "../lib/vaults";
 import { useLayoutStore } from "./layoutStore";
 import { forgetListing, listingsLeft } from "./listings";
 import { getPane } from "./paneRegistry";
+import { forgetSessionPreviews } from "./previewReads";
 import { useSettingsStore } from "./settingsStore";
 
 export interface SessionEntry {
@@ -161,6 +162,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       } satisfies AppError;
     }
     forgetRemoteSource(sessionId);
+    forgetSessionPreviews(sessionId);
     replacedBy.set(sessionId, info.id);
     // What the server showed is remembered for the session that replaces this one, which is on
     // the same connection; only what was kept for this session alone goes with it.
@@ -218,7 +220,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   release: (sessionId) => {
     const leaving = leavingWith(get().sessions, sessionId);
     const leavingIds = new Set([sessionId, ...leaving.map((entry) => entry.info.id)]);
-    leavingIds.forEach(forgetRemoteSource);
+    for (const id of leavingIds) {
+      forgetRemoteSource(id);
+      forgetSessionPreviews(id);
+    }
     set((state) => {
       const sessions = { ...state.sessions };
       for (const id of leavingIds) delete sessions[id];
@@ -235,7 +240,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       return { sessions: { ...state.sessions, [sessionId]: { ...entry, info } } };
     }),
 
-  markLost: (sessionId, reason) =>
+  markLost: (sessionId, reason) => {
+    // What was read is read again over the next session.
+    forgetSessionPreviews(sessionId);
     set((state) => {
       const entry = state.sessions[sessionId];
       if (!entry) return state;
@@ -245,7 +252,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           [sessionId]: { ...entry, status: "lost", lostReason: reason },
         },
       };
-    }),
+    });
+  },
 }));
 
 /**

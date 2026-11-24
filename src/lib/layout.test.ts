@@ -18,6 +18,7 @@ import {
   removeTab,
   resizeShares,
   terminalTab,
+  updateTab,
   type CurrentState,
   type LayoutNode,
   type PaneTab,
@@ -379,5 +380,71 @@ describe("layout", () => {
     const crowded = openTab(fifth, file, columns[1].id);
     expect(allGroups(crowded)).toHaveLength(5);
     expect(groupOfTab(crowded, file.id)?.id).toBe(columns[1].id);
+  });
+});
+
+describe("a pane's preview", () => {
+  const tabOf = (root: LayoutNode, id: string) => allTabs(root).find((tab) => tab.id === id);
+
+  it("stays open when the pane is given another session or folder", () => {
+    const root = group([{ id: "a", kind: "local", preview: true }, remote("b")]);
+    const connected = updateTab(root, "a", { id: "a", kind: "remote", sessionId: "s", path: "/" });
+    expect(tabOf(connected, "a")).toEqual({
+      id: "a",
+      kind: "remote",
+      sessionId: "s",
+      path: "/",
+      preview: true,
+    });
+    // A pane that had none gets none.
+    const moved = updateTab(root, "b", { id: "b", kind: "remote", sessionId: "s", path: "/srv" });
+    expect(tabOf(moved, "b")).toEqual({ id: "b", kind: "remote", sessionId: "s", path: "/srv" });
+  });
+
+  it("closes when the replacement says so, and is not passed on to other kinds of tab", () => {
+    const root = group([{ id: "a", kind: "local", preview: true }]);
+    const closed = updateTab(root, "a", { id: "a", kind: "local", preview: false });
+    expect(tabOf(closed, "a")).toEqual({ id: "a", kind: "local", preview: false });
+    const welcome = updateTab(root, "a", { id: "a", kind: "welcome" });
+    expect(tabOf(welcome, "a")).toEqual({ id: "a", kind: "welcome" });
+  });
+
+  it("is open again after a restart, on this computer and on a server", () => {
+    const root = group([
+      { id: "a", kind: "local", preview: true },
+      { id: "b", kind: "remote", sessionId: "session-b", preview: true },
+      remote("c"),
+    ]);
+    const restored = throughStorage(
+      root,
+      current({}, { "session-b": server("web"), "session-c": server("db") }),
+    );
+    const tabs = restored ? allTabs(restored) : [];
+    expect(tabs.map((tab) => "preview" in tab && tab.preview)).toEqual([true, true, false]);
+  });
+
+  it("is read as closed from a layout that stores anything but yes or no, keeping the tabs", () => {
+    const stored = {
+      type: "group",
+      id: "g",
+      tabs: [
+        { id: "a", kind: "local", path: "/home/deploy", preview: "yes" },
+        { id: "b", kind: "local", preview: 1 },
+      ],
+      activeTabId: "b",
+    };
+    const parsed = parseLayout(stored);
+    expect(parsed).toMatchObject({
+      type: "group",
+      activeTabId: "b",
+      tabs: [
+        { id: "a", kind: "local", path: "/home/deploy" },
+        { id: "b", kind: "local" },
+      ],
+    });
+    const tabs = parsed?.type === "group" ? parsed.tabs : [];
+    expect(tabs.some((tab) => "preview" in tab)).toBe(false);
+    const open = { type: "group", id: "g", tabs: [{ id: "a", kind: "local", preview: true }] };
+    expect(parseLayout(open)).toMatchObject({ tabs: [{ id: "a", preview: true }] });
   });
 });
