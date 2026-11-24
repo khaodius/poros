@@ -42,6 +42,9 @@ const NAMED_IN_MESSAGES: usize = 5;
 /// How long the changes a drive makes are gathered before the app is told of them, so a
 /// program writing many files sends one message rather than one for each.
 const CHANGES_GATHERED: Duration = Duration::from_millis(250);
+/// How long a drive that goes waits for its stopped uploads to clear up after themselves on
+/// the server before its connections close.
+const UPLOADS_STOPPING: Duration = Duration::from_secs(3);
 
 /// What the dialog asks for. Mirrored in `src/lib/types.ts`.
 #[derive(Debug, Clone, Deserialize)]
@@ -527,7 +530,9 @@ impl MountManager {
             }
         }
         let kept = if force {
-            drive.core.keep_unsent()
+            let kept = drive.core.keep_unsent();
+            drive.core.stop_uploads();
+            kept
         } else {
             Vec::new()
         };
@@ -542,6 +547,7 @@ impl MountManager {
         if self.drives.lock().unwrap().remove(&drive.id).is_none() {
             return;
         }
+        drive.core.uploads_ended(UPLOADS_STOPPING).await;
         drive.backend.close().await;
         let session_id = drive.backend.session_id();
         self.events.log(
@@ -573,6 +579,7 @@ impl MountManager {
             return;
         };
         let kept = drive.core.keep_unsent();
+        drive.core.stop_uploads();
         let detaching = drive.clone();
         let _ = tokio::task::spawn_blocking(move || detaching.system.unmount(true)).await;
         self.finish(&drive, &kept, "Something outside Poros unmounted")

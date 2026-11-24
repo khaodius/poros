@@ -58,6 +58,8 @@ pub struct MemoryFs {
     pub read_delay_millis: AtomicU64,
     /// A pause before an upload finishes, in milliseconds.
     pub upload_delay_millis: AtomicU64,
+    /// A pause before every piece of an upload, in milliseconds.
+    pub write_delay_millis: AtomicU64,
     clock: AtomicU64,
 }
 
@@ -75,6 +77,7 @@ impl MemoryFs {
             moves_between_folders: AtomicBool::new(true),
             read_delay_millis: AtomicU64::new(0),
             upload_delay_millis: AtomicU64::new(0),
+            write_delay_millis: AtomicU64::new(0),
             clock: AtomicU64::new(1_700_000_000),
         })
     }
@@ -409,8 +412,25 @@ impl RemoteFileSystem for MemoryFs {
         }))
     }
 
+    /// The file is there, empty, from the moment it is opened, as on an SFTP server.
     async fn open_write(self: Arc<Self>, request: WriteRequest) -> AppResult<Box<dyn WriteStream>> {
         self.check_online()?;
+        let modified = self.tick();
+        {
+            let mut items = self.items.lock().unwrap();
+            let kept_permissions = match items.get(&request.path) {
+                Some(Item::File { permissions, .. }) => *permissions,
+                _ => None,
+            };
+            items.insert(
+                request.path.clone(),
+                Item::File {
+                    data: Bytes::new(),
+                    modified,
+                    permissions: request.permissions.or(kept_permissions),
+                },
+            );
+        }
         Ok(Box::new(MemoryWriter {
             fs: self,
             request,
@@ -478,6 +498,10 @@ struct MemoryWriter {
 #[async_trait]
 impl WriteStream for MemoryWriter {
     async fn write(&mut self, data: Bytes) -> AppResult<()> {
+        let delay = self.fs.write_delay_millis.load(Ordering::Relaxed);
+        if delay > 0 {
+            tokio::time::sleep(Duration::from_millis(delay)).await;
+        }
         self.fs.check_online()?;
         self.data.extend_from_slice(&data);
         Ok(())

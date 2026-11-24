@@ -18,6 +18,7 @@ use std::time::Duration;
 use bytes::Bytes;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncReadExt;
+use tokio_util::sync::CancellationToken;
 
 use super::backend::{Backend, Purpose};
 use crate::error::{AppError, AppResult, ErrorKind};
@@ -39,6 +40,9 @@ pub struct UploadRequest {
     pub size: u64,
     pub modified: Option<i64>,
     pub permissions: Option<u32>,
+    /// Cancelled when the drive goes: the upload stops between two pieces, so what it left
+    /// beside the file can still be removed.
+    pub stop: CancellationToken,
 }
 
 /// How a finished upload is checked.
@@ -269,6 +273,12 @@ async fn send_and_check(
     let mut hasher = Sha256::new();
     let mut remaining = request.size;
     while remaining > 0 {
+        if request.stop.is_cancelled() {
+            return Err(AppError::new(
+                ErrorKind::Cancelled,
+                "The drive went before the upload finished",
+            ));
+        }
         let wanted = remaining.min(CHUNK as u64) as usize;
         let mut buffer = vec![0; wanted];
         let mut filled = 0;

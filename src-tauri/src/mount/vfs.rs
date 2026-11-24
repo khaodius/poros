@@ -434,6 +434,8 @@ pub struct MountFs {
     /// Told about uploads that failed with nobody waiting to hear of it.
     on_upload_failure: Mutex<Option<FailureReport>>,
     on_change: Mutex<Option<ChangeReport>>,
+    /// Cancelled when the drive goes regardless of what is still being sent.
+    stopping: CancellationToken,
 }
 
 impl Drop for MountFs {
@@ -508,6 +510,7 @@ impl MountFs {
             bytes_written: AtomicU64::new(0),
             on_upload_failure: Mutex::new(None),
             on_change: Mutex::new(None),
+            stopping: CancellationToken::new(),
         })
     }
 
@@ -1392,6 +1395,7 @@ impl MountFs {
                     size: state.size,
                     modified: state.modified,
                     permissions: state.permissions,
+                    stop: self.stopping.clone(),
                 };
                 (generation, request)
             };
@@ -1438,7 +1442,11 @@ impl MountFs {
                     local.settled.send_modify(|count| *count += 1);
                     return;
                 }
-                Some(_) if state.generation != generation && attempts < SUPERSEDED_RETRIES => {
+                Some(_)
+                    if state.generation != generation
+                        && attempts < SUPERSEDED_RETRIES
+                        && !self.stopping.is_cancelled() =>
+                {
                     // The file changed while it was sent; what matters is its newer contents.
                     attempts += 1;
                 }
@@ -2277,6 +2285,25 @@ impl MountFs {
         }
         kept.sort();
         kept
+    }
+
+    /// Stops the uploads under way between two pieces, for a drive that goes regardless. What
+    /// they wrote beside their files is removed, and their files stay kept here.
+    pub fn stop_uploads(&self) {
+        self.stopping.cancel();
+    }
+
+    /// Waits, up to `limit`, until no upload runs any more.
+    pub async fn uploads_ended(&self, limit: Duration) {
+        let deadline = Instant::now() + limit;
+        while Instant::now() < deadline
+            && self
+                .pending_uploads()
+                .iter()
+                .any(|pending| pending.uploading)
+        {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
     }
 
     /// Forgets every cached listing and block, so the next request asks the server.

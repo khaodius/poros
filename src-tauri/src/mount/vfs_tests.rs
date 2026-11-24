@@ -1466,6 +1466,49 @@ async fn a_file_nobody_may_write_is_not_replaced() {
 }
 
 #[tokio::test]
+async fn a_drive_that_goes_stops_its_uploads_and_leaves_nothing_beside_the_file() {
+    let drive = drive();
+    drive.server.put_file("/video.mp4", "the original");
+    let id = node(&drive, "/video.mp4").await;
+    let handle = drive.fs.open(id, OpenMode::WRITE_TRUNCATE).await.unwrap();
+    let contents = pattern(4 * 1024 * 1024, 8);
+    drive.fs.write(handle, 0, &contents).await.unwrap();
+    drive.server.write_delay_millis.store(40, Ordering::Relaxed);
+    // Closed without a flush: the upload runs in the background.
+    drive.fs.release(handle);
+    until("a piece of the upload is on the server", || {
+        drive
+            .fs
+            .pending_uploads()
+            .iter()
+            .any(|pending| pending.sent > 0)
+    })
+    .await;
+    assert_eq!(
+        server_names(&drive.server, "/").await.len(),
+        2,
+        "written beside the file"
+    );
+
+    assert_eq!(drive.fs.keep_unsent(), vec!["/video.mp4".to_string()]);
+    drive.fs.stop_uploads();
+    drive.fs.uploads_ended(Duration::from_secs(5)).await;
+    assert!(drive
+        .fs
+        .pending_uploads()
+        .iter()
+        .all(|pending| !pending.uploading));
+    assert_eq!(server_names(&drive.server, "/").await, ["video.mp4"]);
+    assert_eq!(
+        drive.server.file("/video.mp4").unwrap()[..],
+        b"the original"[..]
+    );
+    let unsent = spool::unsent_files(&drive.spool_folder());
+    assert_eq!(unsent.len(), 1);
+    assert!(std::fs::read(&unsent[0].path).unwrap() == contents);
+}
+
+#[tokio::test]
 async fn a_rename_sends_what_is_unsent_first_and_fails_if_it_cannot() {
     let drive = drive();
     drive.server.put_file("/report.docx", "the good report");
