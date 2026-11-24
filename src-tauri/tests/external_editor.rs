@@ -106,10 +106,7 @@ async fn connect(sessions: &SessionManager, profile: &ConnectProfile) -> Session
             let host_key = error
                 .host_key
                 .unwrap_or_else(|| panic!("could not connect: {}", error.message));
-            let approval = HostKeyApproval {
-                fingerprint: host_key.fingerprint,
-                remember: true,
-            };
+            let approval = HostKeyApproval::of(&host_key, true);
             sessions
                 .connect(profile.clone(), Some(approval), OWNER)
                 .await
