@@ -464,6 +464,7 @@ async fn run_command(
         &session,
         command,
         directory,
+        &[],
         &CancellationToken::new(),
         |_, text| {
             pending.push_str(text);
