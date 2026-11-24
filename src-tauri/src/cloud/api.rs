@@ -189,7 +189,7 @@ impl Attempts {
         self.unanswered
     }
 
-    /// Records that the answer to the last attempt broke off after its status.
+    /// Records that the answer to the last attempt was lost, as when its body broke off.
     pub fn lose_answer(&mut self) {
         self.unanswered = true;
     }
