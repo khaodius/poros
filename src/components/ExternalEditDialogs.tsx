@@ -12,7 +12,7 @@ import { formatDate, formatSize, pluralize } from "../lib/format";
 import { external, onExternalEdits } from "../lib/ipc";
 import type { ExternalEdit, ExternalEditNotice, ExternalResolution } from "../lib/types";
 import {
-  closePastEdits,
+  answerClosing,
   editAction,
   exitNow,
   openFileWith,
@@ -25,9 +25,8 @@ import {
 import { forgetListingOf } from "../state/listings";
 import { useSessionStore } from "../state/sessionStore";
 import { saveSettingsSection, useSettingsStore } from "../state/settingsStore";
-import { isMainWindow, requestCloseTab } from "../state/tabActions";
+import { isMainWindow } from "../state/tabActions";
 import { useToastStore } from "../state/toastStore";
-import { requestLockVault } from "../state/vaultActions";
 import { CompareDialog } from "./CompareDialog";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Dialog } from "./Dialog";
@@ -490,13 +489,8 @@ function CloseTabPrompt({ closing }: { closing: ClosePrompt }) {
   const [stuck, setStuck] = useState<ExternalEdit[] | null>(null);
   const locking = closing.kind === "lockVault";
   const inVault = edits.filter((edit) => edit.inVault);
-  const cancel = () => useExternalEditStore.setState({ closing: null });
-  const close = () => {
-    cancel();
-    void closePastEdits(closing, () =>
-      closing.kind === "tab" ? requestCloseTab(closing.tabId) : requestLockVault(closing.sessionId),
-    );
-  };
+  const cancel = () => answerClosing(false);
+  const close = () => answerClosing(true);
 
   /** Uploads what waits, of the vault's files or all, and stops editing those when asked. */
   const settle = async (stopEditing: boolean) => {

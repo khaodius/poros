@@ -31,7 +31,7 @@ import {
   unsavedOnlyThrough,
 } from "./editorActions";
 import { getEditor } from "./editorRegistry";
-import { editsHoldClose } from "./externalEditStore";
+import { editsAllowClose } from "./externalEditStore";
 import { useLayoutStore } from "./layoutStore";
 import { getPane, lastActivePane } from "./paneRegistry";
 import { reopenWithSession, serverKey } from "./restoreActions";
@@ -202,7 +202,9 @@ export async function requestCloseTab(tabId: string): Promise<void> {
   }
   const server = useSessionStore.getState().sessions[serverId];
   const label = server?.info.label ?? "this server";
-  if (editsHoldClose(tabId, label, [serverId, ...vaultIds])) return;
+  if (!(await editsAllowClose(tabId, label, [serverId, ...vaultIds]))) return;
+  // Closed meanwhile, another way.
+  if (!findTab(useLayoutStore.getState().root, tabId)) return;
   const confirm = useSettingsStore.getState().settings.interface.confirmCloseWithTransfers;
   const jobsOf = (sessionId: string) => transfers.sessionJobs(sessionId).catch(() => 0);
   const [serverTransfers, ...transfersOfVaults] = confirm

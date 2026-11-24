@@ -2,10 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "../lib/settings";
 import type { ExternalEdit, SessionInfo } from "../lib/types";
 import {
-  closePastEdits,
-  editsHoldClose,
+  answerClosing,
+  editsAllowClose,
+  editsAllowLock,
   editsHoldExit,
-  editsHoldLock,
   exitNow,
   openWithDefault,
   useExternalEditStore,
@@ -110,27 +110,28 @@ describe("Open", () => {
 });
 
 describe("Closing with files open in other programs", () => {
-  it("asks before a vault locks, and asks again once that lock is done", async () => {
+  it("asks before a vault locks, and asks again at the next lock", async () => {
     useExternalEditStore.setState({ edits: [editing("notes", "vault", "watching")] });
-    expect(editsHoldLock("vault", "Private")).toBe(true);
-    const prompt = useExternalEditStore.getState().closing;
-    expect(prompt).toEqual({
+    const asked = editsAllowLock("vault", "Private");
+    expect(useExternalEditStore.getState().closing).toEqual({
       kind: "lockVault",
       sessionId: "vault",
       label: "Private",
       sessionIds: ["vault"],
     });
-    let heldDuring: boolean | null = null;
-    await closePastEdits(prompt!, async () => {
-      heldDuring = editsHoldLock("vault", "Private");
-    });
-    expect(heldDuring).toBe(false);
-    expect(editsHoldLock("vault", "Private")).toBe(true);
+    answerClosing(true);
+    expect(await asked).toBe(true);
+    expect(useExternalEditStore.getState().closing).toBeNull();
+
+    const again = editsAllowLock("vault", "Private");
+    expect(useExternalEditStore.getState().closing?.kind).toBe("lockVault");
+    answerClosing(false);
+    expect(await again).toBe(false);
     // A vault with nothing open in other programs locks unasked.
-    expect(editsHoldLock("other-vault", "Other")).toBe(false);
+    expect(await editsAllowLock("other-vault", "Other")).toBe(true);
   });
 
-  it("does not lock a vault from its tab before the user answers", async () => {
+  it("locks a vault from its tab only once the user answers", async () => {
     const info: SessionInfo = {
       id: "vault",
       label: "Private on deploy@web.example.com",
@@ -142,31 +143,40 @@ describe("Closing with files open in other programs", () => {
       protocol: "cryptomator",
       vault: { parentSessionId: "server", root: "/srv/private", name: "Private" },
     };
-    useSessionStore.setState({ sessions: { vault: { info, profile: null, status: "connected" } } });
+    const connected = { vault: { info, profile: null, status: "connected" as const } };
+    useSessionStore.setState({ sessions: connected });
     useLogStore.setState({ write: () => undefined });
     useExternalEditStore.setState({ edits: [editing("notes", "vault", "watching")] });
-    await requestLockVault("vault");
-    expect(useExternalEditStore.getState().closing?.kind).toBe("lockVault");
-    expect(useSessionStore.getState().sessions.vault).toBeDefined();
-    expect(commands()).toEqual([]);
 
-    const prompt = useExternalEditStore.getState().closing!;
-    await closePastEdits(prompt, () => requestLockVault("vault"));
+    const kept = requestLockVault("vault");
+    await vi.waitFor(() => expect(useExternalEditStore.getState().closing).not.toBeNull());
+    answerClosing(false);
+    await kept;
+    expect(useSessionStore.getState().sessions.vault).toBeDefined();
+    expect(commands()).not.toContain("disconnect");
+
+    const locked = requestLockVault("vault");
+    await vi.waitFor(() => expect(useExternalEditStore.getState().closing).not.toBeNull());
+    expect(useSessionStore.getState().sessions.vault).toBeDefined();
+    answerClosing(true);
+    await locked;
     expect(useSessionStore.getState().sessions.vault).toBeUndefined();
     expect(commands()).toContain("disconnect");
   });
 
-  it("takes back a tab's close the user agreed to when that close does not happen", async () => {
+  it("gives a tab's close question way to a newer one, which keeps the first tab", async () => {
     useExternalEditStore.setState({ edits: [editing("index", "server", "changed")] });
-    expect(editsHoldClose("tab-1", "Web server", ["server"])).toBe(true);
-    const prompt = useExternalEditStore.getState().closing!;
-    // The close stops at another question the user then cancels.
-    await closePastEdits(prompt, async () => undefined);
-    expect(editsHoldClose("tab-1", "Web server", ["server"])).toBe(true);
-    await expect(
-      closePastEdits(prompt, () => Promise.reject(new Error("Could not close"))),
-    ).rejects.toThrow("Could not close");
-    expect(editsHoldClose("tab-1", "Web server", ["server"])).toBe(true);
+    const first = editsAllowClose("tab-1", "Web server", ["server"]);
+    const second = editsAllowClose("tab-2", "Web server", ["server"]);
+    expect(await first).toBe(false);
+    expect(useExternalEditStore.getState().closing).toMatchObject({ kind: "tab", tabId: "tab-2" });
+    answerClosing(true);
+    expect(await second).toBe(true);
+    // Nothing is left agreed to: closing either tab again asks again.
+    const third = editsAllowClose("tab-2", "Web server", ["server"]);
+    expect(useExternalEditStore.getState().closing).toMatchObject({ tabId: "tab-2" });
+    answerClosing(false);
+    expect(await third).toBe(false);
   });
 });
 

@@ -199,56 +199,48 @@ export function editAction(action: () => Promise<void>): void {
   void action().catch(showError);
 }
 
-/** The tabs and vaults the user has agreed to close with their files still being edited, while
- * that close goes on. */
-const closesAllowed = new Set<string>();
+/** Settles the close question shown, with whether the user agreed. */
+let answerClose: ((agreed: boolean) => void) | null = null;
 
-function allowanceOf(prompt: ClosePrompt): string {
-  return prompt.kind === "tab" ? `tab:${prompt.tabId}` : `vault:${prompt.sessionId}`;
-}
-
-/** Whether the close has to wait for the user, because files from it are open in other
- * programs. Asks when it does. */
-function holdsClose(prompt: ClosePrompt): boolean {
-  if (closesAllowed.has(allowanceOf(prompt))) return false;
+/** Whether the close may go on past the files from it open in other programs: at once when
+ * there are none, else once the user answers. */
+function allowsClose(prompt: ClosePrompt): Promise<boolean> {
   const editing = editsOfSessions(useExternalEditStore.getState().edits, prompt.sessionIds);
-  if (editing.length === 0) return false;
-  useExternalEditStore.setState({ closing: prompt });
-  return true;
+  if (editing.length === 0) return Promise.resolve(true);
+  // A question still open gives way to this one, and what it held stays open.
+  answerClose?.(false);
+  return new Promise((resolve) => {
+    answerClose = resolve;
+    useExternalEditStore.setState({ closing: prompt });
+  });
 }
 
 /**
- * Whether the server tab `tabId` has to wait for the user before it closes, because files from
- * its server are open in other programs. Asks when it does.
+ * Whether the server tab `tabId` may close, files from its server being open in other programs.
+ * Asks when they are, and resolves once the user answers. The answer is for this close alone.
  */
-export function editsHoldClose(tabId: string, label: string, sessionIds: string[]): boolean {
-  return holdsClose({ kind: "tab", tabId, label, sessionIds });
+export function editsAllowClose(
+  tabId: string,
+  label: string,
+  sessionIds: string[],
+): Promise<boolean> {
+  return allowsClose({ kind: "tab", tabId, label, sessionIds });
 }
 
 /**
- * Whether the vault of session `sessionId` has to wait for the user before it locks, because
- * files from it are open in other programs, which locking ends. Asks when it does.
+ * Whether the vault of session `sessionId` may lock, files from it being open in other programs,
+ * which locking ends. Asks when they are, and resolves once the user answers.
  */
-export function editsHoldLock(sessionId: string, name: string): boolean {
-  return holdsClose({ kind: "lockVault", sessionId, label: name, sessionIds: [sessionId] });
+export function editsAllowLock(sessionId: string, name: string): Promise<boolean> {
+  return allowsClose({ kind: "lockVault", sessionId, label: name, sessionIds: [sessionId] });
 }
 
-/**
- * Runs `close` past the question about the files being edited, which the user has answered.
- * The answer is for this close alone: once `close` is done, having closed or stopped at another
- * question, the next close asks again.
- */
-export async function closePastEdits(
-  prompt: ClosePrompt,
-  close: () => Promise<void>,
-): Promise<void> {
-  const allowance = allowanceOf(prompt);
-  closesAllowed.add(allowance);
-  try {
-    await close();
-  } finally {
-    closesAllowed.delete(allowance);
-  }
+/** The user's answer to the question shown before a close: whether it goes on. */
+export function answerClosing(agreed: boolean): void {
+  const answer = answerClose;
+  answerClose = null;
+  useExternalEditStore.setState({ closing: null });
+  answer?.(agreed);
 }
 
 let exitAllowed = false;

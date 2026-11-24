@@ -7,7 +7,7 @@ import { transfers } from "../lib/ipc";
 import { allTabs, isRestoring } from "../lib/layout";
 import { sessionShowing } from "../lib/vaults";
 import { savedOrDiscarded, unsavedOnlyThrough } from "./editorActions";
-import { editsHoldLock } from "./externalEditStore";
+import { editsAllowLock } from "./externalEditStore";
 import { useLayoutStore } from "./layoutStore";
 import { useLogStore } from "./logStore";
 import { getPane } from "./paneRegistry";
@@ -69,7 +69,9 @@ export async function requestLockVault(sessionId: string): Promise<void> {
     if (await savedOrDiscarded(unsaved)) await requestLockVault(sessionId);
     return;
   }
-  if (editsHoldLock(sessionId, info.vault.name)) return;
+  if (!(await editsAllowLock(sessionId, info.vault.name))) return;
+  // Locked meanwhile, as when its server's tab closed.
+  if (!useSessionStore.getState().sessions[sessionId]) return;
   const confirm = useSettingsStore.getState().settings.interface.confirmCloseWithTransfers;
   const pendingTransfers = confirm ? await transfers.sessionJobs(sessionId).catch(() => 0) : 0;
   if (pendingTransfers > 0) {
