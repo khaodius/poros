@@ -41,13 +41,7 @@ impl TransferManager {
         let session = self.shared.sessions.get(&request.session_id).await?;
         let files = session.files();
         versions::of(files.as_ref())?;
-        let source = protocol::normalize(&files.resolve(&request.path));
-        let name = match request.name {
-            Some(name) => name,
-            None => remote_path::file_name(&source).to_string(),
-        };
-        // The name comes from the server or the page: it must stay inside the target folder.
-        local::validate_name(&name)?;
+        let (source, name) = source_and_name(&files.resolve(&request.path), request.name)?;
         let target = Path::new(&request.target_directory)
             .join(&name)
             .to_string_lossy()
@@ -79,6 +73,16 @@ impl TransferManager {
     }
 }
 
+/// The file a version download reads, named exactly: a `.` or `..` part is refused, not
+/// followed to another file. With the name the download gets, the file's own when none is given.
+fn source_and_name(resolved: &str, name: Option<String>) -> AppResult<(String, String)> {
+    let source = protocol::normalize_exact(resolved)?;
+    let name = name.unwrap_or_else(|| remote_path::file_name(&source).to_string());
+    // The name comes from the server or the page: it must stay inside the target folder.
+    local::validate_name(&name)?;
+    Ok((source, name))
+}
+
 /// The version of its source a download asks for, if it asks for one.
 pub(super) fn source_version(spec: &JobSpec) -> Option<&str> {
     match spec.direction {
@@ -102,6 +106,7 @@ pub(super) fn source_files(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::ErrorKind;
 
     fn download(options: Option<JobOptions>) -> JobSpec {
         JobSpec {
@@ -117,6 +122,31 @@ mod tests {
             ancestors: Arc::from([]),
             options: options.map(Arc::new),
         }
+    }
+
+    #[test]
+    fn names_the_file_exactly_and_keeps_the_download_in_its_folder() {
+        assert_eq!(
+            source_and_name("/bucket/notes/a.txt", None).unwrap(),
+            ("/bucket/notes/a.txt".to_string(), "a.txt".to_string())
+        );
+        assert_eq!(
+            source_and_name("/bucket/a.txt", Some("a (old).txt".into()))
+                .unwrap()
+                .1,
+            "a (old).txt"
+        );
+        for dotted in [
+            "/bucket/notes/../a.txt",
+            "/bucket/./a.txt",
+            "/bucket/a.txt/..",
+        ] {
+            let error = source_and_name(dotted, None).unwrap_err();
+            assert_eq!(error.kind, ErrorKind::InvalidInput, "{dotted}");
+        }
+        assert!(source_and_name("/bucket/a.txt", Some("../a.txt".into())).is_err());
+        // Dots inside a name are no `.` or `..` part.
+        assert!(source_and_name("/bucket/v1.2..final/a..b", None).is_ok());
     }
 
     #[test]
