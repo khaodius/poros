@@ -581,7 +581,7 @@ export const OPTION_GROUPS: OptionGroup[] = [
         flag: "--bwlimit",
         unit: "KiB/s",
         max: 100 * 1024 * 1024,
-        hint: "0 is unlimited. Shared by every file of the synchronization.",
+        hint: "0 is unlimited. Shared by every file of the synchronization, which also keeps to the speed limits and schedule in Settings > Transfers.",
       },
       {
         kind: "switch",
