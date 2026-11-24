@@ -12,13 +12,14 @@ use super::remote_command;
 use super::task::{LastRun, Outcome, ScheduledTask, TaskAction, CUT_SHORT};
 use super::transfer_task;
 use crate::connections::ConnectionStore;
-use crate::error::{AppError, AppResult, ErrorKind, HostKeyInfo};
+use crate::error::{AppError, AppResult, ErrorKind};
 use crate::events::{Events, LogLevel};
 use crate::format::format_size;
+use crate::protocol::Protocol;
 use crate::route::{self, Unattended, MAX_JUMP_HOSTS};
 use crate::session::{SessionInfo, SessionManager};
 use crate::settings::{CloudSettings, ConnectionSettings};
-use crate::ssh::{ConnectProfile, HostKeyApproval};
+use crate::ssh::HostKeyApproval;
 use crate::sync::{SyncAction, SyncChoice, SyncManager, SyncRequest, SyncRunRequest};
 use crate::transfer::{JobBatch, TransferManager};
 
@@ -212,8 +213,15 @@ pub(super) async fn connect(
         .as_deref()
         .map(str::trim)
         .filter(|pin| !pin.is_empty() && sign_in.given_for.as_deref() == Some(connection_id));
+    if pin.is_some() && !profile.checks_server_key() {
+        return Err(AppError::invalid(format!(
+            "--host-key cannot be checked for {}",
+            profile.kind_of_server()
+        )));
+    }
     let pinned = pin.map(|fingerprint| {
         let (host, port) = profile.server_address();
+        pin_server(context.sessions, profile.protocol, &host, port, fingerprint);
         HostKeyApproval {
             host,
             port,
@@ -231,7 +239,7 @@ pub(super) async fn connect(
             .connect(profile.clone(), approval.clone(), TASK_OWNER)
             .await
         {
-            Ok(session) => return held_to_pin(context, session, pin, &profile).await,
+            Ok(session) => return Ok(session),
             Err(error) => error,
         };
         let offered = error.host_key.as_ref().filter(|_| {
@@ -244,24 +252,22 @@ pub(super) async fn connect(
         let Some(offered) = offered else {
             return Err(with_host_key_advice(error, sign_in.command_line));
         };
+        let (host, port) = (offered.host.as_str(), offered.port);
         if approval
             .as_ref()
-            .is_some_and(|approved| approved.fingerprint == offered.fingerprint)
+            .is_some_and(|approved| approved.accepts(host, port, &offered.fingerprint))
         {
             return Err(with_host_key_advice(error, sign_in.command_line));
         }
-        let for_server = asks_about_server(&profile, offered);
         let next = match &pinned {
             // The pinned key alone gets the server in. A jump host's approval took its place
             // for the attempt that stopped here.
-            Some(pin) if for_server => {
-                (pin.fingerprint == offered.fingerprint).then(|| pin.clone())
-            }
+            Some(pin) if pin.names(host, port) => pin
+                .accepts(host, port, &offered.fingerprint)
+                .then(|| pin.clone()),
             _ if sign_in.trust_new_host && error.kind == ErrorKind::HostKeyUnknown => {
                 log::info!(
-                    "Trusting the new key of {}:{} ({} {})",
-                    offered.host,
-                    offered.port,
+                    "Trusting the new key of {host}:{port} ({} {})",
                     offered.algorithm,
                     offered.fingerprint
                 );
@@ -271,72 +277,43 @@ pub(super) async fn connect(
         };
         match next {
             Some(next) => approval = Some(next),
-            None if pinned.is_some() && for_server => return Err(not_the_pinned_key(error)),
             None => return Err(with_host_key_advice(error, sign_in.command_line)),
         }
     }
 }
 
-/// Whether a question about a host key is about the server itself rather than a jump host on
-/// the way to it. One that names neither, as a WebDAV or S3 address can, is the server's.
-fn asks_about_server(profile: &ConnectProfile, offered: &HostKeyInfo) -> bool {
-    let names = |hop: &ConnectProfile| {
-        hop.port == offered.port && hop.host.trim().eq_ignore_ascii_case(offered.host.trim())
-    };
-    names(profile) || !profile.route.jump_hosts.iter().any(names)
-}
-
-/// A key on record is accepted before an approval is looked at, so the key the server proved it
-/// holds is held to the pin once it is in.
-async fn held_to_pin(
-    context: &TaskContext<'_>,
-    session: SessionInfo,
-    pin: Option<&str>,
-    profile: &ConnectProfile,
-) -> AppResult<SessionInfo> {
-    let Some(pin) = pin else {
-        return Ok(session);
-    };
-    let shown = context
-        .sessions
-        .get(&session.id)
-        .await
-        .map(|opened| opened.host_key_fingerprint.clone());
-    if matches!(&shown, Ok(shown) if shown == pin) {
-        return Ok(session);
+/// Holds the server to the key `fingerprint` names, whatever known_hosts or the trusted
+/// certificates say, as `--host-key` asks. Once: a daemon connects again for each run.
+fn pin_server(
+    sessions: &SessionManager,
+    protocol: Protocol,
+    host: &str,
+    port: u16,
+    fingerprint: &str,
+) {
+    match protocol {
+        Protocol::Sftp => {
+            if sessions.known_hosts.pinned(host, port).as_deref() != Some(fingerprint) {
+                sessions.known_hosts.pin(host, port, fingerprint);
+            }
+        }
+        _ => {
+            if sessions.certificates.pinned(host, port).as_deref() != Some(fingerprint) {
+                sessions.certificates.pin(host, port, fingerprint);
+            }
+        }
     }
-    if let Err(error) = context.sessions.disconnect(&session.id).await {
-        log::warn!("Could not disconnect: {}", error.message);
-    }
-    Err(match shown {
-        Err(error) => error,
-        Ok(shown) if shown.is_empty() => AppError::invalid(format!(
-            "--host-key cannot be checked for {}",
-            profile.protocol.display_name()
-        )),
-        Ok(shown) => AppError::new(
-            ErrorKind::HostKeyChanged,
-            format!(
-                "{}:{} showed the key {shown}, the one on record for it, not the one given with --host-key",
-                profile.host.trim(),
-                profile.port
-            ),
-        ),
-    })
-}
-
-/// The server showed a key, but not the pinned one: no option settles that but the right pin.
-fn not_the_pinned_key(mut error: AppError) -> AppError {
-    error.message = format!(
-        "{} The server showed another key than the one given with --host-key.",
-        error.message
-    );
-    error
 }
 
 /// A task cannot ask whether to trust a server, so the error says how to settle it once.
+/// Not when the server showed another key than the one given with --host-key: only the right
+/// key settles that.
 fn with_host_key_advice(mut error: AppError, command_line: bool) -> AppError {
-    if error.host_key.is_some() {
+    if error
+        .host_key
+        .as_ref()
+        .is_some_and(|offered| !offered.differs_from_pin)
+    {
         let advice = if command_line {
             "Connect to the server once from Poros and trust its key, or run this with --trust-new-host --save-host-key, then the task can run on its own."
         } else {
@@ -541,40 +518,11 @@ pub(super) fn plural(count: u64, noun: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_key_question_is_the_servers_unless_it_names_a_jump_host() {
-        let hop = |host: &str, port: u16| -> ConnectProfile {
-            serde_json::from_value(serde_json::json!({
-                "protocol": "sftp",
-                "host": host,
-                "port": port,
-                "username": "root",
-                "auth": { "type": "agent" },
-            }))
-            .unwrap()
-        };
-        let asked = |host: &str, port: u16| HostKeyInfo {
-            host: host.into(),
-            port,
-            algorithm: "ssh-ed25519".into(),
-            fingerprint: "SHA256:abc".into(),
-            certificate_problem: None,
-            differs_from_pin: false,
-        };
-        let mut profile = hop(" files.lan", 22);
-        assert!(asks_about_server(&profile, &asked("FILES.lan", 22)));
-        // A WebDAV or S3 server is asked about under the host of its address.
-        assert!(asks_about_server(&profile, &asked("dav.files.lan", 443)));
-        profile.route.jump_hosts.push(hop("bastion.lan", 2222));
-        assert!(!asks_about_server(&profile, &asked("Bastion.lan", 2222)));
-        assert!(asks_about_server(&profile, &asked("bastion.lan", 22)));
-        assert!(asks_about_server(&profile, &asked("files.lan", 22)));
-    }
+    use crate::error::HostKeyInfo;
 
     #[test]
     fn an_untrusted_server_is_answered_with_what_settles_it() {
-        let unknown = || {
+        let shown = |differs_from_pin: bool| {
             AppError::host_key(
                 ErrorKind::HostKeyUnknown,
                 HostKeyInfo {
@@ -583,10 +531,11 @@ mod tests {
                     algorithm: "ssh-ed25519".into(),
                     fingerprint: "SHA256:abc".into(),
                     certificate_problem: None,
-                    differs_from_pin: false,
+                    differs_from_pin,
                 },
             )
         };
+        let unknown = || shown(false);
         let in_the_app = with_host_key_advice(unknown(), false);
         assert!(in_the_app
             .message
@@ -594,6 +543,11 @@ mod tests {
         assert!(with_host_key_advice(unknown(), true)
             .message
             .contains("--trust-new-host"));
+        // Not the key given with --host-key: no option settles that, and none is offered.
+        assert_eq!(
+            with_host_key_advice(shown(true), true).message,
+            shown(true).message
+        );
         // Other failures are left as they are.
         let refused = AppError::new(ErrorKind::AuthFailed, "Wrong password");
         assert_eq!(

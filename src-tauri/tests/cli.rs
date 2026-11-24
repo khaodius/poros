@@ -2014,11 +2014,16 @@ fn a_scheduled_run_holds_only_the_given_connection_to_its_host_key() {
     ]);
     assert_eq!(code, 5, "{value}");
     assert_eq!(value[0]["state"], "failed");
-    let message = value[0]["message"].as_str().unwrap();
-    assert!(
-        message.ends_with("The server showed another key than the one given with --host-key."),
-        "{message}"
-    );
+    let not_the_pin = |message: &str| {
+        assert!(
+            message.contains("is not the one given to connect with")
+                && message.contains(&fingerprint),
+            "{message}"
+        );
+        // No option but the right key settles it, so none is suggested.
+        assert!(!message.contains("--trust-new-host"), "{message}");
+    };
+    not_the_pin(value[0]["message"].as_str().unwrap());
     assert_eq!(
         fresh.schedule_json(&["run", "Quick"]).0,
         5,
@@ -2083,13 +2088,64 @@ fn a_scheduled_run_holds_only_the_given_connection_to_its_host_key() {
     signed_in(&value[0]);
     assert_eq!(fresh.schedule_json(&["run", "Quick"]).0, 0);
 
-    // On record, but not the key asked for.
+    // On record, but not the key asked for: the pin outweighs known_hosts, before anything is
+    // sent to the server.
     let (code, value) =
         fresh.schedule_json(&["--host-key", NOT_ITS_KEY, "-c", "pinned", "run", "Quick"]);
     assert_eq!(code, 6, "{value}");
-    let message = value[0]["message"].as_str().unwrap();
-    assert!(
-        message.contains(&fingerprint) && message.ends_with("not the one given with --host-key"),
-        "{message}"
+    not_the_pin(value[0]["message"].as_str().unwrap());
+}
+
+/// A server that shows no key of its own cannot be held to one: a scheduled run refuses
+/// `--host-key` for it before connecting, rather than ignoring it.
+#[test]
+fn a_scheduled_host_key_is_refused_where_no_key_can_be_checked() {
+    let run = Run::offline();
+    run.write_config(
+        "connections.json",
+        &serde_json::json!([{
+            "id": "plain",
+            "protocol": "ftp",
+            "name": "plain",
+            // Nothing listens there, so a connection tried first would fail another way.
+            "host": "127.0.0.1",
+            "port": 9,
+            "username": "poros",
+            "authType": "password",
+        }]),
     );
+    run.write_config(
+        "schedules.json",
+        &serde_json::json!([{
+            "id": "fetch",
+            "name": "Fetch",
+            "enabled": true,
+            "trigger": { "type": "every", "minutes": 60, "start": 0 },
+            "action": {
+                "type": "transfer",
+                "connectionId": "plain",
+                "direction": "download",
+                "items": [{ "path": "/notes.txt" }],
+                "destination": run.local.path(),
+            },
+            "runMissed": false,
+            "nextRun": now() + 3600,
+        }]),
+    );
+    let output = run
+        .schedule(&[
+            "--json",
+            "--host-key",
+            "SHA256:not-it",
+            "-c",
+            "plain",
+            "run",
+            "Fetch",
+        ])
+        .env("POROS_PASSWORD", "unused")
+        .output()
+        .unwrap();
+    assert_eq!(status(&output), 2, "{output:?}");
+    let value = parsed(&output);
+    assert_eq!(value[0]["message"], "--host-key cannot be checked for FTP");
 }
