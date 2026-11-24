@@ -38,6 +38,16 @@ fn signal_status(signal: &str) -> u8 {
 }
 
 pub async fn execute(context: &Context, arguments: &ExecArgs, json: bool) -> AppResult<Reply> {
+    // An empty folder, as an unset variable leaves, would run the command in the home folder.
+    if arguments
+        .cwd
+        .as_deref()
+        .is_some_and(|folder| folder.trim().is_empty())
+    {
+        return Err(AppError::invalid(
+            "--cwd is empty; leave it out to run in the home folder",
+        ));
+    }
     let connected = context.connected().await?;
     let command = arguments.command.join(" ");
     let (mut stdout, mut stderr) = (String::new(), String::new());
