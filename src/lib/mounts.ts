@@ -6,11 +6,28 @@ export function drivesShowing(drives: DriveView[], sessionIds: string[]): DriveV
   return drives.filter((drive) => sessionIds.includes(drive.sessionId));
 }
 
+/** Whether programs have files open on the drive, or uploads are pending. */
+function inUse(drive: DriveView): boolean {
+  return drive.openFiles.length > 0 || drive.uploads.length > 0;
+}
+
 /** Where the drives are that programs have files open on or that have uploads pending. */
 export function busyDrives(drives: DriveView[]): string[] {
-  return drives
-    .filter((drive) => drive.openFiles.length > 0 || drive.uploads.length > 0)
-    .map((drive) => drive.mountPoint);
+  return drives.filter(inUse).map((drive) => drive.mountPoint);
+}
+
+/** What restarting does to the drives in use, as a sentence for the user, if any is. */
+export function drivesInUseWarning(drives: DriveView[]): string | null {
+  const busy = drives.filter(inUse);
+  if (busy.length === 0) return null;
+  const one = busy.length === 1;
+  const fromVault = busy.some((drive) => drive.protocol === "cryptomator");
+  return (
+    `${one ? "A drive has" : `${busy.length} drives have`} files open in programs or uploads ` +
+    `pending. Restarting unmounts ${one ? "it" : "them"}, and what is not uploaded yet is kept ` +
+    "on this computer" +
+    (fromVault ? ", unencrypted for files from a vault." : ".")
+  );
 }
 
 export function failedUploads(drives: DriveView[]): number {

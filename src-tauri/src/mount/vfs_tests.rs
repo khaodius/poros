@@ -9,7 +9,9 @@ use super::blocks::BLOCK_SIZE;
 use super::memory::MemoryFs;
 use super::names::NameStyle;
 use super::spool;
-use super::vfs::{AttributeChanges, FsOptions, MountFs, NodeKind, OpenMode, VfsError, ROOT_NODE};
+use super::vfs::{
+    AttributeChanges, FsOptions, HandleId, MountFs, NodeKind, OpenMode, VfsError, ROOT_NODE,
+};
 use crate::protocol::RemoteFileSystem;
 
 struct Drive {
@@ -1689,6 +1691,86 @@ async fn an_original_something_took_the_place_of_stays_aside() {
         drive.server.file(&format!("/docs/{old}")).unwrap()[..],
         b"the original"[..]
     );
+}
+
+/// Saves `/docs/log.txt` so that the original steps aside and cannot come back. Gives the
+/// name of the original's hidden copy, and the handle the save was made through, still open
+/// so that no close sends it again.
+async fn strand_a_save(drive: &Drive) -> (String, HandleId) {
+    drive.server.put_file("/docs/log.txt", "the original");
+    let id = node(drive, "/docs/log.txt").await;
+    let handle = drive.fs.open(id, OpenMode::WRITE_TRUNCATE).await.unwrap();
+    drive.fs.write(handle, 0, b"the new log").await.unwrap();
+    drive.server.refuse_moves_onto("/docs/log.txt");
+    assert!(drive.fs.flush(handle).await.is_err());
+    drive.server.allow_every_move();
+    assert_eq!(drive.fs.originals_aside().len(), 1);
+    let old = server_names(&drive.server, "/docs")
+        .await
+        .into_iter()
+        .find(|name| name.ends_with(".old"))
+        .unwrap();
+    (old, handle)
+}
+
+#[tokio::test]
+async fn an_original_is_not_brought_back_after_its_file_was_removed_or_replaced() {
+    for replaced in [false, true] {
+        let drive = drive();
+        let (old, saved_through) = strand_a_save(&drive).await;
+        let docs = node(&drive, "/docs").await;
+        if replaced {
+            let (_, handle) = drive
+                .fs
+                .create(docs, "draft.txt", OpenMode::WRITE_TRUNCATE, false, None)
+                .await
+                .unwrap();
+            drive.fs.write(handle, 0, b"the draft").await.unwrap();
+            drive.fs.release(handle);
+            drive
+                .fs
+                .rename(docs, "draft.txt", docs, "log.txt", true)
+                .await
+                .unwrap();
+        } else {
+            drive.fs.remove_file(docs, "log.txt").await.unwrap();
+        }
+        // A reconnect, a Retry or the drive going: none of them brings the original back.
+        drive.fs.tidy_staged(Duration::from_secs(5)).await;
+        assert!(drive.fs.originals_aside().is_empty(), "{replaced}");
+        let mut expected = vec![old.clone()];
+        if replaced {
+            expected.push("log.txt".to_string());
+            assert_eq!(
+                drive.server.file("/docs/log.txt").unwrap()[..],
+                b"the draft"[..]
+            );
+        }
+        assert_eq!(
+            server_names(&drive.server, "/docs").await,
+            expected,
+            "{replaced}: the original stays aside, and the stranded copy is gone"
+        );
+        assert_eq!(
+            drive.server.file(&format!("/docs/{old}")).unwrap()[..],
+            b"the original"[..]
+        );
+        // The program closing the removed or replaced file sends nothing.
+        drive.fs.release(saved_through);
+        drive.fs.tidy_staged(Duration::from_secs(5)).await;
+        assert_eq!(server_names(&drive.server, "/docs").await, expected);
+    }
+}
+
+#[tokio::test]
+async fn an_original_that_moved_away_is_no_longer_looked_for() {
+    let drive = drive();
+    let (old, _) = strand_a_save(&drive).await;
+    drive.server.move_path("/docs", "/archive").await.unwrap();
+    drive.fs.tidy_staged(Duration::from_secs(5)).await;
+    assert!(drive.fs.originals_aside().is_empty());
+    assert!(drive.server.exists(&format!("/archive/{old}")));
+    assert!(!drive.server.exists("/docs/log.txt"));
 }
 
 #[tokio::test]

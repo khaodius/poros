@@ -1920,7 +1920,16 @@ impl MountFs {
             // An upload that finished after the removal would bring the file back.
             self.wait_for_upload(id).await;
         }
-        self.delete(&path).await
+        // Nor may an original that stepped aside for an upload come back in its place.
+        self.staging.forget_stranded(&path);
+        match self.delete(&path).await {
+            // Only here so far, as when its upload could not take the original's place.
+            Err(VfsError::NotFound) => {
+                self.forget_path(&path);
+                Ok(())
+            }
+            removed => removed,
+        }
     }
 
     pub async fn remove_folder(&self, parent: NodeId, name: &str) -> VfsResult<()> {
@@ -2063,6 +2072,7 @@ impl MountFs {
         }
 
         if let Some((_, replaced)) = &existing {
+            self.staging.forget_stranded(&target_path);
             let file_for_file = replaced.kind == NodeKind::File && source.kind == NodeKind::File;
             if !(file_for_file && self.keep_serving(&target_path, &source)) {
                 self.forget_path(&target_path);
@@ -2346,6 +2356,11 @@ impl MountFs {
     /// The paths of uploads left beside their files, still to be removed.
     pub fn left_beside(&self) -> Vec<String> {
         self.staging.left_beside()
+    }
+
+    /// The originals that stepped aside for an upload and could not come back yet.
+    pub fn originals_aside(&self) -> Vec<String> {
+        self.staging.originals_aside()
     }
 
     /// Waits, up to `limit`, until no upload runs any more.

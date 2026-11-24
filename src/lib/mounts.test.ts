@@ -4,6 +4,7 @@ import {
   connectionRoot,
   driveActivity,
   driveName,
+  drivesInUseWarning,
   drivesShowing,
   indicatorSummary,
   mountPointProblem,
@@ -72,6 +73,21 @@ describe("busyDrives", () => {
     ];
     expect(busyDrives(drives)).toEqual(["/home/me/Poros/open", "/home/me/Poros/failed"]);
     expect(busyDrives([drive("idle")])).toEqual([]);
+  });
+});
+
+describe("drivesInUseWarning", () => {
+  it("tells what restarting does to the drives in use", () => {
+    expect(drivesInUseWarning([drive("idle")])).toBeNull();
+    expect(drivesInUseWarning([drive("idle"), drive("open", { openFiles: ["notes.txt"] })])).toBe(
+      "A drive has files open in programs or uploads pending. Restarting unmounts it, and what " +
+        "is not uploaded yet is kept on this computer.",
+    );
+    const vault = drive("vault", { protocol: "cryptomator", uploads: [upload("plan.md")] });
+    expect(drivesInUseWarning([vault, drive("open", { openFiles: ["notes.txt"] })])).toBe(
+      "2 drives have files open in programs or uploads pending. Restarting unmounts them, and " +
+        "what is not uploaded yet is kept on this computer, unencrypted for files from a vault.",
+    );
   });
 });
 

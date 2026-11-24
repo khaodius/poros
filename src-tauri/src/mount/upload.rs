@@ -86,6 +86,17 @@ impl Staging {
         self.left.lock().unwrap().keys().cloned().collect()
     }
 
+    /// The originals that stepped aside for an upload and are still to be put back.
+    pub fn originals_aside(&self) -> Vec<String> {
+        self.stranded
+            .lock()
+            .unwrap()
+            .values()
+            .flatten()
+            .filter_map(|upload| upload.aside.clone())
+            .collect()
+    }
+
     /// Whether anything is left on the server to remove or put back.
     pub fn is_tidy(&self) -> bool {
         self.left.lock().unwrap().is_empty()
@@ -146,8 +157,33 @@ impl Staging {
         }
     }
 
+    /// The file at `target` was removed through the drive, or another took its place: an
+    /// original that stepped aside for it is never put back, and stays under its hidden name
+    /// as the only copy. The stranded copies of its new contents go.
+    pub fn forget_stranded(&self, target: &str) {
+        let Some(stranded) = self.stranded.lock().unwrap().remove(target) else {
+            return;
+        };
+        for upload in stranded {
+            self.remember(&upload.staged, target);
+        }
+    }
+
+    /// Stops trying to put back the original at `aside`, which stays where it is if it is
+    /// still there.
+    fn forget_aside(&self, target: &str, aside: &str) {
+        if let Some(stranded) = self.stranded.lock().unwrap().get_mut(target) {
+            for upload in stranded.iter_mut() {
+                if upload.aside.as_deref() == Some(aside) {
+                    upload.aside = None;
+                }
+            }
+        }
+    }
+
     /// Puts back the old files that stepped aside, for `target` alone or for every file,
-    /// where nothing has taken their place since.
+    /// where nothing has taken their place since. One whose place was taken stays aside for
+    /// good, and one that is gone, as when its folder moved, is no longer looked for.
     pub async fn put_back(&self, files: &Arc<dyn RemoteFileSystem>, target: Option<&str>) {
         let waiting: Vec<(String, String)> = self
             .stranded
@@ -162,23 +198,49 @@ impl Staging {
             })
             .collect();
         for (file, aside) in waiting {
-            let free = match step(files.stat(&file)).await {
-                Ok(found) => found.is_none(),
+            let taken = match step(files.stat(&file)).await {
+                Ok(found) => found.is_some(),
                 Err(error) if error.is_connection_lost() => return,
-                Err(_) => false,
+                Err(_) => continue,
             };
-            if !free || relocate(files, &aside, &file).await.is_err() {
+            if taken {
+                self.forget_aside(&file, &aside);
                 continue;
             }
-            log::info!("Put the original {file} back in its place");
-            if let Some(stranded) = self.stranded.lock().unwrap().get_mut(&file) {
-                for upload in stranded.iter_mut() {
-                    if upload.aside.as_deref() == Some(aside.as_str()) {
-                        upload.aside = None;
-                    }
-                }
+            let still_aside = match step(files.stat(&aside)).await {
+                Ok(found) => found.is_some(),
+                Err(error) if error.is_connection_lost() => return,
+                Err(_) => continue,
+            };
+            if !still_aside {
+                self.forget_aside(&file, &aside);
+                continue;
+            }
+            // Removed through the drive meanwhile.
+            if !self.is_waiting(&file, &aside) {
+                continue;
+            }
+            // A rename, which unlike a move never replaces a file that appeared meanwhile.
+            if step(files.rename(&aside, remote_path::file_name(&file)))
+                .await
+                .is_ok()
+            {
+                log::info!("Put the original {file} back in its place");
+                self.forget_aside(&file, &aside);
             }
         }
+    }
+
+    fn is_waiting(&self, target: &str, aside: &str) -> bool {
+        self.stranded
+            .lock()
+            .unwrap()
+            .get(target)
+            .is_some_and(|stranded| {
+                stranded
+                    .iter()
+                    .any(|upload| upload.aside.as_deref() == Some(aside))
+            })
     }
 
     fn note_in_place(&self, target: &str) {
