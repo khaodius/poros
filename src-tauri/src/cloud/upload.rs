@@ -23,6 +23,23 @@ pub fn chunk_size_within(size: u64, max_chunks: u64) -> usize {
         .max(CHUNK_SIZE)
 }
 
+/// Why an upload session was not completed, and whether the parts sent may be thrown away.
+pub struct Unfinished {
+    pub error: AppError,
+    /// False when the session is not to be ended: the service no longer has it, or may still
+    /// be completing it after an answer was lost.
+    pub discard: bool,
+}
+
+impl From<AppError> for Unfinished {
+    fn from(error: AppError) -> Self {
+        Self {
+            error,
+            discard: true,
+        }
+    }
+}
+
 /// One service's side of an upload.
 #[async_trait]
 pub trait UploadTarget: Send {

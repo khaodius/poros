@@ -22,7 +22,7 @@ use sha1::{Digest, Sha1};
 
 use super::api;
 use super::s3::split;
-use super::upload::{chunk_size_within, ChunkedUpload, UploadTarget};
+use super::upload::{chunk_size_within, ChunkedUpload, Unfinished, UploadTarget};
 use super::{FolderCache, HttpReader};
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::model::{DirListing, EntryKind, FileEntry};
@@ -415,14 +415,24 @@ impl B2Fs {
         idempotent: bool,
         build: &(dyn Fn(&Session) -> AppResult<Request> + Send + Sync),
     ) -> AppResult<Response> {
+        self.send_within(path, idempotent, build, &mut api::Attempts::default())
+            .await
+    }
+
+    /// Like `send`, counting in `attempts`.
+    async fn send_within(
+        &self,
+        path: &str,
+        idempotent: bool,
+        build: &(dyn Fn(&Session) -> AppResult<Request> + Send + Sync),
+        attempts: &mut api::Attempts,
+    ) -> AppResult<Response> {
         let mut renewed = false;
         loop {
             let session = self.session();
             let attempt = || build(&session);
-            let response = match idempotent {
-                true => api::send_retrying_idempotent(&self.http, &attempt).await?,
-                false => api::send_retrying(&self.http, &attempt).await?,
-            };
+            let response =
+                api::send_retrying_within(&self.http, &attempt, idempotent, attempts).await?;
             if response.status() != StatusCode::UNAUTHORIZED || renewed {
                 return Ok(response);
             }
@@ -441,8 +451,8 @@ impl B2Fs {
         }
     }
 
-    /// Calls an API operation with a JSON body. `idempotent` operations only read, so they
-    /// are retried whatever went wrong.
+    /// Calls an API operation with a JSON body. `idempotent` operations are safe to send
+    /// again, so they are retried whatever went wrong.
     async fn call<T: DeserializeOwned>(
         &self,
         operation: &str,
@@ -450,20 +460,42 @@ impl B2Fs {
         path: &str,
         idempotent: bool,
     ) -> AppResult<T> {
-        let response = self
-            .send(path, idempotent, &|session| {
-                self.http
-                    .post(format!("{}{API_PATH}/{operation}", session.api_url))
-                    .header(AUTHORIZATION, &session.token)
-                    .json(&body)
-                    .build()
-                    .map_err(api::transport_error)
-            })
-            .await?;
+        self.call_within(
+            operation,
+            body,
+            path,
+            idempotent,
+            &mut api::Attempts::default(),
+        )
+        .await
+    }
+
+    /// Like `call`, counting in `attempts`.
+    async fn call_within<T: DeserializeOwned>(
+        &self,
+        operation: &str,
+        body: serde_json::Value,
+        path: &str,
+        idempotent: bool,
+        attempts: &mut api::Attempts,
+    ) -> AppResult<T> {
+        let build = |session: &Session| {
+            self.http
+                .post(format!("{}{API_PATH}/{operation}", session.api_url))
+                .header(AUTHORIZATION, &session.token)
+                .json(&body)
+                .build()
+                .map_err(api::transport_error)
+        };
+        let response = self.send_within(path, idempotent, &build, attempts).await?;
         if !response.status().is_success() {
             return Err(failure(response, path).await);
         }
-        api::decode(response).await
+        api::decode(response).await.inspect_err(|error| {
+            if error.is_connection_lost() {
+                attempts.lose_answer();
+            }
+        })
     }
 
     async fn buckets(&self) -> AppResult<Vec<Bucket>> {
@@ -693,37 +725,78 @@ impl B2Fs {
         Ok(())
     }
 
+    /// Starts a large file. Sending it again is safe: a start whose answer was lost only leaves
+    /// an unfinished file without parts behind.
     async fn start_large_file(
         &self,
         bucket_id: &str,
         key: &str,
-        modified: Option<i64>,
+        info: serde_json::Map<String, serde_json::Value>,
         path: &str,
     ) -> AppResult<String> {
-        let mut info = serde_json::Map::new();
-        if let Some(modified) = modified {
-            info.insert(MTIME_INFO.into(), json!((modified * 1000).to_string()));
-        }
         let body = json!({
             "bucketId": bucket_id,
             "fileName": key,
             "contentType": AUTO_CONTENT_TYPE,
             "fileInfo": info,
         });
-        let started: LargeFile = self.call("b2_start_large_file", body, path, false).await?;
+        let started: LargeFile = self.call("b2_start_large_file", body, path, true).await?;
         Ok(started.file_id)
     }
 
+    /// Puts the parts of a large file of `size` bytes together. An attempt may finish the file
+    /// though its answer is lost, and then a retry is refused; the file's own record tells
+    /// whether it was finished. After a lost answer a record that still reads unfinished may
+    /// be of a finish under way, so the file is not to be cancelled then.
     async fn finish_large_file(
         &self,
         file_id: &str,
         sha1s: &[String],
+        size: u64,
         path: &str,
-    ) -> AppResult<()> {
+    ) -> Result<(), Unfinished> {
         let body = json!({ "fileId": file_id, "partSha1Array": sha1s });
-        self.call::<serde_json::Value>("b2_finish_large_file", body, path, false)
+        let mut attempts = api::Attempts::default();
+        let error = match self
+            .call_within::<serde_json::Value>(
+                "b2_finish_large_file",
+                body,
+                path,
+                true,
+                &mut attempts,
+            )
             .await
-            .map(drop)
+        {
+            Ok(_) => return Ok(()),
+            Err(error) => error,
+        };
+        let answer_lost = attempts.may_have_gone_through();
+        if attempts.made() == 1 && !answer_lost {
+            return Err(error.into());
+        }
+        match self.finished_file(file_id, path).await {
+            Ok(Some(file)) if file.content_length == size => Ok(()),
+            _ => Err(Unfinished {
+                error,
+                discard: !answer_lost,
+            }),
+        }
+    }
+
+    /// The file a large file became once it was finished; `None` while it is unfinished or
+    /// when there is no such file.
+    async fn finished_file(&self, file_id: &str, path: &str) -> AppResult<Option<B2File>> {
+        let body = json!({ "fileId": file_id });
+        match self
+            .call::<B2File>("b2_get_file_info", body, path, true)
+            .await
+        {
+            Ok(file) => Ok(file.is_file().then_some(file)),
+            Err(error) if matches!(error.kind, ErrorKind::NotFound | ErrorKind::InvalidInput) => {
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     async fn cancel_large_file(&self, file_id: &str, path: &str) -> AppResult<()> {
@@ -764,35 +837,33 @@ impl B2Fs {
         if let Some(millis) = source.file_info.get(MTIME_INFO) {
             info.insert(MTIME_INFO.into(), json!(millis));
         }
-        let body = json!({
-            "bucketId": bucket_id,
-            "fileName": target,
-            "contentType": AUTO_CONTENT_TYPE,
-            "fileInfo": info,
-        });
-        let large: LargeFile = self.call("b2_start_large_file", body, path, false).await?;
+        let large_file = self.start_large_file(bucket_id, target, info, path).await?;
         let size = source.content_length;
         let part_size = COPY_PART.max(size.div_ceil(MAX_PARTS));
-        let copied: AppResult<()> = async {
+        let copied: Result<(), Unfinished> = async {
             let mut sha1s = Vec::new();
             for (index, start) in (0..size).step_by(part_size as usize).enumerate() {
                 let end = (start + part_size).min(size) - 1;
                 let body = json!({
                     "sourceFileId": source_id,
-                    "largeFileId": large.file_id,
+                    "largeFileId": large_file,
                     "partNumber": index + 1,
                     "range": format!("bytes={start}-{end}"),
                 });
                 let part: CopiedPart = self.call("b2_copy_part", body, path, false).await?;
                 sha1s.push(part.content_sha1);
             }
-            self.finish_large_file(&large.file_id, &sha1s, path).await
+            self.finish_large_file(&large_file, &sha1s, size, path)
+                .await
         }
         .await;
-        if copied.is_err() {
-            let _ = self.cancel_large_file(&large.file_id, path).await;
+        let Err(unfinished) = copied else {
+            return Ok(());
+        };
+        if unfinished.discard {
+            let _ = self.cancel_large_file(&large_file, path).await;
         }
-        copied
+        Err(unfinished.error)
     }
 
     /// An address to upload to: a spare one for a whole file, a new one for a part.
@@ -1571,20 +1642,25 @@ impl UploadTarget for B2Upload {
     }
 
     async fn start_session(&mut self) -> AppResult<()> {
+        let mut info = serde_json::Map::new();
+        if let Some(modified) = self.modified {
+            info.insert(MTIME_INFO.into(), json!((modified * 1000).to_string()));
+        }
         let file_id = self
             .files
-            .start_large_file(&self.bucket_id, &self.key, self.modified, &self.path)
+            .start_large_file(&self.bucket_id, &self.key, info, &self.path)
             .await?;
         self.large_file = Some(file_id);
         Ok(())
     }
 
-    async fn send_chunk(&mut self, _offset: u64, data: Bytes, last: bool) -> AppResult<()> {
+    async fn send_chunk(&mut self, offset: u64, data: Bytes, last: bool) -> AppResult<()> {
         let file_id = self
             .large_file
             .clone()
             .ok_or_else(|| AppError::new(ErrorKind::Cloud, "No upload is open"))?;
         let part_number = (self.sha1s.len() + 1).to_string();
+        let end = offset + data.len() as u64;
         self.files
             .send_content(
                 Destination::Part { file_id: &file_id },
@@ -1596,9 +1672,18 @@ impl UploadTarget for B2Upload {
             .await?;
         self.sha1s.push(sha1_hex(&data));
         if last {
-            self.files
-                .finish_large_file(&file_id, &self.sha1s, &self.path)
-                .await?;
+            // The large file stays open while it is finished, so that a cancel cancels it: B2
+            // refuses to cancel a file that has no upload in progress.
+            let finished = self
+                .files
+                .finish_large_file(&file_id, &self.sha1s, end, &self.path)
+                .await;
+            if let Err(unfinished) = finished {
+                if !unfinished.discard {
+                    self.large_file = None;
+                }
+                return Err(unfinished.error);
+            }
             self.large_file = None;
         }
         Ok(())
@@ -1608,6 +1693,7 @@ impl UploadTarget for B2Upload {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cloud::scripted_service::{Reply, ScriptedService};
 
     #[test]
     fn a_listing_of_everything_names_files_and_kept_folders() {
@@ -1803,5 +1889,214 @@ mod tests {
         ])));
         // An answer without the list leaves the decision to B2.
         assert!(may_share(&[]));
+    }
+
+    const START: &str = "POST /b2api/v4/b2_start_large_file ";
+    const PART: &str = "POST /part ";
+    const FINISH: &str = "POST /b2api/v4/b2_finish_large_file ";
+    const FILE_INFO: &str = "POST /b2api/v4/b2_get_file_info ";
+    const CANCEL: &str = "POST /b2api/v4/b2_cancel_large_file ";
+    const STARTED: &str = r#"{"fileId":"large-1","fileName":"big.bin","action":"start"}"#;
+    const FINISHED: &str =
+        r#"{"fileId":"large-1","fileName":"big.bin","action":"upload","contentLength":8}"#;
+    /// Eight bytes, sent in two parts of four.
+    const CONTENT: &[u8] = b"abcdefgh";
+
+    fn b2_error(status: u16, code: &str) -> Reply {
+        let body =
+            json!({ "status": status, "code": code, "message": "from the scripted service" });
+        Reply::status(status, &body.to_string())
+    }
+
+    /// A service that takes every part, and starts, finishes and describes the large file
+    /// `/bucket/big.bin` with the replies given.
+    async fn large_file_service(
+        starting: Vec<Reply>,
+        finishing: Vec<Reply>,
+        describing: Vec<Reply>,
+    ) -> ScriptedService {
+        ScriptedService::start(|address| {
+            let part_address =
+                json!({ "uploadUrl": format!("{address}/part"), "authorizationToken": "part" });
+            vec![
+                (START, starting),
+                (
+                    "POST /b2api/v4/b2_get_upload_part_url ",
+                    vec![Reply::status(200, &part_address.to_string())],
+                ),
+                (PART, vec![Reply::status(200, "{}")]),
+                (FINISH, finishing),
+                (FILE_INFO, describing),
+                (CANCEL, vec![Reply::status(200, "{}")]),
+            ]
+        })
+        .await
+    }
+
+    fn files_at(api_url: &str) -> B2Fs {
+        B2Fs {
+            http: api::http_client().unwrap(),
+            key_id: "key".into(),
+            key: "secret".into(),
+            account_id: "account".into(),
+            session: Mutex::new(Arc::new(Session {
+                api_url: api_url.into(),
+                download_url: api_url.into(),
+                token: "token".into(),
+            })),
+            reauthorizing: tokio::sync::Mutex::new(()),
+            allowed: None,
+            key_capabilities: Vec::new(),
+            name_prefix: None,
+            minimum_part_size: 0,
+            home: "/".into(),
+            bucket_ids: Mutex::new(HashMap::new()),
+            bucket_types: tokio::sync::Mutex::new(HashMap::new()),
+            upload_addresses: Mutex::new(HashMap::new()),
+            folders: FolderCache::default(),
+            folder_creation: tokio::sync::Mutex::new(()),
+        }
+    }
+
+    fn large_upload(service: &ScriptedService) -> Box<dyn WriteStream> {
+        let target = B2Upload {
+            files: Arc::new(files_at(&service.address)),
+            bucket_id: "bucket-1".into(),
+            key: "big.bin".into(),
+            path: "/bucket/big.bin".into(),
+            modified: None,
+            chunk_size: CONTENT.len() / 2,
+            large_file: None,
+            part_address: None,
+            sha1s: Vec::new(),
+        };
+        Box::new(ChunkedUpload::new(target, CONTENT.len() as u64))
+    }
+
+    async fn upload_content(service: &ScriptedService) -> AppResult<()> {
+        let mut upload = large_upload(service);
+        upload.write(Bytes::from_static(CONTENT)).await?;
+        upload.finish().await
+    }
+
+    /// A cancel goes out from a task of its own once the upload is dropped.
+    async fn assert_not_cancelled(service: &ScriptedService) {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(service.count(CANCEL), 0, "the large file was cancelled");
+    }
+
+    #[tokio::test]
+    async fn a_large_file_starts_and_finishes_again_after_server_errors() {
+        let service = large_file_service(
+            vec![b2_error(500, "internal_error"), Reply::status(200, STARTED)],
+            vec![
+                b2_error(500, "internal_error"),
+                Reply::status(200, FINISHED),
+            ],
+            Vec::new(),
+        )
+        .await;
+        upload_content(&service).await.unwrap();
+        assert_eq!(service.count(START), 2);
+        assert_eq!(service.count(PART), 2, "the parts are sent once");
+        assert_eq!(service.count(FINISH), 2);
+        assert_not_cancelled(&service).await;
+    }
+
+    /// The first finish went through but its answer was lost, so B2 refuses the second, and
+    /// the file's record shows it finished.
+    #[tokio::test]
+    async fn a_finish_retried_after_it_went_through_succeeds() {
+        let service = large_file_service(
+            vec![Reply::status(200, STARTED)],
+            vec![Reply::HangUp, b2_error(400, "bad_request")],
+            vec![Reply::status(200, FINISHED)],
+        )
+        .await;
+        upload_content(&service).await.unwrap();
+        assert_eq!(service.count(FINISH), 2);
+        assert_eq!(service.count(FILE_INFO), 1);
+        assert_not_cancelled(&service).await;
+    }
+
+    #[tokio::test]
+    async fn a_retried_finish_of_a_file_still_unfinished_fails_and_cancels_it() {
+        let service = large_file_service(
+            vec![Reply::status(200, STARTED)],
+            vec![
+                b2_error(503, "service_unavailable"),
+                b2_error(400, "bad_request"),
+            ],
+            vec![Reply::status(200, STARTED)],
+        )
+        .await;
+        let error = upload_content(&service).await.unwrap_err();
+        assert_eq!(error.kind, ErrorKind::InvalidInput);
+        assert_eq!(error.message, "from the scripted service (bad_request)");
+        assert!(service.waits_for(CANCEL, Duration::from_secs(5)).await);
+    }
+
+    #[tokio::test]
+    async fn a_refused_finish_cancels_the_large_file() {
+        let service = large_file_service(
+            vec![Reply::status(200, STARTED)],
+            vec![b2_error(400, "bad_request")],
+            Vec::new(),
+        )
+        .await;
+        upload_content(&service).await.unwrap_err();
+        assert_eq!(service.count(FINISH), 1);
+        assert_eq!(service.count(FILE_INFO), 0);
+        assert!(service.waits_for(CANCEL, Duration::from_secs(5)).await);
+    }
+
+    /// When the file's record cannot be read either, the finish that lost its answer may still
+    /// have gone through.
+    #[tokio::test]
+    async fn a_finish_that_may_have_gone_through_is_not_cancelled() {
+        let service = large_file_service(
+            vec![Reply::status(200, STARTED)],
+            vec![Reply::HangUp, b2_error(400, "bad_request")],
+            vec![b2_error(401, "unauthorized")],
+        )
+        .await;
+        upload_content(&service).await.unwrap_err();
+        assert_eq!(service.count(FILE_INFO), 1);
+        assert_not_cancelled(&service).await;
+
+        // Nor when the record still reads unfinished: the finish may be under way.
+        let service = large_file_service(
+            vec![Reply::status(200, STARTED)],
+            vec![Reply::HangUp, b2_error(400, "bad_request")],
+            vec![Reply::status(200, STARTED)],
+        )
+        .await;
+        let error = upload_content(&service).await.unwrap_err();
+        assert_eq!(error.kind, ErrorKind::InvalidInput);
+        assert_eq!(service.count(FILE_INFO), 1);
+        assert_not_cancelled(&service).await;
+    }
+
+    /// B2 refuses to cancel a file it has finished, so a cancel cancels whatever the finish
+    /// has come to.
+    #[tokio::test]
+    async fn a_large_file_cancelled_while_it_finishes_is_cancelled() {
+        for finishing in [
+            Reply::Silence,
+            b2_error(503, "service_unavailable").with_header("retry-after", "30"),
+        ] {
+            let service = large_file_service(
+                vec![Reply::status(200, STARTED)],
+                vec![finishing],
+                Vec::new(),
+            )
+            .await;
+            let mut upload = large_upload(&service);
+            upload.write(Bytes::from_static(CONTENT)).await.unwrap();
+            let finishing = tokio::time::timeout(Duration::from_secs(1), upload.finish()).await;
+            assert!(finishing.is_err(), "the finish was over");
+            assert_eq!(service.count(FINISH), 1);
+            assert!(service.waits_for(CANCEL, Duration::from_secs(5)).await);
+        }
     }
 }

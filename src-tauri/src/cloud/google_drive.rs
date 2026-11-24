@@ -563,13 +563,16 @@ impl UploadTarget for DriveUpload {
         let size = self.size.to_string();
         let response = self
             .api
-            .send(&|http| {
-                http.request(method.clone(), &url)
-                    .query(&[("uploadType", "resumable"), ("fields", "id")])
-                    .header("X-Upload-Content-Type", "application/octet-stream")
-                    .header("X-Upload-Content-Length", &size)
-                    .json(&self.metadata)
-            })
+            .send_repeatable(
+                &|http| {
+                    http.request(method.clone(), &url)
+                        .query(&[("uploadType", "resumable"), ("fields", "id")])
+                        .header("X-Upload-Content-Type", "application/octet-stream")
+                        .header("X-Upload-Content-Length", &size)
+                        .json(&self.metadata)
+                },
+                &[],
+            )
             .await?;
         let session = response
             .headers()
