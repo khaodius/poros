@@ -25,6 +25,9 @@ use crate::ssh::exec::{self, shell_quote, CommandLine};
 
 /// Enough for 64 parts' lines and any error the command prints.
 const OUTPUT_LIMIT: usize = 128 * 1024;
+/// GNU `split` runs its filter with `$SHELL -c`, and `SHELL` is the account's login shell. The
+/// filter is a fixed word, but `sh` runs it all the same, so no check depends on the login shell.
+const SPLIT: &str = "SHELL=/bin/sh split";
 
 /// What a server can hash, found once per server.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -217,7 +220,7 @@ fn digest_script(remote: &str, algorithm: Algorithm, parts: Parts, count: usize)
         format!("{} -- {quoted}", algorithm.command())
     } else {
         format!(
-            "split -b {} --filter={} -- {quoted}",
+            "{SPLIT} -b {} --filter={} -- {quoted}",
             parts.size,
             algorithm.command()
         )
@@ -574,7 +577,7 @@ fn resume_command(remote: &str, start: u64, parts: Parts) -> String {
         format!("head -c {start} -- {quoted} | sha256sum")
     } else {
         format!(
-            "head -c {start} -- {quoted} | split -b {} --filter=sha256sum",
+            "head -c {start} -- {quoted} | {SPLIT} -b {} --filter=sha256sum",
             parts.size
         )
     };
@@ -613,7 +616,8 @@ async fn server_hashing(context: &JobContext<'_>) -> ServerHashing {
             hasher.update(data);
             hasher.finish()
         });
-        let command = "printf abc | head -c 3 | split -b 2 --filter=sha256sum";
+        // `SPLIT`, written out, as probes take fixed commands.
+        let command = "printf abc | head -c 3 | SHELL=/bin/sh split -b 2 --filter=sha256sum";
         match probe(context, true, command, Algorithm::Sha256, &expected).await {
             Some(works) => hashing.parts = works,
             None => return ServerHashing::default(),

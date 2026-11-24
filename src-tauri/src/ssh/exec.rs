@@ -170,6 +170,8 @@ pub(crate) mod tests {
     pub(crate) const HOSTILE_NAMES: &[&str] = &[
         "it's",
         r"x\';touch poros-pwned;'",
+        // Quoted for `sh`, fish runs the `touch` in this one.
+        r"x\';touch poros-pwned;echo \'",
         r"back\\slash",
         r"trailing\",
         "$(touch poros-pwned)",
