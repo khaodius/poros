@@ -88,7 +88,7 @@ export const drives = {
   uploadFailed: "失敗: {error}",
   uploadWaiting: "待機中",
   uploading: "アップロード中",
-  uploadingPercent: "アップロード中、{percent}%",
+  uploadingPercent: "アップロード中、{percent}",
   chooseADriveLetter: "ドライブ文字を選択してください。",
   chooseAFolder: "フォルダーを選択してください。",
   driveLetterSuchAs: "ドライブ文字 ({example} など)",

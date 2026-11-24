@@ -2,13 +2,16 @@ import type { TranslatedArea } from "../catalog";
 
 export const rsync = {
   // components/RsyncOptionsEditor
-  changed: "{changed} 個を変更",
+  changed: { other: "{count} 個を変更" },
   noLimit: "制限なし",
   extraRsyncArguments: "追加の rsync 引数",
   typedAsOnRsyncsCommandLine:
     "rsync のコマンドラインと同じように入力します。上のオプションより優先して適用されます。",
 
   // lib/rsyncOptions
+  unitSeconds: { other: "秒" },
+  unitBytes: { other: "バイト" },
+  unitItems: { other: "個" },
   sizeAndModificationTime: "サイズと更新日時",
   sizeOnlySizeOnly: "サイズのみ (--size-only)",
   contentsCReadsFilesOf: "内容 (-c、同じサイズのファイルを読み込みます)",

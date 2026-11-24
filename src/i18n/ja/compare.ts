@@ -100,13 +100,13 @@ export const compare = {
     "このペインに検索結果が表示されている間は、比較を一時停止します。結果を閉じると印が戻ります",
   pausedPartnerShowsResults:
     "{partner} に検索結果が表示されている間は、比較を一時停止します。結果を閉じると印が戻ります",
-  summaryNewerHere: "こちらが新しい {count} 個",
-  summaryOlderHere: "こちらが古い {count} 個",
-  summaryOnlyHere: "こちらのみ {count} 個",
-  summaryOnlyThere: "もう一方のペインのみ {count} 個",
-  summaryDifferent: "異なる {count} 個",
-  summaryIdentical: "同一 {count} 個",
-  summaryNotCompared: "未比較 {count} 個",
+  summaryNewerHere: { other: "こちらが新しい {count} 個" },
+  summaryOlderHere: { other: "こちらが古い {count} 個" },
+  summaryOnlyHere: { other: "こちらのみ {count} 個" },
+  summaryOnlyThere: { other: "もう一方のペインのみ {count} 個" },
+  summaryDifferent: { other: "異なる {count} 個" },
+  summaryIdentical: { other: "同一 {count} 個" },
+  summaryNotCompared: { other: "未比較 {count} 個" },
 
   // state/folderCompare
   noFolderToCompare: "このペインには比較するフォルダーがありません",

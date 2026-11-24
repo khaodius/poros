@@ -53,7 +53,6 @@ export const automation = {
   whenTheQueueFinishes: "キューが終わったとき",
 
   // components/WhenDoneCountdown
-  theTransferQueueHasFinished: "転送キューが終わりました。{seconds}後に{title}を実行します。",
   seconds: { other: "{count} 秒" },
 
   // components/commandMenu
@@ -62,6 +61,15 @@ export const automation = {
   editCommands: "コマンドを編集...",
 
   // lib/automation
+  queueFinishedClosingPorosIn: "転送キューが終わりました。{seconds}後に Poros を終了します。",
+  queueFinishedLockingIn: "転送キューが終わりました。{seconds}後にコンピューターをロックします。",
+  queueFinishedSleepingIn:
+    "転送キューが終わりました。{seconds}後にコンピューターをスリープ状態にします。",
+  queueFinishedHibernatingIn:
+    "転送キューが終わりました。{seconds}後にコンピューターを休止状態にします。",
+  queueFinishedLoggingOffIn: "転送キューが終わりました。{seconds}後にサインアウトします。",
+  queueFinishedShuttingDownIn:
+    "転送キューが終わりました。{seconds}後にコンピューターをシャットダウンします。",
   filesTransferredIn: {
     other: "{count} 個のファイルを転送しました ({size}、{duration})",
   },
@@ -86,8 +94,8 @@ export const automation = {
   confirmShutDownNow: "今すぐシャットダウン",
   transfersFinishedWithErrors: "転送が終わりました (エラーあり)",
   transfersFinished: "転送が終わりました",
-  failedCount: "{count} 個が失敗",
-  skippedCount: "{count} 個をスキップ",
+  failedCount: { other: "{count} 個が失敗" },
+  skippedCount: { other: "{count} 個をスキップ" },
 
   // lib/commands
   eachSelectedItemsFullPath: "選択した各項目のフルパス (項目ごとに 1 回実行)",
@@ -104,8 +112,8 @@ export const automation = {
   // state/commandStore
   stopped: "停止しました",
   nothingToRun: "実行するものがありません",
-  allCommandsFinished: "{finished} 個のコマンドがすべて完了しました",
-  ofCommandsFailed: "{finished} 個のコマンドのうち {failed} 個が失敗しました",
+  allCommandsFinished: { other: "{count} 個のコマンドがすべて完了しました" },
+  ofCommandsFailed: { other: "{finished} 個のコマンドのうち {count} 個が失敗しました" },
 
   // state/whenDone
   whenTheQueueFinished: "キューが終わったときの動作",

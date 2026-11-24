@@ -29,7 +29,7 @@ export const share = {
   hours2: "時間",
   days2: "日",
   link: "リンク",
-  links2: "{count} 個のリンク",
+  links2: { other: "{count} 個のリンク" },
   keepsOneLinkPerItem:
     "{service} では項目ごとにリンクが 1 つのため、上のリンクは、それを知っているすべての人に対して変わります。",
   keepsOneLinkPerItemSo:
@@ -68,23 +68,53 @@ export const share = {
   enterHowLongTheLinkShouldWork: "リンクの有効期間を整数で入力してください。",
   chooseHowLongTheLinkShouldWork: "リンクの有効期間を選んでください。",
   linksHereLastAtMost: "ここでのリンクの有効期間は最長 {lifetime} です。",
-  deadline: "{month}{day}日 {time}",
-  deadlineWithYear: "{year}年{month}{day}日 {time}",
-  statementDownload: "{who}は、{until}、{what}をダウンロードできます。",
-  statementEdit: "{who}は、{until}、{what}を開いて変更できます。",
-  statementView: "{who}は、{until}、{what}を開けます。",
+  anyoneWithThisLinkCanDownload:
+    "このリンクを知っている人は、{until}、{what}をダウンロードできます。",
+  anyoneWithThisLinkCanEdit: "このリンクを知っている人は、{until}、{what}を開いて変更できます。",
+  anyoneWithThisLinkCanView: "このリンクを知っている人は、{until}、{what}を開けます。",
+  anyoneWithOneOfTheseLinksCanDownload:
+    "これらのリンクのいずれかを知っている人は、{until}、{what}をダウンロードできます。",
+  anyoneWithOneOfTheseLinksCanEdit:
+    "これらのリンクのいずれかを知っている人は、{until}、{what}を開いて変更できます。",
+  anyoneWithOneOfTheseLinksCanView:
+    "これらのリンクのいずれかを知っている人は、{until}、{what}を開けます。",
+  peopleInWithThisLinkCanDownload:
+    "{organization} のユーザーのうち、このリンクを知っている人は、{until}、{what}をダウンロードできます。",
+  peopleInWithThisLinkCanEdit:
+    "{organization} のユーザーのうち、このリンクを知っている人は、{until}、{what}を開いて変更できます。",
+  peopleInWithThisLinkCanView:
+    "{organization} のユーザーのうち、このリンクを知っている人は、{until}、{what}を開けます。",
+  peopleInWithOneOfTheseLinksCanDownload:
+    "{organization} のユーザーのうち、これらのリンクのいずれかを知っている人は、{until}、{what}をダウンロードできます。",
+  peopleInWithOneOfTheseLinksCanEdit:
+    "{organization} のユーザーのうち、これらのリンクのいずれかを知っている人は、{until}、{what}を開いて変更できます。",
+  peopleInWithOneOfTheseLinksCanView:
+    "{organization} のユーザーのうち、これらのリンクのいずれかを知っている人は、{until}、{what}を開けます。",
+  peopleInYourOrganizationWithThisLinkCanDownload:
+    "組織内のユーザーのうち、このリンクを知っている人は、{until}、{what}をダウンロードできます。",
+  peopleInYourOrganizationWithThisLinkCanEdit:
+    "組織内のユーザーのうち、このリンクを知っている人は、{until}、{what}を開いて変更できます。",
+  peopleInYourOrganizationWithThisLinkCanView:
+    "組織内のユーザーのうち、このリンクを知っている人は、{until}、{what}を開けます。",
+  peopleInYourOrganizationWithOneOfTheseLinksCanDownload:
+    "組織内のユーザーのうち、これらのリンクのいずれかを知っている人は、{until}、{what}をダウンロードできます。",
+  peopleInYourOrganizationWithOneOfTheseLinksCanEdit:
+    "組織内のユーザーのうち、これらのリンクのいずれかを知っている人は、{until}、{what}を開いて変更できます。",
+  peopleInYourOrganizationWithOneOfTheseLinksCanView:
+    "組織内のユーザーのうち、これらのリンクのいずれかを知っている人は、{until}、{what}を開けます。",
+  peopleAlreadyInvitedWhoHaveThisLinkCanDownload:
+    "既に招待されているユーザーのうち、このリンクを知っている人は、{until}、{what}をダウンロードできます。",
+  peopleAlreadyInvitedWhoHaveThisLinkCanEdit:
+    "既に招待されているユーザーのうち、このリンクを知っている人は、{until}、{what}を開いて変更できます。",
+  peopleAlreadyInvitedWhoHaveThisLinkCanView:
+    "既に招待されているユーザーのうち、このリンクを知っている人は、{until}、{what}を開けます。",
+  peopleAlreadyInvitedWhoHaveOneOfTheseLinksCanDownload:
+    "既に招待されているユーザーのうち、これらのリンクのいずれかを知っている人は、{until}、{what}をダウンロードできます。",
+  peopleAlreadyInvitedWhoHaveOneOfTheseLinksCanEdit:
+    "既に招待されているユーザーのうち、これらのリンクのいずれかを知っている人は、{until}、{what}を開いて変更できます。",
+  peopleAlreadyInvitedWhoHaveOneOfTheseLinksCanView:
+    "既に招待されているユーザーのうち、これらのリンクのいずれかを知っている人は、{until}、{what}を開けます。",
   statementWithPassword: "{statement}最初にパスワードを求められます。",
-  anyoneWithThisLink: "このリンクを知っている人",
-  anyoneWithOneOfTheseLinks: "これらのリンクのいずれかを知っている人",
-  peopleInWithThisLink: "{organization} のユーザーのうち、このリンクを知っている人",
-  peopleInWithOneOfTheseLinks:
-    "{organization} のユーザーのうち、これらのリンクのいずれかを知っている人",
-  peopleInYourOrganizationWithThisLink: "組織内のユーザーのうち、このリンクを知っている人",
-  peopleInYourOrganizationWithOneOfTheseLinks:
-    "組織内のユーザーのうち、これらのリンクのいずれかを知っている人",
-  peopleAlreadyInvitedWhoHaveThisLink: "既に招待されているユーザーのうち、このリンクを知っている人",
-  peopleAlreadyInvitedWhoHaveOneOfTheseLinks:
-    "既に招待されているユーザーのうち、これらのリンクのいずれかを知っている人",
   theItemItIsFor: "対象の項目",
   theFileItIsFor: "対象のファイル",
   theFolderAndEverythingInIt: "フォルダーとその中のすべて",

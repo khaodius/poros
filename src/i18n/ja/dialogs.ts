@@ -18,11 +18,12 @@ export const dialogs = {
   // components/DeleteDialog
   nothingToDelete: "削除する項目はありません",
   deleteItem: "項目の削除",
-  deleteItems: "{count} 個の項目の削除",
+  deleteItems: { other: "{count} 個の項目の削除" },
   checkingTheFolder: "フォルダーを確認しています...",
   theseItemsAreNoLonger: "これらの項目はもうフォルダーにありません。",
 
   // components/PropertiesDialog
+  sizeWithContents: "{size} ({contents})",
   items: { other: "{count} 個の項目" },
   files: { other: "{count} 個のファイル" },
   folders: { other: "{count} 個のフォルダー" },
@@ -30,7 +31,7 @@ export const dialogs = {
     other: "集計中: {count} 個のファイル、{size}",
   },
   propertiesOf: "{name} のプロパティ",
-  propertiesOfItems: "{count} 個の項目のプロパティ",
+  propertiesOfItems: { other: "{count} 個の項目のプロパティ" },
   items2: "項目",
   links: { other: "{count} 個のリンク" },
   type: "種類",
@@ -42,7 +43,7 @@ export const dialogs = {
   permissions: "パーミッション",
   linksHaveNoPermissionsOf:
     "リンクには独自のパーミッションがないため、リンクのパーミッションは変わりません。所有者とグループの変更はリンク自体に適用されます。",
-  andMoreListedInThe: "ほか {count} 件 (ログに記載)",
+  andMoreListedInThe: { other: "ほか {count} 件 (ログに記載)" },
   changedItems: { other: "{count} 個の項目を変更しました" },
   octal: "8 進数",
   mixed: "混在",
@@ -52,7 +53,7 @@ export const dialogs = {
   folders2: "フォルダー",
   files2: "ファイル",
   oneItemCouldNotBe: "1 個の項目を変更できませんでした:",
-  itemsCouldNotBeChanged: "{count} 個の項目を変更できませんでした:",
+  itemsCouldNotBeChanged: { other: "{count} 個の項目を変更できませんでした:" },
   applying: "適用しています...",
   linkToAFolder: "フォルダーへのリンク",
   linkToAFile: "ファイルへのリンク",
@@ -67,10 +68,10 @@ export const dialogs = {
   permissionOfClass: "{who}の{permission}",
 
   // lib/deletion
-  deletedCount: "{count} 個を削除済み",
+  deletedCount: { other: "{count} 個を削除済み" },
   countingToDelete: "削除する項目を数えています...",
-  deletedFoundSoFar: "{count} 個を削除済み (これまでに {found} 個を検出)",
-  deletedOfTotal: "{total} 個中 {count} 個を削除済み",
+  deletedFoundSoFar: { other: "{count} 個を削除済み (これまでに {found} 個を検出)" },
+  deletedOfTotal: { other: "{total} 個中 {count} 個を削除済み" },
 
   // lib/permissions
   setUserId: "SUID",

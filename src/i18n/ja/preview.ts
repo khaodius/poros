@@ -54,7 +54,7 @@ export const preview = {
   thumbnailsNotLoaded: "サムネイルは読み込まれていません",
   thumbnailsNotLoadedDetail:
     "このストレージからの読み込みは課金される場合があるため、画像は指示があったときにだけ読み込みます。",
-  itemsSelected: "{count} 個の項目を選択",
+  itemsSelected: { other: "{count} 個の項目を選択" },
   notTextOrAPicture: "テキストでも画像でもありません",
   noPermissionToReadFile: "このファイルを読み取る権限がありません",
   noPermissionToReadFolder: "このフォルダーを読み取る権限がありません",
@@ -104,7 +104,7 @@ export const preview = {
   dragToResizeDoubleClick: "ドラッグでサイズを変更、ダブルクリックで元に戻します",
 
   // components/PreviewThumbnails
-  andMore: "ほか {count} 個",
+  andMore: { other: "ほか {count} 個" },
 
   // lib/previewLoad
   theFileChangesAsIt: "読み込み中にファイルが変更されています",

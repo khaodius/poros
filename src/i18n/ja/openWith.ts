@@ -131,7 +131,8 @@ export const openWith = {
   noFilesAreOpenIn:
     "他のプログラムで開いているファイルはありません。ファイルを右クリックして「プログラムから開く」を選んでください。",
   inAVault: "金庫内",
-  uploaded: "{uploadTime} にアップロード",
+  uploadedAtTime: "{time} にアップロード",
+  uploadedOnDate: "{date} にアップロード",
   of: "{transferred} / {total}",
   decideWhatToUpload: "アップロードする内容を決める...",
   openInAnEditor: "エディターで開く...",

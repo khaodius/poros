@@ -36,10 +36,11 @@ export const versions = {
   deletedItems: { other: "削除された {count} 個の項目" },
   everythingDeletedUnderAFolder:
     "フォルダーの下で削除されたものもすべて対象になります。フォルダー内に残っているファイルは変更されません。",
-  andMore: "ほか {count} 個",
+  andMore: { other: "ほか {count} 個" },
   removeThisDeleteMarker: "この削除マーカーを削除",
   deleteThisVersionForGood: "このバージョンを完全に削除",
   versionFrom: "{when} のバージョン",
+  versionFromUnknownTime: "日時不明のバージョン",
   currentVersion: "現在のバージョン",
   isNoLongerDeleted: "{name} は削除済みではなくなりました。",
   theseItemsAreNoLongerDeleted: "これらの項目は削除済みではなくなりました。",

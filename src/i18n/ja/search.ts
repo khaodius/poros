@@ -41,14 +41,14 @@ export const search = {
   },
   leaveABoxEmptyTo: "空欄にすると、その側は制限しません。",
   foldersThatCouldNotBe: "読み取れなかったフォルダー",
-  andMore: "ほか {count} 個",
+  andMore: { other: "ほか {count} 個" },
   theSearchWentPastIt: {
     other:
       "読み取れなかった {count} 個のフォルダーを飛ばして検索しました。それらの中身は結果に含まれていません。",
   },
   searchIn: "{folder} 内を検索",
   pressEnterToSearch: "Enter キーを押すと、{folder} とその中のフォルダーを検索します",
-  searchingFoundIn: "検索中: {folders}で {found} 件を検出",
+  searchingFoundIn: { other: "検索中: {folders}で {count} 件を検出" },
   foundInFoldersSearched: "{folders}を検索、{found}",
   searchedByTheServer: "サーバーで検索しました",
   stoppedAfterSoFar: "{folders}で停止: これまでに {found}",

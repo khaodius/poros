@@ -39,7 +39,7 @@ export const limits = {
   clickToChangeTheSchedule: "{scheduleTooltip}\nクリックするとスケジュールを変更できます。",
   scheduleIgnoredShort: "スケジュール無視中",
   scheduleIgnoredShortUntil: "{time} までスケジュール無視中",
-  untilTime: "({time} まで)",
+  limitsUntilTime: "{limits} ({time} まで)",
 
   // components/LimitScheduleWeek
   speedLimitsThroughTheWeek: "1 週間の速度制限",

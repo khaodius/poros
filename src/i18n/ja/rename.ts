@@ -60,6 +60,8 @@ export const rename = {
   cannotBeRenamed: "名前を変更できません",
   nameUnchanged: "変更なし",
   ready: "変更予定",
+  lowercase: "小文字",
+  uppercase: "大文字",
   titleCase: "単語の先頭を大文字",
   sentenceCase: "先頭だけ大文字",
   beforeTheName: "名前の前",
@@ -98,7 +100,8 @@ export const rename = {
 
   // lib/bulkRename
   theNameIsEmpty: "名前が空です",
-  theNameIsTooLong: "名前が長すぎます: {length}/{maxLength} {lengthUnit}",
+  theNameIsTooLongInBytes: { other: "名前が長すぎます: {length}/{count} バイト" },
+  theNameIsTooLongInCharacters: { other: "名前が長すぎます: {length}/{count} 文字" },
   nowNamed: "現在の名前は {temporary} です: {message}",
   nameWithoutTheExtension: "拡張子を除いた名前",
   dateModified: "更新日",

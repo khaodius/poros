@@ -17,6 +17,7 @@ export const common = {
   add: "追加",
 
   // components/BulkRenameDialog
+  sentenceSeparator: "",
   start: "開始",
   tryAgain: "再試行",
   cancel: "キャンセル",
@@ -62,6 +63,7 @@ export const common = {
   replace: "置き換え",
 
   // components/FilePane
+  asSentence: "{text}。",
   none: "なし",
   cut: "切り取り",
   copy: "コピー",
@@ -73,6 +75,7 @@ export const common = {
   default: "既定",
 
   // components/ImportConnectionsDialog
+  clauseSeparator: "／",
   back: "戻る",
 
   // components/LimitScheduleSettings
@@ -109,4 +112,7 @@ export const common = {
   durationSeconds: "{seconds} 秒",
   durationMinutes: "{minutes} 分 {seconds} 秒",
   durationHours: "{hours} 時間 {minutes} 分",
+
+  // state/archiveActions
+  labelWithMessage: "{label}: {message}",
 } satisfies TranslatedArea<"common">;

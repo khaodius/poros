@@ -7,7 +7,7 @@ export const connect = {
   importFromFilezillaWinscpAnd: "FileZilla、WinSCP などのアプリからインポート",
   importConnections: "接続のインポート",
   newConnection: "新しい接続",
-  connectionsYouSaveAppearHere: "保存した接続がここに表示されます。",
+  emptyConnectionList: "保存した接続がここに表示されます。{importLink}",
   importThemFromAnotherApp: "他のアプリからインポート",
   protocol: "プロトコル",
   account: "アカウント",
@@ -95,10 +95,9 @@ export const connect = {
 
   // components/ImportConnectionsDialog
   importFrom: "{label} からインポート",
-  importedFrom: "{label} から {imported}をインポートしました。",
-  imported: "{imported}をインポートしました。",
+  importedFrom: { other: "{label} から {count} 件の接続をインポートしました。" },
+  imported: { other: "{count} 件の接続をインポートしました。" },
   theseCouldNotBeSaved: "次の接続は保存できませんでした: {failures}",
-  importedConnections: { other: "{count} 件の接続" },
   passwordsLeftOut: {
     other:
       "システムのキーチェーンを使用できないため、{count} 件のパスワードは取り込みませんでした。接続するときに Poros が入力を求めます。",
@@ -109,7 +108,9 @@ export const connect = {
     "これらのアプリに保存されたサイトを、Poros の保存済みの接続にコピーします。他のアプリでは何も変更されません。",
   chooseFile: "ファイルを選択...",
   alreadySaved: "保存済み",
-  leftOutSincePorosCannot: "{count} 件は、そのままでは Poros から接続できないため除外しました",
+  leftOutSincePorosCannot: {
+    other: "{count} 件は、そのままでは Poros から接続できないため除外しました",
+  },
   putFolderNamesInFront: "接続名の前にフォルダー名を付ける",
   reading: "読み込んでいます...",
   otherFile: "その他のファイル...",
@@ -121,6 +122,8 @@ export const connect = {
   importCountConnections: { other: "{count} 件の接続をインポート" },
   foundFiles: "{files} が見つかりました",
   notFoundInChoose: "{places} には見つかりませんでした。{choose}",
+  throughConnection: "{name} 経由",
+  neededByConnection: "{name} に必要",
   placeOrPlace: "{first} または {second}",
   keepThePasswordsInTheKeychain: {
     other: "{count} 件のパスワードをシステムのキーチェーンに保存",
