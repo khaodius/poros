@@ -30,7 +30,9 @@ use crate::remote_path;
 use crate::ssh::{AuthMethod, ConnectProfile, HostKeyApproval};
 use crate::tls::{ServerTls, TrustedCertificates};
 pub use api::{http_client, transport_error};
-pub use oauth::{missing_client, Authorization, OAuthClient, OAuthVault, ProviderStatus, SignedIn};
+pub use oauth::{
+    missing_client, Authorization, OAuthClient, OAuthVault, ProviderStatus, SignInPage, SignedIn,
+};
 
 /// How long a folder's id is trusted without asking the service again. Short, because the
 /// folder can be renamed or removed from another device.
@@ -159,10 +161,14 @@ fn password_of(profile: &ConnectProfile) -> AppResult<String> {
     }
 }
 
-/// Signs in to an account in the browser.
-pub async fn sign_in(client: &OAuthClient, cancel: &CancellationToken) -> AppResult<Authorization> {
+/// Signs in to an account in the browser, whose tab then shows `page`.
+pub async fn sign_in(
+    client: &OAuthClient,
+    page: &SignInPage,
+    cancel: &CancellationToken,
+) -> AppResult<Authorization> {
     let http = api::http_client()?;
-    oauth::sign_in(&http, client, open_in_browser, cancel).await
+    oauth::sign_in(&http, client, page, open_in_browser, cancel).await
 }
 
 /// Hands a web address to the system's browser.

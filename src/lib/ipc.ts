@@ -80,6 +80,7 @@ import type {
   ShareLink,
   ShareOptions,
   SignedIn,
+  SignInPage,
   StoreName,
   SyncDirection,
   SyncOptions,
@@ -310,9 +311,12 @@ export const connectionImport = {
 
 export const cloud = {
   providers: () => call<CloudProviderStatus[]>("cloud_providers"),
-  /** Opens the provider's sign-in page in the browser; resolves once the account is back. */
-  signIn: (requestId: string, provider: CloudProvider) =>
-    call<SignedIn>("cloud_sign_in", { requestId, provider }),
+  /**
+   * Opens the provider's sign-in page in the browser; resolves once the account is back. The
+   * tab then shows `page`.
+   */
+  signIn: (requestId: string, provider: CloudProvider, page: SignInPage) =>
+    call<SignedIn>("cloud_sign_in", { requestId, provider, page }),
   cancelSignIn: (requestId: string) => call<void>("cloud_cancel_sign_in", { requestId }),
 };
 

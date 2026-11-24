@@ -51,4 +51,10 @@ export const cloud = {
     "Signing in to {service} needs your own {provider} app registration. Add its client ID under Settings, Cloud accounts.",
   needsOwnAppWithSecret:
     "Signing in to {service} needs your own {provider} app registration. Add its client ID and client secret under Settings, Cloud accounts.",
+  browserSignedIn: "Poros is signed in",
+  browserSignedInDetail: "You can close this tab and return to Poros.",
+  browserNotCompleted: "Sign-in was not completed",
+  browserNotCompletedDetail: "You can close this tab and try again from Poros.",
+  browserExpired: "This sign-in has expired",
+  browserExpiredDetail: "Start the sign-in again from Poros.",
 } as const satisfies MessageArea;

@@ -3,9 +3,9 @@ import { CircleUserRound, LoaderCircle } from "lucide-react";
 import { useCloudProviders } from "../hooks/useCloudProviders";
 import { cloud, toAppError } from "../lib/ipc";
 import { PROVIDER_NAMES, protocolInfo } from "../lib/protocols";
-import type { Protocol, SignedIn } from "../lib/types";
+import type { Protocol, SignedIn, SignInPage } from "../lib/types";
 import { useUiStore } from "../state/uiStore";
-import { useT } from "../i18n";
+import { activeLocale, useT, type Translate } from "../i18n";
 
 interface CloudSignInProps {
   protocol: Protocol;
@@ -13,6 +13,19 @@ interface CloudSignInProps {
   account: string | null;
   onSignedIn: (signedIn: SignedIn) => void;
   onError: (message: string | null) => void;
+}
+
+/** What the browser tab says once the provider sends it back, in the interface's language. */
+function signInPage(t: Translate): SignInPage {
+  return {
+    lang: activeLocale(),
+    signedIn: { heading: t("cloud.browserSignedIn"), detail: t("cloud.browserSignedInDetail") },
+    notCompleted: {
+      heading: t("cloud.browserNotCompleted"),
+      detail: t("cloud.browserNotCompletedDetail"),
+    },
+    expired: { heading: t("cloud.browserExpired"), detail: t("cloud.browserExpiredDetail") },
+  };
 }
 
 /** Signs in to a cloud storage account in the system browser. */
@@ -40,7 +53,7 @@ export function CloudSignIn({ protocol, account, onSignedIn, onError }: CloudSig
     setWaiting(true);
     onError(null);
     try {
-      const signedIn = await cloud.signIn(requestId, provider);
+      const signedIn = await cloud.signIn(requestId, provider, signInPage(t));
       if (request.current === requestId) onSignedIn(signedIn);
     } catch (caught) {
       const error = toAppError(caught);

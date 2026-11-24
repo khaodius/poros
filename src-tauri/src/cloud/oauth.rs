@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
+use quick_xml::escape::escape;
 use reqwest::{Client, Url};
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
@@ -27,6 +28,8 @@ const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(300);
 /// A browser connection that sends no request within this long is a speculative one.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_REQUEST_BYTES: usize = 16 * 1024;
+/// Longer texts are not ones the interface wrote for the browser tab.
+const MAX_PAGE_TEXT_CHARS: usize = 300;
 
 const GOOGLE_AUTHORIZE_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
@@ -270,11 +273,110 @@ pub struct Authorization {
     pub refresh_token: String,
 }
 
+/// What the browser tab says when the provider sends it back to Poros, in the language of the
+/// interface, which sends it with the sign-in.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SignInPage {
+    /// The language tag of the texts, for the page's `lang`.
+    pub lang: String,
+    pub signed_in: PageText,
+    pub not_completed: PageText,
+    pub expired: PageText,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct PageText {
+    pub heading: String,
+    pub detail: String,
+}
+
+impl PageText {
+    fn new(heading: &str, detail: &str) -> Self {
+        Self {
+            heading: heading.to_string(),
+            detail: detail.to_string(),
+        }
+    }
+
+    /// These texts when both are short plain lines, `english` otherwise.
+    fn or(self, english: PageText) -> PageText {
+        let fits = |text: &str| {
+            !text.trim().is_empty()
+                && text.chars().count() <= MAX_PAGE_TEXT_CHARS
+                && !text.chars().any(char::is_control)
+        };
+        if fits(&self.heading) && fits(&self.detail) {
+            self
+        } else {
+            english
+        }
+    }
+}
+
+impl Default for SignInPage {
+    fn default() -> Self {
+        Self {
+            lang: "en".to_string(),
+            signed_in: PageText::new(
+                "Poros is signed in",
+                "You can close this tab and return to Poros.",
+            ),
+            not_completed: PageText::new(
+                "Sign-in was not completed",
+                "You can close this tab and try again from Poros.",
+            ),
+            expired: PageText::new(
+                "This sign-in has expired",
+                "Start the sign-in again from Poros.",
+            ),
+        }
+    }
+}
+
+impl SignInPage {
+    /// The texts the page sent where they are fit to show, the English ones for the rest.
+    pub fn or_english(given: Option<SignInPage>) -> Self {
+        let english = Self::default();
+        let Some(given) = given else {
+            return english;
+        };
+        Self {
+            lang: if is_language_tag(&given.lang) {
+                given.lang
+            } else {
+                english.lang
+            },
+            signed_in: given.signed_in.or(english.signed_in),
+            not_completed: given.not_completed.or(english.not_completed),
+            expired: given.expired.or(english.expired),
+        }
+    }
+}
+
+/// A BCP 47 tag as the interface writes one: letters first, then subtags of letters and digits.
+fn is_language_tag(tag: &str) -> bool {
+    tag.len() <= 35
+        && tag.split('-').enumerate().all(|(index, subtag)| {
+            (1..=8).contains(&subtag.len())
+                && if index == 0 {
+                    subtag
+                        .chars()
+                        .all(|character| character.is_ascii_alphabetic())
+                } else {
+                    subtag
+                        .chars()
+                        .all(|character| character.is_ascii_alphanumeric())
+                }
+        })
+}
+
 /// Opens the provider's sign-in page with `open_browser` and waits for the browser to come
 /// back with an authorization code, which it trades for tokens.
 pub async fn sign_in(
     http: &Client,
     client: &OAuthClient,
+    page: &SignInPage,
     open_browser: impl FnOnce(&str) -> AppResult<()>,
     cancel: &CancellationToken,
 ) -> AppResult<Authorization> {
@@ -324,7 +426,7 @@ pub async fn sign_in(
         _ = tokio::time::sleep(SIGN_IN_TIMEOUT) => {
             return Err(AppError::new(ErrorKind::Timeout, "The sign-in was not finished in time"))
         }
-        code = loopback.wait_for_code(&state) => code?,
+        code = loopback.wait_for_code(&state, page) => code?,
     };
     let mut parameters = vec![
         ("grant_type", "authorization_code"),
@@ -529,18 +631,20 @@ impl Loopback {
         }
     }
 
-    async fn wait_for_code(self, state: &str) -> AppResult<String> {
+    async fn wait_for_code(self, state: &str, page: &SignInPage) -> AppResult<String> {
         let (sender, mut receiver) = mpsc::channel::<AppResult<String>>(4);
         let mut accepting = JoinSet::new();
         for listener in self.listeners {
             let sender = sender.clone();
             let state = state.to_string();
+            let page = page.clone();
             accepting.spawn(async move {
                 while let Ok((stream, _)) = listener.accept().await {
                     let sender = sender.clone();
                     let state = state.clone();
+                    let page = page.clone();
                     tokio::spawn(async move {
-                        if let Some(outcome) = answer(stream, &state).await {
+                        if let Some(outcome) = answer(stream, &state, &page).await {
                             let _ = sender.send(outcome).await;
                         }
                     });
@@ -559,22 +663,20 @@ impl Loopback {
 
 /// Serves one browser request. Returns the outcome when the request was the redirect back
 /// from the provider, and `None` for anything else (a favicon, a stale tab, a preconnect).
-async fn answer(mut stream: TcpStream, state: &str) -> Option<AppResult<String>> {
+async fn answer(
+    mut stream: TcpStream,
+    state: &str,
+    page: &SignInPage,
+) -> Option<AppResult<String>> {
     let target = tokio::time::timeout(REQUEST_TIMEOUT, read_request_target(&mut stream))
         .await
         .ok()??;
     let Some(parameters) = callback_parameters(&target) else {
-        respond(&mut stream, "404 Not Found", "Not found", "").await;
+        respond(&mut stream, "404 Not Found", "en", "Not found", "").await;
         return None;
     };
     if parameters.get("state").map(String::as_str) != Some(state) {
-        respond(
-            &mut stream,
-            "400 Bad Request",
-            "This sign-in has expired",
-            "Start the sign-in again from Poros.",
-        )
-        .await;
+        respond_with(&mut stream, "400 Bad Request", page, &page.expired).await;
         return None;
     }
     if let Some(error) = parameters.get("error") {
@@ -582,13 +684,7 @@ async fn answer(mut stream: TcpStream, state: &str) -> Option<AppResult<String>>
             .get("error_description")
             .map(|description| first_line(description))
             .unwrap_or_else(|| error.clone());
-        respond(
-            &mut stream,
-            "200 OK",
-            "Sign-in was not completed",
-            "You can close this tab and try again from Poros.",
-        )
-        .await;
+        respond_with(&mut stream, "200 OK", page, &page.not_completed).await;
         let message = if error == "access_denied" {
             "The sign-in was declined".to_string()
         } else {
@@ -600,13 +696,7 @@ async fn answer(mut stream: TcpStream, state: &str) -> Option<AppResult<String>>
         .get("code")
         .filter(|code| !code.is_empty())?
         .clone();
-    respond(
-        &mut stream,
-        "200 OK",
-        "Poros is signed in",
-        "You can close this tab and return to Poros.",
-    )
-    .await;
+    respond_with(&mut stream, "200 OK", page, &page.signed_in).await;
     Some(Ok(code))
 }
 
@@ -638,14 +728,12 @@ fn callback_parameters(target: &str) -> Option<HashMap<String, String>> {
     (parameters.contains_key("code") || parameters.contains_key("error")).then_some(parameters)
 }
 
-async fn respond(stream: &mut TcpStream, status: &str, heading: &str, detail: &str) {
-    let body = format!(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><title>Poros</title>\
-         <style>body{{font-family:system-ui,sans-serif;background:#16181d;color:#e6e8ee;\
-         display:flex;align-items:center;justify-content:center;height:100vh;margin:0}}\
-         main{{text-align:center}}p{{color:#9aa1ad}}</style></head>\
-         <body><main><h1>{heading}</h1><p>{detail}</p></main></body></html>"
-    );
+async fn respond_with(stream: &mut TcpStream, status: &str, page: &SignInPage, text: &PageText) {
+    respond(stream, status, &page.lang, &text.heading, &text.detail).await;
+}
+
+async fn respond(stream: &mut TcpStream, status: &str, lang: &str, heading: &str, detail: &str) {
+    let body = page_html(lang, heading, detail);
     let response = format!(
         "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\n\
          Cache-Control: no-store\r\nConnection: close\r\n\r\n{body}",
@@ -653,6 +741,17 @@ async fn respond(stream: &mut TcpStream, status: &str, heading: &str, detail: &s
     );
     let _ = stream.write_all(response.as_bytes()).await;
     let _ = stream.shutdown().await;
+}
+
+fn page_html(lang: &str, heading: &str, detail: &str) -> String {
+    let (lang, heading, detail) = (escape(lang), escape(heading), escape(detail));
+    format!(
+        "<!doctype html><html lang=\"{lang}\"><head><meta charset=\"utf-8\"><title>Poros</title>\
+         <style>body{{font-family:system-ui,sans-serif;background:#16181d;color:#e6e8ee;\
+         display:flex;align-items:center;justify-content:center;height:100vh;margin:0}}\
+         main{{text-align:center}}p{{color:#9aa1ad}}</style></head>\
+         <body><main><h1>{heading}</h1><p>{detail}</p></main></body></html>"
+    )
 }
 
 #[cfg(test)]
@@ -720,7 +819,8 @@ mod tests {
     async fn the_listener_hands_back_the_code() {
         let loopback = Loopback::bind().await.unwrap();
         let port = loopback.port;
-        let waiting = tokio::spawn(loopback.wait_for_code("expected"));
+        let page = SignInPage::default();
+        let waiting = tokio::spawn(async move { loopback.wait_for_code("expected", &page).await });
 
         let mut stray = TcpStream::connect((Ipv4Addr::LOCALHOST, port))
             .await
@@ -743,6 +843,70 @@ mod tests {
         let mut reply = String::new();
         browser.read_to_string(&mut reply).await.unwrap();
         assert!(reply.starts_with("HTTP/1.1 200"));
+        assert!(reply.contains("<html lang=\"en\">"));
+        assert!(reply.contains("<h1>Poros is signed in</h1>"));
         assert_eq!(waiting.await.unwrap().unwrap(), "fresh");
+    }
+
+    fn german_page() -> SignInPage {
+        SignInPage {
+            lang: "de".into(),
+            signed_in: PageText::new(
+                "Poros ist angemeldet",
+                "Sie können diesen Tab schließen und zu Poros zurückkehren.",
+            ),
+            not_completed: PageText::new("Nicht angemeldet", "Versuchen Sie es erneut."),
+            expired: PageText::new("Abgelaufen", "Melden Sie sich erneut an."),
+        }
+    }
+
+    #[test]
+    fn shows_the_texts_of_the_interface() {
+        let page = SignInPage::or_english(Some(german_page()));
+        assert_eq!(page, german_page());
+        assert_eq!(SignInPage::or_english(None), SignInPage::default());
+    }
+
+    #[test]
+    fn shows_english_for_texts_unfit_for_the_tab() {
+        let mut given = german_page();
+        given.lang = "de\" onload=\"x".into();
+        given.signed_in.heading = " ".into();
+        given.not_completed.detail = "line\nbreak".into();
+        given.expired.detail = "x".repeat(MAX_PAGE_TEXT_CHARS + 1);
+        let page = SignInPage::or_english(Some(given));
+        let english = SignInPage::default();
+        assert_eq!(page.lang, "en");
+        assert_eq!(page.signed_in, english.signed_in);
+        assert_eq!(page.not_completed, english.not_completed);
+        assert_eq!(page.expired, english.expired);
+    }
+
+    #[test]
+    fn knows_a_language_tag() {
+        for tag in ["en", "de", "zh-Hans", "es-419", "pt-BR"] {
+            assert!(is_language_tag(tag), "{tag}");
+        }
+        for tag in [
+            "",
+            "de-",
+            "-de",
+            "1de",
+            "de_DE",
+            "de DE",
+            "verylongtag",
+            "de-<b>",
+        ] {
+            assert!(!is_language_tag(tag), "{tag}");
+        }
+    }
+
+    #[test]
+    fn writes_the_texts_as_text() {
+        let html = page_html("ja", "<script>alert(1)</script>", "Tom & \"Jerry\"");
+        assert!(html.contains("<html lang=\"ja\">"));
+        assert!(html.contains("<h1>&lt;script&gt;alert(1)&lt;/script&gt;</h1>"));
+        assert!(html.contains("<p>Tom &amp; &quot;Jerry&quot;</p>"));
+        assert!(!html.contains("<script>"));
     }
 }
