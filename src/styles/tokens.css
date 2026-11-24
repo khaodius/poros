@@ -99,6 +99,10 @@
   --progress: var(--accent);
   --upload: var(--accent);
   --download: var(--success);
+  /* The week view of the speed limit schedule. */
+  --limit-unlimited: var(--success);
+  --limit-limited: var(--warning);
+  --limit-paused: var(--danger);
 
   --transition-fast: 90ms ease-out;
   --transition-layout: 180ms cubic-bezier(0.2, 0, 0, 1);

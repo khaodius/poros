@@ -16,9 +16,17 @@ import {
   storableProgressBars,
   type ProgressBarSettings,
 } from "./progressBars";
+import { DEFAULT_LIMIT_SCHEDULE, sanitizeLimitSchedule } from "./limitSchedule";
 import { DEFAULT_SYNC_OPTIONS, legacySyncOptions, sanitizeSyncOptions } from "./rsyncOptions";
 import { SORT_KEYS, type SortSpec } from "./sort";
-import type { ExistsAction, LogLevel, PowerAction, SyncDirection, SyncOptions } from "./types";
+import type {
+  ExistsAction,
+  LimitSchedule,
+  LogLevel,
+  PowerAction,
+  SyncDirection,
+  SyncOptions,
+} from "./types";
 
 export const MAX_WORKERS = 16;
 export const MAX_RECONNECT_MINUTES = 24 * 60;
@@ -35,6 +43,8 @@ export interface TransferSettings {
   /** KiB per second; zero means unlimited. */
   uploadLimitKib: number;
   downloadLimitKib: number;
+  /** Other limits, or a pause, at set times of the week. */
+  limitSchedule: LimitSchedule;
   existsAction: ExistsAction;
   preserveTimestamps: boolean;
   preservePermissions: boolean;
@@ -286,6 +296,7 @@ export const DEFAULT_SETTINGS: Settings = {
     requestsInFlight: 64,
     uploadLimitKib: 0,
     downloadLimitKib: 0,
+    limitSchedule: DEFAULT_LIMIT_SCHEDULE,
     existsAction: "ask",
     preserveTimestamps: true,
     preservePermissions: false,
@@ -446,6 +457,7 @@ function clamp(value: number, min: number, max: number): number {
 export function sanitizeSettings(stored: unknown): Settings {
   const source = asSection(stored);
   const transfers = mergeSection(DEFAULT_SETTINGS.transfers, source.transfers);
+  transfers.limitSchedule = sanitizeLimitSchedule(asSection(source.transfers).limitSchedule);
   const settings: Settings = {
     transfers,
     connection: mergeSection(DEFAULT_SETTINGS.connection, source.connection),

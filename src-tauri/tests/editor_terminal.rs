@@ -1,6 +1,7 @@
 //! End-to-end tests of the editor and the terminal against real servers, set up as
 //! `sftp_server.rs` and `ftp_server.rs` describe. The SSH tests are skipped unless
-//! `POROS_TEST_SSH_PORT` is set, the FTP test unless `POROS_TEST_FTP_PORT` is.
+//! `POROS_TEST_SSH_PORT` is set, the FTP tests unless `POROS_TEST_FTP_PORT` is, and WebDAV is
+//! left out of the tests that take it unless `POROS_TEST_WEBDAV_PORT` is.
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -10,6 +11,7 @@ use poros_lib::editor::{EditorManager, FileLocation, SaveOutcome, SaveRequest};
 use poros_lib::error::ErrorKind;
 use poros_lib::events::Events;
 use poros_lib::protocol::{Protocol, RemoteFileSystem, WriteRequest};
+use poros_lib::remote_path;
 use poros_lib::session::SessionManager;
 use poros_lib::sftp::RemoteFs;
 use poros_lib::ssh::{AuthMethod, ConnectProfile, HostKeyApproval, Route};
@@ -25,6 +27,14 @@ fn profile() -> Option<ConnectProfile> {
 
 fn ftp_profile() -> Option<ConnectProfile> {
     server_profile(Protocol::Ftp, "POROS_TEST_FTP_PORT", "POROS_TEST_FTP")
+}
+
+fn webdav_profile() -> Option<ConnectProfile> {
+    server_profile(
+        Protocol::WebDav,
+        "POROS_TEST_WEBDAV_PORT",
+        "POROS_TEST_WEBDAV",
+    )
 }
 
 /// The test server named by `port_variable`, logging in as `{prefix}_USER`.
@@ -263,6 +273,157 @@ async fn ftp_files_edit_and_save_through_their_session() {
 
     files.delete(std::slice::from_ref(&path)).await.unwrap();
     editor.close(&info.id).await;
+    sessions.disconnect_all().await;
+}
+
+/// The session a reconnect leaves in place of `session_id`, which is closed as the window does
+/// once its tabs moved over.
+async fn reconnect(sessions: &SessionManager, session_id: &str) -> String {
+    let reconnected = sessions.reconnect(session_id, None, OWNER).await.unwrap();
+    sessions.disconnect(session_id).await.unwrap();
+    assert_ne!(reconnected.id, session_id);
+    reconnected.id
+}
+
+#[tokio::test]
+async fn files_save_through_the_session_that_took_the_place_of_theirs() {
+    for profile in [ftp_profile(), webdav_profile()].into_iter().flatten() {
+        let label = profile.protocol.display_name();
+        let (_temp_dir, sessions, session_id) = connect(&profile).await;
+        let files = sessions.get(&session_id).await.unwrap().files();
+        let name = format!("editor-{}.txt", uuid::Uuid::new_v4());
+        let path = remote_path::join(files.home(), &name);
+        write_through(&files, &path, b"first\r\n").await;
+
+        let editor = EditorManager::new(sessions.clone(), Events::default());
+        let location = FileLocation::Remote {
+            session_id: session_id.clone(),
+            path: path.clone(),
+        };
+        let info = editor.open(location, OWNER).await.unwrap();
+        let document = editor.load(&info.id, OWNER).await.unwrap();
+        assert_eq!(document.text, "first\n", "{label}");
+        drop(files);
+
+        let reconnected = reconnect(&sessions, &session_id).await;
+        let saved = editor
+            .save(save_request(
+                &info.id,
+                "after a reconnect\n",
+                Some(document.stamp),
+            ))
+            .await
+            .unwrap_or_else(|error| panic!("{label}: {}", error.message));
+        assert!(matches!(saved, SaveOutcome::Saved { .. }), "{label}");
+        let files = sessions.get(&reconnected).await.unwrap().files();
+        assert_eq!(
+            read_through(&files, &path).await,
+            b"after a reconnect\r\n",
+            "{label}"
+        );
+        drop(files);
+
+        // With the server's tab closed nothing reaches the file, and the error says what does.
+        sessions.disconnect(&reconnected).await.unwrap();
+        let closed = editor
+            .save(save_request(&info.id, "with no session\n", None))
+            .await
+            .unwrap_err();
+        assert_eq!(closed.kind, ErrorKind::SessionNotFound, "{label}");
+        assert!(
+            closed.message.contains("Connect to it again"),
+            "{label}: {}",
+            closed.message
+        );
+
+        let reopened = sessions
+            .connect(profile.clone(), None, OWNER)
+            .await
+            .unwrap();
+        let saved = editor
+            .save(save_request(&info.id, "after connecting again\n", None))
+            .await
+            .unwrap_or_else(|error| panic!("{label}: {}", error.message));
+        assert!(matches!(saved, SaveOutcome::Saved { .. }), "{label}");
+        let files = sessions.get(&reopened.id).await.unwrap().files();
+        assert_eq!(
+            read_through(&files, &path).await,
+            b"after connecting again\r\n",
+            "{label}"
+        );
+
+        files.delete(std::slice::from_ref(&path)).await.unwrap();
+        editor.close(&info.id).await;
+        sessions.disconnect_all().await;
+    }
+}
+
+#[tokio::test]
+async fn a_file_in_a_vault_saves_through_its_vault_or_not_at_all() {
+    const PASSWORD: &str = "a vault's password";
+    let Some(profile) = ftp_profile() else { return };
+    let (_temp_dir, sessions, session_id) = connect(&profile).await;
+    let server_files = sessions.get(&session_id).await.unwrap().files();
+    let scratch = server_files
+        .make_dir("~", &format!("editor-vault-{}", uuid::Uuid::new_v4()))
+        .await
+        .unwrap();
+    let vault = sessions
+        .create_vault(&session_id, &scratch, "Vault", PASSWORD.to_string(), OWNER)
+        .await
+        .unwrap();
+    let root = remote_path::join(&scratch, "Vault");
+    let path = remote_path::join(&root, "notes.txt");
+    let vault_files = sessions.get(&vault.id).await.unwrap().files();
+    write_through(&vault_files, &path, b"secret\n").await;
+    drop(vault_files);
+
+    let editor = EditorManager::new(sessions.clone(), Events::default());
+    let location = FileLocation::Remote {
+        session_id: vault.id.clone(),
+        path: path.clone(),
+    };
+    let info = editor.open(location, OWNER).await.unwrap();
+    let document = editor.load(&info.id, OWNER).await.unwrap();
+    assert_eq!(document.text, "secret\n");
+
+    // Locked, the vault's files are out of reach: the server's own session, which is still
+    // open, must not be written to in the vault's place.
+    sessions.disconnect(&vault.id).await.unwrap();
+    let locked = editor
+        .save(save_request(&info.id, "written past the vault\n", None))
+        .await
+        .unwrap_err();
+    assert_eq!(locked.kind, ErrorKind::SessionNotFound);
+    assert!(
+        locked.message.contains("Unlock the vault again"),
+        "{}",
+        locked.message
+    );
+    assert_eq!(server_files.stat(&path).await.unwrap(), None);
+
+    let unlocked = sessions
+        .unlock_vault(&session_id, &root, PASSWORD.to_string(), OWNER)
+        .await
+        .unwrap();
+    assert_ne!(unlocked.id, vault.id);
+    let saved = editor
+        .save(save_request(&info.id, "secret, edited\n", None))
+        .await
+        .unwrap();
+    assert!(matches!(saved, SaveOutcome::Saved { .. }));
+    let vault_files = sessions.get(&unlocked.id).await.unwrap().files();
+    assert_eq!(
+        read_through(&vault_files, &path).await,
+        b"secret, edited\r\n"
+    );
+    assert_eq!(server_files.stat(&path).await.unwrap(), None);
+
+    editor.close(&info.id).await;
+    server_files
+        .delete(std::slice::from_ref(&scratch))
+        .await
+        .unwrap();
     sessions.disconnect_all().await;
 }
 
