@@ -2,7 +2,7 @@
 // line below, and nothing else here: each line sits between blank lines, so translations
 // made side by side merge without touching each other.
 
-// export { default as de } from "./de";
+export { default as de } from "./de";
 
 export { default as en } from "./en";
 

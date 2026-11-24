@@ -1,0 +1,125 @@
+import type { TranslatedArea } from "../catalog";
+
+export const share = {
+  // components/ShareDialog
+  share: "{name} freigeben",
+  share2: "{selectionSummary} freigeben",
+  onIn: "Auf {service} in {folder}",
+  links: "Links",
+  lookingForLinksItAlready: "Vorhandene Links werden gesucht...",
+  changeLink: "Link ändern",
+  newLink: "Neuer Link",
+  letsPeople: "Personen dürfen",
+  whoCanOpenIt: "Wer ihn öffnen kann",
+  worksFor: "Gültig für",
+  noEnd: "Unbegrenzt",
+  custom: "Eigene",
+  howMany: "Wie viele",
+  unit: "Einheit",
+  passwordOptional: "Passwort (optional)",
+  anyoneWithTheLinkCan: "Alle mit dem Link können ihn öffnen",
+  copyNewLink: "Neuen Link kopieren",
+  copyNewLinks: "Neue Links kopieren",
+  linkAddress: "Linkadresse",
+  openInBrowser: "Im Browser öffnen",
+  stopSharing: "Freigabe beenden",
+  peopleWhoHaveThisLink: "Personen mit diesem Link können das Element nicht mehr öffnen.",
+  keepSharing: "Freigabe behalten",
+  minutes2: "Minuten",
+  hours2: "Stunden",
+  days2: "Tage",
+  link: "Link",
+  links2: { one: "{count} Link", other: "{count} Links" },
+  keepsOneLinkPerItem:
+    "{service} führt einen Link pro Element. Das ändert den Link oben also für alle, die ihn haben.",
+  keepsOneLinkPerItemSo:
+    "{service} führt einen Link pro Element. Bei einem Element, das schon einen hat, ändert er sich also für alle, die ihn haben.",
+  changing: "Wird geändert...",
+  creating: "Wird erstellt...",
+  copied: "Kopiert",
+  stopping: "Wird beendet...",
+  couldNotReadTheLinksItHas: "Die vorhandenen Links konnten nicht gelesen werden: {message}",
+  createLink: "Link erstellen",
+  createLinks: { one: "{count} Link erstellen", other: "{count} Links erstellen" },
+  copyLink: "Link kopieren",
+  checking: "Wird geprüft...",
+  makingTheLink: "Link wird erstellt...",
+  noLinkYet: "Noch kein Link",
+
+  // lib/shareLinks
+  shareLinkNotInA: "Freigabelink (nicht in einem Tresor)",
+  shareLinkCloudStorageOnly: "Freigabelink (nur Cloud-Speicher)",
+  shareLinkFilesOnly: "Freigabelink (nur Dateien)",
+  shareLink: "Freigabelink...",
+  days: { one: "{count} Tag", other: "{count} Tage" },
+  hours: { one: "{count} Stunde", other: "{count} Stunden" },
+  minutes: { one: "{count} Minute", other: "{count} Minuten" },
+  seconds: { one: "{count} Sekunde", other: "{count} Sekunden" },
+  files: { one: "{count} Datei", other: "{count} Dateien" },
+  folders: { one: "{count} Ordner", other: "{count} Ordner" },
+  view: "Ansehen",
+  n1Hour: "1 Stunde",
+  n1Day: "1 Tag",
+  n7Days: "7 Tage",
+  anyoneWithTheLink: "Alle mit dem Link",
+  peopleAlreadyInvited: "Bereits eingeladene Personen",
+  peopleIn: "Personen in {organization}",
+  peopleInYourOrganization: "Personen in Ihrer Organisation",
+  enterHowLongTheLinkShouldWork: "Geben Sie als ganze Zahl ein, wie lange der Link gelten soll.",
+  chooseHowLongTheLinkShouldWork: "Wählen Sie, wie lange der Link gelten soll.",
+  linksHereLastAtMost: "Links gelten hier höchstens {lifetime}.",
+  anyoneWithThisLinkCanDownload: "Alle mit diesem Link können {what} herunterladen – {until}.",
+  anyoneWithThisLinkCanEdit: "Alle mit diesem Link können {what} öffnen und ändern – {until}.",
+  anyoneWithThisLinkCanView: "Alle mit diesem Link können {what} öffnen – {until}.",
+  anyoneWithOneOfTheseLinksCanDownload:
+    "Alle mit einem dieser Links können {what} herunterladen – {until}.",
+  anyoneWithOneOfTheseLinksCanEdit:
+    "Alle mit einem dieser Links können {what} öffnen und ändern – {until}.",
+  anyoneWithOneOfTheseLinksCanView: "Alle mit einem dieser Links können {what} öffnen – {until}.",
+  peopleInWithThisLinkCanDownload:
+    "Personen in {organization} mit diesem Link können {what} herunterladen – {until}.",
+  peopleInWithThisLinkCanEdit:
+    "Personen in {organization} mit diesem Link können {what} öffnen und ändern – {until}.",
+  peopleInWithThisLinkCanView:
+    "Personen in {organization} mit diesem Link können {what} öffnen – {until}.",
+  peopleInWithOneOfTheseLinksCanDownload:
+    "Personen in {organization} mit einem dieser Links können {what} herunterladen – {until}.",
+  peopleInWithOneOfTheseLinksCanEdit:
+    "Personen in {organization} mit einem dieser Links können {what} öffnen und ändern – {until}.",
+  peopleInWithOneOfTheseLinksCanView:
+    "Personen in {organization} mit einem dieser Links können {what} öffnen – {until}.",
+  peopleInYourOrganizationWithThisLinkCanDownload:
+    "Personen in Ihrer Organisation mit diesem Link können {what} herunterladen – {until}.",
+  peopleInYourOrganizationWithThisLinkCanEdit:
+    "Personen in Ihrer Organisation mit diesem Link können {what} öffnen und ändern – {until}.",
+  peopleInYourOrganizationWithThisLinkCanView:
+    "Personen in Ihrer Organisation mit diesem Link können {what} öffnen – {until}.",
+  peopleInYourOrganizationWithOneOfTheseLinksCanDownload:
+    "Personen in Ihrer Organisation mit einem dieser Links können {what} herunterladen – {until}.",
+  peopleInYourOrganizationWithOneOfTheseLinksCanEdit:
+    "Personen in Ihrer Organisation mit einem dieser Links können {what} öffnen und ändern – {until}.",
+  peopleInYourOrganizationWithOneOfTheseLinksCanView:
+    "Personen in Ihrer Organisation mit einem dieser Links können {what} öffnen – {until}.",
+  peopleAlreadyInvitedWhoHaveThisLinkCanDownload:
+    "Bereits eingeladene Personen mit diesem Link können {what} herunterladen – {until}.",
+  peopleAlreadyInvitedWhoHaveThisLinkCanEdit:
+    "Bereits eingeladene Personen mit diesem Link können {what} öffnen und ändern – {until}.",
+  peopleAlreadyInvitedWhoHaveThisLinkCanView:
+    "Bereits eingeladene Personen mit diesem Link können {what} öffnen – {until}.",
+  peopleAlreadyInvitedWhoHaveOneOfTheseLinksCanDownload:
+    "Bereits eingeladene Personen mit einem dieser Links können {what} herunterladen – {until}.",
+  peopleAlreadyInvitedWhoHaveOneOfTheseLinksCanEdit:
+    "Bereits eingeladene Personen mit einem dieser Links können {what} öffnen und ändern – {until}.",
+  peopleAlreadyInvitedWhoHaveOneOfTheseLinksCanView:
+    "Bereits eingeladene Personen mit einem dieser Links können {what} öffnen – {until}.",
+  statementWithPassword: "{statement} Zuvor wird nach dem Passwort gefragt.",
+  theItemItIsFor: "das zugehörige Element",
+  theFileItIsFor: "die zugehörige Datei",
+  theFolderAndEverythingInIt: "den Ordner und alles darin",
+  theFile: "die Datei",
+  untilDeadline: "bis zum {deadline}",
+  untilYouStopSharing: "bis Sie die Freigabe beenden",
+  forAsLongAsItIsThere: "solange das Element existiert",
+  sharedBefore: "Bereits freigegeben: {statement}",
+  notWhatWasAsked: "Nicht wie gewünscht: {statement}",
+} satisfies TranslatedArea<"share">;
