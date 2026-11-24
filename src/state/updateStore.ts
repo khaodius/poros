@@ -2,10 +2,12 @@ import { check, type Update } from "@tauri-apps/plugin-updater";
 import { create } from "zustand";
 import { pluralize } from "../lib/format";
 import { toAppError, updates } from "../lib/ipc";
+import { drivesInUseWarning } from "../lib/mounts";
 import type { ExternalEdit, UpdateProgress } from "../lib/types";
 import { useUnsavedStore } from "./editorRegistry";
 import { useExternalEditStore } from "./externalEditStore";
 import { useLogStore } from "./logStore";
+import { useMountStore } from "./mountStore";
 import { saveSettingsSection, useSettingsStore } from "./settingsStore";
 import { useTransferStore } from "./transferStore";
 import { useUiStore } from "./uiStore";
@@ -146,6 +148,7 @@ export function useRestartWarnings(): string[] {
   const keepQueue = useSettingsStore((state) => state.settings.transfers.keepQueue);
   const unsavedFiles = useUnsavedStore((state) => Object.keys(state.tabs).length);
   const edits = useExternalEditStore((state) => state.edits);
+  const drives = useMountStore((state) => state.drives);
   const warnings: string[] = [];
   if (pendingTransfers > 0) {
     warnings.push(
@@ -160,6 +163,8 @@ export function useRestartWarnings(): string[] {
   }
   const editsWarning = notUploadedWarning(edits);
   if (editsWarning) warnings.push(editsWarning);
+  const drivesWarning = drivesInUseWarning(drives);
+  if (drivesWarning) warnings.push(drivesWarning);
   return warnings;
 }
 

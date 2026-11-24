@@ -90,8 +90,8 @@ function forgetChangedListing(sessionId: string, path: string): void {
   }, REFRESH_DELAY_MILLIS);
 }
 
-/** Panes showing a folder a transfer wrote to reload, once per burst of changes. */
-function refreshChangedPanes(changed: ChangedDirectory[]): void {
+/** Panes showing a folder a transfer or a drive wrote to reload, once per burst of changes. */
+export function refreshChangedPanes(changed: ChangedDirectory[]): void {
   for (const directory of changed) {
     // A transfer queued before its server reconnected still names the session it was queued on.
     const sessionId = directory.sessionId && currentSessionId(directory.sessionId);

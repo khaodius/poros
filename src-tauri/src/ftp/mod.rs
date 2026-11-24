@@ -23,8 +23,8 @@ use crate::error::{AppError, AppResult, ErrorKind};
 use crate::events::{Events, LogLevel};
 use crate::model::{DirListing, EntryKind, FileEntry, LinkTarget};
 use crate::protocol::{
-    self, Capabilities, Protocol, ReadStream, RemoteFileSystem, RemoteStat, WriteRequest,
-    WriteStream,
+    self, Capabilities, LinkTargets, Protocol, ReadStream, RemoteFileSystem, RemoteStat,
+    WriteRequest, WriteStream,
 };
 use crate::remote_path;
 use crate::ssh::{ConnectProfile, HostKeyApproval, DEFAULT_KEEPALIVE_SECS};
@@ -238,13 +238,18 @@ impl FtpFs {
         &self.session_id
     }
 
+    /// The folder's entries, and where its links lead where the listing says.
     async fn entries_with_links(
         control: &mut Control,
         directory: &str,
-    ) -> AppResult<Vec<FileEntry>> {
+    ) -> AppResult<(Vec<FileEntry>, LinkTargets)> {
         let raw = control.list(directory).await?;
         let mut entries = Vec::with_capacity(raw.len());
-        for entry in raw {
+        let mut targets = LinkTargets::new();
+        for mut entry in raw {
+            if let Some(target) = entry.link_target.take() {
+                targets.insert(entry.name.clone(), target);
+            }
             let path = remote_path::join(directory, &entry.name);
             let mut file_entry = file_entry(&path, entry);
             if file_entry.kind == EntryKind::Symlink {
@@ -260,7 +265,7 @@ impl FtpFs {
             }
             entries.push(file_entry);
         }
-        Ok(entries)
+        Ok((entries, targets))
     }
 
     /// What is at `path` according to its folder's listing, which unlike `stat` tells a link
@@ -369,19 +374,24 @@ impl RemoteFileSystem for FtpFs {
     }
 
     async fn list_dir(&self, path: &str) -> AppResult<DirListing> {
+        Ok(self.list_dir_with_links(path).await?.0)
+    }
+
+    async fn list_dir_with_links(&self, path: &str) -> AppResult<(DirListing, LinkTargets)> {
         let requested = self.resolve(path);
         let mut guard = self.connection().await?;
         let control = guard.as_mut().expect("connection() always connects");
         let result = async {
             let directory = control.change_directory(&requested).await?;
-            let entries = Self::entries_with_links(control, &directory).await?;
+            let (entries, targets) = Self::entries_with_links(control, &directory).await?;
             self.coarse_listings
                 .store(!control.features.mlsd, Ordering::Relaxed);
-            Ok(DirListing {
+            let listing = DirListing {
                 parent: remote_path::parent(&directory),
                 path: directory,
                 entries,
-            })
+            };
+            Ok((listing, targets))
         }
         .await;
         if result.as_ref().is_err_and(AppError::is_connection_lost) {
@@ -414,6 +424,51 @@ impl RemoteFileSystem for FtpFs {
                 Self::ensure_absent(control, &target).await?;
                 control.rename(&path, &target).await?;
                 Ok(target)
+            })
+        })
+        .await
+    }
+
+    async fn move_path(&self, path: &str, target: &str) -> AppResult<()> {
+        let path = self.resolve(path);
+        let target = self.resolve(target);
+        self.with_control(move |control| {
+            Box::pin(async move { control.rename(&path, &target).await })
+        })
+        .await
+    }
+
+    /// Where the link leads as its folder's listing says, the one place FTP tells it. A drive
+    /// answers from the listing it already has, and asks this when it has none.
+    async fn read_link(&self, path: &str) -> AppResult<String> {
+        let path = self.resolve(path);
+        let parent = remote_path::parent(&path)
+            .ok_or_else(|| AppError::invalid("The root folder is not a link"))?;
+        let name = remote_path::file_name(&path).to_string();
+        self.with_control(move |control| {
+            Box::pin(async move {
+                let listed = control
+                    .list(&parent)
+                    .await?
+                    .into_iter()
+                    .find(|entry| entry.name == name);
+                match listed {
+                    None => Err(AppError::new(
+                        ErrorKind::NotFound,
+                        format!("{name} no longer exists"),
+                    )
+                    .with_path(path)),
+                    Some(entry) if entry.kind != EntryKind::Symlink => {
+                        Err(AppError::invalid(format!("{name} is not a link")).with_path(path))
+                    }
+                    Some(RawEntry {
+                        link_target: Some(target),
+                        ..
+                    }) => Ok(target),
+                    Some(_) => Err(AppError::unsupported(format!(
+                        "The server does not say where the link {name} leads"
+                    ))),
+                }
             })
         })
         .await

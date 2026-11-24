@@ -3,6 +3,7 @@
 //! `RemoteFileSystem`; SFTP keeps its own pipelined transfer path and SSH extras (rsync,
 //! commands) on top.
 
+use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -189,6 +190,9 @@ pub struct DeepPage {
     pub next: Option<String>,
 }
 
+/// Where the links of one folder lead, by name, as the server keeps it.
+pub type LinkTargets = HashMap<String, String>;
+
 #[async_trait]
 pub trait RemoteFileSystem: Send + Sync {
     fn protocol(&self) -> Protocol;
@@ -246,6 +250,34 @@ pub trait RemoteFileSystem: Send + Sync {
     }
 
     async fn rename(&self, path: &str, new_name: &str) -> AppResult<String>;
+
+    /// Moves a file or folder to `target`, a full path that may lie in another folder,
+    /// taking the place of a file already there. Protocols that can only rename within a
+    /// folder leave this unsupported, and callers fall back to `rename` or to copying.
+    async fn move_path(&self, path: &str, target: &str) -> AppResult<()> {
+        let _ = target;
+        Err(AppError::unsupported(format!(
+            "{} cannot move {} to another folder",
+            self.protocol().display_name(),
+            remote_path::file_name(path)
+        )))
+    }
+
+    /// `list_dir`, with where its links lead by name, for protocols whose listings say so.
+    /// The others give no targets, and `read_link` asks for each.
+    async fn list_dir_with_links(&self, path: &str) -> AppResult<(DirListing, LinkTargets)> {
+        Ok((self.list_dir(path).await?, LinkTargets::new()))
+    }
+
+    /// Where the symbolic link at `path` leads, as the server keeps it: a full path, or one
+    /// relative to the link's folder. Protocols that cannot tell leave this unsupported.
+    async fn read_link(&self, path: &str) -> AppResult<String> {
+        Err(AppError::unsupported(format!(
+            "{} cannot tell where the link {} leads",
+            self.protocol().display_name(),
+            remote_path::file_name(path)
+        )))
+    }
 
     /// Folders are removed with everything in them.
     async fn delete(&self, paths: &[String]) -> AppResult<()>;

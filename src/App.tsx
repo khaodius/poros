@@ -12,10 +12,12 @@ import { FileFlights } from "./components/FileFlights";
 import { FileOperationsHost } from "./components/FileOperationsHost";
 import { HostKeyDialog } from "./components/HostKeyDialog";
 import { QuickConnectBar } from "./components/QuickConnectBar";
+import { QuitDialog } from "./components/QuitDialog";
 import { PorosLogo } from "./components/PorosLogo";
 import { RunCommandDialog } from "./components/RunCommandDialog";
 import { ImportConnectionsDialog } from "./components/ImportConnectionsDialog";
 import { LockVaultDialog } from "./components/LockVaultDialog";
+import { MountDialog } from "./components/MountDialog";
 import { SaveConnectionDialog } from "./components/SaveConnectionDialog";
 import { SchedulerDialog } from "./components/SchedulerDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
@@ -60,8 +62,8 @@ import { useLayoutStore } from "./state/layoutStore";
 import { startSharingListings } from "./state/listings";
 import { useLogStore } from "./state/logStore";
 import { activePane } from "./state/paneRegistry";
+import { quitWaits } from "./state/quitGuard";
 import { askToSave, unsavedEditorTabs } from "./state/editorActions";
-import { editsHoldExit } from "./state/externalEditStore";
 import { useSavedConnections } from "./state/savedConnectionsStore";
 import { reloadSchedules, useScheduleStore } from "./state/scheduleStore";
 import { useSessionStore } from "./state/sessionStore";
@@ -278,13 +280,14 @@ function useSystemFileDrops() {
   }, []);
 }
 
-/** Keeps the tabs for the next start and asks about unsaved files before the window closes. */
+/** Keeps the tabs for the next start and asks about unsaved files before the window closes, and
+ * when Poros quits first about files saved in other programs and drives in use. */
 function useCloseGuard() {
   useEffect(() => {
     const subscription = getCurrentWindow().onCloseRequested(async (event) => {
       await saveWorkspaceNow();
-      // Closing the main window quits, which ends editing in other programs.
-      if (isMainWindow() && (await editsHoldExit())) {
+      // Closing the main window quits, which ends editing in other programs and unmounts drives.
+      if (isMainWindow() && (await quitWaits())) {
         event.preventDefault();
         return;
       }
@@ -597,6 +600,7 @@ export function AppDialog() {
           label={dialog.label}
           pendingTransfers={dialog.pendingTransfers}
           vaultTransfers={dialog.vaultTransfers}
+          drives={dialog.drives ?? []}
           onClose={close}
         />
       );
@@ -606,9 +610,14 @@ export function AppDialog() {
           sessionId={dialog.sessionId}
           name={dialog.name}
           pendingTransfers={dialog.pendingTransfers}
+          drives={dialog.drives ?? []}
           onClose={close}
         />
       );
+    case "mount":
+      return <MountDialog sessionId={dialog.sessionId} path={dialog.path} onClose={close} />;
+    case "quit":
+      return <QuitDialog drives={dialog.drives} onClose={close} />;
     case "unsavedChanges":
       return (
         <UnsavedChangesDialog

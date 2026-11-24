@@ -1561,3 +1561,78 @@ export interface SearchRecheck {
   /** The paths nothing is at any more. */
   missing: string[];
 }
+
+/** What this computer lacks for mounting drives, and how to get it. Mirrored in `mount/platform.rs`. */
+export interface MountMissing {
+  problem: string;
+  help: string;
+  /** Where to get what is missing. */
+  link?: string;
+}
+
+/** Whether drives can be mounted here. Mirrored in `mount/manager.rs`. */
+export interface MountSupport {
+  missing?: MountMissing;
+  /** Drives are named by a letter (Windows) rather than shown at a folder. */
+  usesDriveLetters: boolean;
+}
+
+/** What the mount dialog asks for. */
+export interface MountRequest {
+  sessionId: string;
+  /** The folder the drive is shown at, or a drive letter on Windows. */
+  mountPoint: string;
+  /** The folder on the server the drive shows. */
+  remoteRoot: string;
+  readOnly: boolean;
+}
+
+/** A file a drive has not finished sending. */
+export interface DriveUpload {
+  /** Below the drive's root. */
+  path: string;
+  size: number;
+  sent: number;
+  uploading: boolean;
+  error?: string;
+}
+
+/** A mounted drive. */
+export interface DriveView {
+  id: string;
+  sessionId: string;
+  label: string;
+  protocol: Protocol;
+  mountPoint: string;
+  remoteRoot: string;
+  readOnly: boolean;
+  bytesRead: number;
+  bytesWritten: number;
+  /** Files programs have open, below the drive's root. */
+  openFiles: string[];
+  uploads: DriveUpload[];
+}
+
+/** Folders a mounted drive changed on a server. Mirrored in `mount/manager.rs`. */
+export interface DriveChanges {
+  sessionId: string;
+  folders: {
+    folder: string;
+    /** Paths in the folder whose own contents changed too, such as folders moved or removed. */
+    entries: string[];
+  }[];
+}
+
+/** A file kept on this computer because a drive went before it reached the server. */
+export interface UnsentFile {
+  /** The local file holding the contents. */
+  path: string;
+  /** The connection the drive showed. */
+  connection: string;
+  remotePath: string;
+  size: number;
+  /** Why the upload failed, if it was tried. */
+  error?: string | null;
+  /** Seconds since the Unix epoch. */
+  keptAt: number;
+}

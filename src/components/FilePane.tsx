@@ -106,6 +106,7 @@ import {
 } from "../state/fileOperations";
 import { useLayoutStore } from "../state/layoutStore";
 import { useLogStore } from "../state/logStore";
+import { requestMount } from "../state/mountActions";
 import { scheduleBlocker, scheduleFiles } from "../state/scheduleActions";
 import {
   getPane,
@@ -1320,6 +1321,17 @@ export function FilePane({
           ]
         : []),
       ...(entry ? [] : [sortMenu(), groupMenu(), ...showDeletedItems()]),
+      // The server, or the unlocked vault, as a drive other programs open files on. A deleted
+      // row has a menu of its own, so this is only ever offered on empty space.
+      ...(!entry && source.kind === "remote" && sessionId
+        ? [
+            {
+              label: "Mount as drive...",
+              icon: <HardDrive size={14} />,
+              onSelect: () => requestMount(sessionId, pane.listing?.path ?? null),
+            },
+          ]
+        : []),
       syncMenuItem(entry),
       ...folderCompareMenuItems(folderCompare, entry === null),
       // Commands run over SSH.
