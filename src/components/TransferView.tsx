@@ -289,12 +289,17 @@ export function TransferView({
 
   return (
     <div className="transfer-view">
+      {/* Each heading is its own tooltip, for languages whose words outgrow the column. */}
       <div className="transfer-header" role="row">
-        <span>{t("common.name")}</span>
-        <span className="align-end">{t("common.size")}</span>
-        <span>{t("transfers.progress")}</span>
-        <span className="align-end">{t("transfers.speed")}</span>
-        <span>{t("transfers.status")}</span>
+        <span title={t("common.name")}>{t("common.name")}</span>
+        <span className="align-end" title={t("common.size")}>
+          {t("common.size")}
+        </span>
+        <span title={t("transfers.progress")}>{t("transfers.progress")}</span>
+        <span className="align-end" title={t("transfers.speed")}>
+          {t("transfers.speed")}
+        </span>
+        <span title={t("transfers.status")}>{t("transfers.status")}</span>
       </div>
       <div
         ref={scrollRef}

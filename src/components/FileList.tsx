@@ -1169,6 +1169,7 @@ export function FileList({
               <button
                 type="button"
                 className={`file-list-heading ${column.align === "end" ? "align-end" : ""}`}
+                title={column.label}
                 onClick={() => pane.setSortKey(column.key)}
               >
                 <span>{column.label}</span>

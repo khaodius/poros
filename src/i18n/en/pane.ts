@@ -109,6 +109,7 @@ export const pane = {
   everythingHereIsIdenticalIn: "Everything here is identical in both panes",
   goToHomeFolder: "Go to home folder",
   selected: { one: "{count} selected", other: "{count} selected" },
+  selectedWithSize: { one: "{count} selected ({size})", other: "{count} selected ({size})" },
   createIn: "Create in {path}",
   create: "Create",
   moveTo3: "Move to",

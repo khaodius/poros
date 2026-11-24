@@ -1803,8 +1803,12 @@ export function FilePane({
         </span>
         {selected.length > 0 && (
           <span>
-            {t("pane.selected", { count: selected.length })}
-            {selectedSize > 0 && ` (${formatSize(selectedSize)})`}
+            {selectedSize > 0
+              ? t("pane.selectedWithSize", {
+                  count: selected.length,
+                  size: formatSize(selectedSize),
+                })
+              : t("pane.selected", { count: selected.length })}
           </span>
         )}
       </footer>

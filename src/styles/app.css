@@ -9466,6 +9466,11 @@ textarea::placeholder {
   color: var(--accent);
 }
 
+/* Focus shows on the active option, which the arrow keys move. */
+.language-list:focus-visible {
+  outline: none;
+}
+
 /* Longer words in the transfer panel's header: the labels of Workers, When done and the queue's
    Start or Pause shorten, each with its full text on hover, before a button is pushed out. */
 .bottom-panel-header > .worker-control,
@@ -9495,4 +9500,17 @@ textarea::placeholder {
 
 .task-form .form-row > .field.grow {
   min-width: 180px;
+}
+
+/* Longer section names in the settings sidebar: it widens a little for them, then wraps a name
+   onto a taller row rather than over its neighbors. */
+.settings-nav {
+  flex: 0 0 auto;
+  min-width: 180px;
+  max-width: 230px;
+}
+
+.settings-nav-item {
+  height: auto;
+  min-height: 30px;
 }
