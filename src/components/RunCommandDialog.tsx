@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { PLACEHOLDERS, expandCommand, needsSelection, type CommandTarget } from "../lib/commands";
+import { PLACEHOLDERS, needsSelection, prepareCommands, type CommandTarget } from "../lib/commands";
 import { useCommandStore } from "../state/commandStore";
 import { Dialog } from "./Dialog";
 
@@ -27,7 +27,7 @@ export function RunCommandDialog({ sessionId, target, onClose }: RunCommandDialo
       title: "Run a command",
       sessionId,
       directory: target.folder,
-      commands: expandCommand(trimmed, target),
+      commands: prepareCommands(trimmed, target),
       refresh,
     });
   };

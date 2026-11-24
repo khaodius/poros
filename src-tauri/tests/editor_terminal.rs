@@ -546,6 +546,7 @@ async fn runs_on_server(sessions: &SessionManager, session_id: &str, command_lin
         &session,
         &check,
         None,
+        &[],
         &tokio_util::sync::CancellationToken::new(),
         |_, _| {},
     )
@@ -592,6 +593,7 @@ async fn a_terminal_on_the_browsing_connection_ends_its_shell_when_closed() {
                 &session,
                 &format!("pkill -f -x '{sleeper}'"),
                 None,
+                &[],
                 &tokio_util::sync::CancellationToken::new(),
                 |_, _| {},
             )

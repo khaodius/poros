@@ -4,6 +4,7 @@ import {
   describeResult,
   expandCommand,
   needsSelection,
+  prepareCommands,
   shellArgument,
   shellQuote,
 } from "./commands";
@@ -97,6 +98,66 @@ describe("expandCommand", () => {
     expect(needsSelection("rm {name}")).toBe(true);
     expect(needsSelection("git -C {folder} pull")).toBe(false);
     expect(needsSelection("uptime")).toBe(false);
+  });
+});
+
+describe("prepareCommands", () => {
+  const hostile = {
+    folder: "/srv/up'loads",
+    items: [
+      { path: "/srv/up'loads/x\\';touch pwned;'", name: "x\\';touch pwned;'" },
+      { path: "/srv/up'loads/-rf", name: "-rf" },
+      { path: "/srv/up'loads/$(reboot)\n`id`", name: "$(reboot)\n`id`" },
+    ],
+  };
+
+  it("sends names as arguments, never inside the command", () => {
+    const runs = prepareCommands("chmod 644 {path} && ls -l {names} {folder}", hostile);
+    expect(runs.map((run) => run.command)).toEqual([
+      'chmod 644 "${1}" && ls -l "${2}" "${3}" "${4}" "${5}"',
+      'chmod 644 "${1}" && ls -l "${2}" "${3}" "${4}" "${5}"',
+      'chmod 644 "${1}" && ls -l "${2}" "${3}" "${4}" "${5}"',
+    ]);
+    expect(runs[0].arguments).toEqual([
+      "/srv/up'loads/x\\';touch pwned;'",
+      "x\\';touch pwned;'",
+      "./-rf",
+      "$(reboot)\n`id`",
+      "/srv/up'loads",
+    ]);
+    expect(runs[2].arguments[0]).toBe("/srv/up'loads/$(reboot)\n`id`");
+    for (const run of runs) {
+      for (const item of hostile.items) expect(run.command).not.toContain(item.name);
+    }
+    expect(runs[1].display).toBe(
+      expandCommand("chmod 644 {path} && ls -l {names} {folder}", hostile)[1],
+    );
+  });
+
+  it("gives a repeated placeholder the same parameters", () => {
+    const [run] = prepareCommands("cp {name} {name}.bak; du {paths} {paths}", {
+      folder: "/srv",
+      items: [{ path: "/srv/a", name: "a" }],
+    });
+    expect(run.command).toBe('cp "${1}" "${1}".bak; du "${2}" "${2}"');
+    expect(run.arguments).toEqual(["a", "/srv/a"]);
+  });
+
+  it("keeps each name one word inside the user's own quotes", () => {
+    const target = { folder: "/srv", items: [{ path: "/srv/a b", name: "a b" }] };
+    const command = (template: string) => prepareCommands(template, target)[0].command;
+    expect(command('echo "file: {name}"')).toBe('echo "file: ${1}"');
+    expect(command("echo 'file: {name}'")).toBe("echo 'file: '\"${1}\"''");
+    expect(command('echo "$(basename "{path}")"')).toBe('echo "$(basename "${1}")"');
+    expect(command('echo "it\\"s {name}"')).toBe('echo "it\\"s ${1}"');
+    expect(command("echo \\' {name}")).toBe('echo \\\' "${1}"');
+    expect(command('du -sh "{paths}"')).toBe('du -sh "${1}"');
+  });
+
+  it("runs a command without placeholders as written, with no arguments", () => {
+    expect(prepareCommands("uptime; echo $HOME", { ...target, items: [] })).toEqual([
+      { display: "uptime; echo $HOME", command: "uptime; echo $HOME", arguments: [] },
+    ]);
   });
 });
 

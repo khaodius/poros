@@ -19,8 +19,9 @@ use crate::checksum::{hash_file, hash_file_parts, parse_output, Algorithm, PartH
 use crate::error::{AppError, AppResult};
 use crate::events::LogLevel;
 use crate::protocol::RemoteFileSystem;
-use crate::rsync::{run_command, shell_quote, CommandOutput};
+use crate::rsync::CommandOutput;
 use crate::sftp::{ReadChunk, RemoteFs};
+use crate::ssh::exec::{self, shell_quote, CommandLine};
 
 /// Enough for 64 parts' lines and any error the command prints.
 const OUTPUT_LIMIT: usize = 128 * 1024;
@@ -33,6 +34,9 @@ pub struct ServerHashing {
     /// `head -c` and GNU `split --filter` beside `sha256sum`: digests of each part of a file,
     /// and of its first bytes.
     parts: bool,
+    /// The commands run under `sh`. A server without it that runs the whole-file command itself,
+    /// as SFTPGo does, is sent that command as its own line, for paths any shell reads alike.
+    shell: bool,
 }
 
 pub enum Checked {
@@ -56,8 +60,14 @@ pub(super) struct Copies<'a> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Method {
-    Command { algorithm: Algorithm, parts: Parts },
-    ReadBack { parts: Parts },
+    Command {
+        algorithm: Algorithm,
+        parts: Parts,
+        shell: bool,
+    },
+    ReadBack {
+        parts: Parts,
+    },
 }
 
 impl Method {
@@ -87,10 +97,12 @@ fn methods(hashing: ServerHashing, read_back: bool, length: u64) -> Vec<Method> 
         Some(Algorithm::Sha256) if hashing.parts => Some(Method::Command {
             algorithm: Algorithm::Sha256,
             parts: Parts::for_length(length),
+            shell: hashing.shell,
         }),
         Some(algorithm) => Some(Method::Command {
             algorithm,
             parts: Parts::WHOLE,
+            shell: hashing.shell,
         }),
         None => None,
     };
@@ -121,9 +133,11 @@ async fn compare_by(
     };
     let remote = async {
         match &method {
-            Method::Command { algorithm, parts } => {
-                command_digests(context, copies, *algorithm, *parts).await
-            }
+            Method::Command {
+                algorithm,
+                parts,
+                shell,
+            } => command_digests(context, copies, *algorithm, *parts, *shell).await,
             Method::ReadBack { parts } => read_back(context, copies, *parts).await.map(Some),
         }
     };
@@ -156,20 +170,31 @@ async fn command_digests(
     copies: &Copies<'_>,
     algorithm: Algorithm,
     parts: Parts,
+    shell: bool,
 ) -> AppResult<Option<Vec<Vec<u8>>>> {
     let count = parts.count(copies.length);
-    let quoted = shell_quote(copies.remote);
-    // One file per command: SFTPGo hashes only the last argument.
-    let command = if count == 1 {
-        format!("{} -- {quoted}", algorithm.command())
-    } else {
-        format!(
-            "split -b {} --filter={} -- {quoted}",
-            parts.size,
-            algorithm.command()
+    let output = if shell {
+        run_on_server(
+            context,
+            &digest_script(copies.remote, algorithm, parts, count),
         )
+        .await?
+    } else {
+        // One file per command: SFTPGo hashes only the last argument.
+        match CommandLine::portable(&[algorithm.command(), "--"], &[copies.remote]) {
+            Some(line) => {
+                let channel = context.command_channel().await?;
+                exec::run_line(channel, &line, OUTPUT_LIMIT).await?
+            }
+            None => {
+                return Ok(not_hashed(
+                    context,
+                    copies,
+                    "the server has no sh, and the name cannot be sent to it as it is",
+                ))
+            }
+        }
     };
-    let output = run_hash_command(context, &command).await?;
     let text = String::from_utf8_lossy(&output.output);
     let digests: Vec<Vec<u8>> = parse_output(&text, algorithm)
         .into_iter()
@@ -182,6 +207,25 @@ async fn command_digests(
         "" => text.trim().to_string(),
         error => error.to_string(),
     };
+    Ok(not_hashed(context, copies, &reason))
+}
+
+/// The script that hashes the file for `sh`, whole or in parts.
+fn digest_script(remote: &str, algorithm: Algorithm, parts: Parts, count: usize) -> String {
+    let quoted = shell_quote(remote);
+    if count == 1 {
+        format!("{} -- {quoted}", algorithm.command())
+    } else {
+        format!(
+            "split -b {} --filter={} -- {quoted}",
+            parts.size,
+            algorithm.command()
+        )
+    }
+}
+
+/// Logs why the server's command could not hash the file, which is then checked otherwise.
+fn not_hashed(context: &JobContext<'_>, copies: &Copies<'_>, reason: &str) -> Option<Vec<Vec<u8>>> {
     let instead = if context.settings.read_back {
         "it is read back to check it instead"
     } else {
@@ -195,36 +239,17 @@ async fn command_digests(
             copies.remote
         ),
     );
-    Ok(None)
+    None
 }
 
-/// Runs a checksum command through the worker's shell on the server where it keeps one, or
-/// else on a channel of its own.
-async fn run_hash_command(context: &JobContext<'_>, command: &str) -> AppResult<CommandOutput> {
-    run_on_server(context, command, command).await
-}
-
-/// `run_hash_command` for a command that needs a POSIX shell. The kept shell is `sh`; a channel
-/// of its own runs the user's login shell, which may be fish or csh, so it is given `sh` too.
-async fn run_sh_command(context: &JobContext<'_>, command: &str) -> AppResult<CommandOutput> {
-    run_on_server(context, command, &under_sh(command)).await
-}
-
-async fn run_on_server(
-    context: &JobContext<'_>,
-    command: &str,
-    on_a_channel: &str,
-) -> AppResult<CommandOutput> {
-    if let Some(output) = hash_shell::run(context, command, OUTPUT_LIMIT).await {
+/// Runs a checksum script through the worker's shell on the server where it keeps one, or else
+/// under `sh` on a channel of its own.
+async fn run_on_server(context: &JobContext<'_>, script: &str) -> AppResult<CommandOutput> {
+    if let Some(output) = hash_shell::run(context, script, OUTPUT_LIMIT).await {
         return Ok(output);
     }
     let channel = context.command_channel().await?;
-    run_command(channel, on_a_channel, OUTPUT_LIMIT).await
-}
-
-/// A command line any login shell hands to `sh` as one argument.
-fn under_sh(command: &str) -> String {
-    format!("sh -c {}", shell_quote(command))
+    exec::run_script(channel, script, OUTPUT_LIMIT).await
 }
 
 /// Reads the server's copy and hashes it here, for servers with no checksum command.
@@ -517,7 +542,7 @@ pub(super) async fn resume_from(
         let path = PathBuf::from(copies.local);
         tokio::task::spawn_blocking(move || hash_file_parts(&path, start, parts))
     };
-    let remote = async { run_sh_command(context, &command).await };
+    let remote = async { run_on_server(context, &command).await };
     let (local, remote) = tokio::select! {
         biased;
         _ = context.run.cancel.cancelled() => return Err(AppError::cancelled()),
@@ -566,26 +591,30 @@ async fn server_hashing(context: &JobContext<'_>) -> ServerHashing {
         return hashing;
     }
     let mut hashing = ServerHashing::default();
-    for algorithm in Algorithm::STRONG {
-        // With no file named, the commands hash their empty input, so the answer is known.
-        let expected = [algorithm.hasher().finish()];
-        match probe(context, algorithm.command(), algorithm, &expected).await {
-            Some(true) => {
-                hashing.whole = Some(algorithm);
-                break;
+    // Under `sh` first; then as lines of their own, for servers that run them without a shell.
+    'forms: for shell in [true, false] {
+        for algorithm in Algorithm::STRONG {
+            // With no file named, the commands hash their empty input, so the answer is known.
+            let expected = [algorithm.hasher().finish()];
+            match probe(context, shell, algorithm.command(), algorithm, &expected).await {
+                Some(true) => {
+                    hashing.whole = Some(algorithm);
+                    hashing.shell = shell;
+                    break 'forms;
+                }
+                Some(false) => {}
+                None => return ServerHashing::default(),
             }
-            Some(false) => {}
-            None => return ServerHashing::default(),
         }
     }
-    if hashing.whole == Some(Algorithm::Sha256) {
+    if hashing.whole == Some(Algorithm::Sha256) && hashing.shell {
         let expected = [b"ab".as_slice(), b"c"].map(|data| {
             let mut hasher = Algorithm::Sha256.hasher();
             hasher.update(data);
             hasher.finish()
         });
         let command = "printf abc | head -c 3 | split -b 2 --filter=sha256sum";
-        match probe(context, command, Algorithm::Sha256, &expected).await {
+        match probe(context, true, command, Algorithm::Sha256, &expected).await {
             Some(works) => hashing.parts = works,
             None => return ServerHashing::default(),
         }
@@ -620,16 +649,22 @@ async fn server_hashing(context: &JobContext<'_>) -> ServerHashing {
     hashing
 }
 
-/// Whether a command printed the expected digests; `None` when the transfer was cancelled.
+/// Whether a command, under `sh` or as a line of its own, printed the expected digests; `None`
+/// when the transfer was cancelled.
 async fn probe(
     context: &JobContext<'_>,
-    command: &str,
+    shell: bool,
+    command: &'static str,
     algorithm: Algorithm,
     expected: &[Vec<u8>],
 ) -> Option<bool> {
     let probed = async {
         let channel = context.command_channel().await?;
-        run_command(channel, command, OUTPUT_LIMIT).await
+        if shell {
+            exec::run_script(channel, command, OUTPUT_LIMIT).await
+        } else {
+            exec::run_line(channel, &CommandLine::fixed(command), OUTPUT_LIMIT).await
+        }
     };
     let output = tokio::select! {
         biased;
@@ -678,10 +713,12 @@ mod tests {
         let in_parts = ServerHashing {
             whole: Some(Algorithm::Sha256),
             parts: true,
+            shell: true,
         };
         let command = Method::Command {
             algorithm: Algorithm::Sha256,
             parts: Parts::for_length(length),
+            shell: true,
         };
         let read_back = Method::ReadBack {
             parts: Parts::for_length(length),
@@ -696,38 +733,49 @@ mod tests {
     }
 
     #[test]
-    fn on_a_channel_of_its_own_the_part_already_transferred_is_hashed_under_sh() {
+    fn the_part_already_transferred_is_hashed_by_a_script() {
         let command = resume_command("/srv/data.bin", 5, Parts::WHOLE);
         assert_eq!(
             command,
             "[ -r '/srv/data.bin' ] && { head -c 5 -- '/srv/data.bin' | sha256sum; }"
         );
-        // Quoted once, so a login shell of any kind passes it to `sh` whole.
         assert_eq!(
-            under_sh(&command),
-            r"sh -c '[ -r '\''/srv/data.bin'\'' ] && { head -c 5 -- '\''/srv/data.bin'\'' | sha256sum; }'"
+            digest_script("/srv/it's.bin", Algorithm::Sha512, Parts::WHOLE, 1),
+            r"sha512sum -- '/srv/it'\''s.bin'"
         );
     }
 
+    /// On a channel of its own, a script goes to `sh` on standard input, and answers as it does
+    /// in the kept shell, whatever the file is called.
     #[cfg(unix)]
     #[test]
-    fn a_command_under_sh_answers_as_it_does_in_the_kept_shell() {
+    fn a_script_on_a_channel_answers_as_it_does_in_the_kept_shell() {
+        use crate::ssh::exec::tests::{run_locally as run_script_locally, HOSTILE_NAMES};
+        use crate::ssh::exec::ScriptInput;
         use crate::transfer::hash_shell::tests::run_locally;
 
         let folder = tempfile::tempdir().unwrap();
-        let file = folder.path().join("it's here.bin");
-        std::fs::write(&file, b"abcdef").unwrap();
-        let command = resume_command(&file.to_string_lossy(), 5, Parts { size: 2 });
-        let (kept_shell, status) = run_locally(&command);
-        assert_eq!(status, 0, "{kept_shell}");
-        // As a login shell runs what an exec request asks for.
-        let channel = std::process::Command::new("sh")
-            .arg("-c")
-            .arg(under_sh(&command))
-            .output()
-            .unwrap();
-        assert!(channel.status.success());
-        assert_eq!(String::from_utf8(channel.stdout).unwrap(), kept_shell);
+        for name in HOSTILE_NAMES {
+            let file = folder.path().join(name);
+            std::fs::write(&file, b"abcdef").unwrap();
+            let path = file.to_string_lossy().into_owned();
+            for command in [
+                resume_command(&path, 5, Parts { size: 2 }),
+                digest_script(&path, Algorithm::Sha256, Parts::WHOLE, 1),
+                digest_script(&path, Algorithm::Sha256, Parts { size: 4 }, 2),
+            ] {
+                let (kept_shell, status) = run_locally(&command);
+                assert_eq!(status, 0, "{kept_shell}");
+                let digests = parse_output(&kept_shell, Algorithm::Sha256);
+                assert!(!digests.is_empty(), "{name:?}: {kept_shell}");
+                let channel = run_script_locally(&command, ScriptInput::Empty);
+                assert_eq!(String::from_utf8(channel).unwrap(), kept_shell);
+            }
+        }
+        assert_eq!(
+            std::fs::read_dir(folder.path()).unwrap().count(),
+            HOSTILE_NAMES.len()
+        );
     }
 
     #[cfg(unix)]

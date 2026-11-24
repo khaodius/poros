@@ -820,6 +820,8 @@ export interface CommandRequest {
   command: string;
   /** The folder to run the command in; the login folder when absent. */
   directory?: string | null;
+  /** What the command's "${1}", "${2}" and so on stand for: the selected items. */
+  arguments?: string[];
 }
 
 export interface OutputChunk {

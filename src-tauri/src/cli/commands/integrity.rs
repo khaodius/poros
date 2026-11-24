@@ -13,7 +13,8 @@ use crate::cli::exit::Exit;
 use crate::cli::output::{plural, Reply};
 use crate::error::{AppError, AppResult};
 use crate::protocol::Protocol;
-use crate::rsync::{run_command, shell_quote};
+use crate::rsync::{shell_quote, CommandOutput};
+use crate::ssh::exec::{self, CommandLine};
 use crate::sync::{
     SyncAction, SyncDirection, SyncManager, SyncOptions, SyncPlanView, SyncReason, SyncRequest,
 };
@@ -81,23 +82,38 @@ async fn remote_digest(
     Ok((hasher.finish(), Method::Streamed))
 }
 
+/// The server's digest of `path`: from its command under `sh`, or, on a server without `sh` that
+/// runs the command itself as SFTPGo does, from the command as a line of its own, when the path
+/// is one any login shell reads alike.
 async fn server_digest(
     connected: &Connected,
     path: &str,
     algorithm: Algorithm,
 ) -> AppResult<Option<Vec<u8>>> {
     let channel = connected.session.open_command_channel().await?;
+    let script = format!("{} -- {}", algorithm.command(), shell_quote(path));
+    let output = exec::run_script(channel, &script, COMMAND_OUTPUT_LIMIT).await?;
+    if let Some(digest) = digest_from(&output, algorithm) {
+        return Ok(Some(digest));
+    }
     // One file per command: SFTPGo hashes only the last argument.
-    let command = format!("{} -- {}", algorithm.command(), shell_quote(path));
-    let output = run_command(channel, &command, COMMAND_OUTPUT_LIMIT).await?;
-    if output.exit_status != Some(0) {
+    let Some(line) = CommandLine::portable(&[algorithm.command(), "--"], &[path]) else {
         return Ok(None);
+    };
+    let channel = connected.session.open_command_channel().await?;
+    let output = exec::run_line(channel, &line, COMMAND_OUTPUT_LIMIT).await?;
+    Ok(digest_from(&output, algorithm))
+}
+
+fn digest_from(output: &CommandOutput, algorithm: Algorithm) -> Option<Vec<u8>> {
+    if output.exit_status != Some(0) {
+        return None;
     }
     let text = String::from_utf8_lossy(&output.output);
-    Ok(parse_output(&text, algorithm)
+    parse_output(&text, algorithm)
         .into_iter()
         .next()
-        .map(|(_, digest)| digest))
+        .map(|(_, digest)| digest)
 }
 
 pub async fn checksum(context: &Context, arguments: &ChecksumArgs) -> AppResult<Reply> {
