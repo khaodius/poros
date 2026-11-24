@@ -10,6 +10,8 @@ pub mod google_drive;
 pub mod oauth;
 pub mod onedrive;
 pub mod s3;
+#[cfg(test)]
+mod scripted_service;
 mod upload;
 pub mod webdav;
 

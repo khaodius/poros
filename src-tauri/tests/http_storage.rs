@@ -535,6 +535,167 @@ async fn keys_with_dot_parts_never_reach_the_folders_around_them() {
     manager.disconnect(&session.id).await.unwrap();
 }
 
+/// Stands between Poros and the S3 server, and fails a multipart upload the ways a busy S3
+/// does: it answers the first start itself with a server error, and drops the connection of
+/// the first completion once the server has carried it out, so its answer is lost.
+struct FaultyS3 {
+    port: u16,
+    requests: Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+impl FaultyS3 {
+    async fn start(server_port: u16) -> Self {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let requests: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+        let seen = requests.clone();
+        tokio::spawn(async move {
+            while let Ok((client, _)) = listener.accept().await {
+                tokio::spawn(relay_faultily(client, server_port, seen.clone()));
+            }
+        });
+        Self { port, requests }
+    }
+
+    /// How many requests went to the server, or were answered for it, that start with `method`
+    /// and carry `parameter` in their query.
+    fn count(&self, method: &str, parameter: &str) -> usize {
+        self.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|line| line.starts_with(method) && line.contains(parameter))
+            .count()
+    }
+}
+
+/// Relays one request, which the server's `Connection: close` makes the only one on the
+/// connection.
+async fn relay_faultily(
+    mut client: tokio::net::TcpStream,
+    server_port: u16,
+    requests: Arc<std::sync::Mutex<Vec<String>>>,
+) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let Some(request) = read_whole_request(&mut client).await else {
+        return;
+    };
+    let line = String::from_utf8_lossy(&request)
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .to_string();
+    let first_of = |parameter: &str| {
+        let requests = requests.lock().unwrap();
+        line.starts_with("POST ")
+            && line.contains(parameter)
+            && !requests
+                .iter()
+                .any(|earlier| earlier.starts_with("POST ") && earlier.contains(parameter))
+    };
+    let (first_start, first_completion) = (first_of("?uploads"), first_of("?uploadId="));
+    requests.lock().unwrap().push(line);
+    if first_start {
+        let body = "<Error><Code>InternalError</Code><Message>We encountered an internal error. Please try again.</Message></Error>";
+        let answer = format!(
+            "HTTP/1.1 500 Internal Server Error\r\ncontent-type: application/xml\r\n\
+             content-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let _ = client.write_all(answer.as_bytes()).await;
+        return;
+    }
+    let mut server = tokio::net::TcpStream::connect(("127.0.0.1", server_port))
+        .await
+        .unwrap();
+    server.write_all(&request).await.unwrap();
+    let mut answer = Vec::new();
+    server.read_to_end(&mut answer).await.unwrap();
+    if !first_completion {
+        let _ = client.write_all(&answer).await;
+    }
+}
+
+/// A request's head and the body its `content-length` gives.
+async fn read_whole_request(stream: &mut tokio::net::TcpStream) -> Option<Vec<u8>> {
+    use tokio::io::AsyncReadExt;
+    let mut received = Vec::new();
+    let mut piece = vec![0u8; 64 * 1024];
+    let head_end = loop {
+        let read = stream
+            .read(&mut piece)
+            .await
+            .ok()
+            .filter(|read| *read > 0)?;
+        received.extend_from_slice(&piece[..read]);
+        if let Some(position) = received.windows(4).position(|window| window == b"\r\n\r\n") {
+            break position + 4;
+        }
+    };
+    let length: usize = String::from_utf8_lossy(&received[..head_end])
+        .lines()
+        .filter_map(|line| line.split_once(':'))
+        .find(|(name, _)| name.trim().eq_ignore_ascii_case("content-length"))
+        .and_then(|(_, value)| value.trim().parse().ok())
+        .unwrap_or(0);
+    while received.len() < head_end + length {
+        let read = stream
+            .read(&mut piece)
+            .await
+            .ok()
+            .filter(|read| *read > 0)?;
+        received.extend_from_slice(&piece[..read]);
+    }
+    Some(received)
+}
+
+/// A large upload once failed after its last part when S3 answered the start or the
+/// completion with a server error, or the completion's answer was lost.
+#[tokio::test]
+async fn a_large_s3_upload_survives_a_failed_start_and_a_lost_completion() {
+    let Some(server) = server("POROS_TEST_S3_PORT", Protocol::S3) else {
+        return;
+    };
+    let (_config, manager) = new_manager();
+    let (session, files, bucket) = open_scratch(&manager, &server, "multipart-retry").await;
+    let faulty = FaultyS3::start(server.port).await;
+    let through_faults = Server {
+        port: faulty.port,
+        ..server.clone()
+    };
+    let faulty_session = connect_with(&manager, profile(&through_faults, &server.password)).await;
+    let faulty_files = files_of(&manager, &faulty_session).await;
+
+    let large = remote_path::join(&bucket, "large.bin");
+    let contents = pattern(23 * MEBIBYTE + 17, 5);
+    write_remote(&faulty_files, &large, &contents, None).await;
+    assert_eq!(faulty.count("POST ", "?uploads"), 2);
+    assert_eq!(
+        faulty.count("PUT ", "partNumber="),
+        3,
+        "the parts went once"
+    );
+    assert_eq!(faulty.count("POST ", "?uploadId="), 2);
+    // An abort goes out from a task of its own once the upload is dropped.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(
+        faulty.count("DELETE ", "uploadId="),
+        0,
+        "the upload was aborted"
+    );
+
+    let stat = files.stat(&large).await.unwrap().unwrap();
+    assert_eq!(stat.size, contents.len() as u64);
+    assert!(read_remote(&files, &large, 0..u64::MAX).await == contents);
+
+    manager.disconnect(&faulty_session.id).await.unwrap();
+    files.delete(std::slice::from_ref(&bucket)).await.unwrap();
+    assert!(files.stat(&bucket).await.unwrap().is_none());
+    manager.disconnect(&session.id).await.unwrap();
+}
+
 fn write_tree(root: &Path) {
     std::fs::create_dir_all(root.join("nested/deeper")).unwrap();
     std::fs::create_dir_all(root.join("empty folder")).unwrap();
