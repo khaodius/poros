@@ -85,12 +85,16 @@ export function createTranslate(
     if (!params) return text;
     // Splitting on a pattern with a group keeps the names at the odd positions.
     const parts = text.split(PLACEHOLDER);
+    const keys = new Set<string>();
     return parts.map((part, index) => {
       if (index % 2 === 0) return part;
       const value = Object.prototype.hasOwnProperty.call(params, part)
         ? (written(params[part]) as ReactNode)
         : `{${part}}`;
-      return createElement(Fragment, { key: index }, value);
+      // Keyed by name, so an element keeps its state where another language moves it.
+      const key = keys.has(part) ? `${part} ${index}` : part;
+      keys.add(key);
+      return createElement(Fragment, { key }, value);
     });
   };
 
