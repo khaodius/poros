@@ -358,6 +358,14 @@ mod tests {
         let mut watched = Watched::holding("same");
         let temporary = watched.path.with_file_name("report.txt.tmp");
         std::fs::write(&temporary, "same").unwrap();
+        // A later time than the first write, which Windows clocks can give both writes.
+        let later = std::fs::metadata(&watched.path).unwrap().modified().unwrap() + COARSE_TIME;
+        std::fs::File::options()
+            .write(true)
+            .open(&temporary)
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
         std::fs::rename(&temporary, &watched.path).unwrap();
         assert_eq!(watched.look(), Observation::Settling);
         assert_eq!(watched.settled(), Observation::Unchanged);
