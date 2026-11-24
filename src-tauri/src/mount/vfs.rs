@@ -33,7 +33,7 @@ use super::spool::{Spool, UnsentNote};
 use super::upload::{self, ChooseCheck, Staging, UploadCheck, UploadRequest};
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::model::{DirListing, EntryKind, FileEntry};
-use crate::protocol::{self, ReadStream, RemoteFileSystem};
+use crate::protocol::{self, LinkTargets, ReadStream, RemoteFileSystem};
 use crate::remote_path;
 
 pub type NodeId = u64;
@@ -229,6 +229,8 @@ struct Listing {
     /// By remote name.
     entries: BTreeMap<String, Entry>,
     names: FolderNames,
+    /// Where links lead, by remote name, where the server's listing says.
+    links: LinkTargets,
 }
 
 struct LocalState {
@@ -643,14 +645,15 @@ impl MountFs {
             return Ok(());
         }
         let listed = self
-            .request(|files| async move { files.list_dir(folder).await })
+            .request(|files| async move { files.list_dir_with_links(folder).await })
             .await;
         self.listing_locks.lock().unwrap().remove(folder);
-        self.store_listing(folder, listed?);
+        let (listed, links) = listed?;
+        self.store_listing(folder, listed, links);
         Ok(())
     }
 
-    fn store_listing(&self, folder: &str, listed: DirListing) {
+    fn store_listing(&self, folder: &str, listed: DirListing, links: LinkTargets) {
         let mut entries = BTreeMap::new();
         for file in &listed.entries {
             if let Some(entry) = entry_of(file) {
@@ -665,6 +668,7 @@ impl MountFs {
                 fetched: Instant::now(),
                 entries,
                 names,
+                links,
             },
         );
     }
@@ -721,6 +725,8 @@ impl MountFs {
                     listing.names.add(&remote, &local, style);
                 }
             }
+            // A link moved here leads where the server says, which is asked again.
+            listing.links.remove(&remote);
             listing.entries.insert(remote, entry);
         });
     }
@@ -734,6 +740,7 @@ impl MountFs {
         let style = self.options.style;
         self.update_listing(&folder, |listing| {
             listing.entries.remove(remote);
+            listing.links.remove(remote);
             listing.names.remove(remote, style);
         });
     }
@@ -875,16 +882,30 @@ impl MountFs {
         if kind != NodeKind::Link {
             return Err(VfsError::InvalidName);
         }
-        let target = self
-            .request(|files| {
-                let path = path.clone();
-                async move { files.read_link(&path).await }
-            })
-            .await?;
+        let target = match self.listed_link_target(&path) {
+            Some(target) => target,
+            None => {
+                self.request(|files| {
+                    let path = path.clone();
+                    async move { files.read_link(&path).await }
+                })
+                .await?
+            }
+        };
         self.on_drive(&path, &target).ok_or_else(|| {
             log::debug!("A link on a drive leads outside its root: {path}");
             VfsError::PermissionDenied
         })
+    }
+
+    /// Where the link at `path` leads according to its folder's listing, while that is fresh.
+    fn listed_link_target(&self, path: &str) -> Option<String> {
+        let folder = remote_path::parent(path)?;
+        let listings = self.listings.lock().unwrap();
+        let listing = listings
+            .get(&folder)
+            .filter(|listing| listing.fetched.elapsed() < self.options.metadata_lifetime)?;
+        listing.links.get(remote_path::file_name(path)).cloned()
     }
 
     /// The way from the folder of the link at `link` to where `target` leads, in local names
@@ -1912,14 +1933,14 @@ impl MountFs {
         let path = remote_path::join(&folder, &remote);
         // The server removes a folder with everything in it, so whether it is empty is
         // asked first, of the server and not of the cache.
-        let listed = self
+        let (listed, links) = self
             .request(|files| {
                 let path = path.clone();
-                async move { files.list_dir(&path).await }
+                async move { files.list_dir_with_links(&path).await }
             })
             .await?;
         if !listed.entries.is_empty() {
-            self.store_listing(&path, listed);
+            self.store_listing(&path, listed, links);
             return Err(VfsError::NotEmpty);
         }
         self.delete(&path).await
@@ -2302,14 +2323,18 @@ impl MountFs {
     }
 
     /// Removes, taking up to `limit`, what uploads that failed without a connection left
-    /// beside their files on the server. What cannot be removed now stays remembered.
+    /// beside their files on the server, and puts back the old files that stepped aside for
+    /// an upload and could not come back. What cannot be done now stays remembered.
     pub async fn tidy_staged(&self, limit: Duration) {
-        if self.staging.left_beside().is_empty() {
+        if self.staging.is_tidy() {
             return;
         }
         let tidying = async {
             match self.backend.lease(Purpose::Request).await {
-                Ok(lease) => self.staging.tidy(&lease.files).await,
+                Ok(lease) => {
+                    self.staging.put_back(&lease.files, None).await;
+                    self.staging.tidy(&lease.files).await;
+                }
                 Err(error) => log::debug!("Unfinished uploads stay for now: {}", error.message),
             }
         };

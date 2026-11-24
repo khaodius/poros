@@ -1291,6 +1291,45 @@ async fn every_change_on_the_server_is_reported_with_its_folder() {
 }
 
 #[tokio::test]
+async fn links_are_read_from_the_listing_where_it_says_where_they_lead() {
+    for in_listings in [true, false] {
+        let drive = drive();
+        drive
+            .server
+            .links_in_listings
+            .store(in_listings, Ordering::Relaxed);
+        drive.server.put_file("/docs/a.txt", "alpha");
+        drive.server.put_file("/docs/b.txt", "beta");
+        drive.server.put_link("/docs/one", "a.txt");
+        drive.server.put_link("/docs/two", "/docs/b.txt");
+        let target = |name: &'static str| {
+            let drive = &drive;
+            async move {
+                let id = node(drive, &format!("/docs/{name}")).await;
+                drive.fs.read_link(id).await
+            }
+        };
+        assert_eq!(target("one").await, Ok("a.txt".to_string()));
+        assert_eq!(target("two").await, Ok("b.txt".to_string()));
+        let asked = drive.server.counters.link_reads.load(Ordering::Relaxed);
+        assert_eq!(asked, if in_listings { 0 } else { 2 }, "{in_listings}");
+
+        // A link moved over another leads where the moved one does.
+        let docs = node(&drive, "/docs").await;
+        drive
+            .fs
+            .rename(docs, "two", docs, "one", true)
+            .await
+            .unwrap();
+        assert_eq!(
+            target("one").await,
+            Ok("b.txt".to_string()),
+            "{in_listings}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn links_are_shown_as_links_and_removed_alone() {
     let server = MemoryFs::new();
     server.put_file("/outside/keep.txt", "keep");
@@ -1544,6 +1583,15 @@ async fn an_upload_cut_off_with_the_connection_is_removed_before_the_next_attemp
         );
     }
 
+    // A server that does not answer in time keeps it remembered too.
+    drive
+        .server
+        .delete_delay_millis
+        .store(500, Ordering::Relaxed);
+    drive.fs.tidy_staged(Duration::from_millis(50)).await;
+    assert_eq!(drive.fs.left_beside().len(), 1);
+    drive.server.delete_delay_millis.store(0, Ordering::Relaxed);
+
     // Without a connection it stays remembered; with one, a reconnect or the drive going
     // removes it, and so does the next attempt.
     drive.server.offline.store(true, Ordering::Relaxed);
@@ -1590,14 +1638,57 @@ async fn an_original_that_cannot_be_put_back_is_named_and_both_copies_stay() {
     );
     assert!(drive.fs.left_beside().is_empty(), "neither copy is removed");
 
+    // Once the server lets it, the original goes back to its name, on a reconnect as before
+    // the next attempt, and the next upload that succeeds removes the stranded copy.
     drive.server.allow_every_move();
+    drive.fs.tidy_staged(Duration::from_secs(5)).await;
+    assert_eq!(
+        drive.server.file("/docs/log.txt").unwrap()[..],
+        b"the original"[..]
+    );
+    assert!(!drive.server.exists(&format!("/docs/{old}")));
     drive.fs.flush(handle).await.unwrap();
     drive.fs.release(handle);
     assert_eq!(
         drive.server.file("/docs/log.txt").unwrap()[..],
         b"the new log"[..]
     );
-    assert!(drive.server.exists(&format!("/docs/{old}")));
+    assert_eq!(server_names(&drive.server, "/docs").await, ["log.txt"]);
+}
+
+#[tokio::test]
+async fn an_original_something_took_the_place_of_stays_aside() {
+    let drive = drive();
+    drive.server.put_file("/docs/log.txt", "the original");
+    let id = node(&drive, "/docs/log.txt").await;
+    let handle = drive.fs.open(id, OpenMode::WRITE_TRUNCATE).await.unwrap();
+    drive.fs.write(handle, 0, b"the new log").await.unwrap();
+    drive.server.refuse_moves_onto("/docs/log.txt");
+    assert!(drive.fs.flush(handle).await.is_err());
+    let old = server_names(&drive.server, "/docs")
+        .await
+        .into_iter()
+        .find(|name| name.ends_with(".old"))
+        .unwrap();
+
+    // Another client wrote the file meanwhile, so the original stays where it went.
+    drive.server.allow_every_move();
+    drive.server.put_file("/docs/log.txt", "written meanwhile");
+    drive.fs.flush(handle).await.unwrap();
+    drive.fs.release(handle);
+    assert_eq!(
+        drive.server.file("/docs/log.txt").unwrap()[..],
+        b"the new log"[..]
+    );
+    assert_eq!(
+        server_names(&drive.server, "/docs").await,
+        [old.clone(), "log.txt".to_string()],
+        "the stranded copy of the new contents is gone"
+    );
+    assert_eq!(
+        drive.server.file(&format!("/docs/{old}")).unwrap()[..],
+        b"the original"[..]
+    );
 }
 
 #[tokio::test]

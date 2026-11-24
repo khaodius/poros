@@ -56,8 +56,21 @@ pub struct Staging {
     /// Uploads written beside their files that could not be removed when they failed, because
     /// the connection was lost or the server stopped answering, with the file each was for.
     left: Mutex<BTreeMap<String, String>>,
+    /// Uploads whose old file stepped aside and could not come back, by the file they were for.
+    stranded: Mutex<BTreeMap<String, Vec<Stranded>>>,
     /// Files written in place because their folder takes no new files, so it is said once.
     in_place: Mutex<HashSet<String>>,
+}
+
+/// What an upload whose old file could not come back left on the server.
+#[derive(Debug, Clone)]
+struct Stranded {
+    /// The new contents, beside the file. A copy of what stays on this computer, removed once
+    /// a later upload of the file succeeds.
+    staged: String,
+    /// The old file, stepped aside. Put back while nothing took its place; otherwise it stays,
+    /// as the only copy of the original.
+    aside: Option<String>,
 }
 
 impl Staging {
@@ -73,17 +86,32 @@ impl Staging {
         self.left.lock().unwrap().keys().cloned().collect()
     }
 
-    /// Removes what earlier uploads left beside their files. What cannot be reached now stays
-    /// remembered for the next time.
+    /// Whether anything is left on the server to remove or put back.
+    pub fn is_tidy(&self) -> bool {
+        self.left.lock().unwrap().is_empty()
+            && self
+                .stranded
+                .lock()
+                .unwrap()
+                .values()
+                .flatten()
+                .all(|upload| upload.aside.is_none())
+    }
+
+    /// Removes what earlier uploads left beside their files. Each path is forgotten only once
+    /// the server answered for it, so what cannot be reached now, or is still being removed
+    /// when this is given up, stays remembered for the next time.
     pub async fn tidy(&self, files: &Arc<dyn RemoteFileSystem>) {
-        let left = std::mem::take(&mut *self.left.lock().unwrap());
-        let mut entries = left.into_iter();
-        for (staged, target) in entries.by_ref() {
+        let left: Vec<(String, String)> = self
+            .left
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(staged, target)| (staged.clone(), target.clone()))
+            .collect();
+        for (staged, target) in left {
             match step(files.delete(std::slice::from_ref(&staged))).await {
-                Err(error) if error.is_connection_lost() => {
-                    self.remember(&staged, &target);
-                    break;
-                }
+                Err(error) if error.is_connection_lost() => return,
                 Err(error) if error.kind != ErrorKind::NotFound => {
                     log::warn!(
                         "Could not remove {staged}, an unfinished upload of {target}: {}",
@@ -92,9 +120,64 @@ impl Staging {
                 }
                 _ => {}
             }
+            self.left.lock().unwrap().remove(&staged);
         }
-        for (staged, target) in entries {
-            self.remember(&staged, &target);
+    }
+
+    fn strand(&self, target: &str, staged: &str, aside: &str) {
+        self.stranded
+            .lock()
+            .unwrap()
+            .entry(target.to_string())
+            .or_default()
+            .push(Stranded {
+                staged: staged.to_string(),
+                aside: Some(aside.to_string()),
+            });
+    }
+
+    /// The file is on the server: the copies earlier attempts stranded beside it can go.
+    fn succeeded(&self, target: &str) {
+        let Some(stranded) = self.stranded.lock().unwrap().remove(target) else {
+            return;
+        };
+        for upload in stranded {
+            self.remember(&upload.staged, target);
+        }
+    }
+
+    /// Puts back the old files that stepped aside, for `target` alone or for every file,
+    /// where nothing has taken their place since.
+    pub async fn put_back(&self, files: &Arc<dyn RemoteFileSystem>, target: Option<&str>) {
+        let waiting: Vec<(String, String)> = self
+            .stranded
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(file, _)| target.is_none_or(|target| target == file.as_str()))
+            .flat_map(|(file, stranded)| {
+                stranded
+                    .iter()
+                    .filter_map(|upload| Some((file.clone(), upload.aside.clone()?)))
+            })
+            .collect();
+        for (file, aside) in waiting {
+            let free = match step(files.stat(&file)).await {
+                Ok(found) => found.is_none(),
+                Err(error) if error.is_connection_lost() => return,
+                Err(_) => false,
+            };
+            if !free || relocate(files, &aside, &file).await.is_err() {
+                continue;
+            }
+            log::info!("Put the original {file} back in its place");
+            if let Some(stranded) = self.stranded.lock().unwrap().get_mut(&file) {
+                for upload in stranded.iter_mut() {
+                    if upload.aside.as_deref() == Some(aside.as_str()) {
+                        upload.aside = None;
+                    }
+                }
+            }
         }
     }
 
@@ -193,8 +276,10 @@ pub async fn upload(
     let lease = backend.lease(Purpose::Upload).await?;
     let files = lease.files.clone();
     let target = &request.remote_path;
-    // A file that failed again and again leaves one upload beside it at most.
+    // A file that failed again and again leaves one upload beside it at most, and an original
+    // that stepped aside goes back first.
     request.staging.tidy(&files).await;
+    request.staging.put_back(&files, Some(target)).await;
     let Some(staged) = staged_path(files.as_ref(), target) else {
         return send_and_check(
             backend,
@@ -260,10 +345,15 @@ pub async fn upload(
     match placed {
         Ok(()) => {
             set_time(&files, request, target).await;
+            request.staging.succeeded(target);
+            request.staging.tidy(&files).await;
             Ok(())
         }
         // Both copies stay on the server, under the names the error gives.
-        Err(NotPlaced::Stranded(error)) => Err(error.with_path(target.clone())),
+        Err(NotPlaced::Stranded { error, aside }) => {
+            request.staging.strand(target, &staged, &aside);
+            Err(error.with_path(target.clone()))
+        }
         Err(NotPlaced::Failed(error)) => {
             // Without a connection it is removed later: before the next attempt, after a
             // reconnect, or when the drive goes.
@@ -283,9 +373,9 @@ pub async fn upload(
 enum NotPlaced {
     /// The server holds the file as before, and the upload beside it can go.
     Failed(AppError),
-    /// The old file stepped aside and could not come back: the server holds both copies under
-    /// the names the error gives.
-    Stranded(AppError),
+    /// The old file stepped aside to `aside` and could not come back: the server holds both
+    /// copies under the names the error gives.
+    Stranded { error: AppError, aside: String },
 }
 
 impl From<AppError> for NotPlaced {
@@ -335,7 +425,7 @@ async fn put_in_place(
     if relocate(files, &aside, target).await.is_ok() {
         return Err(error.into());
     }
-    Err(NotPlaced::Stranded(AppError::new(
+    let error = AppError::new(
         error.kind,
         format!(
             "The server would not put the new {name} in its place, nor the old one back: the \
@@ -346,7 +436,8 @@ async fn put_in_place(
             new = remote_path::file_name(staged),
             reason = error.message,
         ),
-    )))
+    );
+    Err(NotPlaced::Stranded { error, aside })
 }
 
 /// Writes the spool to `path` on the server and checks what arrived there.

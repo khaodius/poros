@@ -14,8 +14,8 @@ use bytes::Bytes;
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::model::{DirListing, EntryKind, FileEntry, LinkTarget};
 use crate::protocol::{
-    self, Capabilities, Protocol, ReadStream, RemoteFileSystem, RemoteStat, WriteRequest,
-    WriteStream,
+    self, Capabilities, LinkTargets, Protocol, ReadStream, RemoteFileSystem, RemoteStat,
+    WriteRequest, WriteStream,
 };
 use crate::remote_path;
 
@@ -41,6 +41,8 @@ pub struct Counters {
     pub read_requests: AtomicU64,
     pub bytes_read: AtomicU64,
     pub uploads: AtomicU64,
+    /// Links asked for one at a time, rather than read from a listing.
+    pub link_reads: AtomicU64,
 }
 
 pub struct MemoryFs {
@@ -63,6 +65,10 @@ pub struct MemoryFs {
     /// No new file may be written while set, as in a folder that takes no new files; the
     /// files there may still be.
     pub refused_new_files: AtomicBool,
+    /// Listings say where links lead while set, as FTP listings do.
+    pub links_in_listings: AtomicBool,
+    /// A pause before every delete, in milliseconds.
+    pub delete_delay_millis: AtomicU64,
     /// Paths nothing may be moved or renamed onto.
     refused_move_targets: Mutex<HashSet<String>>,
     clock: AtomicU64,
@@ -84,6 +90,8 @@ impl MemoryFs {
             upload_delay_millis: AtomicU64::new(0),
             write_delay_millis: AtomicU64::new(0),
             refused_new_files: AtomicBool::new(false),
+            links_in_listings: AtomicBool::new(false),
+            delete_delay_millis: AtomicU64::new(0),
             refused_move_targets: Mutex::new(HashSet::new()),
             clock: AtomicU64::new(1_700_000_000),
         })
@@ -298,6 +306,20 @@ impl RemoteFileSystem for MemoryFs {
         })
     }
 
+    async fn list_dir_with_links(&self, path: &str) -> AppResult<(DirListing, LinkTargets)> {
+        let listing = self.list_dir(path).await?;
+        let mut targets = LinkTargets::new();
+        if self.links_in_listings.load(Ordering::Relaxed) {
+            let items = self.items.lock().unwrap();
+            for entry in &listing.entries {
+                if let Some(Item::Link { target }) = items.get(&entry.path) {
+                    targets.insert(entry.name.clone(), target.clone());
+                }
+            }
+        }
+        Ok((listing, targets))
+    }
+
     async fn make_dir(&self, parent: &str, name: &str) -> AppResult<String> {
         self.check_online()?;
         protocol::validate_name(name)?;
@@ -334,6 +356,7 @@ impl RemoteFileSystem for MemoryFs {
 
     async fn read_link(&self, path: &str) -> AppResult<String> {
         self.check_online()?;
+        self.counters.link_reads.fetch_add(1, Ordering::Relaxed);
         match self.items.lock().unwrap().get(path) {
             Some(Item::Link { target }) => Ok(target.clone()),
             Some(_) => Err(AppError::invalid("Not a link")),
@@ -343,6 +366,10 @@ impl RemoteFileSystem for MemoryFs {
 
     /// A link goes by itself; what it leads to stays.
     async fn delete(&self, paths: &[String]) -> AppResult<()> {
+        let delay = self.delete_delay_millis.load(Ordering::Relaxed);
+        if delay > 0 {
+            tokio::time::sleep(Duration::from_millis(delay)).await;
+        }
         self.check_online()?;
         for path in paths {
             protocol::normalize_exact(path)?;
