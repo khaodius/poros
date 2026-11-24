@@ -432,13 +432,24 @@ impl WriteStream for MemoryWriter {
             tokio::time::sleep(Duration::from_millis(delay)).await;
         }
         self.fs.check_online()?;
-        let failing = self
-            .fs
-            .failing_uploads
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
-                left.checked_sub(1)
-            })
-            .is_ok();
+        // Takes one refusal off the count, if any are left. A plain compare and swap, since
+        // the standard library renamed `fetch_update` and CI builds with the newest compiler.
+        let refusals = &self.fs.failing_uploads;
+        let mut left = refusals.load(Ordering::Relaxed);
+        let failing = loop {
+            if left == 0 {
+                break false;
+            }
+            match refusals.compare_exchange_weak(
+                left,
+                left - 1,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break true,
+                Err(now) => left = now,
+            }
+        };
         if failing {
             return Err(AppError::new(
                 ErrorKind::Sftp,
