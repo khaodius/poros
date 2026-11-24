@@ -634,7 +634,7 @@ async fn execute(shared: &Shared, connections: &mut Connections, claim: Claim) {
                 job.reconnecting,
             )
         });
-        (settled, change, queue.take_abandoned())
+        (settled, change, shared.take_abandoned(&mut queue))
     };
     let error = settled.as_ref().and_then(|(_, error, _, _)| error.clone());
     if let Some((state, error, spec, false)) = settled {
@@ -743,19 +743,26 @@ fn log_server_change(shared: &Shared, session_id: &str, change: ServerChange, er
 }
 
 /// Deletes the temporary files of transfers removed from the queue before they finished.
-async fn discard_partials(shared: &Shared, connections: &Connections, abandoned: Vec<Abandoned>) {
-    for partial in abandoned {
+async fn discard_partials(
+    shared: &Shared,
+    connections: &Connections,
+    abandoned: Vec<(Abandoned, Option<Arc<SessionTarget>>)>,
+) {
+    for (partial, target) in abandoned {
         match partial.direction {
             Direction::Download => {
                 let _ = tokio::fs::remove_file(&partial.path).await;
             }
             Direction::Upload | Direction::Relay => {
                 let paths = std::slice::from_ref(&partial.path);
-                match connections.existing(&partial.session_id) {
-                    Some(fs) => {
+                match (connections.existing(&partial.session_id), target) {
+                    (Some(fs), _) => {
                         let _ = fs.delete(paths).await;
                     }
-                    None => super::discard_with_browsing_session(shared, &partial).await,
+                    (None, Some(target)) => {
+                        super::discard_with_browsing_session(shared, &target, &partial).await
+                    }
+                    (None, None) => {}
                 }
             }
         }

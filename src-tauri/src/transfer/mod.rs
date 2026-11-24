@@ -393,6 +393,24 @@ impl Shared {
             .retain(|session_id, _| queue.has_session_jobs(session_id));
     }
 
+    /// Takes the temporary files of jobs that left the queue unfinished, each with what reaches
+    /// its server. Called with the queue locked: once it is unlocked, a tick may forget the
+    /// server of jobs that were its last while their files are still being deleted.
+    fn take_abandoned(&self, queue: &mut Queue) -> Vec<(Abandoned, Option<Arc<SessionTarget>>)> {
+        let abandoned = queue.take_abandoned();
+        if abandoned.is_empty() {
+            return Vec::new();
+        }
+        let targets = self.targets.lock().unwrap();
+        abandoned
+            .into_iter()
+            .map(|partial| {
+                let target = targets.get(&partial.session_id).cloned();
+                (partial, target)
+            })
+            .collect()
+    }
+
     /// A relay counts once, as data coming in, so batch totals do not count it twice.
     fn total_for(&self, direction: Direction) -> &AtomicU64 {
         match direction {
@@ -868,20 +886,21 @@ fn update_queue(shared: &Arc<Shared>, change: impl FnOnce(&mut Queue)) {
     let abandoned = {
         let mut queue = shared.queue.lock().unwrap();
         change(&mut queue);
-        queue.take_abandoned()
+        shared.take_abandoned(&mut queue)
     };
     shared.work.notify_waiters();
     if !abandoned.is_empty() {
         let shared = shared.clone();
         crate::runtime::spawn(async move {
-            for partial in abandoned {
-                match partial.direction {
-                    Direction::Download => {
+            for (partial, target) in abandoned {
+                match (partial.direction, target) {
+                    (Direction::Download, _) => {
                         let _ = tokio::fs::remove_file(&partial.path).await;
                     }
-                    Direction::Upload | Direction::Relay => {
-                        discard_with_browsing_session(&shared, &partial).await
+                    (Direction::Upload | Direction::Relay, Some(target)) => {
+                        discard_with_browsing_session(&shared, &target, &partial).await
                     }
+                    (Direction::Upload | Direction::Relay, None) => {}
                 }
             }
         });
@@ -1095,10 +1114,11 @@ async fn retry_reached_again(shared: &Shared, servers: Vec<(String, Instant)>) {
 }
 
 /// Deletes a server-side temporary file through the session the user browses with, if open.
-pub(super) async fn discard_with_browsing_session(shared: &Shared, partial: &Abandoned) {
-    let Ok(target) = shared.target(&partial.session_id) else {
-        return;
-    };
+pub(super) async fn discard_with_browsing_session(
+    shared: &Shared,
+    target: &SessionTarget,
+    partial: &Abandoned,
+) {
     target.adopt_live_session(&shared.sessions).await;
     let files = match target.browsing_files() {
         Ok(files) => files,
@@ -1287,9 +1307,20 @@ mod tests {
         assert!(target.login().profile.route.proxy.is_none());
     }
 
-    /// A WebDAV server on which every folder is empty, and nothing else can be done.
+    /// A WebDAV server on which every folder is empty. Deleting takes 150 ms, as over a slow
+    /// network, and the paths deleted are kept. Nothing else can be done.
     #[derive(Default)]
-    struct EmptyFolders;
+    struct EmptyFolders {
+        deleted: Mutex<Vec<String>>,
+    }
+
+    impl EmptyFolders {
+        fn deleted(&self) -> Vec<String> {
+            let mut deleted = self.deleted.lock().unwrap().clone();
+            deleted.sort();
+            deleted
+        }
+    }
 
     fn refused() -> AppError {
         AppError::unsupported("This server only lists empty folders")
@@ -1329,8 +1360,10 @@ mod tests {
             Err(refused())
         }
 
-        async fn delete(&self, _paths: &[String]) -> AppResult<()> {
-            Err(refused())
+        async fn delete(&self, paths: &[String]) -> AppResult<()> {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            self.deleted.lock().unwrap().extend_from_slice(paths);
+            Ok(())
         }
 
         async fn stat(&self, _path: &str) -> AppResult<Option<crate::protocol::RemoteStat>> {
@@ -1517,5 +1550,27 @@ mod tests {
                 job.name
             );
         }
+    }
+
+    /// Removing unfinished uploads deletes every temporary file they left on the server, though
+    /// the first tick after they leave the queue forgets their server while the files are still
+    /// being deleted one by one.
+    #[test]
+    fn removed_uploads_leave_none_of_their_temporary_files_behind() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file = temp_dir.path().join("transfers.json");
+        let partials = save_uploads(&file, 5);
+        let server = Arc::new(EmptyFolders::default());
+        let (manager, _) = manager_over(temp_dir.path(), server.clone());
+        manager.keep_queue_in(file);
+        let ids: Vec<JobId> = manager.list().jobs.iter().map(|job| job.id).collect();
+        assert_eq!(ids.len(), partials.len());
+
+        manager.remove(&ids);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while server.deleted().len() < partials.len() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(server.deleted(), partials);
     }
 }
