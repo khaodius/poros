@@ -12,7 +12,7 @@ use crate::error::AppResult;
 use crate::events::{Events, LogLevel};
 use crate::ssh::proxy::ProxyKind;
 use crate::storage;
-use crate::transfer::ExistsAction;
+use crate::transfer::{ExistsAction, LimitSchedule};
 
 pub const MAX_WORKERS: u32 = 16;
 pub const MIN_SOCKET_BUFFER_KIB: u32 = 4;
@@ -49,6 +49,9 @@ pub struct TransferSettings {
     /// Zero means unlimited.
     pub upload_limit_kib: u32,
     pub download_limit_kib: u32,
+    /// Other limits, or a pause, at set times of the week. Settings saved before there was a
+    /// schedule have none, which reads as one with no rules, switched off.
+    pub limit_schedule: LimitSchedule,
     pub exists_action: ExistsAction,
     pub preserve_timestamps: bool,
     pub preserve_permissions: bool,
@@ -111,6 +114,7 @@ impl Default for TransferSettings {
             requests_in_flight: 64,
             upload_limit_kib: 0,
             download_limit_kib: 0,
+            limit_schedule: LimitSchedule::default(),
             exists_action: ExistsAction::Ask,
             preserve_timestamps: true,
             preserve_permissions: false,
@@ -149,6 +153,7 @@ impl TransferSettings {
         self.retry_attempts = self.retry_attempts.min(20);
         self.retry_delay_secs = self.retry_delay_secs.min(600);
         self.reconnect_minutes = self.reconnect_minutes.min(MAX_RECONNECT_MINUTES);
+        self.limit_schedule.sanitize();
         if self.integrity_revision < INTEGRITY_REVISION {
             self.verify_checksums = true;
             self.flush_to_disk = true;
@@ -605,6 +610,65 @@ mod tests {
         let kept = reloaded.sanitize();
         assert!(!kept.transfers.verify_checksums);
         assert!(!kept.transfers.flush_to_disk);
+    }
+
+    #[test]
+    fn settings_saved_before_the_limit_schedule_load_as_they_were() {
+        // The transfer section as 0.7.0 wrote it.
+        let saved = r#"{"transfers": {"workers": 4, "autoStart": true, "segmented": true,
+            "segmentThresholdMib": 32, "maxSegments": 4, "requestSizeKib": 32,
+            "requestsInFlight": 64, "uploadLimitKib": 250, "downloadLimitKib": 0,
+            "existsAction": "ask", "preserveTimestamps": true, "preservePermissions": false,
+            "retryAttempts": 3, "retryDelaySecs": 5, "reconnectMinutes": 10,
+            "keepCompleted": true, "keepQueue": true, "temporaryFiles": true,
+            "verifyChecksums": true, "readBack": true, "repairParts": true,
+            "verifyResume": true, "checkMetadata": true, "checkPublished": true,
+            "minisignKeys": [], "flushToDisk": true, "separateConnections": true,
+            "logEachFile": false, "deltaTransfers": true, "deltaThresholdKib": 1024,
+            "rsyncPath": "rsync", "fxp": true, "integrityRevision": 1}}"#;
+        let loaded = serde_json::from_str::<Settings>(saved).unwrap().sanitize();
+        let expected = TransferSettings {
+            upload_limit_kib: 250,
+            ..TransferSettings::default()
+        };
+        assert_eq!(loaded.transfers, expected);
+        assert!(!loaded.transfers.limit_schedule.enabled);
+        assert!(loaded.transfers.limit_schedule.rules.is_empty());
+    }
+
+    #[test]
+    fn stored_schedule_rules_are_made_safe_and_kept() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file = temp_dir.path().join("settings.json");
+        let store = SettingsStore::load(file.clone(), &Events::default());
+        let mut changed = store.get();
+        changed.transfers.limit_schedule = serde_json::from_value(serde_json::json!({
+            "enabled": true,
+            "rules": [{
+                "id": "night",
+                "name": " Night \n--bwlimit=0",
+                "days": [6, 5, 5, 12],
+                "startMinute": 1320,
+                "endMinute": 99999,
+                "upload": { "mode": "paused", "kib": 64 },
+                "download": { "mode": "limited", "kib": 0 }
+            }]
+        }))
+        .unwrap();
+        let saved = store.set(changed).unwrap();
+        let rule = &saved.transfers.limit_schedule.rules[0];
+        assert_eq!(rule.name, "Night");
+        assert_eq!(rule.days, vec![5, 6]);
+        assert_eq!((rule.start_minute, rule.end_minute), (1320, 1439));
+        assert!(rule.upload.is_paused());
+        assert_eq!(rule.upload.kib, 64);
+        assert_eq!(rule.download, crate::transfer::RateLimit::UNLIMITED);
+
+        let reloaded = SettingsStore::load(file, &Events::default());
+        assert_eq!(
+            reloaded.get().transfers.limit_schedule,
+            saved.transfers.limit_schedule
+        );
     }
 
     #[test]

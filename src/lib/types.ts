@@ -127,6 +127,8 @@ export interface SessionInfo {
   protocol: Protocol;
   /** Set for the session of an unlocked vault, whose host, port and username are its server's. */
   vault?: VaultInfo;
+  /** Listings give times only to the minute, or to the day, as FTP's `LIST` does. */
+  coarseTimes?: boolean;
 }
 
 export type ErrorKind =
@@ -241,6 +243,49 @@ export interface TransferStats {
   uploadSpeed: number;
   downloadSpeed: number;
   queuePaused: boolean;
+  /** The speed limits in force, and the rule of the schedule that set them. */
+  limits: LimitStatus;
+}
+
+/** Mirrors src-tauri/src/transfer/limit_schedule.rs. `paused` holds that direction's transfers. */
+export type LimitMode = "unlimited" | "limited" | "paused";
+
+export interface RateLimit {
+  mode: LimitMode;
+  /** KiB per second, kept while the mode is another so switching back finds it again. */
+  kib: number;
+}
+
+export interface LimitRule {
+  id: string;
+  name: string;
+  /** The weekdays the rule starts on, Monday being 0. */
+  days: number[];
+  /** Minutes after midnight, local time. */
+  startMinute: number;
+  /** At or before the start, the rule runs into the next day; equal to it, for 24 hours. */
+  endMinute: number;
+  upload: RateLimit;
+  download: RateLimit;
+}
+
+export interface LimitSchedule {
+  enabled: boolean;
+  /** Where several cover the same time, the one latest in the list applies. */
+  rules: LimitRule[];
+}
+
+/** Mirrors src-tauri/src/transfer/scheduled_limits.rs. Times are seconds since the epoch. */
+export interface LimitStatus {
+  upload: RateLimit;
+  download: RateLimit;
+  /** The rule in force; while the schedule is ignored, the one that would be. */
+  rule: { index: number; name: string } | null;
+  /** The schedule's next change, which also ends ignoring it. */
+  until: number | null;
+  ignored: boolean;
+  /** When transfers waiting for the schedule continue, by direction. */
+  pauseEnds: Record<Direction, number | null>;
 }
 
 export interface ChangedDirectory {
@@ -493,6 +538,47 @@ export interface SyncProgress {
   remoteEntries: number;
   compared: number;
   toCompare: number;
+}
+
+/** One of two compared folders. The backend knows itself whether its listings' times are coarse. */
+export interface FolderRef {
+  location: FileLocation;
+  path: string;
+}
+
+export interface FolderCompareRequest {
+  /** Names the comparison for `SyncProgress` events and for `sync_cancel`. */
+  requestId: string;
+  left: FolderRef;
+  right: FolderRef;
+  sizeOnly: boolean;
+  timeToleranceSecs: number;
+  ignoreHourOffsets: boolean;
+  includeHidden: boolean;
+  ignoreCase: boolean;
+}
+
+/** How the files in one folder that both sides have compare, at any depth below it. */
+export interface FolderSummary {
+  /** Below the compared folders, with `/` between names; in lower case when case is ignored. */
+  path: string;
+  identical: number;
+  newerLeft: number;
+  newerRight: number;
+  onlyLeft: number;
+  onlyRight: number;
+  different: number;
+  /** Folders that could not be read, links that lead nowhere and special files. */
+  notCompared: number;
+}
+
+export interface FolderComparison {
+  /** Shallowest first. */
+  folders: FolderSummary[];
+  /** More folders were compared than are reported; the deepest are left out. */
+  truncated: boolean;
+  leftEntries: number;
+  rightEntries: number;
 }
 
 export interface SyncChoice {

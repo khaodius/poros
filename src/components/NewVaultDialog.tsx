@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { useLatest } from "../hooks/useLatest";
 import { MIN_VAULT_PASSWORD_LENGTH } from "../lib/vaults";
 import { Dialog } from "./Dialog";
 
@@ -17,6 +18,7 @@ export function NewVaultDialog({ folder, onCreate, onClose }: NewVaultDialogProp
   const [repeated, setRepeated] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const latestOnClose = useLatest(onClose);
 
   const trimmedName = name.trim();
   const tooShort = Array.from(password).length < MIN_VAULT_PASSWORD_LENGTH;
@@ -30,7 +32,7 @@ export function NewVaultDialog({ folder, onCreate, onClose }: NewVaultDialogProp
     setError(null);
     try {
       await onCreate(trimmedName, password);
-      onClose();
+      latestOnClose.current();
     } catch (caught) {
       setError((caught as { message?: string }).message ?? String(caught));
       setBusy(false);

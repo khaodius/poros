@@ -35,5 +35,7 @@ export default defineConfig(() => ({
   test: {
     environment: "node",
     include: ["src/**/*.test.ts"],
+    // The theme tests read the base palette.
+    css: { include: [/tokens\.css/] },
   },
 }));

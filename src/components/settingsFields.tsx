@@ -21,9 +21,18 @@ export function SettingRow({ label, hint, disabled, children }: RowProps) {
   );
 }
 
-export function SettingGroup({ title, children }: { title: string; children: ReactNode }) {
+export function SettingGroup({
+  title,
+  id,
+  children,
+}: {
+  title: string;
+  /** For a group other parts of the app scroll to. */
+  id?: string;
+  children: ReactNode;
+}) {
   return (
-    <section className="setting-group">
+    <section className="setting-group" id={id}>
       <h3>{title}</h3>
       {children}
     </section>
