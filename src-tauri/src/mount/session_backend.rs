@@ -338,19 +338,15 @@ impl Backend for SessionBackend {
         }
         // A name goes to the server's sha256sum in a script for `sh`, never on the exec line,
         // where the account's login shell (fish, csh, ...) would read its quotes its own way.
-        let digest =
-            tokio::time::timeout(HASH_LIMIT, server_digest(&session, path, Algorithm::Sha256))
-                .await
-                .ok()
-                .and_then(Result::ok)
-                .flatten();
-        // Shell-less accounts and servers without the command stay that way. A server without
-        // `sh` that runs the command itself (SFTPGo) hashes only names any shell reads alike, so
-        // a name with other characters says nothing about the next one.
-        if digest.is_none() && exec::portable(path) {
+        let hashed =
+            ServerHash::within(HASH_LIMIT, server_digest(&session, path, Algorithm::Sha256)).await;
+        if hashed.ends_hashing(path) {
             self.cannot_hash.store(true, Ordering::Relaxed);
         }
-        digest
+        match hashed {
+            ServerHash::Digest(digest) => Some(digest),
+            ServerHash::Failed | ServerHash::TimedOut => None,
+        }
     }
 
     async fn close(&self) {
@@ -361,6 +357,42 @@ impl Backend for SessionBackend {
         };
         for own in idle {
             own.connection.close().await;
+        }
+    }
+}
+
+/// How asking the server for a file's SHA-256 went.
+#[derive(Debug, PartialEq, Eq)]
+enum ServerHash {
+    Digest(Vec<u8>),
+    /// The server answered, or refused to start the command, without a digest.
+    Failed,
+    /// No answer within the time allowed.
+    TimedOut,
+}
+
+impl ServerHash {
+    async fn within(
+        limit: Duration,
+        asked: impl std::future::Future<Output = AppResult<Option<Vec<u8>>>>,
+    ) -> Self {
+        match tokio::time::timeout(limit, asked).await {
+            Ok(Ok(Some(digest))) => Self::Digest(digest),
+            Ok(_) => Self::Failed,
+            Err(_) => Self::TimedOut,
+        }
+    }
+
+    /// Whether the drive stops asking the server. A server that does not answer is not asked
+    /// again whatever the name, so no later upload waits as long. One that fails at once is a
+    /// shell-less account or one without the command, unless the name is not portable: a
+    /// server without `sh` that runs the command itself (SFTPGo) hashes only names any shell
+    /// reads alike, so such a name says nothing about the next one.
+    fn ends_hashing(&self, path: &str) -> bool {
+        match self {
+            Self::Digest(_) => false,
+            Self::Failed => exec::portable(path),
+            Self::TimedOut => true,
         }
     }
 }
@@ -378,5 +410,36 @@ mod tests {
         assert!(Carrier::Sftp.opens_own(Purpose::Stream));
         assert!(Carrier::Sftp.opens_own(Purpose::Upload));
         assert!(!Carrier::Shared.opens_own(Purpose::Upload));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_server_that_does_not_answer_is_not_asked_again_whatever_the_name() {
+        let hung = ServerHash::within(
+            HASH_LIMIT,
+            std::future::pending::<AppResult<Option<Vec<u8>>>>(),
+        )
+        .await;
+        assert_eq!(hung, ServerHash::TimedOut);
+        assert!(hung.ends_hashing("/srv/plain.txt"));
+        assert!(hung.ends_hashing("/srv/it's caf\u{e9} & co"));
+    }
+
+    #[tokio::test]
+    async fn a_quick_failure_stops_hashing_only_for_a_portable_name() {
+        let failed = ServerHash::within(HASH_LIMIT, async { Ok(None) }).await;
+        assert_eq!(failed, ServerHash::Failed);
+        assert!(failed.ends_hashing("/srv/plain.txt"));
+        assert!(!failed.ends_hashing("/srv/it's caf\u{e9} & co"));
+        let refused = ServerHash::within(HASH_LIMIT, async {
+            Err(AppError::new(
+                ErrorKind::Ssh,
+                "The server does not allow running commands",
+            ))
+        })
+        .await;
+        assert_eq!(refused, ServerHash::Failed);
+        let hashed = ServerHash::within(HASH_LIMIT, async { Ok(Some(vec![1, 2])) }).await;
+        assert_eq!(hashed, ServerHash::Digest(vec![1, 2]));
+        assert!(!hashed.ends_hashing("/srv/plain.txt"));
     }
 }
