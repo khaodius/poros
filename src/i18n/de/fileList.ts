@@ -20,7 +20,7 @@ export const fileList = {
   // lib/columns
   type: "Typ",
   modified: "Geändert",
-  permissions: "Berechtigungen",
+  permissions: "Rechte",
   owner: "Besitzer",
 
   // lib/dateGroups

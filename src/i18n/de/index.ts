@@ -38,7 +38,8 @@
 // settings Einstellungen, password Passwort, system keychain Schlüsselbund des Systems,
 // link (symbolic) Verknüpfung, mount / unmount einbinden / trennen, extract entpacken,
 // pause / resume anhalten / fortsetzen, retry wiederholen, home folder Benutzerordner,
-// the login folder der Ordner nach der Anmeldung, cursor Cursor, dry run Probelauf.
+// the login folder der Ordner nach der Anmeldung, cursor Cursor, dry run Probelauf,
+// permissions Berechtigungen (the file list column heading alone says Rechte, for room).
 // Progress phrases take the passive ("Wird gespeichert..."), hints that start with "Off:"
 // read "Aus:" followed by a whole sentence. Key names stay as the menus show them (Ctrl,
 // Shift, Alt, Enter), as do units (KB, MiB, KiB/s); durations are written "2 min 5 s".
