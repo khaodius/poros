@@ -16,7 +16,7 @@ use crate::format::{format_duration, format_size};
 use crate::settings::TransferSettings;
 use crate::transfer::{
     clock_time, Direction, EnqueueRequest, ExistsAction, JobKind, JobSnapshot, JobState,
-    LimitStatus, TransferItem, TransferManager,
+    LimitStatus, TransferItem, TransferList, TransferManager,
 };
 
 const POLL: Duration = Duration::from_millis(100);
@@ -197,12 +197,7 @@ pub async fn wait(
         let list = manager.list();
         reporter.update(snapshot(&list.jobs));
         if !told_of_schedule {
-            let queued: Vec<Direction> = list
-                .jobs
-                .iter()
-                .filter(|job| job.state == JobState::Queued)
-                .map(|job| job.direction)
-                .collect();
+            let queued = queued_directions(&list.jobs);
             if let Some(notice) = schedule_notice(&list.stats.limits, &queued, &Local::now()) {
                 log::warn!("{notice}");
                 told_of_schedule = true;
@@ -228,6 +223,13 @@ pub async fn wait(
     Ok(summarize(&manager.list().jobs, elapsed, workers, verified))
 }
 
+fn queued_directions(jobs: &[JobSnapshot]) -> Vec<Direction> {
+    jobs.iter()
+        .filter(|job| job.state == JobState::Queued)
+        .map(|job| job.direction)
+        .collect()
+}
+
 /// What to say once when the speed limit schedule of the saved settings keeps transfers
 /// waiting, which without it would look like a run that hangs.
 fn schedule_notice<Tz: TimeZone>(
@@ -235,6 +237,29 @@ fn schedule_notice<Tz: TimeZone>(
     queued: &[Direction],
     now: &DateTime<Tz>,
 ) -> Option<String> {
+    let (pause, option) = schedule_pause(limits, queued, now)?;
+    Some(format!(
+        "{pause} To run now, set the limit for this run with {option} (0 for none)."
+    ))
+}
+
+/// The same for the files of scheduled runs, which keep to the schedule as any transfer does
+/// and take no limits of their own.
+pub fn scheduled_run_notice<Tz: TimeZone>(
+    list: &TransferList,
+    now: &DateTime<Tz>,
+) -> Option<String> {
+    let queued = queued_directions(&list.jobs);
+    schedule_pause(&list.stats.limits, &queued, now).map(|(pause, _)| pause)
+}
+
+/// What the schedule pauses of the queued directions, and the options that would set the
+/// limits of a run instead.
+fn schedule_pause<Tz: TimeZone>(
+    limits: &LimitStatus,
+    queued: &[Direction],
+    now: &DateTime<Tz>,
+) -> Option<(String, &'static str)> {
     // A copy between two servers needs both directions.
     let waits = |paused: bool, direction: Direction| {
         paused
@@ -262,13 +287,15 @@ fn schedule_notice<Tz: TimeZone>(
             format!(" until {shown}")
         })
         .unwrap_or_default();
-    Some(format!(
-        "The speed limit schedule in the Poros settings pauses {paused}{until}, so this waits. \
-         To run now, set the limit for this run with {option} (0 for none)."
+    Some((
+        format!(
+            "The speed limit schedule in the Poros settings pauses {paused}{until}, so this waits."
+        ),
+        option,
     ))
 }
 
-fn snapshot(jobs: &[JobSnapshot]) -> Snapshot {
+pub fn snapshot(jobs: &[JobSnapshot]) -> Snapshot {
     let mut snapshot = Snapshot::default();
     for job in jobs.iter().filter(|job| job.kind == JobKind::File) {
         snapshot.files_total += 1;
@@ -448,6 +475,13 @@ mod tests {
             notice,
             "The speed limit schedule in the Poros settings pauses uploads until Tue 06:00, \
              so this waits. To run now, set the limit for this run with --limit-up (0 for none)."
+        );
+        // A scheduled run takes no limits of its own, so it is only told why it waits.
+        let (pause, _) = schedule_pause(&limits, &[Direction::Upload], &now).unwrap();
+        assert_eq!(
+            pause,
+            "The speed limit schedule in the Poros settings pauses uploads until Tue 06:00, \
+             so this waits."
         );
         // Downloads are only slowed, and nothing waits once the queue is empty.
         assert_eq!(schedule_notice(&limits, &[Direction::Download], &now), None);

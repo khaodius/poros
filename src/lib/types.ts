@@ -282,6 +282,10 @@ export interface JobSnapshot {
   direct?: boolean;
   /** Queued while its server is out of reach after a dropped connection. */
   reconnecting?: boolean;
+  /** What queued the job when it was not the user: a scheduled task's name. */
+  label?: string;
+  /** A scheduled run follows it, so it goes while transfers wait for Start. */
+  unattended?: boolean;
 }
 
 export interface QueueCounts {
@@ -300,6 +304,10 @@ export interface TransferStats {
   uploadSpeed: number;
   downloadSpeed: number;
   queuePaused: boolean;
+  /** Paused only until the user presses Start; the files of scheduled runs go on. */
+  heldForStart: boolean;
+  /** Files of scheduled runs are going or waiting their turn. */
+  unattendedRunning: boolean;
   /** The speed limits in force, and the rule of the schedule that set them. */
   limits: LimitStatus;
 }
@@ -847,7 +855,29 @@ export type TaskAction =
       /** rsync arguments applied over the options. */
       arguments: string;
     } & SyncOptions)
-  | { type: "command"; connectionId: string; command: string; directory?: string | null };
+  | { type: "command"; connectionId: string; command: string; directory?: string | null }
+  | {
+      type: "transfer";
+      /** The server written to, or read from by a download. */
+      connectionId: string;
+      /** The server a copy between two servers reads from. */
+      sourceConnectionId?: string | null;
+      direction: Direction;
+      items: TaskItem[];
+      /** The folder the items go into: on the server, or on this computer for a download. */
+      destination: string;
+      /** Never "ask": no one is there to answer. */
+      exists: ExistsAction;
+      /** A folder inside the destination named from the time of each run, or empty. */
+      subfolder: string;
+    };
+
+/** A file or folder a transfer task copies; a folder goes with everything in it. */
+export interface TaskItem {
+  path: string;
+  /** As it was when it was added, for the icon. A run looks again. */
+  isDir?: boolean;
+}
 
 export interface LastRun {
   /** Seconds since the Unix epoch. */
@@ -855,6 +885,11 @@ export interface LastRun {
   finished: number;
   succeeded: boolean;
   message: string;
+  /**
+   * Written as a run begins, a failure that its end replaces: true while the run goes on, or
+   * when the process running it ended before it could say how the run went.
+   */
+  underWay?: boolean;
 }
 
 export interface ScheduledTask {

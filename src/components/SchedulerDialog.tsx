@@ -30,7 +30,9 @@ import {
   syncAction,
   taskOptions,
   timeInputValue,
+  transferAction,
   type IntervalUnit,
+  type TransferTaskAction,
 } from "../lib/schedule";
 import { commandPreview, withOption } from "../lib/rsyncOptions";
 import { DIRECTION_OPTIONS } from "../lib/sync";
@@ -41,6 +43,7 @@ import { useSettingsStore } from "../state/settingsStore";
 import { Dialog } from "./Dialog";
 import { OptionCheckView, RsyncArgumentsField, RsyncOptionsEditor } from "./RsyncOptionsEditor";
 import { Stepper } from "./Stepper";
+import { TransferTaskFields } from "./TransferTaskFields";
 
 type SyncTaskAction = Extract<TaskAction, { type: "sync" }>;
 type CommandTaskAction = Extract<TaskAction, { type: "command" }>;
@@ -51,10 +54,29 @@ const TRIGGER_KINDS: { value: Trigger["type"]; label: string }[] = [
   { value: "once", label: "Once" },
 ];
 
-/** Tasks synchronize and run commands over SSH, so only SFTP connections can run them. */
-function taskConnections(connections: SavedConnection[]): SavedConnection[] {
+const TASK_KINDS: { value: TaskAction["type"]; label: string }[] = [
+  { value: "sync", label: "Synchronize folders" },
+  { value: "transfer", label: "Transfer files" },
+  { value: "command", label: "Run a command" },
+];
+
+/** What the connection is to a transfer task, by its direction. */
+const TRANSFER_CONNECTION_LABELS: Record<TransferTaskAction["direction"], string> = {
+  upload: "Upload to",
+  download: "Download from",
+  relay: "Copy to",
+};
+
+/**
+ * The connections a kind of task can use, by name: any for a transfer, while synchronizing and
+ * running commands go over SSH, so only SFTP connections can do them.
+ */
+function taskConnections(
+  connections: SavedConnection[],
+  type: TaskAction["type"],
+): SavedConnection[] {
   return connections
-    .filter((connection) => connection.protocol === "sftp")
+    .filter((connection) => type === "transfer" || connection.protocol === "sftp")
     .sort((first, second) => first.name.localeCompare(second.name));
 }
 
@@ -83,7 +105,8 @@ function newSyncAction(connectionId: string): TaskAction {
 }
 
 function blankTask(): ScheduledTask {
-  const connectionId = taskConnections(useSavedConnections.getState().connections)[0]?.id ?? "";
+  const connectionId =
+    taskConnections(useSavedConnections.getState().connections, "sync")[0]?.id ?? "";
   return newTask(newSyncAction(connectionId));
 }
 
@@ -110,11 +133,19 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
 
   const saved = draft.id ? tasks.find((task) => task.id === draft.id) : undefined;
   const connection = connections.find((candidate) => candidate.id === draft.action.connectionId);
-  const candidates = taskConnections(connections);
+  const candidates = taskConnections(connections, draft.action.type);
   const unusable =
     draft.action.connectionId !== "" &&
     !candidates.some((candidate) => candidate.id === draft.action.connectionId);
   const suggested = suggestedName(draft.action);
+  const sourceId =
+    draft.action.type === "transfer" && draft.action.direction === "relay"
+      ? draft.action.sourceConnectionId
+      : null;
+  const source = sourceId ? connections.find((candidate) => candidate.id === sourceId) : undefined;
+  const signedInWith = [connection, source].filter(
+    (candidate): candidate is SavedConnection => candidate !== undefined,
+  );
 
   const select = (task: ScheduledTask) => {
     setDraft(editableTask(task));
@@ -136,6 +167,12 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
         ? { ...current, action: { ...current.action, ...change } }
         : current,
     );
+  const updateTransfer = (change: Partial<TransferTaskAction>) =>
+    setDraft((current) =>
+      current.action.type === "transfer"
+        ? { ...current, action: { ...current.action, ...change } }
+        : current,
+    );
 
   const switchKind = (type: TaskAction["type"]) => {
     if (draft.action.type === type) return;
@@ -144,7 +181,9 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
       action:
         type === "command"
           ? { type, connectionId, command: "", directory: null }
-          : newSyncAction(connectionId),
+          : type === "transfer"
+            ? transferAction(connectionId)
+            : newSyncAction(connectionId),
     });
   };
 
@@ -173,11 +212,19 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
             localPath: draft.action.localPath.trim(),
             remotePath: draft.action.remotePath.trim(),
           }
-        : {
-            ...draft.action,
-            command: draft.action.command.trim(),
-            directory: draft.action.directory?.trim() || null,
-          };
+        : draft.action.type === "transfer"
+          ? {
+              ...draft.action,
+              sourceConnectionId:
+                draft.action.direction === "relay" ? draft.action.sourceConnectionId || null : null,
+              destination: draft.action.destination.trim(),
+              subfolder: draft.action.subfolder.trim().replace(/^\/+|\/+$/g, ""),
+            }
+          : {
+              ...draft.action,
+              command: draft.action.command.trim(),
+              directory: draft.action.directory?.trim() || null,
+            };
     return { ...draft, name: draft.name.trim() || suggestedName(action), action };
   };
 
@@ -250,7 +297,8 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
           </div>
           {tasks.length === 0 ? (
             <p className="site-list-empty">
-              Tasks run while Poros is open. Ones you save appear here.
+              Tasks run while Poros is open, or from poros-cli with cron or a timer. Ones you save
+              appear here.
             </p>
           ) : (
             <ul>
@@ -305,33 +353,36 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
             <div className="field">
               <span>Task</span>
               <div className="segmented" role="radiogroup">
-                {(
-                  [
-                    ["sync", "Synchronize folders"],
-                    ["command", "Run a command"],
-                  ] as const
-                ).map(([type, label]) => (
+                {TASK_KINDS.map((kind) => (
                   <button
-                    key={type}
+                    key={kind.value}
                     type="button"
                     role="radio"
-                    aria-checked={draft.action.type === type}
-                    className={draft.action.type === type ? "is-selected" : ""}
-                    onClick={() => switchKind(type)}
+                    aria-checked={draft.action.type === kind.value}
+                    className={draft.action.type === kind.value ? "is-selected" : ""}
+                    onClick={() => switchKind(kind.value)}
                   >
-                    {label}
+                    {kind.label}
                   </button>
                 ))}
               </div>
             </div>
             <label className="field grow">
-              <span>Saved connection</span>
+              <span>
+                {draft.action.type === "transfer"
+                  ? TRANSFER_CONNECTION_LABELS[draft.action.direction]
+                  : "Saved connection"}
+              </span>
               <select
                 value={draft.action.connectionId}
                 onChange={(event) => chooseConnection(event.target.value)}
               >
                 <option value="">
-                  {candidates.length === 0 ? "No saved SFTP connections" : "Choose a connection"}
+                  {candidates.length > 0
+                    ? "Choose a connection"
+                    : draft.action.type === "transfer"
+                      ? "No saved connections"
+                      : "No saved SFTP connections"}
                 </option>
                 {unusable && (
                   <option value={draft.action.connectionId}>
@@ -349,19 +400,20 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
           {unusable && (
             <p className="warning-text">
               {connection
-                ? `${connection.name} uses ${protocolInfo(connection.protocol).label}; scheduled tasks need an SFTP connection.`
+                ? `${connection.name} uses ${protocolInfo(connection.protocol).label}; synchronizing and running commands need an SFTP connection.`
                 : "This task's saved connection was deleted. Choose another."}
             </p>
           )}
-          {!unusable && connection?.authType === "password" && !connection.saveSecret && (
-            <p className="warning-text">
-              This connection's password is not saved in the system keychain, so the task cannot log
-              in. Save it in the connection's settings.
-            </p>
-          )}
+          {!unusable && <UnsavedPasswords connections={signedInWith} />}
 
           {draft.action.type === "sync" ? (
             <SyncFields action={draft.action} host={connection?.host} onChange={updateSync} />
+          ) : draft.action.type === "transfer" ? (
+            <TransferTaskFields
+              action={draft.action}
+              connections={candidates}
+              onChange={updateTransfer}
+            />
           ) : (
             <CommandFields action={draft.action} onChange={updateCommand} />
           )}
@@ -408,6 +460,27 @@ export function SchedulerDialog({ initialDraft, onClose }: SchedulerDialogProps)
         </form>
       </div>
     </Dialog>
+  );
+}
+
+/** Says which connections cannot sign in on their own, because their password is not kept. */
+function UnsavedPasswords({ connections }: { connections: SavedConnection[] }) {
+  const unsaved = connections.filter(
+    (connection) => connection.authType === "password" && !connection.saveSecret,
+  );
+  if (unsaved.length === 0) return null;
+  const names = unsaved.map((connection) => connection.name).join(" and ");
+  return (
+    <p className="warning-text">
+      {connections.length === 1
+        ? "This connection's password is not saved in the system keychain, so the task cannot log in."
+        : unsaved.length === 1
+          ? `The password of ${names} is not saved in the system keychain, so the task cannot log in.`
+          : `The passwords of ${names} are not saved in the system keychain, so the task cannot log in.`}{" "}
+      {unsaved.length === 1
+        ? "Save it in the connection's settings."
+        : "Save them in the connections' settings."}
+    </p>
   );
 }
 

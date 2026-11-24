@@ -1766,3 +1766,571 @@ fn rm_and_mv_never_take_the_home_or_start_folder_or_everything_at_the_top() {
     assert_eq!(code, 0, "{value}");
     assert!(run.names("start").is_empty());
 }
+
+impl Run {
+    /// `schedule` as cron would run it: no connection or password in the environment.
+    fn schedule(&self, arguments: &[&str]) -> Command {
+        let mut command = self.command(&[&["schedule"], arguments].concat());
+        command
+            .env_remove("POROS_CONNECTION")
+            .env_remove("POROS_PASSWORD");
+        command
+    }
+
+    fn schedule_json(&self, arguments: &[&str]) -> (i32, Value) {
+        let output = self
+            .schedule(&[&["--json"], arguments].concat())
+            .output()
+            .unwrap();
+        (status(&output), parsed(&output))
+    }
+
+    fn write_config(&self, name: &str, value: &Value) {
+        std::fs::write(
+            self.config.path().join(name),
+            serde_json::to_vec_pretty(value).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn tasks(&self) -> Vec<Value> {
+        let (code, value) = self.schedule_json(&["list"]);
+        assert_eq!(code, 0, "{value}");
+        value.as_array().unwrap().clone()
+    }
+
+    fn task(&self, name: &str) -> Value {
+        self.tasks()
+            .into_iter()
+            .find(|task| task["name"] == name)
+            .unwrap_or_else(|| panic!("no task {name}"))
+    }
+
+    fn wait_until_running(&self, name: &str) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while self.task(name)["running"] != true {
+            assert!(std::time::Instant::now() < deadline, "{name} never started");
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+}
+
+fn now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
+}
+
+#[test]
+fn scheduled_tasks_from_0_7_0_are_listed() {
+    let run = Run::offline();
+    let output = run.schedule(&["list"]).output().unwrap();
+    assert_eq!(status(&output), 0, "{output:?}");
+    assert!(String::from_utf8_lossy(&output.stdout).contains("No scheduled tasks"));
+    // Looking leaves no trace in a config folder without tasks.
+    assert_eq!(std::fs::read_dir(run.config.path()).unwrap().count(), 0);
+
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/schedules-0.7.0.json"),
+        run.config.path().join("schedules.json"),
+    )
+    .unwrap();
+    let output = run.schedule(&["list"]).output().unwrap();
+    assert_eq!(status(&output), 0, "{output:?}");
+    let text = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(lines[0].starts_with("NAME") && lines[0].contains("NEXT RUN"));
+    assert!(lines[1].starts_with("Nightly site upload  sync"));
+    assert!(lines[1].contains("Every day at 02:00") && lines[1].contains("ok: 12 files copied"));
+    assert!(lines[2].contains("Every 6 hours") && lines[2].contains(" off "));
+    assert!(lines[2].contains("failed: Command exited with status 1"));
+
+    let tasks = run.tasks();
+    assert_eq!(tasks.len(), 3);
+    assert_eq!(tasks[0]["kind"], "sync");
+    assert_eq!(tasks[0]["nextRun"], "2026-11-24T02:00:00Z");
+    assert_eq!(tasks[0]["lastRun"]["succeeded"], true);
+    assert_eq!(tasks[1]["enabled"], false);
+    assert_eq!(tasks[1]["nextRun"], Value::Null);
+    assert_eq!(
+        tasks[2]["description"],
+        "Run wall 'Moving to the new server tonight'"
+    );
+    assert_eq!(tasks[2]["lastRun"], Value::Null);
+
+    let (code, value) = run.schedule_json(&["run", "weekly"]);
+    assert_eq!(code, 7, "{value}");
+    assert_eq!(value["error"]["kind"], "notFound");
+    let (code, value) = run.schedule_json(&["enable", "rotate LOGS"]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(value[0]["enabled"], true);
+    assert!(value[0]["nextRun"].is_string());
+    let help = run.run(&["schedule", "--help"]);
+    let help = String::from_utf8_lossy(&help.stdout);
+    for part in [
+        "*/5 * * * * poros-cli schedule run --due",
+        "OnCalendar=",
+        "13 for one already running",
+    ] {
+        assert!(help.contains(part), "{help}");
+    }
+}
+
+#[test]
+fn scheduled_tasks_run_now_when_due_and_never_twice_at_once() {
+    let Some(run) = Run::online("schedule") else {
+        return;
+    };
+    let (code, info) = run.json(&["info"]);
+    assert_eq!(code, 0, "{info}");
+    let home = info["home"]
+        .as_str()
+        .unwrap()
+        .trim_end_matches('/')
+        .to_string();
+    let remote = format!("{home}/{}", run.remote);
+    let port: u16 = std::env::var("POROS_TEST_SSH_PORT")
+        .unwrap()
+        .parse()
+        .unwrap();
+    let user = std::env::var("POROS_TEST_SSH_USER").unwrap_or_else(|_| "poros".into());
+    let saved = |id: &str, name: &str, auth: &str| {
+        serde_json::json!({
+            "id": id,
+            "protocol": "sftp",
+            "name": name,
+            "host": "127.0.0.1",
+            "port": port,
+            "username": user,
+            "authType": auth,
+            "keyPath": fixture("openssh-ed25519"),
+            "saveSecret": auth == "password",
+        })
+    };
+    run.write_config(
+        "connections.json",
+        &serde_json::json!([
+            saved("by-key", "test server", "publicKey"),
+            saved("by-password", "with password", "password"),
+        ]),
+    );
+    write_tree(
+        run.local.path(),
+        &[
+            ("site/index.html", b"<h1>scheduled</h1>\n"),
+            ("site/css/site.css", &[7u8; 40_000]),
+            ("notes.txt", b"remember\n"),
+        ],
+    );
+    let site = run.local("site").to_string_lossy().into_owned();
+    let notes = run.local("notes.txt").to_string_lossy().into_owned();
+    let restored = run.local("restored").to_string_lossy().into_owned();
+    let every_hour = serde_json::json!({ "type": "every", "minutes": 60, "start": 0 });
+    let task = |id: &str, name: &str, next_run: i64, action: Value| {
+        serde_json::json!({
+            "id": id,
+            "name": name,
+            "enabled": true,
+            "trigger": every_hour,
+            "action": action,
+            "runMissed": true,
+            "nextRun": next_run,
+        })
+    };
+    run.write_config(
+        "schedules.json",
+        &serde_json::json!([
+            task(
+                "upload",
+                "Backup",
+                now() - 30,
+                serde_json::json!({
+                    "type": "transfer",
+                    "connectionId": "by-key",
+                    "direction": "upload",
+                    "items": [{ "path": site, "isDir": true }, { "path": notes }],
+                    "destination": remote,
+                    "exists": "overwrite",
+                    "subfolder": "backup-{date}",
+                })
+            ),
+            task(
+                "download",
+                "Restore",
+                now() + 3600,
+                serde_json::json!({
+                    "type": "transfer",
+                    "connectionId": "by-key",
+                    "direction": "download",
+                    "items": [{ "path": format!("{remote}/latest"), "isDir": true }],
+                    "destination": restored,
+                })
+            ),
+            task(
+                "slow",
+                "Slow",
+                now() + 3600,
+                serde_json::json!({
+                    "type": "command",
+                    "connectionId": "by-key",
+                    "command": "sleep 3; echo slept",
+                })
+            ),
+            task(
+                "long",
+                "Long",
+                now() + 3600,
+                serde_json::json!({
+                    "type": "command",
+                    "connectionId": "by-key",
+                    "command": "sleep 20; echo slept",
+                })
+            ),
+            task(
+                "password",
+                "Needs a password",
+                now() + 3600,
+                serde_json::json!({
+                    "type": "command",
+                    "connectionId": "by-password",
+                    "command": "echo signed in",
+                })
+            ),
+        ]),
+    );
+
+    // Only the task whose time has come runs, once.
+    let (code, value) = run.schedule_json(&["run", "--due"]);
+    assert_eq!(code, 0, "{value}");
+    let reports = value.as_array().unwrap();
+    assert_eq!(reports.len(), 1, "{value}");
+    assert_eq!(reports[0]["name"], "Backup");
+    assert_eq!(reports[0]["state"], "succeeded");
+    let message = reports[0]["message"].as_str().unwrap();
+    assert!(message.starts_with("3 files uploaded ("), "{message}");
+    let dated = message.rsplit_once(" to ").unwrap().1.to_string();
+    assert!(dated.starts_with(&format!("{remote}/backup-20")), "{dated}");
+    let shown = run.run(&["cat", &format!("{dated}/site/index.html")]);
+    assert_eq!(shown.stdout, b"<h1>scheduled</h1>\n");
+    let backup = run.task("Backup");
+    assert_eq!(backup["lastRun"]["message"], message);
+    assert!(backup["nextRun"].as_str().unwrap() > backup["lastRun"]["started"].as_str().unwrap());
+    let output = run.schedule(&["run", "--due"]).output().unwrap();
+    assert_eq!(status(&output), 0, "{output:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "No task is due"
+    );
+
+    // A task asked for by name runs whenever; this one downloads what the backup uploaded.
+    let (code, value) = run.json(&["mv", &dated, &format!("{remote}/latest")]);
+    assert_eq!(code, 0, "{value}");
+    let output = run.schedule(&["run", "restore"]).output().unwrap();
+    assert_eq!(status(&output), 0, "{output:?}");
+    assert!(String::from_utf8_lossy(&output.stdout).starts_with("Restore: 3 files downloaded"));
+    // Its connections, the transfer workers' included, are closed and not reported as lost.
+    let warnings = String::from_utf8_lossy(&output.stderr);
+    assert!(!warnings.contains("Connection lost"), "{warnings}");
+    assert_eq!(
+        std::fs::read(run.local("restored/latest/site/css/site.css")).unwrap(),
+        [7u8; 40_000]
+    );
+    assert_eq!(
+        std::fs::read(run.local("restored/latest/notes.txt")).unwrap(),
+        b"remember\n"
+    );
+
+    // While one run of a task goes on, another is refused with a status of its own.
+    let first = run
+        .schedule(&["run", "Slow"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    run.wait_until_running("Slow");
+    let (code, value) = run.schedule_json(&["run", "slow"]);
+    assert_eq!(code, 13, "{value}");
+    assert_eq!(value[0]["state"], "alreadyRunning");
+    let first = first.wait_with_output().unwrap();
+    assert_eq!(status(&first), 0, "{first:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&first.stdout).trim(),
+        "Slow: Command finished: slept"
+    );
+    assert_eq!(run.task("Slow")["running"], false);
+
+    // SIGTERM, as systemctl stop sends, stops a run the way Ctrl+C does, and it is written down.
+    #[cfg(unix)]
+    {
+        let stopped = run
+            .schedule(&["run", "Long"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        run.wait_until_running("Long");
+        let killed = Command::new("kill")
+            .args(["-TERM", &stopped.id().to_string()])
+            .status()
+            .unwrap();
+        assert!(killed.success());
+        let stopped = stopped.wait_with_output().unwrap();
+        assert_eq!(status(&stopped), 130, "{stopped:?}");
+        let long = run.task("Long");
+        assert_eq!(long["running"], false);
+        assert_eq!(long["lastRun"]["succeeded"], false);
+        assert_eq!(long["lastRun"]["message"], "Stopped before it finished");
+        assert!(long["lastRun"].get("underWay").is_none(), "{long}");
+    }
+
+    // A run whose process is killed outright leaves the result written as it began: a failure,
+    // not the result of the run before.
+    let mut killed = run
+        .schedule(&["run", "Long"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    run.wait_until_running("Long");
+    killed.kill().unwrap();
+    killed.wait().unwrap();
+    let long = run.task("Long");
+    assert_eq!(long["running"], false);
+    assert_eq!(long["lastRun"]["succeeded"], false);
+    assert_eq!(long["lastRun"]["message"], "Stopped before it finished");
+    assert_eq!(long["lastRun"]["underWay"], true, "{long}");
+
+    // Without a keychain, a connection that needs its password says how to give one.
+    let (code, value) = run.schedule_json(&["run", "Needs a password"]);
+    assert_eq!(code, 4, "{value}");
+    let message = value[0]["message"].as_str().unwrap();
+    assert!(
+        message.contains("--connection \"with password\"") && message.contains("POROS_PASSWORD"),
+        "{message}"
+    );
+    let output = run
+        .schedule(&["--json", "-c", "with password", "run", "Needs a password"])
+        .env("POROS_PASSWORD", &run.password)
+        .output()
+        .unwrap();
+    assert_eq!(status(&output), 0, "{output:?}");
+    assert_eq!(parsed(&output)[0]["message"], "Command finished: signed in");
+    assert!(!String::from_utf8_lossy(&output.stderr).contains(&run.password));
+
+    let (code, value) = run.schedule_json(&["disable", "Backup"]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(run.task("Backup")["enabled"], false);
+}
+
+/// `--host-key` on a scheduled run pins the server of the connection named with --connection,
+/// and that one alone. `--trust-new-host` never stands in for the pin, and a key on record does
+/// not outweigh it.
+#[test]
+fn a_scheduled_run_holds_only_the_given_connection_to_its_host_key() {
+    const NOT_ITS_KEY: &str = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    let Some(run) = Run::online("schedule-pin") else {
+        return;
+    };
+    let (code, info) = run.json(&["info"]);
+    assert_eq!(code, 0, "{info}");
+    let fingerprint = info["hostKeyFingerprint"].as_str().unwrap().to_string();
+    let port: u16 = std::env::var("POROS_TEST_SSH_PORT")
+        .unwrap()
+        .parse()
+        .unwrap();
+    let user = std::env::var("POROS_TEST_SSH_USER").unwrap_or_else(|_| "poros".into());
+
+    // A config folder with no key on record, and the same server under two names.
+    let fresh = Run::new(run.connection.clone(), run.password.clone(), String::new());
+    let saved = |id: &str, host: &str| {
+        serde_json::json!({
+            "id": id,
+            "protocol": "sftp",
+            "name": id,
+            "host": host,
+            "port": port,
+            "username": user,
+            "authType": "publicKey",
+            "keyPath": fixture("openssh-ed25519"),
+        })
+    };
+    fresh.write_config(
+        "connections.json",
+        &serde_json::json!([saved("pinned", "127.0.0.1"), saved("other", "localhost")]),
+    );
+    let task = |id: &str, name: &str, connection: &str| {
+        serde_json::json!({
+            "id": id,
+            "name": name,
+            "enabled": true,
+            "trigger": { "type": "every", "minutes": 60, "start": 0 },
+            "action": {
+                "type": "command",
+                "connectionId": connection,
+                "command": "echo signed in",
+            },
+            "runMissed": false,
+            "nextRun": now() + 3600,
+        })
+    };
+    fresh.write_config(
+        "schedules.json",
+        &serde_json::json!([
+            task("quick", "Quick", "pinned"),
+            task("elsewhere", "Elsewhere", "other"),
+        ]),
+    );
+    let signed_in = |report: &Value| {
+        assert_eq!(report["state"], "succeeded", "{report}");
+        assert_eq!(report["message"], "Command finished: signed in");
+    };
+
+    // A key the server does not show is refused, and nothing is remembered.
+    let (code, value) = fresh.schedule_json(&[
+        "--host-key",
+        NOT_ITS_KEY,
+        "--trust-new-host",
+        "--save-host-key",
+        "-c",
+        "pinned",
+        "run",
+        "Quick",
+    ]);
+    assert_eq!(code, 5, "{value}");
+    assert_eq!(value[0]["state"], "failed");
+    let not_the_pin = |message: &str| {
+        assert!(
+            message.contains("is not the one given to connect with")
+                && message.contains(&fingerprint),
+            "{message}"
+        );
+        // No option but the right key settles it, so none is suggested.
+        assert!(!message.contains("--trust-new-host"), "{message}");
+    };
+    not_the_pin(value[0]["message"].as_str().unwrap());
+    assert_eq!(
+        fresh.schedule_json(&["run", "Quick"]).0,
+        5,
+        "nothing was remembered"
+    );
+
+    // A run can sign in to several servers, so a key has to say whose it is.
+    let (code, value) = fresh.schedule_json(&["--host-key", &fingerprint, "run", "Quick"]);
+    assert_eq!(code, 2, "{value}");
+    assert_eq!(value["error"]["kind"], "invalidInput");
+    assert!(value["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("--host-key needs --connection"));
+    // One that names nothing, as an empty POROS_HOST_KEY gives, is none.
+    let output = fresh
+        .schedule(&["--json", "--trust-new-host", "run", "Elsewhere"])
+        .env("POROS_HOST_KEY", " ")
+        .output()
+        .unwrap();
+    assert_eq!(status(&output), 0, "{output:?}");
+
+    // The pin is not offered to the run's other servers; --trust-new-host takes them, and only
+    // them.
+    let (code, value) = fresh.schedule_json(&[
+        "--host-key",
+        &fingerprint,
+        "-c",
+        "pinned",
+        "run",
+        "Quick",
+        "Elsewhere",
+    ]);
+    assert_eq!(code, 5, "{value}");
+    signed_in(&value[0]);
+    assert_eq!(value[1]["exitCode"], 5, "{value}");
+    let (code, value) = fresh.schedule_json(&[
+        "--host-key",
+        NOT_ITS_KEY,
+        "--trust-new-host",
+        "-c",
+        "pinned",
+        "run",
+        "Quick",
+        "Elsewhere",
+    ]);
+    assert_eq!(code, 5, "{value}");
+    assert_eq!(value[0]["exitCode"], 5, "{value}");
+    signed_in(&value[1]);
+
+    // The right key gets in, and is remembered when asked.
+    let (code, value) = fresh.schedule_json(&[
+        "--host-key",
+        &fingerprint,
+        "--save-host-key",
+        "-c",
+        "pinned",
+        "run",
+        "Quick",
+    ]);
+    assert_eq!(code, 0, "{value}");
+    signed_in(&value[0]);
+    assert_eq!(fresh.schedule_json(&["run", "Quick"]).0, 0);
+
+    // On record, but not the key asked for: the pin outweighs known_hosts, before anything is
+    // sent to the server.
+    let (code, value) =
+        fresh.schedule_json(&["--host-key", NOT_ITS_KEY, "-c", "pinned", "run", "Quick"]);
+    assert_eq!(code, 6, "{value}");
+    not_the_pin(value[0]["message"].as_str().unwrap());
+}
+
+/// A server that shows no key of its own cannot be held to one: a scheduled run refuses
+/// `--host-key` for it before connecting, rather than ignoring it.
+#[test]
+fn a_scheduled_host_key_is_refused_where_no_key_can_be_checked() {
+    let run = Run::offline();
+    run.write_config(
+        "connections.json",
+        &serde_json::json!([{
+            "id": "plain",
+            "protocol": "ftp",
+            "name": "plain",
+            // Nothing listens there, so a connection tried first would fail another way.
+            "host": "127.0.0.1",
+            "port": 9,
+            "username": "poros",
+            "authType": "password",
+        }]),
+    );
+    run.write_config(
+        "schedules.json",
+        &serde_json::json!([{
+            "id": "fetch",
+            "name": "Fetch",
+            "enabled": true,
+            "trigger": { "type": "every", "minutes": 60, "start": 0 },
+            "action": {
+                "type": "transfer",
+                "connectionId": "plain",
+                "direction": "download",
+                "items": [{ "path": "/notes.txt" }],
+                "destination": run.local.path(),
+            },
+            "runMissed": false,
+            "nextRun": now() + 3600,
+        }]),
+    );
+    let output = run
+        .schedule(&[
+            "--json",
+            "--host-key",
+            "SHA256:not-it",
+            "-c",
+            "plain",
+            "run",
+            "Fetch",
+        ])
+        .env("POROS_PASSWORD", "unused")
+        .output()
+        .unwrap();
+    assert_eq!(status(&output), 2, "{output:?}");
+    let value = parsed(&output);
+    assert_eq!(value[0]["message"], "--host-key cannot be checked for FTP");
+}

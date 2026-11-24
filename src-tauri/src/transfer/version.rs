@@ -61,6 +61,7 @@ impl TransferManager {
                 source_version: Some(request.version_id),
                 ..JobOptions::default()
             })),
+            batch: None,
         };
         self.add_jobs(
             NewJobs {
@@ -121,6 +122,7 @@ mod tests {
             size: 1,
             ancestors: Arc::from([]),
             options: options.map(Arc::new),
+            batch: None,
         }
     }
 

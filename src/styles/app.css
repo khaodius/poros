@@ -9087,6 +9087,89 @@ textarea::placeholder {
   display: block;
 }
 
+/* Scheduled transfer tasks */
+
+.task-items {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+}
+
+.task-items ul {
+  max-height: 160px;
+  margin: 0;
+  padding: 4px 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.task-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 4px 0 10px;
+}
+
+.task-item:hover {
+  background: var(--row-hover);
+}
+
+.task-item-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--font-size-small);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.task-items-empty {
+  margin: 0;
+  padding: 10px;
+  color: var(--text-faint);
+  font-size: var(--font-size-small);
+}
+
+.task-items-actions {
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.task-items-actions .grow {
+  flex: 1;
+}
+
+.task-pattern-hint {
+  margin-top: -6px;
+}
+
+/* A long result wraps beside its label rather than breaking it. */
+.task-status strong {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* The scheduled task that queued the transfer. */
+.transfer-tag {
+  flex: 0 1 auto;
+  max-width: 40%;
+  padding: 0 6px;
+  overflow: hidden;
+  color: var(--accent);
+  font-size: var(--font-size-tiny);
+  line-height: 16px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  background: var(--accent-soft);
+  border-radius: 999px;
+}
+
 /* Object versions: the Versions dialog, deleted files in a pane and older versions in the editor */
 .file-row.is-deleted,
 .file-row.is-deleted .file-name {

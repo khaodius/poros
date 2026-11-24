@@ -4,10 +4,11 @@
 
 use std::collections::HashSet;
 
+use crate::cloud::{CloudProvider, OAuthClient};
 use crate::connections::{AuthType, ConnectionStore, SavedConnection};
-use crate::error::{AppError, AppResult};
+use crate::error::{AppError, AppResult, ErrorKind};
 use crate::protocol::Protocol;
-use crate::settings::ConnectionSettings;
+use crate::settings::{CloudSettings, ConnectionSettings};
 use crate::ssh::proxy::Proxy;
 use crate::ssh::{AuthMethod, ConnectProfile, Route};
 
@@ -163,6 +164,24 @@ pub fn profile_from_saved(saved: &SavedConnection, auth: AuthMethod) -> ConnectP
     }
 }
 
+/// What connecting with no one there to answer may use besides the saved connection itself.
+#[derive(Default)]
+pub struct Unattended<'a> {
+    /// What only an SFTP connection can do, such as "run scheduled tasks". `None` when any
+    /// protocol will do.
+    pub needs_sftp_to: Option<&'a str>,
+    /// A password and a key passphrase given for this connection, used before the keychain's.
+    pub password: Option<String>,
+    pub passphrase: Option<String>,
+    /// The app registrations cloud drives sign in as. Without them a cloud drive is refused.
+    pub cloud: Option<&'a CloudSettings>,
+    /// Run from a command line, so a missing secret is answered with the options that give
+    /// one, and a keychain that is not there is not the end.
+    pub command_line: bool,
+    /// Seconds to wait for the server, in place of the connection settings'.
+    pub timeout_secs: Option<u64>,
+}
+
 /// A saved connection's profile with the connection settings and its route, for connecting
 /// without a window, as scheduled tasks do. Blocks on the keychain.
 pub fn saved_profile(
@@ -170,19 +189,44 @@ pub fn saved_profile(
     settings: &ConnectionSettings,
     id: &str,
 ) -> AppResult<ConnectProfile> {
+    saved_profile_with(
+        store,
+        settings,
+        id,
+        &Unattended {
+            needs_sftp_to: Some("run scheduled tasks"),
+            ..Unattended::default()
+        },
+    )
+}
+
+/// `saved_profile` for a connection of any protocol, with what `unattended` adds.
+pub fn saved_profile_with(
+    store: &ConnectionStore,
+    settings: &ConnectionSettings,
+    id: &str,
+    unattended: &Unattended<'_>,
+) -> AppResult<ConnectProfile> {
     let saved = store
         .list()?
         .into_iter()
         .find(|connection| connection.id == id)
         .ok_or_else(|| AppError::invalid("The saved connection no longer exists"))?;
-    require_sftp(&saved, "run scheduled tasks")?;
-    let auth = auth_for(&saved, store.secret(id)?, |name| {
-        format!(
-            "Save the password of {name} in the system keychain so Poros can connect on its own"
-        )
-    })?;
+    if let Some(purpose) = unattended.needs_sftp_to {
+        require_sftp(&saved, purpose)?;
+    }
+    let given = match saved.auth_type {
+        AuthType::Password => unattended.password.clone(),
+        AuthType::PublicKey => unattended.passphrase.clone(),
+        AuthType::Agent | AuthType::OAuth => None,
+    };
+    let secret = match given {
+        Some(secret) => Some(secret),
+        None => stored_secret(store, &saved, unattended.command_line)?,
+    };
+    let auth = unattended_auth(&saved, secret, unattended)?;
     let mut profile = ConnectProfile {
-        timeout_secs: Some(settings.timeout_secs),
+        timeout_secs: Some(unattended.timeout_secs.unwrap_or(settings.timeout_secs)),
         keepalive_secs: Some(settings.keepalive_secs),
         compression: settings.compression,
         receive_buffer_kib: (!settings.auto_tune_receive_buffer)
@@ -192,6 +236,77 @@ pub fn saved_profile(
     };
     resolve(&mut profile, settings, store)?;
     Ok(profile)
+}
+
+/// The secret the keychain holds for a saved connection. On a command line a keychain that
+/// cannot be reached, as on a server with no desktop, counts as holding nothing.
+fn stored_secret(
+    store: &ConnectionStore,
+    saved: &SavedConnection,
+    command_line: bool,
+) -> AppResult<Option<String>> {
+    match store.secret(&saved.id) {
+        Err(error) if command_line && error.kind == ErrorKind::Keychain => {
+            log::warn!("{}", error.message);
+            Ok(None)
+        }
+        secret => secret,
+    }
+}
+
+fn unattended_auth(
+    saved: &SavedConnection,
+    secret: Option<String>,
+    unattended: &Unattended<'_>,
+) -> AppResult<AuthMethod> {
+    let name = &saved.name;
+    match saved.auth_type {
+        // An FTP server open to anyone asks for no password worth keeping.
+        AuthType::Password if secret.is_none() && signs_in_as_anyone(saved) => {
+            Ok(AuthMethod::Password {
+                password: String::new(),
+            })
+        }
+        AuthType::Password if secret.is_none() && unattended.command_line => Err(AppError::new(
+            ErrorKind::AuthFailed,
+            format!(
+                "No password for {name}: none is saved for it in the system keychain, or this \
+                 computer has none. Name it with --connection \"{name}\" and give its password \
+                 with POROS_PASSWORD, --password-env or --password-file, or have the connection \
+                 sign in with a key or the SSH agent"
+            ),
+        )),
+        AuthType::OAuth => {
+            let provider = CloudProvider::for_protocol(saved.protocol)
+                .ok_or_else(|| AppError::invalid("Only cloud drives sign in through a browser"))?;
+            let Some(cloud) = unattended.cloud else {
+                return auth_for(saved, secret, |_| String::new());
+            };
+            let refresh_token = secret.ok_or_else(|| {
+                AppError::new(
+                    ErrorKind::AuthFailed,
+                    format!(
+                        "The sign-in of {name} is not in the system keychain; open it once in Poros"
+                    ),
+                )
+            })?;
+            Ok(AuthMethod::OAuth {
+                grant_id: None,
+                refresh_token,
+                client: OAuthClient::configured(provider, cloud),
+            })
+        }
+        _ => auth_for(saved, secret, |name| {
+            format!(
+                "Save the password of {name} in the system keychain so Poros can connect on its own"
+            )
+        }),
+    }
+}
+
+fn signs_in_as_anyone(saved: &SavedConnection) -> bool {
+    let username = saved.username.trim();
+    saved.protocol.is_ftp() && (username.is_empty() || username.eq_ignore_ascii_case("anonymous"))
 }
 
 #[cfg(test)]
@@ -368,5 +483,199 @@ mod tests {
         let error =
             saved_profile(&store, &ConnectionSettings::default(), &behind_ftp.id).unwrap_err();
         assert!(error.message.contains("cannot be a jump host"));
+    }
+
+    fn save_as(store: &ConnectionStore, changes: SavedConnection, secret: Option<&str>) -> String {
+        store
+            .save(
+                SavedConnection {
+                    save_secret: secret.is_some(),
+                    ..changes
+                },
+                secret.map(str::to_string),
+            )
+            .unwrap()
+            .id
+    }
+
+    #[test]
+    fn connections_of_any_protocol_open_on_their_own_when_asked() {
+        let (_dir, store) = store();
+        let settings = ConnectionSettings::default();
+        let any = Unattended::default();
+        let ftp = SavedConnection {
+            protocol: Protocol::Ftp,
+            name: "files".into(),
+            port: 21,
+            username: "me".into(),
+            auth_type: AuthType::Password,
+            ..connection()
+        };
+        let with_password = save_as(&store, ftp.clone(), Some("ftp-pw"));
+        let profile = saved_profile_with(&store, &settings, &with_password, &any).unwrap();
+        assert_eq!(profile.protocol, Protocol::Ftp);
+        assert!(matches!(
+            &profile.auth,
+            AuthMethod::Password { password } if password == "ftp-pw"
+        ));
+        assert_eq!(profile.timeout_secs, Some(settings.timeout_secs));
+
+        // A server open to anyone needs no saved password; any other does.
+        let anonymous = save_as(
+            &store,
+            SavedConnection {
+                name: "mirror".into(),
+                username: "anonymous".into(),
+                ..ftp.clone()
+            },
+            None,
+        );
+        assert!(matches!(
+            &saved_profile_with(&store, &settings, &anonymous, &any).unwrap().auth,
+            AuthMethod::Password { password } if password.is_empty()
+        ));
+        let no_password = save_as(
+            &store,
+            SavedConnection {
+                name: "private".into(),
+                ..ftp
+            },
+            None,
+        );
+        let error = saved_profile_with(&store, &settings, &no_password, &any).unwrap_err();
+        assert!(error.message.contains("Save the password of private"));
+    }
+
+    #[test]
+    fn the_command_line_says_how_to_give_a_password_and_takes_one() {
+        let (_dir, store) = store();
+        let settings = ConnectionSettings::default();
+        let id = save(&store, "backup", AuthType::Password, None, None).id;
+        let command_line = || Unattended {
+            command_line: true,
+            ..Unattended::default()
+        };
+        let error = saved_profile_with(&store, &settings, &id, &command_line()).unwrap_err();
+        assert_eq!(error.kind, ErrorKind::AuthFailed);
+        for part in [
+            "--connection \"backup\"",
+            "POROS_PASSWORD",
+            "--password-file",
+        ] {
+            assert!(error.message.contains(part), "{}", error.message);
+        }
+
+        let given = Unattended {
+            password: Some("typed".into()),
+            passphrase: Some("for a key".into()),
+            timeout_secs: Some(5),
+            ..command_line()
+        };
+        let profile = saved_profile_with(&store, &settings, &id, &given).unwrap();
+        assert!(matches!(
+            &profile.auth,
+            AuthMethod::Password { password } if password == "typed"
+        ));
+        assert_eq!(profile.timeout_secs, Some(5));
+
+        // A given secret is used before the keychain's, each for its own kind of sign-in.
+        let key = save(&store, "key", AuthType::PublicKey, None, Some("stored")).id;
+        assert!(matches!(
+            &saved_profile_with(&store, &settings, &key, &given).unwrap().auth,
+            AuthMethod::PublicKey { passphrase: Some(passphrase), .. } if passphrase == "for a key"
+        ));
+        assert!(matches!(
+            &saved_profile_with(&store, &settings, &key, &command_line()).unwrap().auth,
+            AuthMethod::PublicKey { passphrase: Some(passphrase), .. } if passphrase == "stored"
+        ));
+    }
+
+    /// A keychain that cannot be reached, as on a server with no desktop session.
+    struct NoKeychainService;
+
+    impl crate::connections::SecretStore for NoKeychainService {
+        fn get(&self, _account: &str) -> AppResult<Option<String>> {
+            Err(AppError::new(
+                ErrorKind::Keychain,
+                "The system keychain is not available: no secret service",
+            ))
+        }
+
+        fn set(&self, _account: &str, _secret: &str) -> AppResult<()> {
+            Ok(())
+        }
+
+        fn delete(&self, _account: &str) -> AppResult<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_missing_keychain_stops_only_what_needs_its_secret() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store = ConnectionStore::new(
+            temp_dir.path().join("connections.json"),
+            Box::new(NoKeychainService),
+        );
+        let settings = ConnectionSettings::default();
+        let password = save(&store, "backup", AuthType::Password, None, Some("lost")).id;
+        let key = save(&store, "deploy", AuthType::PublicKey, None, Some("lost")).id;
+        let command_line = Unattended {
+            command_line: true,
+            ..Unattended::default()
+        };
+
+        let error = saved_profile_with(&store, &settings, &password, &command_line).unwrap_err();
+        assert_eq!(error.kind, ErrorKind::AuthFailed);
+        assert!(
+            error.message.contains("POROS_PASSWORD"),
+            "{}",
+            error.message
+        );
+        // A key may need no passphrase, so it is tried without one.
+        assert!(matches!(
+            &saved_profile_with(&store, &settings, &key, &command_line)
+                .unwrap()
+                .auth,
+            AuthMethod::PublicKey {
+                passphrase: None,
+                ..
+            }
+        ));
+        // The app says what is wrong with the keychain, as it always did.
+        let error = saved_profile(&store, &settings, &password).unwrap_err();
+        assert_eq!(error.kind, ErrorKind::Keychain);
+    }
+
+    #[test]
+    fn cloud_drives_sign_in_with_their_stored_account_where_settings_are_given() {
+        let (_dir, store) = store();
+        let settings = ConnectionSettings::default();
+        let drive = save_as(
+            &store,
+            SavedConnection {
+                protocol: Protocol::GoogleDrive,
+                name: "Drive".into(),
+                auth_type: AuthType::OAuth,
+                ..connection()
+            },
+            Some("refresh-token"),
+        );
+        let cloud = CloudSettings::default();
+        let with_cloud = Unattended {
+            cloud: Some(&cloud),
+            ..Unattended::default()
+        };
+        assert!(matches!(
+            &saved_profile_with(&store, &settings, &drive, &with_cloud).unwrap().auth,
+            AuthMethod::OAuth { grant_id: None, refresh_token, .. } if refresh_token == "refresh-token"
+        ));
+        let error =
+            saved_profile_with(&store, &settings, &drive, &Unattended::default()).unwrap_err();
+        assert!(
+            error.message.contains("needs a window"),
+            "{}",
+            error.message
+        );
     }
 }
