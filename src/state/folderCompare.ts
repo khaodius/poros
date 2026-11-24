@@ -21,6 +21,7 @@ import {
 } from "../lib/folderCompare";
 import { baseName, samePath } from "../lib/path";
 import type { FolderCompareSettings } from "../lib/settings";
+import { liveEntries } from "../lib/versions";
 import type {
   CompareMode,
   DirListing,
@@ -112,7 +113,8 @@ export function snapshotOf(shown: ShownFolder): PaneSnapshot | null {
     showingResults: shown.showingResults,
     path: listing.path,
     parent: listing.parent,
-    entries: compareEntries(listing.entries),
+    // Deleted files shown among the others are not in the folder to compare.
+    entries: compareEntries(liveEntries(listing)),
   };
 }
 

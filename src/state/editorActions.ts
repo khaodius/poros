@@ -11,7 +11,9 @@ import { useUiStore } from "./uiStore";
 import { stopSavingWorkspace } from "./workspace";
 
 function sameFile(tab: PaneTab, location: DocumentLocation): tab is EditorTab {
-  if (tab.kind !== "editor" || tab.path !== location.path) return false;
+  if (tab.kind !== "editor" || tab.path !== location.path || tab.version !== undefined) {
+    return false;
+  }
   return location.side === "remote" ? tab.sessionId === location.sessionId : !tab.sessionId;
 }
 

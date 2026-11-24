@@ -17,6 +17,8 @@ interface PanePreviewProps {
   onOpenInEditor: (entry: FileEntry) => void;
   onSwitchPane: (from: HTMLElement) => void;
   onLeave: () => void;
+  /** Rows on show that are not there to read: deleted files shown among the others. */
+  leftOut?: ReadonlySet<string>;
 }
 
 /**
@@ -32,6 +34,7 @@ export function PanePreview({
   onOpenInEditor,
   onSwitchPane,
   onLeave,
+  leftOut,
 }: PanePreviewProps) {
   const remoteSession = source.kind === "remote" ? sessionId : undefined;
   // A vault's bytes come over the connection of the server it is on.
@@ -63,8 +66,9 @@ export function PanePreview({
       subjectOf(
         visibleEntries.find((entry) => entry.path === cursorPath),
         selectedEntries(),
+        leftOut,
       ),
-    [visibleEntries, cursorPath, selectedEntries],
+    [visibleEntries, cursorPath, selectedEntries, leftOut],
   );
   return (
     <PreviewPane

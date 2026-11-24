@@ -81,9 +81,18 @@ export type Subject =
   | { kind: "special"; entry: FileEntry }
   | { kind: "selection"; entries: FileEntry[] };
 
-/** What the preview is about: several selected items together, else the one under the cursor. */
-export function subjectOf(cursor: FileEntry | undefined, selected: FileEntry[]): Subject {
+/**
+ * What the preview is about: several selected items together, else the one under the cursor.
+ * Rows in `leftOut`, such as deleted files shown among the others, have nothing to read.
+ */
+export function subjectOf(
+  cursor: FileEntry | undefined,
+  given: FileEntry[],
+  leftOut?: ReadonlySet<string>,
+): Subject {
+  const selected = leftOut ? given.filter((entry) => !leftOut.has(entry.path)) : given;
   if (selected.length > 1) return { kind: "selection", entries: selected };
+  if (cursor && leftOut?.has(cursor.path)) return { kind: "nothing" };
   const entry = cursor ?? selected[0];
   if (!entry) return { kind: "nothing" };
   if (entry.kind === "dir" || entry.linkTarget === "dir") return { kind: "folder", entry };

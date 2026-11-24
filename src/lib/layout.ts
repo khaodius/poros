@@ -61,6 +61,9 @@ export type PaneTab =
       origin: string;
       /** The session the file was opened from, for server files. */
       sessionId?: string;
+      /** The version shown, for an older version of a file in a bucket: read only, and never
+       * reopened after a restart. */
+      version?: string;
       draft?: EditorDraft;
       restore?: Restore;
     }
@@ -473,6 +476,7 @@ function isTab(value: unknown): value is PaneTab {
       return (
         [tab.documentId, tab.name, tab.path, tab.origin].every(isString) &&
         isOptionalString(tab.sessionId) &&
+        isOptionalString(tab.version) &&
         (tab.draft === undefined || isDraft(tab.draft)) &&
         isRestore(tab.restore, isString(tab.sessionId))
       );
@@ -571,6 +575,8 @@ function restorableTab(tab: PaneTab, current: CurrentState): PaneTab | null {
       return { id, kind: "terminal", sessionId, label, restore: { server } };
     }
     case "editor": {
+      // An older version was only looked at, and opening the file instead would mislead.
+      if (tab.version !== undefined) return null;
       // Reopened from the file as last saved; the close guard has asked about any changes.
       const { id, documentId, name, path, origin, sessionId } = tab;
       const reopened: EditorTab = { id, kind: "editor", documentId, name, path, origin };

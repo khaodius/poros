@@ -4,6 +4,7 @@
 pub mod archive;
 mod compare;
 mod delete;
+mod history;
 mod local_ops;
 pub(crate) mod names;
 mod permissions;
@@ -23,7 +24,8 @@ use crate::error::{AppError, AppResult};
 use crate::events::Events;
 use crate::session::{Session, SessionManager};
 use crate::sftp::RemoteFs;
-pub use compare::{CompareRequest, Comparison, FileRef};
+pub use compare::{CompareRequest, Comparison, FileRef, VersionCompareRequest};
+pub use history::{DeletedAction, DeletedItem, DeletedRequest, DeletedSummary};
 pub use permissions::{Details, ModeChange, PermissionRequest, PermissionSummary, Usage};
 pub use rename::{
     Rename, RenameFailure, RenameGroup, RenameRequest, RenameSummary, Renamed, Stranded,
@@ -588,5 +590,27 @@ impl FileOperations {
     pub async fn compare(&self, request: CompareRequest) -> AppResult<Comparison> {
         let running = self.begin(&request.operation_id);
         compare::compare(&self.sessions, &request, &running.cancel).await
+    }
+
+    /// Compares one version of a file with the file as it is now.
+    pub async fn compare_version(&self, request: VersionCompareRequest) -> AppResult<Comparison> {
+        let running = self.begin(&request.operation_id);
+        compare::compare_version(&self.sessions, &request, &running.cancel).await
+    }
+
+    /// Brings back what a delete hid in a bucket that keeps versions, or removes it for good.
+    pub async fn restore_or_purge_deleted(
+        &self,
+        request: DeletedRequest,
+    ) -> AppResult<DeletedSummary> {
+        let running = self.begin(&request.operation_id);
+        let session = self.sessions.get(&request.session_id).await?;
+        history::run(
+            session.files().as_ref(),
+            &request,
+            &running.cancel,
+            &running.progress,
+        )
+        .await
     }
 }

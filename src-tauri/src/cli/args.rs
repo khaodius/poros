@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use clap::builder::FalseyValueParser;
-use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
+use clap::{ArgAction, Args, FromArgMatches, Parser, Subcommand, ValueEnum};
 
 use super::exit;
 use crate::settings::MAX_WORKERS;
@@ -227,6 +227,8 @@ pub enum Command {
     Ls(ListArgs),
     /// Show the size, time and permissions of paths
     Stat(PathsArgs),
+    /// List the versions a bucket keeps of a file, restore one or download one
+    Versions(VersionsArgs),
     /// Print files to standard output
     Cat(CatArgs),
     /// Write standard input to a file on the server
@@ -353,6 +355,27 @@ pub struct ListArgs {
     /// How many levels a recursive listing goes down
     #[arg(long, value_name = "LEVELS", requires = "recursive")]
     pub max_depth: Option<usize>,
+    /// Also list what was deleted, in a bucket that keeps versions
+    #[arg(long, conflicts_with = "recursive")]
+    pub deleted: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct VersionsArgs {
+    /// The file whose versions to list
+    #[arg(value_name = "PATH")]
+    pub path: String,
+    /// Make this version the current one again; what it replaces stays in the history
+    #[arg(long, value_name = "VERSION", conflicts_with = "get")]
+    pub restore: Option<String>,
+    /// Download one version: --get VERSION DESTINATION
+    #[arg(long, num_args = 2, value_names = ["VERSION", "DESTINATION"])]
+    pub get: Option<Vec<String>>,
+    /// Create the destination folder when it is missing
+    #[arg(short, long, requires = "get")]
+    pub parents: bool,
+    #[command(flatten)]
+    pub options: TransferOptions,
 }
 
 #[derive(Debug, Args)]
@@ -450,7 +473,7 @@ pub struct TransferArgs {
     pub options: TransferOptions,
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
 pub struct TransferOptions {
     /// Files moved at once, each on its own connection
     #[arg(short, long, value_name = "COUNT", value_parser = clap::value_parser!(u32).range(1..=MAX_WORKERS as i64), help_heading = TRANSFERS)]
@@ -509,6 +532,16 @@ pub struct TransferOptions {
     pub single_connection: bool,
 }
 
+impl TransferOptions {
+    /// Whether any of them was given, as only a command that transfers files takes them.
+    pub fn any_given(&self) -> bool {
+        let none = TransferOptions::augment_args(clap::Command::new("options"))
+            .try_get_matches_from(["options"])
+            .and_then(|matches| TransferOptions::from_arg_matches(&matches));
+        none.map_or(true, |none| *self != none)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum Exists {
     Overwrite,
@@ -542,6 +575,9 @@ pub struct RemoveArgs {
     /// Pass over paths that do not exist
     #[arg(short, long)]
     pub force: bool,
+    /// Delete an S3 bucket that keeps versions with every older version and deleted file in it
+    #[arg(long)]
+    pub all_versions: bool,
 }
 
 #[derive(Debug, Args)]
@@ -881,6 +917,47 @@ mod tests {
             panic!("not exec");
         };
         assert_eq!(exec.command, ["ls", "-la", "/tmp"]);
+    }
+
+    #[test]
+    fn versions_lists_restores_or_downloads() {
+        let parse = |arguments: &[&str]| {
+            let line = ["poros-cli", "versions"].iter().chain(arguments).copied();
+            Cli::try_parse_from(line).map(|cli| match cli.command {
+                Command::Versions(versions) => versions,
+                _ => panic!("not versions"),
+            })
+        };
+        let list = parse(&["notes/a.txt"]).unwrap();
+        assert_eq!(list.path, "notes/a.txt");
+        assert!(list.restore.is_none() && list.get.is_none());
+        let restore = parse(&["a.txt", "--restore", "null"]).unwrap();
+        assert_eq!(restore.restore.as_deref(), Some("null"));
+        let get = parse(&["a.txt", "--get", "v1", "/tmp/old.txt", "-w", "2"]).unwrap();
+        assert_eq!(get.get.unwrap(), ["v1", "/tmp/old.txt"]);
+        assert_eq!(get.options.workers, Some(2));
+        assert!(get.options.any_given());
+        assert!(!list.options.any_given() && !restore.options.any_given());
+        for option in [
+            &["-w", "2"][..],
+            &["--exists", "skip"],
+            &["--no-verify"],
+            &["--limit-down", "9"],
+        ] {
+            let given = parse(&[&["a.txt", "--restore", "v1"][..], option].concat()).unwrap();
+            assert!(given.options.any_given(), "{option:?}");
+        }
+        assert!(!parse(&["a.txt", "--exists", "overwrite"])
+            .unwrap()
+            .options
+            .any_given());
+        assert!(parse(&["a.txt", "--get", "v1"]).is_err());
+        assert!(parse(&["a.txt", "--restore", "v1", "--get", "v2", "x"]).is_err());
+        assert!(Cli::try_parse_from(["poros-cli", "rm", "--all-versions", "/bucket"]).is_ok());
+        assert!(parse(&[]).is_err());
+        let deleted = Cli::try_parse_from(["poros-cli", "ls", "--deleted", "/bucket"]).unwrap();
+        assert!(matches!(deleted.command, Command::Ls(list) if list.deleted));
+        assert!(Cli::try_parse_from(["poros-cli", "ls", "--deleted", "-R"]).is_err());
     }
 
     #[test]

@@ -226,6 +226,8 @@ export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
           drawSelection(),
           dropCursor(),
           EditorState.allowMultipleSelections.of(true),
+          // An older version of a file is there to read; restoring it is how it changes.
+          EditorState.readOnly.of(tabRef.current.version !== undefined),
           indentOnInput(),
           syntaxHighlighting(syntaxColors),
           bracketMatching(),
@@ -342,6 +344,7 @@ export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
     }));
 
   const ready = phase === "ready";
+  const readOnly = tab.version !== undefined;
   return (
     <section className={["pane", "editor-pane", active && "is-active"].filter(Boolean).join(" ")}>
       <header className="pane-header">
@@ -366,8 +369,8 @@ export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
             <RotateCw size={15} />
           </EditorButton>
           <EditorButton
-            label="Save (Ctrl+S)"
-            disabled={!ready || saving}
+            label={readOnly ? "An older version is read only" : "Save (Ctrl+S)"}
+            disabled={!ready || saving || readOnly}
             onClick={() => void save(false)}
           >
             <Save size={15} />
@@ -378,6 +381,7 @@ export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
       <div className="editor-location selectable" title={tab.path}>
         <span className="editor-origin">{tab.origin}</span>
         <span className="editor-path">{tab.path}</span>
+        {readOnly && <span className="version-read-only">Older version, read only</span>}
       </div>
 
       {conflict && (
@@ -461,7 +465,8 @@ export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
             <button
               type="button"
               className="editor-status-button"
-              title="Encoding used when saving"
+              title={readOnly ? "Encoding of this older version" : "Encoding used when saving"}
+              disabled={readOnly}
               onClick={(event) => showMenu(event, encodingMenu())}
             >
               {ENCODING_LABELS[format.encoding]}
@@ -469,7 +474,10 @@ export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
             <button
               type="button"
               className="editor-status-button"
-              title="Line endings used when saving"
+              title={
+                readOnly ? "Line endings of this older version" : "Line endings used when saving"
+              }
+              disabled={readOnly}
               onClick={(event) => showMenu(event, lineEndingMenu())}
             >
               {LINE_ENDING_LABELS[format.lineEnding]}
