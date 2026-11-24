@@ -129,9 +129,8 @@ impl FileQueue {
     }
 
     fn enqueue_for(&self, target: &Arc<SessionTarget>, file: FileTransfer) -> JobId {
-        let session_id = target.session_id.clone();
         let spec = JobSpec {
-            session_id: session_id.clone(),
+            session_id: target.session_id.clone(),
             source_session_id: None,
             direction: file.direction,
             kind: JobKind::File,
@@ -148,12 +147,7 @@ impl FileQueue {
             // queue forgets, under that lock, the servers no job needs. Targets leave the queue
             // with their last job, and this one may be for a session that closed since.
             let mut queue = self.shared.queue.lock().unwrap();
-            self.shared
-                .targets
-                .lock()
-                .unwrap()
-                .entry(session_id)
-                .or_insert_with(|| target.clone());
+            self.shared.keep_target(&queue, target);
             let id = queue.add_resolved(spec, file.resolution);
             queue.move_to(&[id], true);
             id
@@ -304,12 +298,7 @@ mod tests {
         while manager.shared.target("closed").is_err() && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(1));
         }
-        manager
-            .shared
-            .targets
-            .lock()
-            .unwrap()
-            .retain(|session_id, _| tick.has_session_jobs(session_id));
+        manager.shared.forget_unused_targets(&tick);
         drop(tick);
         let id = queuing.join().unwrap();
 

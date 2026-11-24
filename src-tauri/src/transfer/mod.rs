@@ -392,6 +392,16 @@ impl Shared {
             .or_insert_with(|| Arc::new(SessionTarget::for_session(session)));
     }
 
+    /// Keeps a target a caller held on to for a session that may have closed since, as
+    /// [`Self::register`] keeps one for an open session, and under the same lock.
+    fn keep_target(&self, _queue: &Queue, target: &Arc<SessionTarget>) {
+        self.targets
+            .lock()
+            .unwrap()
+            .entry(target.session_id.clone())
+            .or_insert_with(|| target.clone());
+    }
+
     /// Forgets the servers of sessions that no job in the queue involves any more.
     fn forget_unused_targets(&self, queue: &Queue) {
         self.targets
