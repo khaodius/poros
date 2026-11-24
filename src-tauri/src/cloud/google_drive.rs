@@ -309,9 +309,10 @@ impl RemoteFileSystem for DriveFs {
                 })
                 .await?;
             for file in list.files {
-                // A slash cannot be part of a path name, and only the first of several files
-                // with one name can be reached by path.
-                if file.name.contains('/') || !seen.insert(file.name.clone()) {
+                // A slash cannot be part of a path name, `.` and `..` (names Drive allows)
+                // would stand for this folder and the one above it, and only the first of
+                // several files with one name can be reached by path.
+                if protocol::validate_name(&file.name).is_err() || !seen.insert(file.name.clone()) {
                     continue;
                 }
                 let path = remote_path::join(&directory, &file.name);
@@ -351,7 +352,7 @@ impl RemoteFileSystem for DriveFs {
 
     async fn rename(&self, path: &str, new_name: &str) -> AppResult<String> {
         protocol::validate_name(new_name)?;
-        let path = protocol::normalize(&self.resolve(path));
+        let path = protocol::normalize_exact(&self.resolve(path))?;
         let parent = remote_path::parent(&path)
             .ok_or_else(|| AppError::invalid("Cannot rename the root folder"))?;
         let target = remote_path::join(&parent, new_name);
@@ -371,7 +372,7 @@ impl RemoteFileSystem for DriveFs {
     /// Moves the items to the Drive trash, where they can be restored for 30 days.
     async fn delete(&self, paths: &[String]) -> AppResult<()> {
         let resolved: Vec<String> = paths.iter().map(|path| self.resolve(path)).collect();
-        for path in protocol::outermost(&resolved) {
+        for path in protocol::outermost(&resolved)? {
             if path == "/" {
                 return Err(AppError::invalid("Refusing to delete /"));
             }

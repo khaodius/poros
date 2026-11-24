@@ -143,6 +143,10 @@ pub fn run() {
                     });
                 },
             ));
+            let store = connections.clone();
+            sessions.set_secret_source(Arc::new(move |id: &str, scope: &SecretScope| {
+                store.secret_for(id, scope).ok().flatten()
+            }));
             let transfers =
                 TransferManager::new(sessions.clone(), events.clone(), settings.get().transfers);
             let (handle, store) = (app.handle().clone(), connections.clone());

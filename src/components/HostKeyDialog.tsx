@@ -1,4 +1,5 @@
 import { ShieldAlert, ShieldQuestion } from "lucide-react";
+import { approvalOf } from "../lib/hostKey";
 import { useHostKeyPrompt } from "../state/connectFlow";
 import { Dialog } from "./Dialog";
 
@@ -68,18 +69,14 @@ export function HostKeyDialog() {
         <button type="button" className="button" onClick={() => answer(null)}>
           Cancel
         </button>
-        <button
-          type="button"
-          className="button"
-          onClick={() => answer({ fingerprint: hostKey.fingerprint, remember: false })}
-        >
+        <button type="button" className="button" onClick={() => answer(approvalOf(hostKey, false))}>
           Connect once
         </button>
         <button
           type="button"
           data-autofocus={changed ? undefined : true}
           className={`button ${changed ? "button-danger" : "button-primary"}`}
-          onClick={() => answer({ fingerprint: hostKey.fingerprint, remember: true })}
+          onClick={() => answer(approvalOf(hostKey, true))}
         >
           {changed
             ? `Replace ${certificate ? "certificate" : "key"} and connect`
