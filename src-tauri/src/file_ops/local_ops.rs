@@ -1,5 +1,6 @@
 //! Moving and copying on this computer's disks. Runs on a blocking thread.
 
+use std::ffi::OsStr;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -64,6 +65,12 @@ pub fn move_or_copy(
     cancel: &CancellationToken,
     progress: &Progress,
 ) -> AppResult<OperationSummary> {
+    if let Some(name) = &request.target_name {
+        // The server's rule for names allows `..\x` and `C:\x`, which are paths on Windows.
+        if Path::new(name).file_name() != Some(OsStr::new(name)) {
+            return Err(AppError::invalid(format!("{name} is not a name")));
+        }
+    }
     let directory = PathBuf::from(&request.target_directory);
     if !directory.is_dir() {
         return Err(AppError::new(
@@ -82,6 +89,7 @@ pub fn move_or_copy(
                 .place(
                     Path::new(source),
                     &directory,
+                    request.target_name.as_deref(),
                     request.mode,
                     request.conflict,
                 )
@@ -106,10 +114,12 @@ impl Work<'_> {
         }
     }
 
+    /// Moves or copies one item into `directory`, under `target_name` when it is given.
     fn place(
         &self,
         source: &Path,
         directory: &Path,
+        target_name: Option<&str>,
         mode: Mode,
         conflict: Conflict,
     ) -> AppResult<Option<PathBuf>> {
@@ -118,18 +128,19 @@ impl Work<'_> {
             .symlink_metadata()
             .map_err(|error| with_path(error, source))?;
         let kind = Kind::of(&metadata);
-        let name = source
+        let own_name = source
             .file_name()
             .ok_or_else(|| AppError::invalid("Cannot move or copy a filesystem root"))?
             .to_string_lossy()
             .into_owned();
-        if kind == Kind::Dir && directory.starts_with(source) {
+        if kind == Kind::Dir && is_inside(directory, source) {
             let verb = if mode == Mode::Move { "move" } else { "copy" };
             return Err(AppError::invalid(format!(
-                "Cannot {verb} the folder {name} into itself"
+                "Cannot {verb} the folder {own_name} into itself"
             )));
         }
-        let in_place = source.parent() == Some(directory);
+        let name = target_name.map_or_else(|| own_name.clone(), str::to_string);
+        let in_place = source.parent() == Some(directory) && name == own_name;
         let destination = match (mode, in_place) {
             (Mode::Move, true) => return Ok(None),
             (Mode::Copy, true) => Some(Destination::Fresh(free_name(directory, &name, kind)?)),
@@ -138,6 +149,14 @@ impl Work<'_> {
         let Some(destination) = destination else {
             return Ok(None);
         };
+        if let Destination::Replace(existing) = &destination {
+            if same_file(source, existing) {
+                return Err(
+                    AppError::invalid(format!("{name} would be replaced with itself"))
+                        .with_path(display(source)),
+                );
+            }
+        }
         self.progress.working_on(&display(source));
         match mode {
             Mode::Move => self.move_to(source, kind, &destination)?,
@@ -363,6 +382,11 @@ fn destination(
     let existing_is_dir = Kind::of(&existing) == Kind::Dir;
     match conflict {
         Conflict::Skip => Ok(None),
+        Conflict::Fail => Err(AppError::new(
+            ErrorKind::AlreadyExists,
+            format!("{name} already exists"),
+        )
+        .with_path(display(&path))),
         Conflict::KeepBoth => Ok(Some(Destination::Fresh(free_name(directory, name, kind)?))),
         Conflict::Replace => {
             match (kind == Kind::Dir, existing_is_dir) {
@@ -382,6 +406,26 @@ fn destination(
                 }
             }
         }
+    }
+}
+
+/// Whether `source` is the file at `existing` once links are followed, as a link to it, or
+/// the file reached through a linked folder, is.
+fn same_file(source: &Path, existing: &Path) -> bool {
+    match (fs::canonicalize(source), fs::canonicalize(existing)) {
+        (Ok(source), Ok(existing)) => source == existing,
+        _ => false,
+    }
+}
+
+/// Whether `directory` is `folder` or inside it, as spelled or once links are followed.
+fn is_inside(directory: &Path, folder: &Path) -> bool {
+    if directory.starts_with(folder) {
+        return true;
+    }
+    match (fs::canonicalize(directory), fs::canonicalize(folder)) {
+        (Ok(directory), Ok(folder)) => directory.starts_with(folder),
+        _ => false,
     }
 }
 
@@ -423,6 +467,7 @@ mod tests {
             sources: sources.iter().map(|path| display(path)).collect(),
             target_directory: display(target),
             conflict,
+            target_name: None,
         }
     }
 
@@ -549,6 +594,143 @@ mod tests {
         assert_eq!(summary.failures.len(), 1);
         assert!(summary.failures[0].message.contains("into itself"));
         assert!(!root.join("a/b/a").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_a_folder_into_itself_through_a_link() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let root = temp_dir.path();
+        fs::create_dir_all(root.join("photos/inside")).unwrap();
+        fs::write(root.join("photos/a.jpg"), b"a").unwrap();
+        std::os::unix::fs::symlink("photos", root.join("album")).unwrap();
+        for (mode, verb) in [(Mode::Copy, "copy"), (Mode::Move, "move")] {
+            let summary = run(&request(
+                mode,
+                &[&root.join("photos")],
+                &root.join("album/inside"),
+                Conflict::KeepBoth,
+            ));
+            let messages: Vec<&str> = summary
+                .failures
+                .iter()
+                .map(|failure| failure.message.as_str())
+                .collect();
+            assert_eq!(
+                messages,
+                [format!("Cannot {verb} the folder photos into itself")]
+            );
+            assert!(root.join("photos/a.jpg").exists());
+            assert_eq!(fs::read_dir(root.join("photos/inside")).unwrap().count(), 0);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_is_not_replaced_with_itself_through_a_link() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let root = temp_dir.path();
+        fs::create_dir_all(root.join("real")).unwrap();
+        fs::create_dir_all(root.join("links")).unwrap();
+        fs::write(root.join("real/notes.txt"), b"notes").unwrap();
+        std::os::unix::fs::symlink("real", root.join("alias")).unwrap();
+        std::os::unix::fs::symlink("../real/notes.txt", root.join("links/notes.txt")).unwrap();
+        for source in ["alias/notes.txt", "links/notes.txt"] {
+            for mode in [Mode::Move, Mode::Copy] {
+                let summary = run(&request(
+                    mode,
+                    &[&root.join(source)],
+                    &root.join("real"),
+                    Conflict::Replace,
+                ));
+                let messages: Vec<&str> = summary
+                    .failures
+                    .iter()
+                    .map(|failure| failure.message.as_str())
+                    .collect();
+                assert_eq!(
+                    messages,
+                    ["notes.txt would be replaced with itself"],
+                    "{source} {mode:?}"
+                );
+                let kept = root.join("real/notes.txt");
+                assert!(
+                    kept.symlink_metadata().unwrap().is_file(),
+                    "{source} {mode:?}"
+                );
+                assert_eq!(fs::read(&kept).unwrap(), b"notes");
+            }
+        }
+    }
+
+    #[test]
+    fn takes_the_name_asked_for() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let root = temp_dir.path();
+        fs::write(root.join("a.txt"), b"a").unwrap();
+        fs::write(root.join("b.txt"), b"b").unwrap();
+        let named = |mode, conflict| MoveCopyRequest {
+            target_name: Some("b.txt".into()),
+            ..request(mode, &[&root.join("a.txt")], root, conflict)
+        };
+
+        let kept = run(&named(Mode::Copy, Conflict::KeepBoth));
+        assert_eq!(kept.placed, [display(&root.join("b (2).txt"))]);
+        assert_eq!(fs::read(root.join("b (2).txt")).unwrap(), b"a");
+        let replaced = run(&named(Mode::Move, Conflict::Replace));
+        assert_eq!(replaced.placed, [display(&root.join("b.txt"))]);
+        assert_eq!(fs::read(root.join("b.txt")).unwrap(), b"a");
+        assert!(!root.join("a.txt").exists());
+    }
+
+    #[test]
+    fn failing_on_a_taken_name_leaves_both_items() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let root = temp_dir.path();
+        fs::create_dir(root.join("into")).unwrap();
+        fs::write(root.join("a.txt"), b"a").unwrap();
+        fs::write(root.join("into/a.txt"), b"kept").unwrap();
+        for mode in [Mode::Move, Mode::Copy] {
+            let summary = run(&request(
+                mode,
+                &[&root.join("a.txt")],
+                &root.join("into"),
+                Conflict::Fail,
+            ));
+            assert!(summary.placed.is_empty(), "{mode:?}");
+            assert_eq!(summary.failures.len(), 1, "{mode:?}");
+            assert_eq!(summary.errors[0].kind, ErrorKind::AlreadyExists);
+            assert_eq!(fs::read(root.join("into/a.txt")).unwrap(), b"kept");
+            assert_eq!(fs::read(root.join("a.txt")).unwrap(), b"a");
+        }
+    }
+
+    #[test]
+    fn a_new_name_is_never_a_path() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let root = temp_dir.path();
+        fs::create_dir(root.join("into")).unwrap();
+        fs::write(root.join("a.txt"), b"a").unwrap();
+        let mut paths = vec!["../a.txt", "into/b.txt", "b/"];
+        if cfg!(windows) {
+            paths.extend(["..\\a.txt", "C:\\a.txt", "C:a.txt"]);
+        }
+        for name in paths {
+            let request = MoveCopyRequest {
+                target_name: Some(name.into()),
+                ..request(
+                    Mode::Copy,
+                    &[&root.join("a.txt")],
+                    &root.join("into"),
+                    Conflict::Fail,
+                )
+            };
+            let refused = move_or_copy(&request, &CancellationToken::new(), &Progress::default())
+                .unwrap_err();
+            assert_eq!(refused.kind, ErrorKind::InvalidInput, "{name}");
+        }
+        assert_eq!(fs::read_dir(root.join("into")).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(root).unwrap().count(), 2);
     }
 
     #[test]
