@@ -541,10 +541,14 @@ export function App() {
   );
 }
 
-function AppDialog() {
+export function AppDialog() {
   const dialog = useUiStore((state) => state.dialog);
-  const open = useUiStore((state) => state.open);
-  const close = useUiStore((state) => state.close);
+  const closeIfShown = useUiStore((state) => state.closeIfShown);
+  // Each dialog closes only itself, so one that finishes its work after it was dismissed leaves
+  // alone the dialog opened since.
+  const close = () => {
+    if (dialog) closeIfShown(dialog);
+  };
   switch (dialog?.kind) {
     case "connect":
       return (
@@ -560,11 +564,7 @@ function AppDialog() {
     case "saveConnection":
       return <SaveConnectionDialog sessionId={dialog.sessionId} onClose={close} />;
     case "importConnections":
-      return (
-        <ImportConnectionsDialog
-          onClose={() => (dialog.returnTo ? open(dialog.returnTo) : close())}
-        />
-      );
+      return <ImportConnectionsDialog onClose={() => closeIfShown(dialog, dialog.returnTo)} />;
     case "sync":
       return (
         <SyncDialog
@@ -575,7 +575,7 @@ function AppDialog() {
         />
       );
     case "update":
-      return <UpdateDialog onClose={() => (dialog.returnTo ? open(dialog.returnTo) : close())} />;
+      return <UpdateDialog onClose={() => closeIfShown(dialog, dialog.returnTo)} />;
     case "closeTab":
       return (
         <CloseTabDialog

@@ -57,10 +57,18 @@ interface UiState {
   dialog: AppDialog | null;
   open: (dialog: AppDialog) => void;
   close: () => void;
+  /**
+   * Closes `dialog` while it is the one on show, with `next` taking its place, as the dialog it
+   * was opened from does. A dialog that finishes its work after it was dismissed so leaves alone
+   * the one opened since.
+   */
+  closeIfShown: (dialog: AppDialog, next?: AppDialog) => void;
 }
 
 export const useUiStore = create<UiState>((set) => ({
   dialog: null,
   open: (dialog) => set({ dialog }),
   close: () => set({ dialog: null }),
+  closeIfShown: (dialog, next) =>
+    set((state) => (state.dialog === dialog ? { dialog: next ?? null } : state)),
 }));

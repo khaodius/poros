@@ -32,6 +32,7 @@ import {
   FolderPlus,
   FolderSearch,
   FolderSync,
+  GitCompareArrows,
   HardDrive,
   Home,
   Info,
@@ -54,13 +55,14 @@ import {
   X,
 } from "lucide-react";
 import { useBackForwardButtons } from "../hooks/useBackForwardButtons";
+import { useFolderCompare, useHiddenIdentical } from "../hooks/useFolderCompare";
 import { useListingPrefetch } from "../hooks/useListingPrefetch";
 import { usePane, type Focus } from "../hooks/usePane";
 import { useSearch, type SearchView } from "../hooks/useSearch";
 import { archiveFormatOf, isSingleFile, unpackedName } from "../lib/archives";
 import { COLUMN_LABELS, availableColumns, type DetailColumn } from "../lib/columns";
 import { entryAfterRemoval } from "../lib/cursor";
-import { sameFilesystem, toLocation, worksInPlace } from "../lib/fileOrigin";
+import { sameFilesystem, toLocation, worksInPlace, type FileOrigin } from "../lib/fileOrigin";
 import type { FileSource } from "../lib/fileSource";
 import { PANE_KEYBOARD_TARGET } from "../lib/focus";
 import { toAppError } from "../lib/ipc";
@@ -124,10 +126,13 @@ import {
 import { useUiStore } from "../state/uiStore";
 import { requestLockVault, vaultHandover } from "../state/vaultActions";
 import { workspaceChanged } from "../state/workspace";
+import { BulkRenameDialog } from "./BulkRenameDialog";
 import { CompareDialog, type CompareSide } from "./CompareDialog";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { DeleteDialog } from "./DeleteDialog";
 import { FileList, type MenuPosition } from "./FileList";
+import { FolderCompareBar } from "./FolderCompareBar";
+import { COMPARE_FOLDERS_SHORTCUT, folderCompareMenuItems } from "./folderCompareMenu";
 import { NewVaultDialog } from "./NewVaultDialog";
 import { PathBar } from "./PathBar";
 import { PromptDialog } from "./PromptDialog";
@@ -143,6 +148,7 @@ type PaneDialog =
   | { type: "delete"; entries: FileEntry[] }
   | { type: "placeTo"; mode: PlaceMode; entries: FileEntry[] }
   | { type: "properties"; entries: FileEntry[] }
+  | { type: "bulkRename"; origin: FileOrigin; folder: string; entries: FileEntry[] }
   | { type: "compare"; left: CompareSide; right: CompareSide };
 
 interface FilePaneProps {
@@ -273,6 +279,7 @@ export function FilePane({
     (path: string) => (sessionId ? vaultHandover(tabId, sessionId, path) : null),
     [tabId, sessionId],
   );
+  const hiddenIdentical = useHiddenIdentical(tabId);
   /** The entry whose row shows the name field. */
   const [renaming, setRenaming] = useState<string | null>(null);
   const [menu, setMenu] = useState<OpenMenu | null>(null);
@@ -307,6 +314,7 @@ export function FilePane({
     groupByDate,
     onSortChange: rememberSort,
     handover,
+    hideNames: hiddenIdentical,
     results: searchResults,
     // This computer's folders list at once, so only a server's are remembered.
     listings: sessionId && cachedListings ? paneListings : undefined,
@@ -325,6 +333,11 @@ export function FilePane({
   const [searchFocus, setSearchFocus] = useState(0);
   const recentSearches = useSearchStore((state) => state.recent[source.key]) ?? NO_SEARCHES;
   const [dialog, setDialog] = useState<PaneDialog | null>(null);
+  // A field whose row is no longer on show, as after going to another folder with the mouse's
+  // back button, ends there, so it does not come back when the folder is shown again.
+  if (renaming !== null && !pane.listing?.entries.some((entry) => entry.path === renaming)) {
+    setRenaming(null);
+  }
   const [pathEditRequest, setPathEditRequest] = useState(0);
   const sectionRef = useRef<HTMLElement>(null);
   const filterRef = useRef<HTMLInputElement>(null);
@@ -410,6 +423,16 @@ export function FilePane({
   useEffect(() => {
     updatePane(tabId, { locked: lockedCard });
   }, [tabId, lockedCard]);
+  const folderCompare = useFolderCompare({
+    tabId,
+    source,
+    sessionId,
+    pane,
+    covered: lockedCard,
+    focusList,
+  });
+  /** Rows left out because they are identical in the pane this one is compared with. */
+  const identicalHidden = hiddenIdentical ? (folderCompare.bar?.counts?.identical ?? 0) : 0;
 
   // The card takes the keyboard with it as it leaves, so the file list gets it back.
   const hadLockedCard = useRef(lockedCard);
@@ -578,6 +601,10 @@ export function FilePane({
       }
     : pane;
 
+  /** Closes `shown` only, so a dialog that finishes its work after it was dismissed leaves alone
+   * the one opened since. */
+  const closeDialog = (shown: PaneDialog) => () =>
+    setDialog((current) => (current === shown ? null : current));
   const openNewFolder = () => pane.listing && !inResults && setDialog({ type: "newFolder" });
   const openNewFile = () =>
     pane.listing && !inResults && setDialog({ type: "newFile", example: exampleFileName() });
@@ -662,6 +689,16 @@ export function FilePane({
       showToast("error", toAppError(caught).message);
       return false;
     }
+  };
+  const openBulkRename = (entries: FileEntry[]) => {
+    const listing = pane.listing;
+    if (!listing || entries.length < 2) return;
+    setDialog({
+      type: "bulkRename",
+      origin: paneOrigin({ kind: source.kind, sessionId }),
+      folder: listing.path,
+      entries,
+    });
   };
   const openDelete = () => selected.length > 0 && setDialog({ type: "delete", entries: selected });
 
@@ -902,7 +939,7 @@ export function FilePane({
     }
     if (!worksHere) {
       return {
-        label: `Compare (${needsSftp})`,
+        label: `Compare files (${needsSftp})`,
         icon: <FileDiff size={14} />,
         disabled: true,
         onSelect: () => undefined,
@@ -922,7 +959,9 @@ export function FilePane({
     }
     const other = counterpartFile(tabId);
     return {
-      label: other ? `Compare with ${other.entry.name}` : "Compare (select a file in another tab)",
+      label: other
+        ? `Compare with ${other.entry.name}`
+        : "Compare files (select a file in another tab)",
       icon: <FileDiff size={14} />,
       disabled: !other,
       onSelect: () =>
@@ -1127,6 +1166,7 @@ export function FilePane({
           ]
         : []),
       syncMenuItem(entry),
+      ...folderCompareMenuItems(folderCompare, entry === null),
       // Commands run over SSH.
       ...(sessionId && protocol === "sftp" && pane.listing
         ? [commandsMenuItem(sessionId, pane.listing.path, targets)]
@@ -1138,8 +1178,9 @@ export function FilePane({
         label: "Rename",
         icon: <Pencil size={14} />,
         shortcut: "F2",
-        disabled: targets.length !== 1,
-        onSelect: () => setRenaming(targets[0].path),
+        disabled: targets.length === 0,
+        onSelect: () =>
+          targets.length === 1 ? setRenaming(targets[0].path) : openBulkRename(targets),
       },
       {
         label: targets.length > 1 ? "Copy paths" : "Copy path",
@@ -1185,6 +1226,14 @@ export function FilePane({
       // Nothing is dropped unseen among a locked vault's encrypted files.
       data-drop-pane={lockedCard ? undefined : tabId}
       onMouseDown={markActive}
+      onKeyDown={(event) => {
+        // From anywhere in the pane; the file list handles it itself while it has the keyboard.
+        const primary = event.ctrlKey || event.metaKey;
+        if (!primary || !event.shiftKey || event.altKey || event.key.toLowerCase() !== "d") return;
+        if (dialog || menu) return;
+        event.preventDefault();
+        folderCompare.toggle();
+      }}
     >
       <header className="pane-header">
         <div className="pane-title">
@@ -1291,6 +1340,14 @@ export function FilePane({
             disabled={!pane.listing || lockedCard}
           >
             <FolderSearch size={15} />
+          </ToolbarButton>
+          <ToolbarButton
+            label={`Compare folders (${COMPARE_FOLDERS_SHORTCUT})`}
+            onClick={folderCompare.toggle}
+            pressed={folderCompare.comparing}
+            disabled={!pane.listing && !folderCompare.comparing}
+          >
+            <GitCompareArrows size={15} />
           </ToolbarButton>
         </div>
       </header>
@@ -1399,6 +1456,12 @@ export function FilePane({
               </button>
             </p>
           )}
+          {folderCompare.bar && (
+            <FolderCompareBar
+              bar={folderCompare.bar}
+              onMenu={(anchor, items) => setMenu({ x: anchor.left, y: anchor.bottom + 4, items })}
+            />
+          )}
           <FileList
             pane={listPane}
             side={side}
@@ -1415,6 +1478,7 @@ export function FilePane({
             fontSize={fontSize}
             dropFolder={dropFolder}
             cutPaths={cutPaths}
+            compareMarks={folderCompare.marks}
             onActivate={markActive}
             onContextMenu={showContextMenu}
             onHeaderContextMenu={showHeaderMenu}
@@ -1422,6 +1486,7 @@ export function FilePane({
             renaming={renaming}
             heldPaths={heldPaths}
             onRename={(entry) => setRenaming(entry.path)}
+            onRenameSeveral={() => openBulkRename(pane.selectedEntries())}
             onRenameSubmit={renameEntry}
             onRenameCancel={() => setRenaming(null)}
             onEdit={edit}
@@ -1436,9 +1501,16 @@ export function FilePane({
             onCopy={() => cutOrCopy("copy", pane.selectedEntries())}
             onPaste={() => pasteInto(null)}
             onProperties={() => openProperties(pane.selectedEntries())}
+            onCompareFolders={folderCompare.toggle}
             onSearch={() => (lockedCard ? undefined : openSearch())}
             folderOf={inResults ? folderLabel : undefined}
-            emptyMessage={inResults ? searchEmptyMessage(searchView) : undefined}
+            emptyMessage={
+              inResults
+                ? searchEmptyMessage(searchView)
+                : identicalHidden > 0
+                  ? "Everything here is identical in both panes"
+                  : undefined
+            }
           />
         </>
       ) : (
@@ -1477,6 +1549,7 @@ export function FilePane({
         <span>
           {lockedCard ? "Locked vault" : pluralize(pane.entryCount, inResults ? "result" : "item")}
           {!lockedCard && pane.hiddenCount > 0 && `, ${pane.hiddenCount} hidden`}
+          {!lockedCard && identicalHidden > 0 && `, ${identicalHidden} identical not shown`}
         </span>
         {selected.length > 0 && (
           <span>
@@ -1495,7 +1568,7 @@ export function FilePane({
           title="New folder"
           label={`Create in ${pane.listing.path}`}
           confirmLabel="Create"
-          onClose={() => setDialog(null)}
+          onClose={closeDialog(dialog)}
           onSubmit={async (name) => {
             const created = await source.mkdir(pane.listing!.path, name);
             writeLog("info", `Created ${where} folder ${created}`);
@@ -1510,7 +1583,7 @@ export function FilePane({
           label={`Create in ${pane.listing.path}`}
           placeholder={dialog.example}
           confirmLabel="Create"
-          onClose={() => setDialog(null)}
+          onClose={closeDialog(dialog)}
           onSubmit={async (name) => {
             const created = await source.makeFile(pane.listing!.path, name);
             writeLog("info", `Created ${where} file ${created}`);
@@ -1523,7 +1596,7 @@ export function FilePane({
         <NewVaultDialog
           folder={pane.listing.path}
           onCreate={createVault}
-          onClose={() => setDialog(null)}
+          onClose={closeDialog(dialog)}
         />
       )}
 
@@ -1537,7 +1610,7 @@ export function FilePane({
           } into`}
           initialValue={pane.listing.path}
           confirmLabel={dialog.mode === "move" ? "Move" : "Copy"}
-          onClose={() => setDialog(null)}
+          onClose={closeDialog(dialog)}
           onSubmit={async (folder) => {
             const self = getPane(tabId);
             if (!self || !pane.listing) return;
@@ -1561,7 +1634,7 @@ export function FilePane({
           sessionId={sessionId}
           folder={inResults ? folderOfResults(dialog.entries) : pane.listing.path}
           entries={dialog.entries}
-          onClose={() => setDialog(null)}
+          onClose={closeDialog(dialog)}
           onApplied={() => {
             if (!inResults) return void pane.refresh();
             // The dialog forgets the listing of the one folder it is given; results from
@@ -1569,6 +1642,18 @@ export function FilePane({
             refreshFoldersOf(paneOrigin(side), dialog.entries);
             void search.recheck(dialog.entries.map((entry) => entry.path));
           }}
+        />
+      )}
+
+      {dialog?.type === "bulkRename" && (
+        <BulkRenameDialog
+          origin={dialog.origin}
+          folder={dialog.folder}
+          chosen={dialog.entries}
+          listing={pane.listing}
+          stale={pane.stale}
+          onRetry={() => void pane.refresh()}
+          onClose={() => setDialog(null)}
         />
       )}
 
@@ -1582,7 +1667,7 @@ export function FilePane({
           listing={pane.listing}
           checking={pane.stale === "refreshing"}
           summary={(entries) => <DeleteSummary entries={entries} where={where} />}
-          onClose={() => setDialog(null)}
+          onClose={closeDialog(dialog)}
           onConfirm={async (entries) => {
             const removed = entries.map((entry) => entry.path);
             const next = entryAfterRemoval(pane.visibleEntries, new Set(removed), pane.cursorPath);

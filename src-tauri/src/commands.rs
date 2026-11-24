@@ -24,7 +24,7 @@ use crate::file_ops::archive::{self, ExtractSummary, InstalledTool};
 use crate::file_ops::{
     CompareRequest, Comparison, DeleteRequest, DeleteSummary, Details, ExtractRequest,
     FileOperations, Location, MoveCopyRequest, OperationSummary, PermissionRequest,
-    PermissionSummary, Usage,
+    PermissionSummary, RenameRequest, RenameSummary, Usage,
 };
 use crate::fonts::{self, FontFamily};
 use crate::import::{
@@ -40,8 +40,8 @@ use crate::session::{SessionInfo, SessionManager};
 use crate::settings::{Settings, SettingsStore};
 use crate::ssh::{AuthMethod, ConnectProfile, HostKeyApproval};
 use crate::sync::{
-    OptionCheck, SyncDirection, SyncManager, SyncOptions, SyncPlanView, SyncRequest,
-    SyncRunRequest, SyncRunSummary,
+    FolderCompareRequest, FolderComparison, OptionCheck, SyncDirection, SyncManager, SyncOptions,
+    SyncPlanView, SyncRequest, SyncRunRequest, SyncRunSummary,
 };
 use crate::system_icons::{self, IconRequest};
 use crate::terminal::{Sink, TerminalEvent, TerminalInfo, TerminalManager};
@@ -325,6 +325,14 @@ pub async fn files_delete(
 }
 
 #[tauri::command]
+pub async fn files_rename(
+    operations: State<'_, FileOperations>,
+    request: RenameRequest,
+) -> AppResult<RenameSummary> {
+    operations.rename(request).await
+}
+
+#[tauri::command]
 pub fn files_cancel(operations: State<'_, FileOperations>, operation_id: String) {
     operations.cancel(&operation_id);
 }
@@ -446,6 +454,16 @@ pub async fn sync_compare(
     request: SyncRequest,
 ) -> AppResult<SyncPlanView> {
     sync.compare(request).await
+}
+
+/// Compares what two folders hold below them, each on this computer or a server, for two
+/// panes that are compared. `sync_cancel` stops it.
+#[tauri::command]
+pub async fn sync_compare_folders(
+    sync: State<'_, SyncManager>,
+    request: FolderCompareRequest,
+) -> AppResult<FolderComparison> {
+    sync.compare_folders(request).await
 }
 
 /// rsync options with layers of rsync arguments applied in turn, checked, and shown as the
