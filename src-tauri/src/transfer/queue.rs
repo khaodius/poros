@@ -89,21 +89,47 @@ impl JobSpec {
 
     /// The file a file job writes, told apart from the files other jobs write.
     fn written_file(&self) -> Option<WrittenFile> {
-        if self.kind != JobKind::File {
-            return None;
-        }
-        Some(match self.direction {
-            // Local file systems may ignore case, so names that differ only in case are one file.
+        (self.kind == JobKind::File).then(|| self.file_at(&self.target))
+    }
+
+    /// `path` on the side this job writes to, told apart from the files other jobs write.
+    fn file_at(&self, path: &str) -> WrittenFile {
+        match self.direction {
             Direction::Download => WrittenFile {
                 session_id: None,
-                path: self.target.to_lowercase(),
+                path: local_file(path),
             },
             Direction::Upload | Direction::Relay => WrittenFile {
                 session_id: Some(self.session_id.clone()),
-                path: self.target.clone(),
+                path: path.to_string(),
             },
-        })
+        }
     }
+}
+
+/// Local file systems may ignore case, so names that differ only in case are one file. So, on
+/// Windows, are names that differ only in the dots and spaces that end them.
+fn local_file(target: &str) -> String {
+    if cfg!(windows) {
+        as_windows_opens(target).to_lowercase()
+    } else {
+        target.to_lowercase()
+    }
+}
+
+/// `path` as Windows opens it, each name without the dots and spaces that end it: `report.`
+/// and `report ` are both `report`. Paths starting `\\?\` are opened as written.
+fn as_windows_opens(path: &str) -> String {
+    if path.starts_with(r"\\?\") {
+        return path.to_string();
+    }
+    path.split(['\\', '/'])
+        .map(|name| match name {
+            "." | ".." => name,
+            _ => name.trim_end_matches(['.', ' ']),
+        })
+        .collect::<Vec<_>>()
+        .join("\\")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -285,6 +311,11 @@ impl JobRun {
         }
     }
 
+    /// Where this run began writing: 0 unless it continued an earlier one.
+    pub fn start(&self) -> Option<u64> {
+        self.pieces.lock().unwrap().as_ref().map(Pieces::start)
+    }
+
     pub fn end(&self) -> Option<u64> {
         self.pieces.lock().unwrap().as_ref().map(Pieces::end)
     }
@@ -342,6 +373,9 @@ pub struct Job {
     pub attempts: u32,
     pub not_before: Option<Instant>,
     pub resume: Option<ResumePoint>,
+    /// A temporary file an attempt left that failed a check, so the next attempt starts over.
+    /// Deleted if the job leaves the queue before an attempt finishes it.
+    pub stale_partial: Option<String>,
     /// Waiting for its server to come back after the connection dropped.
     pub reconnecting: bool,
     /// When its server went out of reach, for a job that failed because the server stayed away.
@@ -577,6 +611,40 @@ pub struct Abandoned {
     pub session_id: String,
     pub direction: Direction,
     pub path: String,
+    /// The folder it is in.
+    pub directory: String,
+}
+
+/// A temporary file a job left, until the caller takes it to delete.
+#[derive(Debug)]
+struct Left {
+    partial: Abandoned,
+    /// The file as other jobs writing it would name it.
+    file: WrittenFile,
+    /// The target it was written beside.
+    beside: Option<WrittenFile>,
+}
+
+impl Left {
+    fn new(spec: &JobSpec, path: String) -> Self {
+        Self {
+            file: spec.file_at(&path),
+            beside: spec.written_file(),
+            partial: Abandoned {
+                session_id: spec.session_id.clone(),
+                direction: spec.direction,
+                path,
+                directory: spec.target_directory.clone(),
+            },
+        }
+    }
+}
+
+/// How a watched job stood when it left the queue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Ended {
+    pub state: JobState,
+    pub size: u64,
 }
 
 /// An unfinished job as it is saved between runs of the app.
@@ -587,6 +655,7 @@ pub struct Unfinished {
     pub error: Option<String>,
     pub resolution: Option<ExistsAction>,
     pub resume: Option<ResumePoint>,
+    pub stale_partial: Option<String>,
 }
 
 #[derive(Default)]
@@ -606,10 +675,13 @@ pub struct Queue {
     removed: Vec<JobId>,
     changed_directories: Vec<ChangedDirectory>,
     outages: HashMap<String, Outage>,
-    abandoned: Vec<Abandoned>,
+    abandoned: Vec<Left>,
     /// Files that running jobs write. Two jobs writing one file would share its temporary
     /// file, so a job waits while another writes its target.
     writing: HashMap<WrittenFile, JobId>,
+    /// Jobs a caller follows to the end, and how those that left the queue ended.
+    watched: HashSet<JobId>,
+    ended: HashMap<JobId, Ended>,
     /// Jobs were added, removed, reordered or changed state since the queue was last saved.
     pub unsaved: bool,
     /// The number of the latest progress update sent to the windows.
@@ -658,6 +730,7 @@ impl Queue {
                 attempts: 0,
                 not_before: None,
                 resume: None,
+                stale_partial: None,
                 reconnecting: false,
                 unreachable_since: None,
                 transferred: 0,
@@ -689,6 +762,7 @@ impl Queue {
             job.resolution = saved.resolution;
             job.transferred = saved.resume.as_ref().map_or(0, |resume| resume.offset);
             job.resume = saved.resume;
+            job.stale_partial = saved.stale_partial;
         }
         id
     }
@@ -712,6 +786,7 @@ impl Queue {
                     .as_ref()
                     .and_then(|run| run.resume_point())
                     .or_else(|| job.resume.clone()),
+                stale_partial: job.stale_partial.clone(),
             })
             .collect()
     }
@@ -887,6 +962,13 @@ impl Queue {
                 // What is at the target cannot be trusted, so the next attempt replaces it
                 // rather than resuming onto it or skipping it as already there.
                 job.resolution = Some(ExistsAction::Overwrite);
+                if let Some(plan) = run.plan.get().filter(|plan| plan.rename_to.is_some()) {
+                    job.stale_partial = Some(plan.target.clone());
+                }
+                // A download that failed its check is deleted, or rewritten, by now.
+                if job.spec.direction == Direction::Download {
+                    self.changed_directories.push(changed_directory(&job.spec));
+                }
             } else if let Some(resume) = run.resume_point() {
                 job.resume = Some(resume);
             }
@@ -909,12 +991,20 @@ impl Queue {
                 job.state = JobState::Done;
                 job.error = None;
                 job.resume = None;
+                // Moved into place, unless this attempt wrote through another temporary file.
+                let stale = job.stale_partial.take().filter(|stale| {
+                    !run.as_ref()
+                        .and_then(|run| run.plan.get())
+                        .is_some_and(|plan| plan.target == *stale)
+                });
+                let left = stale.map(|stale| Left::new(&job.spec, stale));
                 if let Some(end) = run.as_ref().and_then(|run| run.end()) {
                     job.spec.size = end;
                     job.transferred = end;
                 }
                 let changed = changed_directory(&job.spec);
                 self.changed_directories.push(changed);
+                self.abandoned.extend(left);
                 if !settings.keep_completed {
                     self.forget(id);
                 }
@@ -929,14 +1019,19 @@ impl Queue {
                 }
                 return self.server_answered(&session_id);
             }
-            (_, RunOutcome::Expanded(children)) => {
+            (stop, RunOutcome::Expanded(children)) => {
                 let rank = job.rank.clone();
                 let changed = changed_directory(&job.spec);
                 self.changed_directories.push(changed);
                 self.forget(id);
+                // Paused while it was being listed: what it holds waits as the folder would.
+                let paused = matches!(stop, Some(StopReason::Pause));
                 for (index, child) in children.into_iter().enumerate() {
                     let child_rank = format!("{rank}{}", rank_segment(index as u32));
-                    self.insert(child_rank, child);
+                    let child_id = self.insert(child_rank, child);
+                    if paused {
+                        self.pause(&[child_id]);
+                    }
                 }
                 return self.server_answered(&session_id);
             }
@@ -1154,25 +1249,92 @@ impl Queue {
         ids.len()
     }
 
+    /// Keeps how these jobs end once they leave the queue, for `ended`.
+    pub fn watch(&mut self, ids: &[JobId]) {
+        self.watched.extend(ids);
+    }
+
+    pub fn ended(&self, id: JobId) -> Option<Ended> {
+        self.ended.get(&id).copied()
+    }
+
+    /// The caller no longer follows these jobs.
+    pub fn unwatch(&mut self, ids: &[JobId]) {
+        for id in ids {
+            self.watched.remove(id);
+            self.ended.remove(id);
+        }
+    }
+
     fn forget(&mut self, id: JobId) {
         if let Some(job) = self.jobs.remove(&id) {
+            if self.watched.remove(&id) {
+                self.ended.insert(
+                    id,
+                    Ended {
+                        state: job.state,
+                        size: job.spec.size,
+                    },
+                );
+            }
             self.pending.remove(&job.rank);
             self.dirty.remove(&id);
             self.removed.push(id);
             self.unsaved = true;
-            if let Some(partial) = job.resume.and_then(|resume| resume.partial) {
-                self.abandoned.push(Abandoned {
-                    session_id: job.spec.session_id,
-                    direction: job.spec.direction,
-                    path: partial,
-                });
+            let partial = job.resume.and_then(|resume| resume.partial);
+            let stale = job
+                .stale_partial
+                .filter(|stale| partial.as_ref() != Some(stale));
+            for path in partial.into_iter().chain(stale) {
+                self.abandoned.push(Left::new(&job.spec, path));
             }
         }
     }
 
-    /// Temporary files of jobs that left the queue, for the caller to delete.
+    /// Temporary files of jobs that left the queue, for the caller to delete: each once, and
+    /// none that a job still in the queue writes or keeps to continue from.
     pub fn take_abandoned(&mut self) -> Vec<Abandoned> {
+        if self.abandoned.is_empty() {
+            return Vec::new();
+        }
+        let mut held = HashSet::new();
+        // Running jobs that have not yet chosen where to write: one writing the same target
+        // would choose the same temporary file.
+        let mut preparing = HashSet::new();
+        for job in self.jobs.values() {
+            let planned = job
+                .run
+                .as_ref()
+                .map(|run| run.plan.get().map(|plan| plan.target.as_str()));
+            if planned == Some(None) {
+                preparing.extend(job.spec.written_file());
+            }
+            let partial = job
+                .resume
+                .as_ref()
+                .and_then(|resume| resume.partial.as_deref());
+            let stale = job.stale_partial.as_deref();
+            for path in planned.flatten().into_iter().chain(partial).chain(stale) {
+                held.insert(job.spec.file_at(path));
+            }
+        }
         std::mem::take(&mut self.abandoned)
+            .into_iter()
+            .filter(|left| {
+                left.beside
+                    .as_ref()
+                    .is_none_or(|target| !preparing.contains(target))
+                    && held.insert(left.file.clone())
+            })
+            .map(|left| left.partial)
+            .collect()
+    }
+
+    /// The caller deleted a temporary file `take_abandoned` gave it, so panes showing its
+    /// folder can refresh.
+    pub fn deleted(&mut self, partial: &Abandoned) {
+        let folder = folder_written(partial.direction, &partial.session_id, &partial.directory);
+        self.changed_directories.push(folder);
     }
 
     pub fn pause(&mut self, ids: &[JobId]) {
@@ -1522,16 +1684,21 @@ fn stop_run(job: &mut Job, reason: StopReason) {
 }
 
 fn changed_directory(spec: &JobSpec) -> ChangedDirectory {
-    match spec.direction {
+    folder_written(spec.direction, &spec.session_id, &spec.target_directory)
+}
+
+/// `directory` on the side a transfer of `direction` to or from `session_id` writes to.
+fn folder_written(direction: Direction, session_id: &str, directory: &str) -> ChangedDirectory {
+    match direction {
         Direction::Download => ChangedDirectory {
             side: Side::Local,
             session_id: None,
-            path: spec.target_directory.clone(),
+            path: directory.to_string(),
         },
         Direction::Upload | Direction::Relay => ChangedDirectory {
             side: Side::Remote,
-            session_id: Some(spec.session_id.clone()),
-            path: spec.target_directory.clone(),
+            session_id: Some(session_id.to_string()),
+            path: directory.to_string(),
         },
     }
 }
@@ -1626,6 +1793,29 @@ mod tests {
         let (_, removed, changed) = queue.take_changes();
         assert_eq!(removed, vec![folder_id]);
         assert_eq!(changed[0].path, "/remote");
+    }
+
+    #[test]
+    fn a_folder_paused_while_it_is_listed_queues_its_contents_paused() {
+        let mut queue = Queue::new();
+        let folder_id = queue.add(folder("dir"));
+        queue.claim(Instant::now()).unwrap();
+        queue.pause(&[folder_id]);
+        finish(
+            &mut queue,
+            folder_id,
+            RunOutcome::Expanded(vec![file("one", 1), folder("two")]),
+        );
+        assert!(queue.job(folder_id).is_none());
+        assert!(queue.claim(Instant::now()).is_none());
+        let children = queue.snapshots();
+        let states: Vec<JobState> = children.iter().map(|job| job.state).collect();
+        assert_eq!(states, [JobState::Paused, JobState::Paused]);
+
+        let ids: Vec<JobId> = children.iter().map(|job| job.id).collect();
+        queue.resume(&ids);
+        assert_eq!(claim_name(&mut queue).as_deref(), Some("one"));
+        assert_eq!(claim_name(&mut queue).as_deref(), Some("two"));
     }
 
     #[test]
@@ -2038,6 +2228,55 @@ mod tests {
     }
 
     #[test]
+    fn windows_opens_names_without_the_dots_and_spaces_that_end_them() {
+        for (path, opened) in [
+            (r"C:\Downloads\report.", r"C:\Downloads\report"),
+            (r"C:\Downloads\report . .", r"C:\Downloads\report"),
+            (
+                r"C:\Downloads\draft.\report.txt",
+                r"C:\Downloads\draft\report.txt",
+            ),
+            (r"C:/Downloads/report ", r"C:\Downloads\report"),
+            (r"\\server\share\report.", r"\\server\share\report"),
+            (r"..\notes\.\report", r"..\notes\.\report"),
+            (r"\\?\C:\Downloads\report.", r"\\?\C:\Downloads\report."),
+        ] {
+            assert_eq!(as_windows_opens(path), opened, "{path}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn downloads_onto_names_windows_opens_as_one_take_turns() {
+        let mut queue = Queue::new();
+        let mut download = file("report", 1);
+        download.direction = Direction::Download;
+        download.target = r"C:\Downloads\report".into();
+        let first = queue.add(download.clone());
+        download.target = r"C:\Downloads\report.".into();
+        let second = queue.add(download.clone());
+        download.target = r"C:\Downloads\REPORT ".into();
+        let third = queue.add(download);
+
+        assert_eq!(
+            queue.claim(Instant::now()).map(|claim| claim.id),
+            Some(first)
+        );
+        assert!(queue.claim(Instant::now()).is_none());
+        finish(&mut queue, first, RunOutcome::Completed);
+        assert_eq!(
+            queue.claim(Instant::now()).map(|claim| claim.id),
+            Some(second)
+        );
+        assert!(queue.claim(Instant::now()).is_none());
+        finish(&mut queue, second, RunOutcome::Completed);
+        assert_eq!(
+            queue.claim(Instant::now()).map(|claim| claim.id),
+            Some(third)
+        );
+    }
+
+    #[test]
     fn removed_jobs_leave_their_temporary_files_for_deletion() {
         let mut queue = Queue::new();
         let id = queue.add(file("big", 100));
@@ -2064,6 +2303,202 @@ mod tests {
                 session_id: "session".into(),
                 direction: Direction::Upload,
                 path: "/remote/.big.poros-part".into(),
+                directory: "/remote".into(),
+            }]
+        );
+    }
+
+    /// Claims a job and lets its attempt fail a check after writing its temporary file.
+    fn fail_check(queue: &mut Queue, id: JobId, settings: &TransferSettings) {
+        let claim = queue.claim(Instant::now()).unwrap();
+        claim
+            .run
+            .plan
+            .set(Plan {
+                rename_to: Some("/remote/live.log".into()),
+                ..plan("/remote/.live.log.poros-part", 100)
+            })
+            .unwrap();
+        claim.run.start_pieces(Pieces::new(0, 100, 100));
+        let piece = claim.run.claim_piece().unwrap();
+        claim.run.complete_piece(piece.start);
+        claim.run.restart.store(true, Ordering::Relaxed);
+        let failed = RunOutcome::Failed(AppError::integrity("live.log changed meanwhile"));
+        assert!(matches!(queue.release(id, &failed), Release::Settle));
+        queue.settle(id, failed, settings, Instant::now());
+    }
+
+    #[test]
+    fn a_temporary_file_that_failed_its_check_is_deleted_with_its_job() {
+        let temporary_file = Abandoned {
+            session_id: "session".into(),
+            direction: Direction::Upload,
+            path: "/remote/.live.log.poros-part".into(),
+            directory: "/remote".into(),
+        };
+        let mut queue = Queue::new();
+        let id = queue.add(file("live.log", 100));
+        let no_retries = TransferSettings {
+            retry_attempts: 0,
+            ..settings()
+        };
+        fail_check(&mut queue, id, &no_retries);
+        assert_eq!(queue.job(id).unwrap().state, JobState::Failed);
+        assert!(queue.take_abandoned().is_empty());
+        queue.clear(&[JobState::Failed]);
+        assert_eq!(queue.take_abandoned(), vec![temporary_file.clone()]);
+
+        // Removed while it waits to try again.
+        let id = queue.add(file("live.log", 100));
+        let retrying = TransferSettings {
+            retry_delay_secs: 60,
+            ..settings()
+        };
+        fail_check(&mut queue, id, &retrying);
+        assert_eq!(queue.job(id).unwrap().state, JobState::Queued);
+        queue.remove(&[id]);
+        assert_eq!(queue.take_abandoned(), vec![temporary_file.clone()]);
+
+        // Saved with the queue and restored, it is still known.
+        let id = queue.add(file("live.log", 100));
+        fail_check(&mut queue, id, &no_retries);
+        let mut restored = Queue::new();
+        for job in queue.unfinished() {
+            restored.restore(job);
+        }
+        let ids: Vec<JobId> = restored.jobs().map(|job| job.id).collect();
+        restored.remove(&ids);
+        assert_eq!(restored.take_abandoned(), vec![temporary_file]);
+    }
+
+    #[test]
+    fn a_temporary_file_a_later_attempt_finished_is_not_deleted() {
+        let mut queue = Queue::new();
+        let id = queue.add(file("live.log", 100));
+        let retrying = TransferSettings {
+            retry_delay_secs: 0,
+            ..settings()
+        };
+        fail_check(&mut queue, id, &retrying);
+        let claim = queue.claim(Instant::now()).unwrap();
+        claim
+            .run
+            .plan
+            .set(Plan {
+                rename_to: Some("/remote/live.log".into()),
+                ..plan("/remote/.live.log.poros-part", 100)
+            })
+            .unwrap();
+        finish(&mut queue, id, RunOutcome::Completed);
+        queue.clear(&[JobState::Done]);
+        assert!(queue.take_abandoned().is_empty());
+    }
+
+    #[test]
+    fn a_temporary_file_another_job_writes_is_not_deleted() {
+        let no_retries = TransferSettings {
+            retry_attempts: 0,
+            ..settings()
+        };
+        let mut queue = Queue::new();
+        let failed = queue.add(file("live.log", 100));
+        fail_check(&mut queue, failed, &no_retries);
+        assert!(queue.take_abandoned().is_empty());
+
+        // The same file queued again and running.
+        let again = queue.add(file("live.log", 100));
+        let claim = queue.claim(Instant::now()).unwrap();
+        assert_eq!(claim.id, again);
+        queue.clear(&[JobState::Failed]);
+        assert!(queue.take_abandoned().is_empty());
+
+        // Paused part-way, it holds the file to continue from.
+        let failed = queue.add(file("live.log", 100));
+        claim
+            .run
+            .plan
+            .set(Plan {
+                rename_to: Some("/remote/live.log".into()),
+                ..plan("/remote/.live.log.poros-part", 100)
+            })
+            .unwrap();
+        claim.run.start_pieces(Pieces::new(0, 100, 10));
+        let piece = claim.run.claim_piece().unwrap();
+        claim.run.complete_piece(piece.start);
+        queue.pause(&[again]);
+        finish(&mut queue, again, RunOutcome::Stopped);
+        fail_check(&mut queue, failed, &no_retries);
+        queue.clear(&[JobState::Failed]);
+        assert!(queue.take_abandoned().is_empty());
+
+        // Once nothing holds it, it goes with the last job.
+        queue.remove(&[again]);
+        assert_eq!(
+            queue.take_abandoned(),
+            vec![Abandoned {
+                session_id: "session".into(),
+                direction: Direction::Upload,
+                path: "/remote/.live.log.poros-part".into(),
+                directory: "/remote".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn deleting_a_file_reports_its_folder() {
+        let mut queue = Queue::new();
+        let id = queue.add(JobSpec {
+            direction: Direction::Download,
+            source: "/remote/live.log".into(),
+            target: "/local/live.log".into(),
+            target_directory: "/local".into(),
+            ..file("live.log", 100)
+        });
+        let claim = queue.claim(Instant::now()).unwrap();
+        claim.run.plan.set(plan("/local/live.log", 100)).unwrap();
+        claim.run.restart.store(true, Ordering::Relaxed);
+        queue.take_changes();
+        // Failed its check, it was deleted where it lay.
+        let failed = RunOutcome::Failed(AppError::integrity("live.log changed meanwhile"));
+        finish(&mut queue, id, failed);
+        let (_, _, changed) = queue.take_changes();
+        assert_eq!(
+            changed,
+            vec![ChangedDirectory {
+                side: Side::Local,
+                session_id: None,
+                path: "/local".into(),
+            }]
+        );
+        queue.remove(&[id]);
+        assert!(queue.take_abandoned().is_empty());
+
+        // A removed job's temporary file, once it is deleted and not before.
+        let id = queue.add(file("big", 100));
+        let claim = queue.claim(Instant::now()).unwrap();
+        claim
+            .run
+            .plan
+            .set(Plan {
+                rename_to: Some("/remote/big".into()),
+                ..plan("/remote/.big.poros-part", 100)
+            })
+            .unwrap();
+        claim.run.start_pieces(Pieces::new(0, 100, 10));
+        let piece = claim.run.claim_piece().unwrap();
+        claim.run.complete_piece(piece.start);
+        queue.remove(&[id]);
+        finish(&mut queue, id, RunOutcome::Stopped);
+        let abandoned = queue.take_abandoned();
+        assert_eq!(abandoned.len(), 1);
+        assert!(queue.take_changes().2.is_empty());
+        queue.deleted(&abandoned[0]);
+        assert_eq!(
+            queue.take_changes().2,
+            vec![ChangedDirectory {
+                side: Side::Remote,
+                session_id: Some("session".into()),
+                path: "/remote".into(),
             }]
         );
     }
