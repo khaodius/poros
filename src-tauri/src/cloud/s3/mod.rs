@@ -18,7 +18,7 @@ use reqwest::{Client, Method, Request, Response, StatusCode, Url};
 use serde::{Deserialize, Serialize};
 
 use super::api;
-use super::upload::{chunk_size_within, ChunkedUpload, UploadTarget};
+use super::upload::{chunk_size_within, ChunkedUpload, Unfinished, UploadTarget};
 use super::{FolderCache, HttpReader, Login};
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::events::Events;
@@ -52,6 +52,14 @@ const MAX_PARTS: u64 = 10_000;
 const MAX_CLOCK_SKEW_SECS: u64 = 15 * 60;
 /// A difference between the clocks that changes when a link ends enough to say so.
 const NOTABLE_CLOCK_SKEW_SECS: u64 = 30;
+/// Error codes for a request S3 could not carry out just then, which may go through if sent
+/// again.
+const RETRYABLE_CODES: [&str; 4] = [
+    "InternalError",
+    "SlowDown",
+    "ServiceUnavailable",
+    "RequestTimeout",
+];
 
 /// Mirrored in `src/lib/types.ts`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -213,6 +221,8 @@ struct S3Request {
     headers: Vec<(String, String)>,
     body: Bytes,
     payload_hash: String,
+    /// A `POST` that is safe to send again.
+    repeatable: bool,
 }
 
 impl S3Request {
@@ -225,7 +235,17 @@ impl S3Request {
             headers: Vec::new(),
             body: Bytes::new(),
             payload_hash: signing::sha256_hex(b""),
+            repeatable: false,
         }
+    }
+
+    fn repeatable(mut self) -> Self {
+        self.repeatable = true;
+        self
+    }
+
+    fn is_repeatable(&self) -> bool {
+        self.repeatable || self.method != Method::POST
     }
 
     fn query(mut self, name: &str, value: &str) -> Self {
@@ -420,13 +440,24 @@ impl S3Fs {
     /// Sends a request, retrying what is safe to retry, and once more in the bucket's own
     /// region when the service says it is elsewhere.
     async fn send(&self, request: &S3Request) -> AppResult<Response> {
+        self.send_within(request, &mut api::Attempts::default())
+            .await
+    }
+
+    /// Like `send`, counting in `attempts`.
+    async fn send_within(
+        &self,
+        request: &S3Request,
+        attempts: &mut api::Attempts,
+    ) -> AppResult<Response> {
         let mut region = self.region_of(request.bucket.as_deref());
         let mut moved = false;
         loop {
             let build = || self.build(request, &region);
-            let response = api::send_retrying(&self.http, &build)
-                .await
-                .map_err(|error| super::certificate_rejection(error, self.tls.as_ref()))?;
+            let response =
+                api::send_retrying_within(&self.http, &build, request.repeatable, attempts)
+                    .await
+                    .map_err(|error| super::certificate_rejection(error, self.tls.as_ref()))?;
             let status = response.status();
             let wrong_region = matches!(
                 status,
@@ -468,14 +499,47 @@ impl S3Fs {
 
     /// Sends a request and reads the whole answer, which must be a success.
     async fn send_for_body(&self, request: &S3Request, path: &str) -> AppResult<Vec<u8>> {
-        let response = self.send(request).await?;
-        if !response.status().is_success() {
-            return Err(failure(response, path).await);
-        }
-        let body = api::body_bytes(response).await?;
-        match xml::embedded_error(&body) {
-            Some(error) => Err(service_error(StatusCode::OK, error, path)),
-            None => Ok(body),
+        self.send_for_body_within(request, path, &mut api::Attempts::default())
+            .await
+    }
+
+    /// Like `send_for_body`, counting in `attempts`. S3 may fail a request after its 200 status
+    /// has gone out, saying so in the body, or lose the connection while it works on a long
+    /// one. A request that is safe to repeat is then sent again, like after any other failure.
+    async fn send_for_body_within(
+        &self,
+        request: &S3Request,
+        path: &str,
+        attempts: &mut api::Attempts,
+    ) -> AppResult<Vec<u8>> {
+        loop {
+            let response = self.send_within(request, attempts).await?;
+            if !response.status().is_success() {
+                return Err(failure(response, path).await);
+            }
+            let body = match api::body_bytes(response).await {
+                Ok(body) => body,
+                Err(error) if error.is_connection_lost() => {
+                    attempts.lose_answer();
+                    if !request.is_repeatable() || !attempts.remain() {
+                        return Err(error);
+                    }
+                    attempts.wait(None).await;
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            match xml::embedded_error(&body) {
+                None => return Ok(body),
+                Some(error)
+                    if RETRYABLE_CODES.contains(&error.code.as_str())
+                        && request.is_repeatable()
+                        && attempts.remain() =>
+                {
+                    attempts.wait(None).await;
+                }
+                Some(error) => return Err(service_error(StatusCode::OK, error, path)),
+            }
         }
     }
 
@@ -697,7 +761,7 @@ impl S3Fs {
         let upload_id = self.start_multipart(bucket, target, &[]).await?;
         let part_size = COPY_PART.max(size.div_ceil(MAX_PARTS));
         let mut etags = Vec::new();
-        let copied: AppResult<()> = async {
+        let copied: Result<(), Unfinished> = async {
             for (index, start) in (0..size).step_by(part_size as usize).enumerate() {
                 let end = (start + part_size).min(size) - 1;
                 let request = S3Request::new(Method::PUT, Some(bucket), target)
@@ -709,23 +773,30 @@ impl S3Fs {
                     xml::parse(&self.send_for_body(&request, &target_path).await?)?;
                 etags.push(result.etag);
             }
-            self.complete_multipart(bucket, target, &upload_id, &etags)
+            self.complete_multipart(bucket, target, &upload_id, &etags, size)
                 .await
         }
         .await;
-        if copied.is_err() {
+        let Err(unfinished) = copied else {
+            return Ok(());
+        };
+        if unfinished.discard {
             let _ = self.abort_multipart(bucket, target, &upload_id).await;
         }
-        copied
+        Err(unfinished.error)
     }
 
+    /// Starts a multipart upload. Sending it again is safe: a start whose answer was lost only
+    /// leaves an upload without parts behind.
     async fn start_multipart(
         &self,
         bucket: &str,
         key: &str,
         headers: &[(String, String)],
     ) -> AppResult<String> {
-        let mut request = S3Request::new(Method::POST, Some(bucket), key).query("uploads", "");
+        let mut request = S3Request::new(Method::POST, Some(bucket), key)
+            .query("uploads", "")
+            .repeatable();
         request.headers.extend(headers.iter().cloned());
         let body = self
             .send_for_body(&request, &format!("/{bucket}/{key}"))
@@ -734,20 +805,73 @@ impl S3Fs {
         Ok(started.upload_id)
     }
 
+    /// Puts the parts of a multipart upload of `size` bytes together into the object. An
+    /// attempt may complete the upload though its answer is lost, and then a retry finds the
+    /// upload gone; the object at the key tells whether it is the one uploaded.
     async fn complete_multipart(
         &self,
         bucket: &str,
         key: &str,
         upload_id: &str,
         etags: &[String],
-    ) -> AppResult<()> {
+        size: u64,
+    ) -> Result<(), Unfinished> {
+        let path = format!("/{bucket}/{key}");
         let request = S3Request::new(Method::POST, Some(bucket), key)
             .query("uploadId", upload_id)
             .header("content-type", "application/xml")
-            .body(Bytes::from(xml::complete_multipart(etags)));
-        self.send_for_body(&request, &format!("/{bucket}/{key}"))
+            .body(Bytes::from(xml::complete_multipart(etags)))
+            .repeatable();
+        let mut attempts = api::Attempts::default();
+        let error = match self
+            .send_for_body_within(&request, &path, &mut attempts)
             .await
-            .map(drop)
+        {
+            Ok(_) => return Ok(()),
+            Err(error) => error,
+        };
+        if error.kind != ErrorKind::NotFound || attempts.made() == 1 {
+            return Err(Unfinished {
+                error,
+                discard: !attempts.may_have_gone_through(),
+            });
+        }
+        let error = match self.holds_upload(bucket, key, size, etags.len()).await {
+            Ok(true) => return Ok(()),
+            Ok(false) => AppError::new(
+                ErrorKind::Cloud,
+                "S3 no longer has the upload and does not hold the file sent under this name",
+            ),
+            Err(check) => AppError::new(
+                check.kind,
+                format!(
+                    "S3 no longer has the upload, and checking whether it finished failed: {}",
+                    check.message
+                ),
+            ),
+        };
+        Err(Unfinished {
+            error: error.with_path(path),
+            discard: false,
+        })
+    }
+
+    /// Whether the object at the key is what completing a multipart upload of `size` bytes in
+    /// `parts` parts makes.
+    async fn holds_upload(
+        &self,
+        bucket: &str,
+        key: &str,
+        size: u64,
+        parts: usize,
+    ) -> AppResult<bool> {
+        let request = S3Request::new(Method::HEAD, Some(bucket), key);
+        let response = self.send(&request).await?;
+        match response.status() {
+            status if status.is_success() => Ok(is_upload_of(response.headers(), size, parts)),
+            StatusCode::NOT_FOUND => Ok(false),
+            _ => Err(failure(response, &format!("/{bucket}/{key}")).await),
+        }
     }
 
     async fn abort_multipart(&self, bucket: &str, key: &str, upload_id: &str) -> AppResult<()> {
@@ -884,6 +1008,19 @@ fn header_text(headers: &HeaderMap, name: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+/// Whether an object's headers show the size of a multipart upload and, in the ETag S3 gives
+/// such an object (`"<digest>-<parts>"`), its number of parts.
+fn is_upload_of(headers: &HeaderMap, size: u64, parts: usize) -> bool {
+    let stored_size =
+        header_text(headers, CONTENT_LENGTH.as_str()).and_then(|length| length.parse().ok());
+    let parts_match = header_text(headers, ETAG.as_str()).is_none_or(|etag| {
+        etag.trim_matches('"')
+            .rsplit_once('-')
+            .is_some_and(|(_, count)| count == parts.to_string())
+    });
+    stored_size == Some(size) && parts_match
+}
+
 fn no_such_bucket(bucket: &str) -> AppError {
     AppError::new(
         ErrorKind::NotFound,
@@ -925,7 +1062,7 @@ fn service_error(status: StatusCode, error: xml::ErrorBody, path: &str) -> AppEr
         }
         "AccessDenied" | "AllAccessDisabled" | "AccountProblem" => ErrorKind::PermissionDenied,
         "BucketAlreadyExists" | "BucketAlreadyOwnedByYou" => ErrorKind::AlreadyExists,
-        "SlowDown" | "InternalError" | "ServiceUnavailable" | "RequestTimeout" => ErrorKind::Cloud,
+        code if RETRYABLE_CODES.contains(&code) => ErrorKind::Cloud,
         _ => match status {
             StatusCode::UNAUTHORIZED => ErrorKind::AuthFailed,
             StatusCode::FORBIDDEN => ErrorKind::PermissionDenied,
@@ -1420,7 +1557,8 @@ struct S3Upload {
     key: String,
     modified: Option<i64>,
     chunk_size: usize,
-    /// The multipart upload in progress, aborted if the upload does not finish.
+    /// The multipart upload in progress, aborted if the upload does not finish. It is let go
+    /// while the upload is being completed, which may succeed though its answer is lost.
     upload_id: Option<String>,
     etags: Vec<String>,
 }
@@ -1486,12 +1624,13 @@ impl UploadTarget for S3Upload {
         Ok(())
     }
 
-    async fn send_chunk(&mut self, _offset: u64, data: Bytes, last: bool) -> AppResult<()> {
+    async fn send_chunk(&mut self, offset: u64, data: Bytes, last: bool) -> AppResult<()> {
         let upload_id = self
             .upload_id
             .clone()
             .ok_or_else(|| AppError::new(ErrorKind::Cloud, "No upload is open"))?;
         let part_number = (self.etags.len() + 1).to_string();
+        let end = offset + data.len() as u64;
         let request = S3Request::new(Method::PUT, Some(&self.bucket), &self.key)
             .query("partNumber", &part_number)
             .query("uploadId", &upload_id)
@@ -1505,10 +1644,17 @@ impl UploadTarget for S3Upload {
         })?;
         self.etags.push(etag);
         if last {
-            self.files
-                .complete_multipart(&self.bucket, &self.key, &upload_id, &self.etags)
-                .await?;
             self.upload_id = None;
+            let completed = self
+                .files
+                .complete_multipart(&self.bucket, &self.key, &upload_id, &self.etags, end)
+                .await;
+            if let Err(unfinished) = completed {
+                if unfinished.discard {
+                    self.upload_id = Some(upload_id);
+                }
+                return Err(unfinished.error);
+            }
         }
         Ok(())
     }
@@ -1517,6 +1663,8 @@ impl UploadTarget for S3Upload {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cloud::scripted_service::{Reply, ScriptedService};
+    use std::time::Duration;
 
     #[test]
     fn a_listing_of_everything_names_files_and_folders_made_by_hand() {
@@ -1974,5 +2122,301 @@ mod tests {
         assert_eq!(capabilities.expiry, Expiry::Required);
         assert_eq!(capabilities.max_lifetime_secs, Some(604_800));
         assert!(!capabilities.revocable && !capabilities.folders && !capabilities.password);
+    }
+
+    const START: &str = "POST /bucket/big.bin?uploads= ";
+    const PART: &str = "PUT /bucket/big.bin?partNumber=";
+    const COMPLETE: &str = "POST /bucket/big.bin?uploadId=upload-1 ";
+    const CHECK: &str = "HEAD /bucket/big.bin ";
+    const ABORT: &str = "DELETE /bucket/big.bin?uploadId=upload-1 ";
+    const STARTED: &str =
+        "<InitiateMultipartUploadResult><Bucket>bucket</Bucket><Key>big.bin</Key>\
+         <UploadId>upload-1</UploadId></InitiateMultipartUploadResult>";
+    const COMPLETED: &str =
+        "<CompleteMultipartUploadResult><Bucket>bucket</Bucket><Key>big.bin</Key>\
+         <ETag>\"3858f62230ac3c915f300c664312c11f-2\"</ETag></CompleteMultipartUploadResult>";
+    /// Eight bytes, sent in two parts of four.
+    const CONTENT: &[u8] = b"abcdefgh";
+
+    fn s3_error(status: u16, code: &str) -> Reply {
+        Reply::status(
+            status,
+            &format!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>{code}</Code>\
+                 <Message>{code} from the scripted service</Message></Error>"
+            ),
+        )
+    }
+
+    /// What S3 says of the object a multipart upload made from `parts` parts.
+    fn object_of(parts: usize) -> Reply {
+        Reply::status(200, "")
+            .with_header("content-length", &CONTENT.len().to_string())
+            .with_header(
+                "etag",
+                &format!("\"3858f62230ac3c915f300c664312c11f-{parts}\""),
+            )
+    }
+
+    /// A service that takes every part, and starts, completes and checks the upload of
+    /// `/bucket/big.bin` with the replies given.
+    async fn multipart_service(
+        starting: Vec<Reply>,
+        completing: Vec<Reply>,
+        checking: Vec<Reply>,
+    ) -> ScriptedService {
+        ScriptedService::start(|_| {
+            vec![
+                (START, starting),
+                (
+                    PART,
+                    vec![Reply::status(200, "").with_header("etag", "\"part\"")],
+                ),
+                (COMPLETE, completing),
+                (CHECK, checking),
+                (ABORT, vec![Reply::status(204, "")]),
+            ]
+        })
+        .await
+    }
+
+    fn multipart_upload(service: &ScriptedService) -> Box<dyn WriteStream> {
+        let target = S3Upload {
+            files: Arc::new(files(&service.address, 443, Addressing::Automatic)),
+            bucket: "bucket".into(),
+            key: "big.bin".into(),
+            modified: None,
+            chunk_size: CONTENT.len() / 2,
+            upload_id: None,
+            etags: Vec::new(),
+        };
+        Box::new(ChunkedUpload::new(target, CONTENT.len() as u64))
+    }
+
+    async fn upload_content(service: &ScriptedService) -> AppResult<()> {
+        let mut upload = multipart_upload(service);
+        upload.write(Bytes::from_static(CONTENT)).await?;
+        upload.finish().await
+    }
+
+    /// An abort goes out from a task of its own once the upload is dropped.
+    async fn assert_not_aborted(service: &ScriptedService) {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(service.count(ABORT), 0, "the upload was aborted");
+    }
+
+    #[tokio::test]
+    async fn a_multipart_upload_starts_again_after_a_server_error() {
+        let service = multipart_service(
+            vec![s3_error(500, "InternalError"), Reply::status(200, STARTED)],
+            vec![Reply::status(200, COMPLETED)],
+            Vec::new(),
+        )
+        .await;
+        upload_content(&service).await.unwrap();
+        assert_eq!(service.count(START), 2);
+        assert_eq!(service.count(PART), 2);
+        assert_eq!(service.count(COMPLETE), 1);
+        assert_not_aborted(&service).await;
+    }
+
+    #[tokio::test]
+    async fn a_multipart_upload_completes_again_after_a_server_error() {
+        let service = multipart_service(
+            vec![Reply::status(200, STARTED)],
+            vec![
+                s3_error(500, "InternalError"),
+                Reply::status(200, COMPLETED),
+            ],
+            Vec::new(),
+        )
+        .await;
+        upload_content(&service).await.unwrap();
+        assert_eq!(service.count(PART), 2, "the parts are sent once");
+        assert_eq!(service.count(COMPLETE), 2);
+        assert_not_aborted(&service).await;
+    }
+
+    /// S3 answers 200 at once to a completion and reports a failure in the body, which may
+    /// come minutes later.
+    #[tokio::test]
+    async fn a_completion_failed_in_the_body_of_a_200_answer_is_sent_again() {
+        let service = multipart_service(
+            vec![Reply::status(200, STARTED)],
+            vec![
+                s3_error(200, "InternalError"),
+                Reply::status(200, COMPLETED),
+            ],
+            Vec::new(),
+        )
+        .await;
+        upload_content(&service).await.unwrap();
+        assert_eq!(service.count(COMPLETE), 2);
+        assert_not_aborted(&service).await;
+
+        // A failure that sending again does not mend is the service's to explain.
+        let service = multipart_service(
+            vec![Reply::status(200, STARTED)],
+            vec![s3_error(200, "InvalidPart")],
+            Vec::new(),
+        )
+        .await;
+        let error = upload_content(&service).await.unwrap_err();
+        assert_eq!(error.kind, ErrorKind::InvalidInput);
+        assert_eq!(error.message, "InvalidPart from the scripted service");
+        assert_eq!(service.count(COMPLETE), 1);
+    }
+
+    /// The first completion went through but its answer was lost, so the second finds no
+    /// upload, and the object S3 now holds is the one uploaded.
+    #[tokio::test]
+    async fn a_completion_retried_after_it_went_through_succeeds() {
+        let service = multipart_service(
+            vec![Reply::status(200, STARTED)],
+            vec![Reply::HangUp, s3_error(404, "NoSuchUpload")],
+            vec![object_of(2)],
+        )
+        .await;
+        upload_content(&service).await.unwrap();
+        assert_eq!(service.count(COMPLETE), 2);
+        assert_eq!(service.count(CHECK), 1);
+        assert_not_aborted(&service).await;
+    }
+
+    #[tokio::test]
+    async fn a_retried_completion_that_finds_another_object_fails() {
+        let service = multipart_service(
+            vec![Reply::status(200, STARTED)],
+            vec![s3_error(503, "SlowDown"), s3_error(404, "NoSuchUpload")],
+            vec![object_of(3)],
+        )
+        .await;
+        let error = upload_content(&service).await.unwrap_err();
+        assert_eq!(error.kind, ErrorKind::Cloud);
+        assert_eq!(
+            error.message,
+            "S3 no longer has the upload and does not hold the file sent under this name"
+        );
+        assert_eq!(error.path.as_deref(), Some("/bucket/big.bin"));
+        // There is no upload left to abort.
+        assert_not_aborted(&service).await;
+
+        // Nor when nothing is there.
+        let service = multipart_service(
+            vec![Reply::status(200, STARTED)],
+            vec![
+                s3_error(500, "InternalError"),
+                s3_error(404, "NoSuchUpload"),
+            ],
+            vec![Reply::status(404, "")],
+        )
+        .await;
+        let error = upload_content(&service).await.unwrap_err();
+        assert!(error.message.starts_with("S3 no longer has the upload"));
+    }
+
+    #[tokio::test]
+    async fn a_refused_completion_aborts_the_upload() {
+        let service = multipart_service(
+            vec![Reply::status(200, STARTED)],
+            vec![s3_error(400, "InvalidPart")],
+            Vec::new(),
+        )
+        .await;
+        let error = upload_content(&service).await.unwrap_err();
+        assert_eq!(error.kind, ErrorKind::InvalidInput);
+        assert!(service.waits_for(ABORT, Duration::from_secs(5)).await);
+        assert_eq!(service.count(CHECK), 0);
+    }
+
+    /// A refusal after an attempt whose answer was lost may be about an upload that attempt
+    /// completed, or is still completing.
+    #[tokio::test]
+    async fn a_completion_that_may_have_gone_through_is_not_aborted() {
+        let service = multipart_service(
+            vec![Reply::status(200, STARTED)],
+            vec![Reply::HangUp, s3_error(400, "InvalidPart")],
+            Vec::new(),
+        )
+        .await;
+        let error = upload_content(&service).await.unwrap_err();
+        assert_eq!(error.kind, ErrorKind::InvalidInput);
+        assert_eq!(service.count(COMPLETE), 2);
+        assert_not_aborted(&service).await;
+    }
+
+    #[tokio::test]
+    async fn an_upload_cancelled_while_it_completes_is_not_aborted() {
+        let service = multipart_service(
+            vec![Reply::status(200, STARTED)],
+            vec![Reply::Silence],
+            Vec::new(),
+        )
+        .await;
+        let mut upload = multipart_upload(&service);
+        upload.write(Bytes::from_static(CONTENT)).await.unwrap();
+        let finishing = tokio::time::timeout(Duration::from_millis(500), upload.finish()).await;
+        assert!(finishing.is_err(), "the completion was answered");
+        assert_eq!(service.count(COMPLETE), 1);
+        assert_not_aborted(&service).await;
+
+        // Cancelled before completing, it is.
+        let mut upload = multipart_upload(&service);
+        upload.write(Bytes::from_static(CONTENT)).await.unwrap();
+        drop(upload);
+        assert!(service.waits_for(ABORT, Duration::from_secs(5)).await);
+    }
+
+    #[tokio::test]
+    async fn a_copy_in_parts_completes_again_after_a_failure_in_the_body() {
+        let service = ScriptedService::start(|_| {
+            vec![
+                (START, vec![Reply::status(200, STARTED)]),
+                (
+                    PART,
+                    vec![Reply::status(
+                        200,
+                        "<CopyPartResult><ETag>\"part\"</ETag></CopyPartResult>",
+                    )],
+                ),
+                (
+                    COMPLETE,
+                    vec![s3_error(200, "SlowDown"), Reply::status(200, COMPLETED)],
+                ),
+                (ABORT, vec![Reply::status(204, "")]),
+            ]
+        })
+        .await;
+        let files = files(&service.address, 443, Addressing::Automatic);
+        files
+            .copy_object("bucket", "source.bin", COPY_LIMIT + 1, "big.bin")
+            .await
+            .unwrap();
+        assert_eq!(service.count(PART), 6);
+        assert_eq!(service.count(COMPLETE), 2);
+        assert_eq!(service.count(ABORT), 0);
+    }
+
+    #[test]
+    fn tells_the_object_a_multipart_upload_made() {
+        let headers = |pairs: &[(&'static str, &str)]| {
+            let mut headers = HeaderMap::new();
+            for (name, value) in pairs {
+                headers.insert(*name, value.parse().unwrap());
+            }
+            headers
+        };
+        let made = headers(&[("content-length", "8"), ("etag", "\"3858f622-2\"")]);
+        assert!(is_upload_of(&made, 8, 2));
+        assert!(!is_upload_of(&made, 9, 2), "another size");
+        assert!(!is_upload_of(&made, 8, 3), "another number of parts");
+        let whole = headers(&[("content-length", "8"), ("etag", "\"3858f622\"")]);
+        assert!(
+            !is_upload_of(&whole, 8, 2),
+            "an object written in one request"
+        );
+        // A service that gives no ETag leaves the size to tell.
+        assert!(is_upload_of(&headers(&[("content-length", "8")]), 8, 2));
+        assert!(!is_upload_of(&headers(&[]), 8, 2));
     }
 }
