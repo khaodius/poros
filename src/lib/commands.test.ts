@@ -4,6 +4,7 @@ import {
   describeResult,
   needsSelection,
   prepareCommands,
+  readsUncertainly,
   shellQuote,
 } from "./commands";
 
@@ -166,6 +167,56 @@ describe("prepareCommands", () => {
     expect(commandFor('echo "$(echo ")") {name}"')).toBe('echo "$(echo ")") ${1}"');
     // A word that only holds "case" is no case statement.
     expect(commandFor('echo "$(echo suitcase) {name}"')).toBe('echo "$(echo suitcase) ${1}"');
+  });
+
+  it("counts case as a statement only when a word and in follow", () => {
+    expect(commandFor('echo "$(echo case)" "{name}"')).toBe('echo "$(echo case)" "${1}"');
+    expect(commandFor('echo "$(case "$x" in a) echo {name};; esac) {name}"')).toBe(
+      'echo "$(case "$x" in a) echo "${1}";; esac) ${1}"',
+    );
+    expect(commandFor('echo "$(case $(uname) in Linux) echo {name};; esac) {name}"')).toBe(
+      'echo "$(case $(uname) in Linux) echo "${1}";; esac) ${1}"',
+    );
+  });
+
+  it("quotes every placeholder as outside quotes when the command cannot be read for sure", () => {
+    expect(commandFor("echo $'it\\'s' {path} '\"' {name}")).toBe(
+      "echo $'it\\'s' \"${1}\" '\"' \"${2}\"",
+    );
+    expect(commandFor('cat <<EOF\n5" disk\nEOF\nrm {name}')).toBe(
+      'cat <<EOF\n5" disk\nEOF\nrm "${1}"',
+    );
+    expect(commandFor('echo "unclosed {name}')).toBe('echo "unclosed "${1}"');
+  });
+
+  it("knows which commands it cannot read for sure", () => {
+    for (const template of [
+      "echo $'x' {name}",
+      "cat <<EOF\n{name}\nEOF",
+      "echo $((1 << 2)) {name}",
+      'echo "{name}',
+      "echo '{name}",
+      "(ls {name}",
+      "echo `ls {name}",
+    ]) {
+      expect(readsUncertainly(template), template).toBe(true);
+    }
+    for (const template of [
+      "du -sh {paths}",
+      'echo "$(echo case)" "{name}"',
+      'echo "it\'s {name}"',
+      "cat <<EOF",
+      "echo $'x'",
+    ]) {
+      expect(readsUncertainly(template), template).toBe(false);
+    }
+  });
+
+  it("applies a backslash before a placeholder to the name's first character", () => {
+    expect(commandFor("echo \\{name}")).toBe('echo "${1}"');
+    expect(commandFor('echo "\\{name}"')).toBe('echo "\\\\${1}"');
+    expect(commandFor("echo '\\{name}'")).toBe("echo '\\'\"${1}\"''");
+    expect(commandFor("echo \\\\{name}")).toBe('echo \\\\"${1}"');
   });
 
   it("reads past comments", () => {

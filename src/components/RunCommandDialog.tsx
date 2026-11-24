@@ -2,8 +2,10 @@ import { useState, type FormEvent } from "react";
 import {
   PLACEHOLDER_ADVICE,
   PLACEHOLDERS,
+  UNCERTAIN_COMMAND_WARNING,
   needsSelection,
   prepareCommands,
+  readsUncertainly,
   type CommandTarget,
 } from "../lib/commands";
 import { useCommandStore } from "../state/commandStore";
@@ -23,6 +25,7 @@ export function RunCommandDialog({ sessionId, target, onClose }: RunCommandDialo
   const [refresh, setRefresh] = useState(true);
   const trimmed = command.trim();
   const missingSelection = needsSelection(trimmed) && target.items.length === 0;
+  const uncertain = readsUncertainly(trimmed);
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -66,6 +69,7 @@ export function RunCommandDialog({ sessionId, target, onClose }: RunCommandDialo
           ))}
         </dl>
         <p className="field-hint">{PLACEHOLDER_ADVICE}</p>
+        {uncertain && <p className="field-hint warning-text">{UNCERTAIN_COMMAND_WARNING}</p>}
         <label className="check">
           <input
             type="checkbox"
