@@ -113,14 +113,23 @@ impl Lifetime {
         self.program_closed = Some(now);
     }
 
-    /// The file changed. A change after its program seemed to close proves the file is still
-    /// open somewhere, as when a launcher handed it to a window and ended.
-    pub fn changed(&mut self, now: Instant) {
-        self.program_closed = None;
+    /// A save was noticed. One noticed later than `grace` after its program seemed to close
+    /// proves the file is still open somewhere, as when a launcher handed it to a window and
+    /// ended. One noticed sooner is taken for the program's last save, made as it closed and
+    /// noticed once it had settled.
+    pub fn changed(&mut self, now: Instant, grace: Duration) {
+        if self
+            .program_closed
+            .is_some_and(|closed| now.saturating_duration_since(closed) > grace)
+        {
+            self.program_closed = None;
+        }
         self.last_change = now;
     }
 
-    pub fn uploaded(&mut self, now: Instant) {
+    /// The working copy and the server's copy were made the same, by the download or an
+    /// upload.
+    pub fn synced(&mut self, now: Instant) {
         self.last_change = now;
     }
 
@@ -339,19 +348,36 @@ mod tests {
     use super::*;
 
     const KEEP: Duration = Duration::from_secs(600);
+    const GRACE: Duration = Duration::from_secs(4);
 
     #[test]
-    fn a_change_after_the_program_ended_keeps_the_copy() {
+    fn a_save_after_the_program_ended_keeps_the_copy() {
         let opened = Instant::now();
+        let at = |seconds: u64| opened + Duration::from_secs(seconds);
         let mut lifetime = Lifetime::new(opened);
         lifetime.program_started();
         // A launcher handed the file to a window already open, and ended.
-        lifetime.program_closed(opened + Duration::from_secs(6));
-        assert!(!lifetime.is_over(KEEP, opened + Duration::from_secs(60)));
+        lifetime.program_closed(at(6));
+        assert!(!lifetime.is_over(KEEP, at(60)));
         // The file is saved from that window: it is plainly still open.
-        lifetime.changed(opened + Duration::from_secs(120));
-        assert!(!lifetime.is_over(KEEP, opened + Duration::from_secs(3600)));
-        assert!(!lifetime.is_over(Duration::ZERO, opened + Duration::from_secs(3600)));
+        lifetime.changed(at(120), GRACE);
+        assert!(!lifetime.is_over(KEEP, at(3600)));
+        assert!(!lifetime.is_over(Duration::ZERO, at(3600)));
+    }
+
+    #[test]
+    fn the_save_a_program_made_as_it_closed_does_not_keep_the_copy() {
+        let opened = Instant::now();
+        let at = |seconds: u64| opened + Duration::from_secs(seconds);
+        let mut lifetime = Lifetime::new(opened);
+        lifetime.program_started();
+        lifetime.program_closed(at(30));
+        // Noticed once it had come to rest, a moment after the program was seen to end.
+        lifetime.changed(at(32), GRACE);
+        lifetime.synced(at(33));
+        assert!(!lifetime.is_over(KEEP, at(632)));
+        assert!(lifetime.is_over(KEEP, at(633)));
+        assert!(lifetime.is_over(Duration::ZERO, at(33)));
     }
 
     #[test]
@@ -360,8 +386,8 @@ mod tests {
         let at = |seconds: u64| opened + Duration::from_secs(seconds);
         let mut lifetime = Lifetime::new(opened);
         lifetime.program_started();
-        lifetime.changed(at(100));
-        lifetime.uploaded(at(400));
+        lifetime.changed(at(100), GRACE);
+        lifetime.synced(at(400));
         lifetime.program_closed(at(500));
         // Ten minutes from the upload, not from the program's end.
         assert!(!lifetime.is_over(KEEP, at(999)));

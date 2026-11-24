@@ -137,7 +137,7 @@ impl Follower {
             core.transferred = 0;
             core.size = content.size;
             core.stalled = None;
-            core.lifetime.changed(Instant::now());
+            core.lifetime.synced(Instant::now());
             core.runs |= is_program;
             // Held back until the user agrees, and names an editor: the system would run it.
             let by_default = matches!(core.launch, None | Some(Launch::Default));
@@ -323,7 +323,10 @@ impl Follower {
                 .as_ref()
                 .is_some_and(|content| phase.content() != Some(content))
             {
-                core.lifetime.changed(now);
+                // A save made as the program closed is noticed this long after, at the most.
+                let timing = self.inner.pace.watch;
+                core.lifetime
+                    .changed(now, (timing.settle + timing.poll) * 3);
             }
         }
         match content {
@@ -698,7 +701,7 @@ impl Follower {
             core.synced = Some(content);
             core.uploads += 1;
             core.last_upload = Some(now_millis());
-            core.lifetime.uploaded(Instant::now());
+            core.lifetime.synced(Instant::now());
             core.transferred = 0;
             core.stalled = None;
             core.phase = Phase::Watching;
