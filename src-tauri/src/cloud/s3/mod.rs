@@ -538,7 +538,13 @@ impl S3Fs {
             let page = self
                 .list_page(bucket, prefix, true, token.as_deref(), PAGE_SIZE)
                 .await?;
-            objects.extend(page.contents);
+            // Only a broken service lists keys outside the prefix asked for, and renaming or
+            // deleting a folder must not touch them.
+            objects.extend(
+                page.contents
+                    .into_iter()
+                    .filter(|object| object.key.starts_with(prefix)),
+            );
             match page.next_continuation_token.filter(|_| page.is_truncated) {
                 Some(next) => token = Some(next),
                 None => return Ok(objects),
@@ -1794,6 +1800,129 @@ mod tests {
         assert!(fits_in_host_name("my-bucket-1"));
         assert!(!fits_in_host_name("My_Bucket"));
         assert!(!fits_in_host_name("a.b.c"));
+    }
+
+    /// A service on this computer that answers each request with what `answer` makes of its
+    /// first line, such as `GET /bucket?list-type=2&prefix=a%2F HTTP/1.1`, as a broken or
+    /// hostile service may. Returns its address and the first lines of the requests it took.
+    async fn stub_service(
+        answer: fn(&str) -> (u16, &'static str),
+    ) -> (String, Arc<Mutex<Vec<String>>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let address = format!("http://{}", listener.local_addr().unwrap());
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let taken = requests.clone();
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let mut head = Vec::new();
+                let mut buffer = [0u8; 4096];
+                while !head.windows(4).any(|window| window == b"\r\n\r\n") {
+                    match stream.read(&mut buffer).await {
+                        Ok(read) if read > 0 => head.extend_from_slice(&buffer[..read]),
+                        _ => break,
+                    }
+                }
+                let text = String::from_utf8_lossy(&head);
+                let request = text.lines().next().unwrap_or_default();
+                taken.lock().unwrap().push(request.to_string());
+                let (status, body) = answer(request);
+                let length = if text.starts_with("HEAD ") {
+                    0
+                } else {
+                    body.len()
+                };
+                let response = format!(
+                    "HTTP/1.1 {status} Stub\r\ncontent-length: {length}\r\nconnection: close\r\n\r\n{}",
+                    &body[..length]
+                );
+                stream.write_all(response.as_bytes()).await.ok();
+            }
+        });
+        (address, requests)
+    }
+
+    /// What a service that ignores the prefix lists for a folder: a key outside it.
+    const KEY_OUTSIDE_THE_FOLDER: &str = "<ListBucketResult><IsTruncated>false</IsTruncated>\
+         <Contents><Key>x</Key><Size>3</Size></Contents>\
+         </ListBucketResult>";
+
+    const EMPTY_LISTING: &str =
+        "<ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>";
+
+    /// The folders and files in a listing are named by what follows the listed prefix, and a
+    /// name before it, which only a broken service sends, may end inside a character.
+    #[tokio::test]
+    async fn a_listing_skips_names_outside_the_folder() {
+        let (address, _) = stub_service(|request| {
+            if request.contains("prefix=ab%2F") {
+                (
+                    200,
+                    "<ListBucketResult><IsTruncated>false</IsTruncated>\
+                     <CommonPrefixes><Prefix>a\u{20ac}/</Prefix></CommonPrefixes>\
+                     <CommonPrefixes><Prefix>ab/sub/</Prefix></CommonPrefixes>\
+                     <Contents><Key>ab/file.txt</Key><Size>3</Size></Contents>\
+                     </ListBucketResult>",
+                )
+            } else {
+                (200, EMPTY_LISTING)
+            }
+        })
+        .await;
+        let files = files(&address, 443, Addressing::Automatic);
+        let listing = files.list_dir("/bucket/ab").await.unwrap();
+        let names: Vec<&str> = listing
+            .entries
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["sub", "file.txt"]);
+    }
+
+    #[tokio::test]
+    async fn a_folder_rename_moves_only_what_is_inside_the_folder() {
+        let (address, _) = stub_service(|request| {
+            if request.starts_with("HEAD ") {
+                (404, "")
+            } else if request.contains("prefix=ab%2F") {
+                (200, KEY_OUTSIDE_THE_FOLDER)
+            } else {
+                (200, EMPTY_LISTING)
+            }
+        })
+        .await;
+        let files = files(&address, 443, Addressing::Automatic);
+        let error = files.rename("/bucket/ab", "cd").await.unwrap_err();
+        assert_eq!(error.kind, ErrorKind::NotFound, "{}", error.message);
+    }
+
+    #[tokio::test]
+    async fn a_folder_delete_removes_only_what_is_inside_the_folder() {
+        let (address, requests) = stub_service(|request| {
+            if request.starts_with("POST ") {
+                // Not taking deletes in batches makes the client name each key it deletes.
+                (501, "")
+            } else if request.starts_with("DELETE ") {
+                (204, "")
+            } else if request.contains("prefix=ab%2F") {
+                (200, KEY_OUTSIDE_THE_FOLDER)
+            } else {
+                (200, EMPTY_LISTING)
+            }
+        })
+        .await;
+        let files = files(&address, 443, Addressing::Automatic);
+        files.delete(&["/bucket/ab".to_string()]).await.unwrap();
+        let deleted: Vec<String> = requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|request| request.starts_with("DELETE "))
+            .cloned()
+            .collect();
+        assert_eq!(deleted, vec!["DELETE /bucket/ab HTTP/1.1"]);
     }
 
     /// 24 May 2013, midnight UTC: the time of the examples in the S3 API reference.

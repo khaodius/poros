@@ -649,6 +649,8 @@ fn base_job_options(options: &SyncOptions, run_id: &str) -> JobOptions {
         rate_limit: options.bwlimit_kib.saturating_mul(1024),
         limit_group: run_id.to_string(),
         source_version: None,
+        keep_completed: None,
+        quiet: false,
     }
 }
 

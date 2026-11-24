@@ -445,6 +445,43 @@ mod tests {
         assert_eq!(fs::read_to_string(&known_hosts.app_file).unwrap(), "");
     }
 
+    /// Each approval rewrites the file with what it read before, so two at once could each
+    /// keep only their own record, or share one temporary file.
+    #[test]
+    fn keys_remembered_at_the_same_moment_are_all_recorded() {
+        let (dir, known_hosts) = store("", "");
+        let hosts: Vec<String> = (0..24)
+            .map(|index| format!("host{index}.example.com"))
+            .collect();
+        let start = Arc::new(std::sync::Barrier::new(hosts.len()));
+        let approvals: Vec<_> = hosts
+            .iter()
+            .map(|host| {
+                let (known_hosts, start, host) = (known_hosts.clone(), start.clone(), host.clone());
+                std::thread::spawn(move || {
+                    start.wait();
+                    known_hosts.trust(&host, 22, &key(KEY_A))
+                })
+            })
+            .collect();
+        for approval in approvals {
+            approval.join().unwrap().unwrap();
+        }
+        for host in &hosts {
+            assert_eq!(
+                known_hosts.check(host, 22, &key(KEY_A)),
+                HostKeyStatus::Trusted,
+                "{host}"
+            );
+        }
+        let leftovers: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .filter(|name| name.to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
+    }
+
     #[test]
     fn unknown_when_nothing_recorded() {
         let (_dir, known_hosts) = store("", "");

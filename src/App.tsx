@@ -7,6 +7,7 @@ import { CommandOutputDialog } from "./components/CommandOutputDialog";
 import { ConflictDialog } from "./components/ConflictDialog";
 import { ConnectDialog } from "./components/ConnectDialog";
 import { DragGhost } from "./components/DragGhost";
+import { ExternalEditsHost } from "./components/ExternalEditDialogs";
 import { FileFlights } from "./components/FileFlights";
 import { FileOperationsHost } from "./components/FileOperationsHost";
 import { HostKeyDialog } from "./components/HostKeyDialog";
@@ -60,6 +61,7 @@ import { startSharingListings } from "./state/listings";
 import { useLogStore } from "./state/logStore";
 import { activePane } from "./state/paneRegistry";
 import { askToSave, unsavedEditorTabs } from "./state/editorActions";
+import { editsHoldExit } from "./state/externalEditStore";
 import { useSavedConnections } from "./state/savedConnectionsStore";
 import { reloadSchedules } from "./state/scheduleStore";
 import { useSessionStore } from "./state/sessionStore";
@@ -275,6 +277,11 @@ function useCloseGuard() {
   useEffect(() => {
     const subscription = getCurrentWindow().onCloseRequested(async (event) => {
       await saveWorkspaceNow();
+      // Closing the main window quits, which ends editing in other programs.
+      if (isMainWindow() && (await editsHoldExit())) {
+        event.preventDefault();
+        return;
+      }
       const unsaved = unsavedEditorTabs();
       if (unsaved.length === 0) return;
       event.preventDefault();
@@ -528,6 +535,7 @@ export function App() {
       {ready && <AppliedTheme />}
       <AppDialog />
       <ConflictDialog />
+      <ExternalEditsHost />
       <FileOperationsHost />
       <HostKeyDialog />
       <CommandOutputDialog />

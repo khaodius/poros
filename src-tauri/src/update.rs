@@ -17,7 +17,6 @@ use tauri::{AppHandle, Manager, ResourceId, Url, Webview};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 use crate::error::{AppError, AppResult, ErrorKind};
-use crate::transfer::TransferManager;
 
 /// How often the download reports how far it has got.
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
@@ -121,15 +120,16 @@ pub async fn download(
 
 /// Starts the new version. On Windows the installer closes Poros, installs the update and starts
 /// it; elsewhere the update is in place already and Poros restarts through the normal exit.
-pub fn restart(
-    app: &AppHandle,
-    pending: &PendingUpdate,
-    transfers: &TransferManager,
-) -> AppResult<()> {
+pub fn restart(app: &AppHandle, pending: &PendingUpdate) -> AppResult<()> {
     if let Some((update, bytes)) = pending.take() {
-        // The installer ends Poros without the normal exit, which would save the queue.
-        transfers.save_queue();
-        update.install(bytes).map_err(update_error)?;
+        // The installer ends Poros without the normal exit, so what the exit does is done here.
+        crate::shut_down(app);
+        if let Err(error) = update.install(bytes) {
+            // Poros is shut down by now, so it starts again as it was.
+            log::error!("Could not install the update: {error}");
+            app.request_restart();
+            return Err(update_error(error));
+        }
     }
     app.request_restart();
     Ok(())

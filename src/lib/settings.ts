@@ -137,8 +137,9 @@ export interface CloudSettings {
   boxClientSecret: string;
 }
 
-export type DoubleClickAction = "transfer" | "edit" | "nothing";
-const DOUBLE_CLICK_ACTIONS: DoubleClickAction[] = ["transfer", "edit", "nothing"];
+/** `edit` is the built-in editor, `open` the file's own program, `ask` a choice each time. */
+export type DoubleClickAction = "transfer" | "edit" | "open" | "ask" | "nothing";
+const DOUBLE_CLICK_ACTIONS: DoubleClickAction[] = ["transfer", "edit", "open", "ask", "nothing"];
 export type DateFormat = "minutes" | "seconds" | "locale";
 export const DATE_FORMATS: DateFormat[] = ["minutes", "seconds", "locale"];
 
@@ -273,10 +274,34 @@ export interface AutomationSettings {
   commands: ServerCommand[];
 }
 
+/** A program files can be opened in, listed under Open with. */
+export interface ExternalProgram {
+  id: string;
+  name: string;
+  /** The program file, or a name found on the PATH. Taken whole, never split. */
+  command: string;
+  /** `{file}` stands for the file, which goes last when left out. */
+  arguments: string;
+  /** File name patterns such as `*.psd` that Open hands to this program. */
+  patterns: string[];
+}
+
+/** Programs to open files in, and what becomes of server files they edit. Owned by the backend. */
+export interface EditingSettings {
+  programs: ExternalProgram[];
+  /** Uploads each save of a server file at once; off asks first. */
+  uploadOnSave: boolean;
+  /** Minutes a working copy is kept after its program closes. */
+  keepMinutes: number;
+}
+
+export const MAX_KEEP_WORKING_COPY_MINUTES = 24 * 60;
+
 export interface Settings {
   transfers: TransferSettings;
   connection: ConnectionSettings;
   cloud: CloudSettings;
+  editing: EditingSettings;
   interface: InterfaceSettings;
   appearance: AppearanceSettings;
   log: LogSettings;
@@ -354,6 +379,11 @@ export const DEFAULT_SETTINGS: Settings = {
     microsoftTenant: "",
     boxClientId: "",
     boxClientSecret: "",
+  },
+  editing: {
+    programs: [],
+    uploadOnSave: true,
+    keepMinutes: 10,
   },
   interface: {
     doubleClickFile: "transfer",
@@ -470,6 +500,7 @@ export function sanitizeSettings(stored: unknown): Settings {
     transfers,
     connection: mergeSection(DEFAULT_SETTINGS.connection, source.connection),
     cloud: mergeSection(DEFAULT_SETTINGS.cloud, source.cloud),
+    editing: mergeSection(DEFAULT_SETTINGS.editing, source.editing),
     interface: mergeSection(DEFAULT_SETTINGS.interface, source.interface),
     appearance: mergeSection(DEFAULT_SETTINGS.appearance, source.appearance),
     log: mergeSection(DEFAULT_SETTINGS.log, source.log),
@@ -528,6 +559,7 @@ export function sanitizeSettings(stored: unknown): Settings {
     automation.whenDone = DEFAULT_SETTINGS.automation.whenDone;
   }
   automation.commands = sanitizeCommands(automation.commands);
+  settings.editing.programs = sanitizePrograms(settings.editing.programs);
   return settings;
 }
 
@@ -578,6 +610,31 @@ function sanitizeCommands(stored: unknown[]): ServerCommand[] {
         command: command.command,
         showOutput: typeof command.showOutput === "boolean" ? command.showOutput : true,
         refresh: typeof command.refresh === "boolean" ? command.refresh : false,
+      },
+    ];
+  });
+}
+
+/** Keeps each program that has a command, with its fields as strings. The backend tidies the rest. */
+function sanitizePrograms(stored: unknown[]): ExternalProgram[] {
+  const ids = new Set<string>();
+  return stored.flatMap((value, index) => {
+    const program = asSection(value);
+    if (typeof program.command !== "string" || program.command.trim() === "") return [];
+    const text = (field: unknown) => (typeof field === "string" ? field : "");
+    // Open with names a program by its id, so each gets one of its own, as the backend gives it.
+    const storedId = text(program.id);
+    const id = storedId && !ids.has(storedId) ? storedId : `program-${index + 1}`;
+    ids.add(id);
+    return [
+      {
+        id,
+        name: text(program.name),
+        command: program.command,
+        arguments: text(program.arguments),
+        patterns: Array.isArray(program.patterns)
+          ? program.patterns.filter((pattern): pattern is string => typeof pattern === "string")
+          : [],
       },
     ];
   });
