@@ -80,6 +80,7 @@ export const schedule = {
   filesAndFoldersOnThe: "服务器上的文件和文件夹",
   filesAndFoldersOnThis: "这台计算机上的文件和文件夹",
   inAFolderOfIts: "放入单独的文件夹（可选）",
+  subfolderExample: "备份-{date}",
   intoTheFolderOnThe: "放入服务器上的文件夹",
   intoTheFolderOnThis: "放入这台计算机上的文件夹",
   itemsToCopy: "要复制的项目",

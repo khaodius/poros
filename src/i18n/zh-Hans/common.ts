@@ -10,6 +10,7 @@ export const common = {
 
   // components/ArchiveSettings
   browse: "浏览",
+  listSeparator: "，",
 
   // components/AutomationSettings
   refresh: "刷新",
@@ -45,14 +46,14 @@ export const common = {
   discard: "放弃",
   open: "打开",
 
-  // components/DrivesGoing
-  listSeparator: "，",
-
   // components/EditorPane
   dismiss: "关闭",
 
   // components/ExternalEditDialogs
   upload: "上传",
+
+  // components/ExternalEditorSettings
+  minutesUnit: "分钟",
 
   // components/FileList
   folder: "文件夹",
@@ -83,12 +84,14 @@ export const common = {
 
   // components/PropertiesDialog
   apply: "应用",
+  ok: "确定",
 
   // components/SearchBar
   search: "搜索",
 
   // components/SettingsDialog
   askMe: "询问我",
+  secondsUnit: "秒",
 
   // components/SyncPlanList
   path: "路径",

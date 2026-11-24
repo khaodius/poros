@@ -118,6 +118,7 @@ export const connect = {
   importCountConnections: { other: "导入 {count} 个连接" },
   foundFiles: "已找到 {files}",
   notFoundInChoose: "在 {places} 中未找到。{choose}",
+  placeOrPlace: "{first} 或 {second}",
   keepThePasswordsInTheKeychain: {
     other: "将 {count} 个密码保存在系统密钥链中",
   },

@@ -21,7 +21,7 @@ export const archives = {
   noProgramThatExtractsArchives: "未找到可解压压缩文件的程序。请安装 7-Zip，或在上方指定一个程序。",
   onServers: "在服务器上",
   archivesOnAnSftpServer:
-    "SFTP 服务器上的压缩文件会在服务器上使用其已有的程序解压。Poros 首次会查找 {programs}，并为每种格式使用最合适的程序。只允许 SFTP 的服务器无法解压；请将压缩文件下载后在本机解压。",
+    "SFTP 服务器上的压缩文件会在服务器上使用其已有的程序解压。Poros 首次会查找 {programs} 和 {lastProgram}，并为每种格式使用最合适的程序。只允许 SFTP 的服务器无法解压；请将压缩文件下载后在本机解压。",
   programsFileType: "程序",
 
   // lib/archives

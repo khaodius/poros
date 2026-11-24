@@ -51,6 +51,15 @@ export const sync = {
   settleByHand: "手动处理",
   dryRun: "试运行",
   synchronize: "同步",
+  localSide: "本地",
+  serverSide: "服务器",
+  sideMissing: "{side}：不存在",
+  sideFolder: "{side}：文件夹",
+  sideFolderWithPermissions: "{side}：文件夹，{permissions}",
+  sideFile: "{side}：{size}，{modified}",
+  sideFileWithPermissions: "{side}：{size}，{modified}，{permissions}",
+  sideLink: "{side}：链接，{size}，{modified}",
+  sideLinkWithPermissions: "{side}：链接，{size}，{modified}，{permissions}",
 
   // components/SyncSettings
   rsync2: "rsync",
