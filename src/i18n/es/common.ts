@@ -15,6 +15,7 @@ export const common = {
   // components/AutomationSettings
   refresh: "Actualizar",
   add: "Agregar",
+  labelWithMessage: "{label}: {message}",
 
   // components/BulkRenameDialog
   sentenceSeparator: " ",
@@ -112,7 +113,4 @@ export const common = {
   durationSeconds: "{seconds} s",
   durationMinutes: "{minutes} min {seconds} s",
   durationHours: "{hours} h {minutes} min",
-
-  // state/archiveActions
-  labelWithMessage: "{label}: {message}",
 } satisfies TranslatedArea<"common">;

@@ -113,6 +113,11 @@ export const automation = {
   theFullPathsOfAll: "las rutas completas de todos los elementos seleccionados",
   theNamesOfAllSelected: "los nombres de todos los elementos seleccionados",
   theFolderShown: "la carpeta mostrada",
+  keepPlaceholdersOutOfAnotherShell:
+    "No pongas marcadores dentro de una cadena de comando que lea otro shell, como {bashExample} o {sshExample}: ese shell leería un nombre como parte de su comando.",
+  cannotTellHowTheShellReads:
+    "Poros no puede saber con certeza cómo lee el shell este comando: tiene un here-document, {ansiQuoted}, o una comilla o un corchete sin cerrar. Cada marcador entra como {parameter} y así sucesivamente, lo que mantiene un nombre como una sola palabra solo fuera de las comillas.",
+  commandWithParameters: "{command} con {parameters}",
   stoppedAfter: "Detenido después de {elapsed}",
   endedBySignal: "Terminado por la señal {signal} después de {elapsed}",
   endedWithoutStatus: "Terminado sin estado de salida después de {elapsed}",
