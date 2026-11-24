@@ -13,9 +13,9 @@ use super::{Progress, ServerFeatures};
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::model::EntryKind;
 use crate::remote_path;
-use crate::rsync::{run_command, shell_quote};
 use crate::session::Session;
 use crate::sftp::{EntryStat, RemoteFs};
+use crate::ssh::exec::{self, shell_quote};
 
 const PARALLEL_ENTRIES: usize = 16;
 const COMMAND_OUTPUT_LIMIT: usize = 64 * 1024;
@@ -305,11 +305,11 @@ async fn change_owner(
     }
     let options = if request.recursive { "-R -P" } else { "-h" };
     let prefix = format!("{program} {options} -- {}", shell_quote(&spec));
-    for command in command_batches(&prefix, &paths) {
+    for script in command_batches(&prefix, &paths) {
         let channel = session.open_command_channel().await?;
         let output = tokio::time::timeout(
             COMMAND_TIMEOUT,
-            run_command(channel, &command, COMMAND_OUTPUT_LIMIT),
+            exec::run_script(channel, &script, COMMAND_OUTPUT_LIMIT),
         )
         .await
         .map_err(|_| AppError::new(ErrorKind::Timeout, format!("{program} took too long")))??;
@@ -411,7 +411,7 @@ fn set_ids<'a>(
     })
 }
 
-/// `prefix` followed by as many quoted paths as fit a modest command line.
+/// Scripts for `sh`: `prefix` followed by as many quoted paths as fit a modest command.
 fn command_batches(prefix: &str, paths: &[String]) -> Vec<String> {
     let mut batches = Vec::new();
     let mut command = prefix.to_string();
@@ -465,5 +465,28 @@ mod tests {
             .map(|batch| batch.matches("'/srv").count())
             .sum();
         assert_eq!(total, 3000);
+    }
+
+    /// `sh` gives `chown` the owner and each path whole, whatever they hold.
+    #[cfg(unix)]
+    #[test]
+    fn owners_and_paths_reach_chown_whole() {
+        use crate::ssh::exec::tests::{printed_words, run_locally, HOSTILE_NAMES};
+        use crate::ssh::exec::ScriptInput;
+
+        let paths: Vec<String> = HOSTILE_NAMES
+            .iter()
+            .map(|name| format!("/srv/{name}"))
+            .collect();
+        let prefix = format!("chown -h -- {}", shell_quote("www:it's"));
+        let batches = command_batches(&prefix, &paths);
+        assert_eq!(batches.len(), 1);
+        let stub = "chown() { printf '%s\\0' \"$@\"; }\n";
+        let words = printed_words(&run_locally(
+            &format!("{stub}{}", batches[0]),
+            ScriptInput::Empty,
+        ));
+        assert_eq!(&words[..3], ["-h", "--", "www:it's"]);
+        assert_eq!(&words[3..], paths);
     }
 }

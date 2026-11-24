@@ -90,6 +90,23 @@ describe("the trigger editor", () => {
     ]);
   });
 
+  it("keeps the field being typed in when the language moves it", async () => {
+    const container = await render({ type: "every", minutes: 5, start: 0 });
+    document.body.append(container);
+    const amount = container.querySelector<HTMLInputElement>(".stepper input")!;
+    amount.focus();
+    await act(async () => {
+      useLanguageStore.setState({
+        choice: "ja",
+        translation: START_FIRST,
+        translate: createTranslate(START_FIRST, ENGLISH),
+      });
+    });
+    expect(container.querySelector(".stepper input")).toBe(amount);
+    expect(document.activeElement).toBe(amount);
+    container.remove();
+  });
+
   it("does the same for the time of a daily task", async () => {
     const container = await render({ type: "daily", minuteOfDay: 120, weekdays: [0] });
     expect(partsOf(container)).toEqual(["at", "[time]", "[days]"]);

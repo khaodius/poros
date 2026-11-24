@@ -12,9 +12,9 @@ use super::tree::Counter;
 use crate::checksum::{hash_file, parse_output, Algorithm};
 use crate::error::{AppError, AppResult};
 use crate::remote_path;
-use crate::rsync::{run_command, shell_quote};
 use crate::session::Session;
 use crate::sftp::{ReadChunk, RemoteFs};
+use crate::ssh::exec::{self, shell_quote};
 
 type Hash = Vec<u8>;
 
@@ -118,9 +118,11 @@ async fn hash_with_md5sum(
 ) -> Option<HashMap<String, Hash>> {
     let batches = command_batches(root, paths);
     let results: Vec<Option<HashMap<String, Hash>>> = stream::iter(batches)
-        .map(|(command, by_argument)| async move {
+        .map(|(script, by_argument)| async move {
             let channel = session.open_command_channel().await.ok()?;
-            let output = run_command(channel, &command, OUTPUT_LIMIT).await.ok()?;
+            let output = exec::run_script(channel, &script, OUTPUT_LIMIT)
+                .await
+                .ok()?;
             // Status 1 means some files could not be read; the others are still listed.
             if output.exit_status == Some(COMMAND_NOT_FOUND) || output.exit_status.is_none() {
                 return None;
@@ -147,7 +149,7 @@ async fn hash_with_md5sum(
     Some(hashes)
 }
 
-/// Commands that each fit a modest command line, with each argument's relative path.
+/// Scripts for `sh` that each fit a modest command, with each argument's relative path.
 fn command_batches(root: &str, paths: &[String]) -> Vec<(String, HashMap<String, String>)> {
     let mut batches = Vec::new();
     let mut command = String::from("md5sum --");
@@ -206,5 +208,28 @@ mod tests {
             .all(|(command, _)| command.len() <= MAX_COMMAND_BYTES));
         assert_eq!(batches[0].1["/srv/dir/file-0"], "dir/file-0");
         assert!(batches[0].0.starts_with("md5sum -- '/srv/dir/file-0'"));
+    }
+
+    /// `sh` gives `md5sum` each path whole, whatever it holds.
+    #[cfg(unix)]
+    #[test]
+    fn hostile_paths_reach_md5sum_whole() {
+        use crate::ssh::exec::tests::{printed_words, run_locally, HOSTILE_NAMES};
+        use crate::ssh::exec::ScriptInput;
+
+        let paths: Vec<String> = HOSTILE_NAMES.iter().map(|name| name.to_string()).collect();
+        let batches = command_batches("/srv", &paths);
+        assert_eq!(batches.len(), 1);
+        let stub = "md5sum() { printf '%s\\0' \"$@\"; }\n";
+        let words = printed_words(&run_locally(
+            &format!("{stub}{}", batches[0].0),
+            ScriptInput::Empty,
+        ));
+        assert_eq!(words[0], "--");
+        for (word, path) in words[1..].iter().zip(&paths) {
+            assert_eq!(word, &format!("/srv/{path}"));
+            assert_eq!(&batches[0].1[word], path);
+        }
+        assert_eq!(words.len(), paths.len() + 1);
     }
 }

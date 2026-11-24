@@ -22,9 +22,9 @@ use super::{
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::model::EntryKind;
 use crate::remote_path;
-use crate::rsync::{run_command, shell_quote};
 use crate::session::Session;
 use crate::sftp::{EntryStat, RemoteFs};
+use crate::ssh::exec::{self, shell_quote};
 
 /// Top-level items worked on at once.
 const PARALLEL_ITEMS: usize = 4;
@@ -408,12 +408,7 @@ impl<'a> Work<'a> {
         }
         if self.runs_commands().await {
             let target = destination.path();
-            self.run(&format!(
-                "mv -f -- {} {}",
-                shell_quote(source),
-                shell_quote(target)
-            ))
-            .await?;
+            self.run(&move_script(source, target)).await?;
             if self.fs.lstat_entry(target).await?.is_none() {
                 return Err(rename_error);
             }
@@ -600,12 +595,7 @@ impl<'a> Work<'a> {
             }
         }
         if commands {
-            self.run(&format!(
-                "cp -Pp -- {} {}",
-                shell_quote(source),
-                shell_quote(target)
-            ))
-            .await?;
+            self.run(&copy_file_script(source, target)).await?;
             self.progress.used(Method::Command);
             self.progress.add_bytes(stat.size);
             return Ok(());
@@ -716,17 +706,7 @@ impl<'a> Work<'a> {
     /// Copies a folder or file with one `cp` on the server. `cp -PpR` is POSIX: links stay
     /// links, and times and permissions are kept.
     async fn copy_with_command(&self, source: &str, destination: &Destination) -> AppResult<()> {
-        let command = match destination {
-            Destination::Merge(target) => format!(
-                "cp -PpR -- {} {}",
-                shell_quote(&format!("{source}/.")),
-                shell_quote(target)
-            ),
-            Destination::Fresh(target) | Destination::Replace(target) => {
-                format!("cp -PpR -- {} {}", shell_quote(source), shell_quote(target))
-            }
-        };
-        self.run(&command).await?;
+        self.run(&copy_script(source, destination)).await?;
         // A server that forces one program for every command may do nothing and still succeed.
         if self.fs.lstat_entry(destination.path()).await?.is_none() {
             return Err(AppError::new(
@@ -747,31 +727,57 @@ impl<'a> Work<'a> {
             .await
     }
 
-    async fn run(&self, command: &str) -> AppResult<()> {
+    async fn run(&self, script: &str) -> AppResult<()> {
         let channel = self.session.open_command_channel().await?;
         let output = self
-            .cancellable(run_command(channel, command, COMMAND_OUTPUT_LIMIT))
+            .cancellable(exec::run_script(channel, script, COMMAND_OUTPUT_LIMIT))
             .await?;
         if output.exit_status == Some(0) {
             return Ok(());
         }
         Err(command_error(
-            command,
+            script,
             output.exit_status,
             &output.error_output,
         ))
     }
 }
 
-/// Whether the server runs shell commands. Servers limited to SFTP may run their SFTP server
-/// for every command and report success, so the probe checks what comes back.
+/// `mv` of `source` onto `target`, for `sh`.
+fn move_script(source: &str, target: &str) -> String {
+    format!("mv -f -- {} {}", shell_quote(source), shell_quote(target))
+}
+
+/// `cp` of one file, keeping it a link if it is one, with its times and permissions.
+fn copy_file_script(source: &str, target: &str) -> String {
+    format!("cp -Pp -- {} {}", shell_quote(source), shell_quote(target))
+}
+
+/// `cp -PpR` of a folder or file to `destination`; into a folder that is merged, of what the
+/// source holds.
+fn copy_script(source: &str, destination: &Destination) -> String {
+    match destination {
+        Destination::Merge(target) => format!(
+            "cp -PpR -- {} {}",
+            shell_quote(&format!("{source}/.")),
+            shell_quote(target)
+        ),
+        Destination::Fresh(target) | Destination::Replace(target) => {
+            format!("cp -PpR -- {} {}", shell_quote(source), shell_quote(target))
+        }
+    }
+}
+
+/// Whether the server runs shell commands through `sh`, as every command here does. Servers
+/// limited to SFTP may run their SFTP server for every command and report success, so the probe
+/// checks what comes back.
 pub async fn runs_commands(session: &Session) -> bool {
     let Ok(channel) = session.open_command_channel().await else {
         return false;
     };
     let probe = tokio::time::timeout(
         COMMAND_PROBE_TIMEOUT,
-        run_command(channel, COMMAND_PROBE, COMMAND_OUTPUT_LIMIT),
+        exec::run_script(channel, COMMAND_PROBE, COMMAND_OUTPUT_LIMIT),
     )
     .await;
     matches!(
@@ -969,5 +975,39 @@ mod tests {
         );
         let silent = command_error("mv -f -- 'a' 'b'", Some(1), "");
         assert_eq!(silent.message, "mv on the server exited with status 1");
+    }
+
+    /// `sh` gives `mv` and `cp` each path whole, whatever it holds.
+    #[cfg(unix)]
+    #[test]
+    fn moves_and_copies_get_hostile_paths_whole() {
+        use crate::ssh::exec::tests::{printed_words, run_locally, HOSTILE_NAMES};
+        use crate::ssh::exec::ScriptInput;
+
+        let stubs = "mv() { printf '%s\\0' mv \"$@\"; }\ncp() { printf '%s\\0' cp \"$@\"; }\n";
+        for name in HOSTILE_NAMES {
+            let (source, target) = (format!("/srv/{name}"), format!("/srv/copy of {name}"));
+            let scripts = [
+                (move_script(&source, &target), ["mv", "-f"]),
+                (copy_file_script(&source, &target), ["cp", "-Pp"]),
+                (
+                    copy_script(&source, &Destination::Fresh(target.clone())),
+                    ["cp", "-PpR"],
+                ),
+            ];
+            for (script, [program, options]) in scripts {
+                let words = printed_words(&run_locally(
+                    &format!("{stubs}{script}"),
+                    ScriptInput::Empty,
+                ));
+                assert_eq!(words, [program, options, "--", &source, &target]);
+            }
+            let script = copy_script(&source, &Destination::Merge(target.clone()));
+            let words = printed_words(&run_locally(
+                &format!("{stubs}{script}"),
+                ScriptInput::Empty,
+            ));
+            assert_eq!(words, ["cp", "-PpR", "--", &format!("{source}/."), &target]);
+        }
     }
 }

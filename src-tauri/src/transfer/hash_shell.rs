@@ -12,6 +12,7 @@ use russh::Channel;
 use super::worker::JobContext;
 use crate::error::{AppError, AppResult};
 use crate::rsync::{CommandOutput, RemoteProcess};
+use crate::ssh::exec;
 
 /// A server that has not answered by then is taken not to run a shell.
 const START_WAIT: Duration = Duration::from_secs(15);
@@ -27,7 +28,7 @@ pub(super) struct HashShell {
 
 impl HashShell {
     async fn start(channel: Channel<Msg>, limit: usize) -> AppResult<Self> {
-        let process = RemoteProcess::start(channel, "sh").await?;
+        let process = exec::open_shell(channel).await?;
         let mut shell = Self {
             process,
             marker: format!("poros-end-{}", uuid::Uuid::new_v4().simple()),
