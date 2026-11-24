@@ -77,6 +77,14 @@ export function deletionsIn(listing: DirListing | null): ReadonlyMap<string, Del
   return (listing && deletions.get(listing)) ?? NONE;
 }
 
+/** The entries of a listing that are there now, without the deleted ones it shows. */
+export function liveEntries(listing: DirListing): FileEntry[] {
+  const deleted = deletionsIn(listing);
+  return deleted.size === 0
+    ? listing.entries
+    : listing.entries.filter((entry) => !deleted.has(entry.path));
+}
+
 /**
  * The entries among `chosen` that `listing` still shows as deleted, as it shows them now. One
  * written again since it was picked is left out, so nothing removes it with its history.

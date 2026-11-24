@@ -13,6 +13,7 @@ import {
   isBucket,
   isTextName,
   keepsVersions,
+  liveEntries,
   mergeDeleted,
   restoreProgressText,
   shortTag,
@@ -152,6 +153,13 @@ describe("mergeDeleted", () => {
   it("knows of no deletions in a listing it did not make", () => {
     expect(deletionsIn(listing([entry("a.jpg")])).size).toBe(0);
     expect(deletionsIn(null).size).toBe(0);
+  });
+
+  it("tells the entries that are there now from the deleted ones", () => {
+    const merged = mergeDeleted(listing([entry("kept.jpg")]), [deleted("gone.jpg")]);
+    expect(liveEntries(merged).map((item) => item.name)).toEqual(["kept.jpg"]);
+    const plain = listing([entry("a.jpg")]);
+    expect(liveEntries(plain)).toBe(plain.entries);
   });
 });
 

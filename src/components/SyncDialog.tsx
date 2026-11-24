@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { CalendarClock, FolderOpen, LoaderCircle } from "lucide-react";
+import { useLatest } from "../hooks/useLatest";
 import { useOptionCheck } from "../hooks/useOptionCheck";
 import { localSource } from "../lib/fileSource";
 import { pluralize } from "../lib/format";
 import { onSyncProgress, sync, toAppError } from "../lib/ipc";
+import { progressReach } from "../lib/progressBars";
 import { commandPreview, withOption } from "../lib/rsyncOptions";
 import { newTask, syncAction } from "../lib/schedule";
 import {
@@ -112,6 +114,7 @@ export function SyncDialog({ onClose, ...given }: SyncDialogProps) {
   const [error, setError] = useState<string | null>(null);
   /** The comparison or plan the backend holds for this dialog, to let go of on close. */
   const held = useRef<{ requestId?: string; planId?: string }>({});
+  const latestOnClose = useLatest(onClose);
 
   const session = sessions.find((entry) => entry.info.id === folders.sessionId);
   const savedConnectionId = session?.info.savedConnectionId;
@@ -237,7 +240,7 @@ export function SyncDialog({ onClose, ...given }: SyncDialogProps) {
       useToastStore
         .getState()
         .show(summary.failures.length > 0 ? "error" : "info", describeRun(summary));
-      onClose();
+      latestOnClose.current();
     } catch (caught) {
       held.current = {};
       // Whatever the run changed before it failed or was cancelled is not what was remembered.
@@ -491,8 +494,11 @@ function ComparingView({
           : `Listing folders: ${progress?.localEntries ?? 0} local and ${progress?.remoteEntries ?? 0} server entries`}
       </p>
       {comparing && (
-        <span className="progress-track sync-comparing-track">
-          <span className="progress-fill" style={{ width: `${fraction * 100}%` }} />
+        <span
+          className="progress-track sync-comparing-track"
+          style={progressReach(fraction) as CSSProperties}
+        >
+          <span className="progress-fill" />
         </span>
       )}
       <div className="dialog-actions">
