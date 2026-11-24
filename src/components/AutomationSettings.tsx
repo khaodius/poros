@@ -1,7 +1,12 @@
 import { useState, type FormEvent } from "react";
 import { CalendarClock, Plus, Trash2 } from "lucide-react";
 import { WHEN_DONE_LABELS } from "../lib/automation";
-import { PLACEHOLDERS } from "../lib/commands";
+import {
+  PLACEHOLDER_ADVICE,
+  PLACEHOLDERS,
+  UNCERTAIN_COMMAND_WARNING,
+  readsUncertainly,
+} from "../lib/commands";
 import {
   WHEN_DONE_ACTIONS,
   type AutomationSettings,
@@ -85,6 +90,7 @@ export function AutomationSettingsPage({ settings }: { settings: Settings }) {
             </div>
           ))}
         </dl>
+        <p className="setting-note">{PLACEHOLDER_ADVICE}</p>
         <CommandList commands={automation.commands} onChange={(commands) => set({ commands })} />
       </SettingGroup>
 
@@ -185,6 +191,13 @@ function CommandList({ commands, onChange }: CommandListProps) {
           </button>
         </div>
       ))}
+      {commands
+        .filter((saved) => readsUncertainly(saved.command))
+        .map((saved) => (
+          <p key={`uncertain-${saved.id}`} className="setting-note warning-text">
+            {saved.name.trim() || saved.command}: {UNCERTAIN_COMMAND_WARNING}
+          </p>
+        ))}
       <form className="command-row command-row-new" onSubmit={add}>
         <input
           className="command-name"
@@ -206,6 +219,9 @@ function CommandList({ commands, onChange }: CommandListProps) {
           <Plus size={14} /> Add
         </button>
       </form>
+      {readsUncertainly(command) && (
+        <p className="setting-note warning-text">{UNCERTAIN_COMMAND_WARNING}</p>
+      )}
     </div>
   );
 }

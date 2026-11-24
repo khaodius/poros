@@ -52,11 +52,11 @@ pub struct RemoteProcess {
 }
 
 impl RemoteProcess {
-    pub async fn start(channel: Channel<Msg>, command: &str) -> AppResult<Self> {
-        channel.exec(true, command).await?;
+    /// The process an exec request just started on `channel`; [`crate::ssh::exec`] sends it.
+    pub(crate) fn attach(channel: Channel<Msg>) -> Self {
         let (reader, writer) = channel.split();
         let (sender, incoming) = mpsc::channel(RECEIVE_BUFFER_MESSAGES);
-        Ok(Self {
+        Self {
             incoming,
             current: Bytes::new(),
             writer: Some(writer),
@@ -66,7 +66,47 @@ impl RemoteProcess {
             multiplexed: false,
             frame_left: 0,
             messages: Vec::new(),
-        })
+        }
+    }
+
+    /// Writes `input`, closes it, and collects up to `limit` bytes of output and how the process
+    /// ended. A process that is gone before it takes the input ends with no status.
+    pub(crate) async fn collect(mut self, input: &[u8], limit: usize) -> CommandOutput {
+        self.write_bytes(input);
+        let _ = self.flush().await;
+        self.close_input().await;
+        let output = self.read_to_end(limit).await;
+        let ending = self.end().await;
+        CommandOutput {
+            exit_status: ending.exit_status,
+            output,
+            error_output: ending.error_output,
+        }
+    }
+
+    /// Reads up to and including the first `marker`, dropping what came before it, at most
+    /// `limit` bytes.
+    pub(crate) async fn skip_past(&mut self, marker: &[u8], limit: usize) -> AppResult<()> {
+        let mut seen: Vec<u8> = Vec::new();
+        loop {
+            let chunk = self.read_chunk().await?;
+            let searched_from = seen.len().saturating_sub(marker.len() - 1);
+            seen.extend_from_slice(&chunk);
+            if let Some(at) = seen[searched_from..]
+                .windows(marker.len())
+                .position(|window| window == marker)
+            {
+                let end = searched_from + at + marker.len();
+                self.current = Bytes::copy_from_slice(&seen[end..]);
+                return Ok(());
+            }
+            if seen.len() > limit + marker.len() {
+                return Err(AppError::new(
+                    ErrorKind::Rsync,
+                    "The server's login shell printed too much before the command started",
+                ));
+            }
+        }
     }
 
     /// The next output the process sent, as it came, for a process that does not frame it.
@@ -419,24 +459,9 @@ pub struct CommandOutput {
     pub error_output: String,
 }
 
-/// Runs a command with no input and collects up to `limit` bytes of its output.
-pub async fn run_command(
-    channel: Channel<Msg>,
-    command: &str,
-    limit: usize,
-) -> AppResult<CommandOutput> {
-    let mut process = RemoteProcess::start(channel, command).await?;
-    process.close_input().await;
-    let output = process.read_to_end(limit).await;
-    let ending = process.end().await;
-    Ok(CommandOutput {
-        exit_status: ending.exit_status,
-        output,
-        error_output: ending.error_output,
-    })
-}
-
-/// Quotes an argument for a POSIX shell.
+/// Quotes an argument for a POSIX shell. Only `sh` reads what it writes: other login shells read
+/// single quotes otherwise, so quoted words go in scripts, never on an exec line
+/// (see [`crate::ssh::exec`]).
 pub fn shell_quote(argument: &str) -> String {
     format!("'{}'", argument.replace('\'', r"'\''"))
 }
