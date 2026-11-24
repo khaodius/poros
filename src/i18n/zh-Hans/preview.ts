@@ -86,7 +86,7 @@ export const preview = {
   textReadFromAFileHint: "较长的文件会显示其开头部分。",
   thumbnailSize: "缩略图大小",
   whenTheCursorRestsOn: "光标停留在文件上时",
-  onAClickOfShow: "点击“显示预览”时",
+  onAClickOfShow: "单击“显示预览”时",
   filesOnThisComputerLoad: "加载这台计算机上的文件",
   filesOnServersLoad: "加载服务器上的文件",
   sftpFtpAndWebdav: "SFTP、FTP 和 WebDAV。",

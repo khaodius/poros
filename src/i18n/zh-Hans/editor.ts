@@ -31,7 +31,7 @@ export const editor = {
   reloadFromTheServer: "从服务器重新加载",
   reloadFromDisk: "从磁盘重新加载",
   lineColumn: "第 {line} 行，第 {column} 列",
-  lineColumnSelected: "第 {line} 行，第 {column} 列（已选择 {selected}）",
+  lineColumnSelected: "第 {line} 行，第 {column} 列（已选择 {selected} 个字符）",
   anOlderVersionIsReadOnly: "旧版本为只读",
   encodingOfThisOlderVersion: "此旧版本的编码",
   lineEndingsOfThisOlderVersion: "此旧版本的换行符",

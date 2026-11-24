@@ -26,7 +26,7 @@ export const limits = {
   endTime: "结束时间",
   limitTo: "限制为",
   unlimited: "不限速",
-  noDaysSoItNever: "未选择任何日期，因此永远不会生效",
+  noDaysSoItNever: "未选择星期几，因此永远不会生效",
   uploadLimit: "上传限制",
   downloadLimit: "下载限制",
 
@@ -35,7 +35,7 @@ export const limits = {
   followTheSpeedLimitSchedule: "重新按速度限制计划执行",
   ignoreSchedule: "忽略计划",
   ignoreTheSpeedLimitSchedule: "忽略速度限制计划，直到其下次变化",
-  clickToChangeTheSchedule: "{scheduleTooltip}\n点击以更改计划。",
+  clickToChangeTheSchedule: "{scheduleTooltip}\n单击以更改计划。",
   scheduleIgnoredShort: "已忽略计划",
   scheduleIgnoredShortUntil: "已忽略计划，直到 {time}",
   limitsUntilTime: "{limits} 直到 {time}",

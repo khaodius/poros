@@ -14,7 +14,7 @@ export const openWith = {
   keepBoth: "保留两者",
   upload: "上传 {name}？",
   uploadEverySaveWithoutAsking: "每次保存都直接上传，不再询问",
-  notNow: "暂不",
+  notNow: "暂不上传",
   defaultProgram: "默认程序",
   setUpForFilesLike: "为与此类似的文件设置",
   builtInEditor: "内置编辑器",
@@ -94,7 +94,7 @@ export const openWith = {
   // components/ExternalEditorSettings
   openWith: "打开方式",
   openCtrlEnterUsesThe:
-    "“打开”(Ctrl+Enter) 使用为该类文件设置的程序，否则使用系统自己的程序。服务器上的文件会从这台计算机上的副本打开，程序每次保存时都会上传该副本。",
+    "“打开”（Ctrl+Enter）使用为该类文件设置的程序，否则使用系统自己的程序。服务器上的文件会从这台计算机上的副本打开，程序每次保存时都会上传该副本。",
   uploadEachSaveWithoutAsking: "每次保存都直接上传，不再询问",
   uploadEachSaveWithoutAskingHint: "关闭时：每次上传前都会询问。",
   keepCopiesAfterTheProgram: "程序关闭后保留副本",

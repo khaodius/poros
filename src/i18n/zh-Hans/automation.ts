@@ -99,7 +99,7 @@ export const automation = {
   keepPlaceholdersOutOfAnotherShell:
     "不要把占位符放进由另一个 shell 读取的命令字符串中，例如 {bashExample} 或 {sshExample}：那个 shell 会把名称当作其命令的一部分来读取。",
   cannotTellHowTheShellReads:
-    "Poros 无法确定 shell 如何读取此命令：其中有 here 文档、{ansiQuoted}，或者有未闭合的引号或括号。每个占位符会依次以 {parameter} 等形式填入，只有在引号之外，这样才能让名称保持为一个词。",
+    "Poros 无法确定 shell 如何读取此命令：其中有 here 文档、{ansiQuoted}，或者有未闭合的引号或括号。每个占位符会以 {parameter} 等形式填入，而这种形式只有在引号之外才能让名称保持为一个词。",
   commandWithParameters: "{command}，其中 {parameters}",
   stoppedAfter: "运行 {elapsed} 后已停止",
   endedBySignal: "运行 {elapsed} 后被信号 {signal} 终止",

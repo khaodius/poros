@@ -143,7 +143,7 @@ export const pane = {
   mountAsDrive: "挂载为驱动器...",
 
   // components/PathBar
-  clickToTypeOrCopy: "点击以输入或复制路径 (Ctrl+L)",
+  clickToTypeOrCopy: "单击以输入或复制路径 (Ctrl+L)",
   unlockedVault: "已解锁的保险库",
 
   // state/fileOperations

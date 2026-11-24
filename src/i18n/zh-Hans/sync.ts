@@ -27,7 +27,7 @@ export const sync = {
   // components/SyncPlanList
   rsync: "rsync {arguments}",
   theOptionsAsRsyncArguments: "以 rsync 参数形式表示的选项",
-  dryRunRunningThisChanges: "试运行：运行此操作不会做任何更改，只会将将要执行的操作写入日志。",
+  dryRunRunningThisChanges: "试运行：运行此操作不会做任何更改，只会把将要执行的操作写入日志。",
   unchangedSourceFilesWillBe: {
     other: "{count} 个未更改的源文件也将被删除。",
   },
@@ -131,7 +131,7 @@ export const sync = {
   notOnTheServer: "不在服务器上",
   typeDiffers: "此处为{here}，服务器上为{there}",
   differsWithTheSameTimeOnBothSides: "不同，但两侧的时间相同",
-  shorterOnTheTarget: "目标上的较短；只发送其余部分",
+  shorterOnTheTarget: "目标上的文件较短；只发送其余部分",
   sameContentsOnlyTheTimeOrPermissions: "内容相同；只设置时间或权限",
   nothingHere: "无",
   folderHere: "文件夹",

@@ -41,7 +41,7 @@ export const rsync = {
   blankPicksOneFromEach: "留空则根据每个文件的大小选择。",
   removeSourceFilesOnceThey: "源文件到达目标后将其删除",
   foldersStayFilesAlreadyThe: "文件夹会保留。两侧已相同的文件也会被删除。",
-  flushEachFileToDisk: "将每个文件写入磁盘",
+  flushEachFileToDisk: "将每个文件刷写到磁盘",
   rsyncOnTheServer: "服务器上的 rsync",
   blankUsesTheSitesSetting: "留空则使用站点的设置，其次使用传输设置。",
   deletion: "删除",
@@ -98,7 +98,7 @@ export const rsync = {
   bandwidthAndCompression: "带宽和压缩",
   speedLimit: "速度限制",
   n0IsUnlimitedSharedBy:
-    "0 表示不限制。由同步中的所有文件共享，同步也会遵守“设置 > 传输”中的速度限制和计划。",
+    "0 表示不限速。由同步中的所有文件共享，同步也会遵守“设置 > 传输”中的速度限制和计划。",
   compressDataOnTheWay: "传输时压缩数据",
   overAConnectionOfIts: "通过单独的连接使用 SSH 压缩。",
   backups: "备份",

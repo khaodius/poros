@@ -5,7 +5,7 @@ export const cloud = {
   googleDrive: "Google Drive",
   inGoogleCloudConsoleCreate: "在 Google Cloud Console 中创建一个项目，并启用 Google Drive API。",
   setUpTheOauthConsent:
-    "设置 OAuth 同意屏幕。在应用处于测试阶段时，将您的 Google 账号添加为测试用户。",
+    "设置 OAuth 同意屏幕。在应用处于测试阶段时，将您的 Google 账户添加为测试用户。",
   createAnOauthClientId: "创建一个类型为“桌面应用”的 OAuth 客户端 ID。",
   clientId: "客户端 ID",
   endsInAppsGoogleusercontentCom: "以 apps.googleusercontent.com 结尾",

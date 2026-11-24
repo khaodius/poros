@@ -36,7 +36,7 @@ export const compare = {
   couldNotCompareSubfolders: "无法比较子文件夹：{message}",
   thereAreTooManySubfolders: "子文件夹过多，无法全部标记。最深层的子文件夹未标记。",
   thePanesAreNoLonger: "{note}。两个窗格已不再同步浏览。",
-  inAnotherWindow: "另一个窗口中的 {label}",
+  inAnotherWindow: "另一个窗口中的“{label}”",
   nothingToCompareYet: "尚无可比较的内容",
   stateCount: "{state}：{amount}",
   stateCountHidden: "{state}：{amount}，未显示",

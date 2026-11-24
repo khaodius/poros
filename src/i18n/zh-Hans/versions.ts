@@ -30,7 +30,8 @@ export const versions = {
   deleteTheVersionOf: "要永久删除 {name} 在 {when} 的版本吗？此操作无法撤销。",
   deleteForGood: "永久删除",
   deletedItems: { other: "{count} 个已删除的项目" },
-  everythingDeletedUnderAFolder: "文件夹下所有已删除的内容也会一并处理。仍在其中的文件不受影响。",
+  everythingDeletedUnderAFolder:
+    "文件夹下所有已删除的内容也会一并永久移除。仍在其中的文件不受影响。",
   andMore: { other: "以及另外 {count} 项" },
   removeThisDeleteMarker: "移除此删除标记",
   deleteThisVersionForGood: "永久删除此版本",

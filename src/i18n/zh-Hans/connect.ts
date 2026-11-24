@@ -29,7 +29,7 @@ export const connect = {
   bucketAddress: "存储桶地址",
   automatic: "自动",
   pathEndpointBucket: "路径 (endpoint/bucket)",
-  virtualHostedBucketEndpoint: "虚拟主机 (bucket.endpoint)",
+  virtualHostedBucketEndpoint: "虚拟托管 (bucket.endpoint)",
   remoteFolderOptional: "远程文件夹（可选）",
   jumpHost: "跳板机",
   noneConnectStraightToThe: "无，直接连接到服务器",
