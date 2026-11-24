@@ -11,6 +11,11 @@ import {
   type DetailColumn,
 } from "./columns";
 import {
+  DEFAULT_FILE_PREVIEW,
+  sanitizeFilePreview,
+  type FilePreviewSettings,
+} from "./previewSettings";
+import {
   DEFAULT_PROGRESS_BARS,
   sanitizeProgressBars,
   storableProgressBars,
@@ -173,6 +178,8 @@ export interface InterfaceSettings {
   columnWidths: ColumnWidths;
   /** The program that extracts archives on this computer. */
   extractor: ExtractorSettings;
+  /** The preview pane beside a file list. */
+  preview: FilePreviewSettings;
   folderCompare: FolderCompareSettings;
   /** A server folder seen before shows its last listing at once, while it is asked for again. */
   cachedListings: boolean;
@@ -392,6 +399,7 @@ export const DEFAULT_SETTINGS: Settings = {
     hiddenColumns: [],
     columnWidths: {},
     extractor: { choice: "", program: "", arguments: CUSTOM_ARGUMENTS_EXAMPLE },
+    preview: DEFAULT_FILE_PREVIEW,
     folderCompare: {
       hideIdentical: false,
       sizeRule: "sync",
@@ -512,6 +520,7 @@ export function sanitizeSettings(stored: unknown): Settings {
   }
   options.hiddenColumns = DETAIL_COLUMNS.filter((column) => options.hiddenColumns.includes(column));
   options.columnWidths = sanitizeColumnWidths(asSection(source.interface).columnWidths);
+  options.preview = sanitizeFilePreview(options.preview);
   if (!COMPARE_SIZE_RULES.includes(options.folderCompare.sizeRule)) {
     options.folderCompare.sizeRule = DEFAULT_SETTINGS.interface.folderCompare.sizeRule;
   }

@@ -541,7 +541,8 @@ pub struct SyncArgs {
     /// Leave out paths that match
     #[arg(long, value_name = "PATTERN")]
     pub exclude: Vec<String>,
-    /// Keep paths that match, even when an exclude would leave them out
+    /// Keep paths that match, even when an --exclude would leave them out. Rules in the
+    /// connection's saved rsync arguments are checked first, as rsync checks rules in order
     #[arg(long, value_name = "PATTERN")]
     pub include: Vec<String>,
     /// Compare contents instead of size and time

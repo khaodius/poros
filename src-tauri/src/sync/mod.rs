@@ -490,17 +490,27 @@ fn receivers(direction: SyncDirection) -> &'static [Place] {
 fn build_filter(options: &SyncOptions, local_root: &str) -> AppResult<Filter> {
     let read = |path: &str| read_list(local_root, path);
     let mut spec = options.filter_spec(&read)?;
-    // rsync keeps --delete away from a backup folder inside the target.
-    let backup_dir = options.backup_dir.trim();
-    if options.backup
-        && !backup_dir.is_empty()
-        && !backup_dir.starts_with('/')
-        && !Path::new(backup_dir).is_absolute()
-    {
-        spec.rules
-            .push(format!("P /{}/", backup_dir.trim_matches('/')));
-    }
+    // A backup folder inside the target is kept from --delete, which rsync itself would let
+    // delete it. It is no rule, so no rule given, `!` or per-folder file can undo that.
+    spec.protected_folders
+        .extend(backup_folder_inside_target(options));
     Filter::build(&spec, &read)
+}
+
+/// The backup folder relative to the target, when `--backup-dir` names one inside it.
+fn backup_folder_inside_target(options: &SyncOptions) -> Option<String> {
+    let backup_dir = options.backup_dir.trim();
+    if !options.backup || backup_dir.starts_with('/') || Path::new(backup_dir).is_absolute() {
+        return None;
+    }
+    let components: Vec<&str> = backup_dir
+        .split('/')
+        .filter(|component| !component.is_empty() && *component != ".")
+        .collect();
+    if components.is_empty() || components.contains(&"..") {
+        return None;
+    }
+    Some(components.join("/"))
 }
 
 fn read_list(local_root: &str, path: &str) -> AppResult<String> {
@@ -604,6 +614,8 @@ async fn report_progress(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
 
     #[test]
@@ -653,5 +665,235 @@ mod tests {
         // The backup folder is kept from deletion, not from copying.
         assert!(verdict("old", true, filter::Side::Sender).is_included());
         assert!(!verdict("old", true, filter::Side::Receiver).is_included());
+
+        // Whatever the rules say: ones that would decide about the folder first, `!` given
+        // in any form, or a per-folder rule file.
+        std::fs::write(folder.path().join("clears.txt"), "*.tmp\n!\n").unwrap();
+        let per_folder = HashMap::from([(".rsync-filter".to_string(), "+ */\n".to_string())]);
+        for (described, changed) in [
+            (
+                "+ */ first",
+                SyncOptions {
+                    filter_rules: vec!["+ */".into(), "- *".into()],
+                    ..options.clone()
+                },
+            ),
+            (
+                "a typed !",
+                check_options(options.clone(), &["--exclude=!"], SyncDirection::Upload).options,
+            ),
+            (
+                "! in a list",
+                SyncOptions {
+                    exclude_from: vec!["clears.txt".into()],
+                    ..options.clone()
+                },
+            ),
+            (
+                "+ */ in .rsync-filter",
+                SyncOptions {
+                    filter_files: FilterFiles::Read,
+                    ..options.clone()
+                },
+            ),
+            (
+                "a folder named in the long way",
+                SyncOptions {
+                    backup_dir: "./old/".into(),
+                    filter_rules: vec!["!".into()],
+                    ..options.clone()
+                },
+            ),
+        ] {
+            let filter = build_filter(&changed, &root).unwrap();
+            let rules = filter.enter(&rules, "", &per_folder).unwrap();
+            let verdict = |path, is_dir, side| filter.verdict(path, is_dir, side, &rules);
+            assert!(
+                !verdict("old", true, filter::Side::Receiver).is_included(),
+                "{described}"
+            );
+            assert!(
+                !verdict("old/a.txt", false, filter::Side::Receiver).is_included(),
+                "{described}"
+            );
+            assert!(
+                verdict("older", true, filter::Side::Receiver).is_included(),
+                "{described}"
+            );
+        }
+        // A folder outside the target is not the target's to keep.
+        for outside in ["../old", "/srv/old", ""] {
+            let options = SyncOptions {
+                backup_dir: outside.into(),
+                ..options.clone()
+            };
+            assert_eq!(backup_folder_inside_target(&options), None, "{outside}");
+        }
+    }
+
+    /// The files a plan copies and deletes, a folder copied or deleted whole standing for the
+    /// files in it.
+    fn files_planned(
+        local: &Tree,
+        remote: &Tree,
+        planned: &plan::Plan,
+    ) -> (BTreeSet<String>, BTreeSet<String>) {
+        let (mut copied, mut deleted) = (BTreeSet::new(), BTreeSet::new());
+        for item in &planned.items {
+            let (files, tree) = match item.action {
+                SyncAction::Upload => (&mut copied, local),
+                SyncAction::DeleteRemote => (&mut deleted, remote),
+                other => panic!("{} is planned for {other:?}", item.path),
+            };
+            if item.is_dir {
+                let inside = tree.inside(&item.path).filter(|(_, node)| !node.is_dir);
+                files.extend(inside.map(|(path, _)| path.clone()));
+            } else {
+                files.insert(item.path.clone());
+            }
+        }
+        (copied, deleted)
+    }
+
+    /// The files rsync itself would copy and delete with `arguments`, from its itemized dry run.
+    fn files_rsync_picks(
+        arguments: &str,
+        source: &Path,
+        target: &Path,
+    ) -> (BTreeSet<String>, BTreeSet<String>) {
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!(r#"rsync -r -n -i {arguments} "$0/" "$1/""#))
+            .arg(source)
+            .arg(target)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "rsync {arguments}: {output:?}");
+        let (mut copied, mut deleted) = (BTreeSet::new(), BTreeSet::new());
+        for line in String::from_utf8(output.stdout).unwrap().lines() {
+            let Some((change, path)) = line.split_once(' ') else {
+                continue;
+            };
+            let path = path.trim_start();
+            if path.ends_with('/') {
+                continue;
+            }
+            if change.starts_with(">f") {
+                copied.insert(path.to_string());
+            } else if change == "*deleting" {
+                deleted.insert(path.to_string());
+            }
+        }
+        (copied, deleted)
+    }
+
+    /// Whether the `rsync` on the path is rsync 3, whose filters and itemized output the
+    /// comparison below expects, rather than none, an older one or openrsync.
+    fn rsync_3_installed() -> bool {
+        let Ok(output) = std::process::Command::new("rsync")
+            .arg("--version")
+            .output()
+        else {
+            return false;
+        };
+        let text = String::from_utf8_lossy(&output.stdout);
+        let mut words = text.lines().next().unwrap_or_default().split_whitespace();
+        output.status.success()
+            && words.next() == Some("rsync")
+            && words.next() == Some("version")
+            && words
+                .next()
+                .is_some_and(|version| version.starts_with("3."))
+    }
+
+    /// Rule sets whose meaning hangs on the order of their rules pick the files rsync picks.
+    /// rsync itself is the judge, run over the same folders; skipped where rsync 3 is missing.
+    #[test]
+    fn rules_pick_the_files_rsync_picks() {
+        if !rsync_3_installed() {
+            return;
+        }
+        let folder = tempfile::tempdir().unwrap();
+        let (source, target) = (folder.path().join("source"), folder.path().join("target"));
+        let write = |root: &Path, path: &str, contents: &str| {
+            let file = root.join(path);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, contents).unwrap();
+        };
+        for path in [
+            "keep.js",
+            "lib/a.js",
+            "lib/b.txt",
+            "node_modules/x.js",
+            "node_modules/sub/y.js",
+            "docs/readme.md",
+            "docs/guide.txt",
+            "docs/notes.md",
+            "docs/deep/notes.md",
+            "keep.log",
+            "drop.log",
+            "a.tmp",
+            "keep.tmp",
+            "z.bak",
+        ] {
+            write(&source, path, path);
+        }
+        write(&source, ".rsync-filter", "+ keep.tmp\n- *.tmp\n");
+        for path in [
+            "old.js",
+            "lib/old.txt",
+            "node_modules/stale.js",
+            "docs/old.md",
+            "gone.log",
+            "x.tmp",
+        ] {
+            write(&target, path, path);
+        }
+        let lists = folder.path().join("lists");
+        write(&lists, "kept", "z.bak\n- lib/\n");
+        write(&lists, "documents", "*/\n*.md\n");
+        // Quoted for the shell rsync runs under and for the parser alike.
+        let quoted = |name: &str| format!("'{}'", lists.join(name).to_string_lossy());
+        let (kept, documents) = (quoted("kept"), quoted("documents"));
+        let cases = [
+            "--delete --exclude=node_modules/ --include='*/' --include='*.js' --exclude='*'"
+                .to_string(),
+            "--delete --exclude='*.md' --include='/docs/***' --exclude='*'".into(),
+            "--delete --include=keep.log --filter='- *.log'".into(),
+            "--exclude='*.tmp' -F".into(),
+            format!("--delete --exclude='*.bak' --include-from={kept}"),
+            "--exclude='+ keep.tmp' --exclude='*.tmp'".into(),
+            format!("--include-from={documents} --exclude='*'"),
+            "--exclude='docs/**/notes.md'".into(),
+            "--exclude='docs/***/notes.md'".into(),
+            "--delete --include='/docs/**/*.md' --exclude='*.md'".into(),
+        ];
+        let source_root = source.to_string_lossy().into_owned();
+        let target_root = target.to_string_lossy().into_owned();
+        for arguments in &cases {
+            let checked =
+                check_options(SyncOptions::default(), &[arguments], SyncDirection::Upload);
+            assert!(
+                checked.errors.is_empty(),
+                "{arguments}: {:?}",
+                checked.errors
+            );
+            let options = checked.options;
+            let filter = build_filter(&options, &source_root).unwrap();
+            let (counter, cancel) = (Counter::default(), CancellationToken::new());
+            let walk = |root: &str, role| {
+                let walk = walk_for(&options, filter.clone(), role);
+                tree::walk_local(root, &walk, &counter, &cancel).unwrap()
+            };
+            let local = walk(&source_root, Role::Sender);
+            let remote = walk(&target_root, Role::Receiver);
+            let plan_options = plan_options(&options, SyncDirection::Upload);
+            let planned = plan::plan(&local, &remote, &plan_options, &HashMap::new());
+            assert_eq!(
+                files_planned(&local, &remote, &planned),
+                files_rsync_picks(arguments, &source, &target),
+                "{arguments}"
+            );
+        }
     }
 }

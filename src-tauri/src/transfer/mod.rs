@@ -862,6 +862,49 @@ impl TransferManager {
             .unwrap()
             .session_failures(session_id)
     }
+
+    /// Whether transfers that run or are about to send their bytes over the very connection
+    /// `files` uses, as they do with an FTP server that takes one connection or with separate
+    /// connections turned off. Anything else read over it would wait for them, or they for it.
+    pub fn borrows_connection_of(&self, files: &dyn RemoteFileSystem) -> bool {
+        if !files.transport().is_ftp() {
+            return false;
+        }
+        let always_borrows = !self.shared.settings().separate_connections;
+        let connection = files.connection_identity();
+        let borrowers: Vec<String> = self
+            .shared
+            .targets
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|target| always_borrows || target.channels_only.load(Ordering::Relaxed))
+            .filter(|target| {
+                target
+                    .login()
+                    .browsing_files
+                    .is_some_and(|browsing| browsing.connection_identity() == connection)
+            })
+            .map(|target| target.session_id.clone())
+            .collect();
+        if borrowers.is_empty() {
+            return false;
+        }
+        let queue = self.shared.queue.lock().unwrap();
+        let starts_queued = !queue.paused;
+        let borrowing = queue.jobs().any(|job| {
+            let active = match job.state {
+                JobState::Running => true,
+                JobState::Queued => starts_queued,
+                _ => false,
+            };
+            active
+                && borrowers
+                    .iter()
+                    .any(|session_id| job.spec.involves(session_id))
+        });
+        borrowing
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

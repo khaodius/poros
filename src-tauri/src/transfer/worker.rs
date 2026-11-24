@@ -1008,16 +1008,27 @@ pub(super) fn source_changed(
 
 /// Whether a local source differs from when its transfer started, by size, time or stamp.
 pub(super) async fn local_source_changed(source: &str, plan: &Plan) -> AppResult<bool> {
+    let then = FileFacts {
+        size: plan.source_size,
+        modified: plan.source_modified,
+    };
+    local_source_differs(source, then, plan.source_stamp).await
+}
+
+/// Whether a local source differs from `then` by size, time or `stamp`.
+pub(super) async fn local_source_differs(
+    source: &str,
+    then: FileFacts,
+    stamp: Option<SourceStamp>,
+) -> AppResult<bool> {
     let metadata = match tokio::fs::metadata(source).await {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
         Err(error) => return Err(AppError::from(error).with_path(source)),
     };
-    Ok(metadata.len() != plan.source_size
-        || modified_seconds(&metadata) != plan.source_modified
-        || plan
-            .source_stamp
-            .is_some_and(|stamp| stamp != SourceStamp::of(&metadata)))
+    Ok(metadata.len() != then.size
+        || modified_seconds(&metadata) != then.modified
+        || stamp.is_some_and(|stamp| stamp != SourceStamp::of(&metadata)))
 }
 
 async fn download(

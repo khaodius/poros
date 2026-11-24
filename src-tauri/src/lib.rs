@@ -19,6 +19,7 @@ pub mod events;
 #[cfg(feature = "gui")]
 pub mod external_editor;
 pub mod file_ops;
+pub mod file_preview;
 #[cfg(feature = "gui")]
 pub mod fonts;
 pub mod format;
@@ -74,6 +75,7 @@ use {
     events::Events,
     external_editor::ExternalEditManager,
     file_ops::FileOperations,
+    file_preview::FilePreviews,
     search::SearchManager,
     session::SessionManager,
     settings::SettingsStore,
@@ -164,6 +166,7 @@ pub fn run() {
             app.manage(TerminalManager::new(sessions.clone(), events.clone()));
             app.manage(CommandRunner::new(sessions.clone(), events.clone()));
             app.manage(FileOperations::new(sessions.clone(), events.clone()));
+            app.manage(FilePreviews::new(sessions.clone()));
             app.manage(SearchManager::new(sessions.clone()));
             app.manage(sessions);
             app.manage(settings);
@@ -372,6 +375,9 @@ pub fn run() {
             commands::external_edit_recover,
             commands::external_edit_reveal_leftover,
             commands::external_edit_discard_leftover,
+            commands::file_preview_read,
+            commands::file_preview_list,
+            commands::file_preview_cancel,
             commands::search_start,
             commands::search_cancel,
             commands::search_recheck,

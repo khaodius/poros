@@ -2,6 +2,7 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Update } from "@tauri-apps/plugin-updater";
 import type { PanePicture } from "./panePicture";
+import { parsePreviewFrame } from "./previewFrame";
 import type {
   AppError,
   CloudProvider,
@@ -56,6 +57,8 @@ import type {
   PowerAction,
   PreviewContent,
   PreviewPlacement,
+  PreviewRead,
+  PreviewReadRequest,
   PreviewSupport,
   QueueFinished,
   RenameRequest,
@@ -388,6 +391,23 @@ export const external = {
     call<ExternalEdit>("external_edit_recover", { id, sessionId }),
   revealLeftover: (id: string) => call<void>("external_edit_reveal_leftover", { id }),
   discardLeftover: (id: string) => call<void>("external_edit_discard_leftover", { id }),
+};
+
+export const filePreview = {
+  /** Part of a file, as raw bytes, with the file's size and time as they are now. */
+  read: async (request: PreviewReadRequest): Promise<PreviewRead> => {
+    const reply = await call<ArrayBuffer>("file_preview_read", { request });
+    try {
+      return parsePreviewFrame(reply);
+    } catch (rejection) {
+      throw toAppError(rejection);
+    }
+  },
+  /** Stops a read by the name its request gave it, also one that has not started yet. */
+  cancel: (requestId: string) => call<void>("file_preview_cancel", { requestId }),
+  /** A server's folder, unless transfers are using the connection it would be listed over. */
+  list: (sessionId: string, path: string) =>
+    call<DirListing>("file_preview_list", { sessionId, path }),
 };
 
 function outputChannel(onEvent: (event: TerminalEvent) => void): Channel<TerminalEvent> {

@@ -306,6 +306,45 @@ describe("sanitizeSettings", () => {
   });
 });
 
+describe("preview settings", () => {
+  it("gives a settings file from before the preview pane its defaults", () => {
+    const before = sanitizeSettings({ interface: { showHiddenFiles: true, confirmDelete: false } });
+    expect(before.interface.preview).toEqual({
+      maxImageMib: 16,
+      textKib: 256,
+      thumbnailSize: 96,
+      load: { local: "rest", server: "rest", metered: "click" },
+    });
+    expect(sanitizeSettings({ interface: { preview: "on" } }).interface.preview).toEqual(
+      DEFAULT_SETTINGS.interface.preview,
+    );
+  });
+
+  it("keeps the caps and the thumbnail size within their limits", () => {
+    const large = sanitizeSettings({
+      interface: { preview: { maxImageMib: 4096, textKib: 1e9, thumbnailSize: 2000 } },
+    }).interface.preview;
+    expect([large.maxImageMib, large.textKib, large.thumbnailSize]).toEqual([64, 4096, 192]);
+    const small = sanitizeSettings({
+      interface: { preview: { maxImageMib: 0, textKib: -5, thumbnailSize: 1.5 } },
+    }).interface.preview;
+    expect([small.maxImageMib, small.textKib, small.thumbnailSize]).toEqual([1, 16, 48]);
+    const wrong = sanitizeSettings({
+      interface: { preview: { maxImageMib: "all", textKib: null, thumbnailSize: Infinity } },
+    }).interface.preview;
+    expect([wrong.maxImageMib, wrong.textKib, wrong.thumbnailSize]).toEqual([16, 256, 96]);
+  });
+
+  it("loads on rest or on a click for each kind of storage, and nothing else", () => {
+    const chosen = sanitizeSettings({
+      interface: { preview: { load: { local: "click", server: "never", metered: "rest" } } },
+    }).interface.preview;
+    expect(chosen.load).toEqual({ local: "click", server: "rest", metered: "rest" });
+    const broken = sanitizeSettings({ interface: { preview: { load: ["rest"] } } });
+    expect(broken.interface.preview.load).toEqual(DEFAULT_SETTINGS.interface.preview.load);
+  });
+});
+
 describe("integrity settings", () => {
   it("turns every check on by default and keeps the revision the backend set", () => {
     const transfers = sanitizeSettings(undefined).transfers;
