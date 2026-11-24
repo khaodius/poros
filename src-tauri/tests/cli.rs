@@ -279,6 +279,117 @@ fn host_keys_are_refused_until_trusted() {
     assert_eq!(fresh.json(&["info"]).0, 0);
 }
 
+/// `--host-key` pins the server asked for. `--trust-new-host`, there for new jump hosts, never
+/// stands in for the pin, and a key on record does not outweigh it.
+#[test]
+fn a_host_key_pin_is_never_replaced() {
+    let Some(run) = Run::online("pinned") else {
+        return;
+    };
+    let (code, value) = run.json(&["info"]);
+    assert_eq!(code, 0, "{value}");
+    let fingerprint = value["hostKeyFingerprint"].as_str().unwrap().to_string();
+
+    let fresh = Run::new(run.connection.clone(), run.password.clone(), String::new());
+    let (code, value) = fresh.json(&[
+        "--host-key",
+        "SHA256:not-it",
+        "--trust-new-host",
+        "--save-host-key",
+        "info",
+    ]);
+    assert_eq!(code, 5, "{value}");
+    assert_eq!(
+        value["error"]["hostKey"]["fingerprint"],
+        fingerprint.as_str()
+    );
+    assert_eq!(
+        value["error"]["hint"],
+        "The server showed another key than the one given with --host-key"
+    );
+    assert_eq!(fresh.json(&["info"]).0, 5, "nothing was remembered");
+
+    // On record, but not the key asked for.
+    let (code, value) = run.json(&["--host-key", "SHA256:not-it", "info"]);
+    assert_eq!(code, 6, "{value}");
+    assert_eq!(value["error"]["kind"], "hostKeyChanged");
+    assert_eq!(run.json(&["--host-key", &fingerprint, "info"]).0, 0);
+
+    // Through a jump host that is new, which --trust-new-host accepts, to the pinned server.
+    let jumping = Run::new(run.connection.clone(), run.password.clone(), String::new());
+    let port: u16 = std::env::var("POROS_TEST_SSH_PORT")
+        .unwrap()
+        .parse()
+        .unwrap();
+    let bastion = serde_json::json!([{
+        "id": "bastion",
+        "name": "bastion",
+        "host": "localhost",
+        "port": port,
+        "username": std::env::var("POROS_TEST_SSH_USER").unwrap_or_else(|_| "poros".into()),
+        "authType": "publicKey",
+        "keyPath": fixture("openssh-ed25519"),
+    }]);
+    std::fs::write(
+        jumping.config.path().join("connections.json"),
+        bastion.to_string(),
+    )
+    .unwrap();
+    let through = |pin: &str| {
+        jumping.json(&[
+            "-J",
+            "bastion",
+            "--host-key",
+            pin,
+            "--trust-new-host",
+            "info",
+        ])
+    };
+    let (code, value) = through("SHA256:not-it");
+    assert_eq!(code, 5, "{value}");
+    assert_eq!(value["error"]["hostKey"]["host"], "127.0.0.1");
+    let (code, value) = through(&fingerprint);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(value["hostKeyFingerprint"], fingerprint.as_str());
+
+    // A pin that names nothing, as a script exporting an empty POROS_HOST_KEY gives, is none.
+    let output = run
+        .command(&["--json", "info"])
+        .env("POROS_HOST_KEY", " ")
+        .output()
+        .unwrap();
+    assert_eq!(status(&output), 0, "{output:?}");
+}
+
+/// A server that shows no key of its own cannot be held to one: `--host-key` is refused before
+/// anything is sent, rather than ignored.
+#[test]
+fn a_host_key_is_refused_where_no_key_can_be_checked() {
+    let Some(port) = std::env::var("POROS_TEST_FTP_PORT").ok() else {
+        return;
+    };
+    let user = std::env::var("POROS_TEST_FTP_USER").unwrap_or_else(|_| "poros".into());
+    let password = std::env::var("POROS_TEST_FTP_PASSWORD").unwrap_or_else(|_| "poros-pass".into());
+    let run = Run::new(
+        format!("ftp://{user}@127.0.0.1:{port}"),
+        password.clone(),
+        String::new(),
+    );
+    let (code, value) = run.json(&["info"]);
+    assert_eq!(code, 0, "{value}");
+    let (code, value) = run.json(&["--host-key", "SHA256:not-it", "info"]);
+    assert_eq!(code, 2, "{value}");
+    assert_eq!(value["error"]["kind"], "invalidInput");
+    assert_eq!(
+        value["error"]["message"],
+        "--host-key cannot be checked for FTP"
+    );
+    // Refused before connecting: a port nothing listens on gives the same answer.
+    let closed = Run::new(format!("ftp://{user}@127.0.0.1:9"), password, String::new());
+    let (code, value) = closed.json(&["--host-key", "SHA256:not-it", "info"]);
+    assert_eq!(code, 2, "{value}");
+}
+
 #[test]
 fn sign_in_failures_exit_with_the_auth_status() {
     let Some(run) = Run::online("auth") else {

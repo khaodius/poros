@@ -80,10 +80,7 @@ async fn connect(profile: &ConnectProfile) -> (tempfile::TempDir, Arc<SessionMan
             let host_key = error
                 .host_key
                 .expect("the server should only ask about its key");
-            let approval = HostKeyApproval {
-                fingerprint: host_key.fingerprint,
-                remember: true,
-            };
+            let approval = HostKeyApproval::of(&host_key, true);
             manager
                 .connect(profile.clone(), Some(approval), OWNER)
                 .await

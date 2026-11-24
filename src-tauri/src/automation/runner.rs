@@ -212,9 +212,14 @@ pub(super) async fn connect(
         .as_deref()
         .map(str::trim)
         .filter(|pin| !pin.is_empty() && sign_in.given_for.as_deref() == Some(connection_id));
-    let pinned = pin.map(|fingerprint| HostKeyApproval {
-        fingerprint: fingerprint.to_string(),
-        remember: sign_in.save_host_key,
+    let pinned = pin.map(|fingerprint| {
+        let (host, port) = profile.server_address();
+        HostKeyApproval {
+            host,
+            port,
+            fingerprint: fingerprint.to_string(),
+            remember: sign_in.save_host_key,
+        }
     });
     let mut approval = pinned.clone();
     // Each jump host can stop the attempt once to have its key trusted.
@@ -260,10 +265,7 @@ pub(super) async fn connect(
                     offered.algorithm,
                     offered.fingerprint
                 );
-                Some(HostKeyApproval {
-                    fingerprint: offered.fingerprint.clone(),
-                    remember: sign_in.save_host_key,
-                })
+                Some(HostKeyApproval::of(offered, sign_in.save_host_key))
             }
             _ => None,
         };
@@ -558,6 +560,7 @@ mod tests {
             algorithm: "ssh-ed25519".into(),
             fingerprint: "SHA256:abc".into(),
             certificate_problem: None,
+            differs_from_pin: false,
         };
         let mut profile = hop(" files.lan", 22);
         assert!(asks_about_server(&profile, &asked("FILES.lan", 22)));
@@ -580,6 +583,7 @@ mod tests {
                     algorithm: "ssh-ed25519".into(),
                     fingerprint: "SHA256:abc".into(),
                     certificate_problem: None,
+                    differs_from_pin: false,
                 },
             )
         };

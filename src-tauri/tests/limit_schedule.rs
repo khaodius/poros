@@ -91,10 +91,7 @@ async fn connect(server: &Server, sessions: &SessionManager) -> SessionInfo {
             let host_key = error
                 .host_key
                 .expect("first connect should ask about the host key");
-            let approval = HostKeyApproval {
-                fingerprint: host_key.fingerprint,
-                remember: true,
-            };
+            let approval = HostKeyApproval::of(&host_key, true);
             sessions
                 .connect(profile(server), Some(approval), OWNER)
                 .await

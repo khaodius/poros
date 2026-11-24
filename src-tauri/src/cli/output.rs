@@ -47,7 +47,13 @@ impl Reply {
 pub fn hint(error: &AppError) -> Option<String> {
     match error.kind {
         ErrorKind::HostKeyUnknown | ErrorKind::HostKeyChanged => {
-            let fingerprint = &error.host_key.as_ref()?.fingerprint;
+            let offered = error.host_key.as_ref()?;
+            if offered.differs_from_pin {
+                return Some(
+                    "The server showed another key than the one given with --host-key".into(),
+                );
+            }
+            let fingerprint = &offered.fingerprint;
             Some(match error.kind {
                 ErrorKind::HostKeyUnknown => format!(
                     "To accept it, run again with --host-key {fingerprint}, or --trust-new-host; add --save-host-key to remember it"

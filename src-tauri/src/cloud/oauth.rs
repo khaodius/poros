@@ -109,7 +109,7 @@ impl OAuthClient {
         }
     }
 
-    fn token_url(&self) -> String {
+    pub(super) fn token_url(&self) -> String {
         match self.provider {
             CloudProvider::Google => GOOGLE_TOKEN_URL.to_string(),
             CloudProvider::Microsoft => {
@@ -334,7 +334,7 @@ pub async fn sign_in(
     if client.uses_pkce() {
         parameters.push(("code_verifier", verifier.as_str()));
     }
-    let tokens = request_tokens(http, client, &parameters).await?;
+    let tokens = request_tokens(http, client, &client.token_url(), &parameters).await?;
     let refresh_token = tokens
         .refresh_token
         .filter(|token| !token.is_empty())
@@ -380,11 +380,13 @@ struct TokenError {
 pub async fn refresh(
     http: &Client,
     client: &OAuthClient,
+    token_url: &str,
     refresh_token: &str,
 ) -> AppResult<TokenResponse> {
     request_tokens(
         http,
         client,
+        token_url,
         &[
             ("grant_type", "refresh_token"),
             ("refresh_token", refresh_token),
@@ -396,6 +398,7 @@ pub async fn refresh(
 async fn request_tokens(
     http: &Client,
     client: &OAuthClient,
+    token_url: &str,
     parameters: &[(&str, &str)],
 ) -> AppResult<TokenResponse> {
     let mut form: Vec<(&str, &str)> = parameters.to_vec();
@@ -407,7 +410,7 @@ async fn request_tokens(
         form.push(("scope", scopes));
     }
     let request = http
-        .post(client.token_url())
+        .post(token_url)
         .form(&form)
         .build()
         .map_err(api::transport_error)?;

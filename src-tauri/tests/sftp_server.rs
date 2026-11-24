@@ -111,10 +111,7 @@ async fn trusted_manager_with(
         let info = manager
             .connect(
                 profile(server, password),
-                Some(HostKeyApproval {
-                    fingerprint: host_key.fingerprint,
-                    remember: true,
-                }),
+                Some(HostKeyApproval::of(&host_key, true)),
                 OWNER,
             )
             .await
@@ -144,7 +141,7 @@ async fn host_key_prompt_then_remembered() {
 
         let wrong = HostKeyApproval {
             fingerprint: "SHA256:not-it".into(),
-            remember: true,
+            ..HostKeyApproval::of(&host_key, true)
         };
         let error = manager
             .connect(profile(&server, auth.clone()), Some(wrong), OWNER)
@@ -152,10 +149,7 @@ async fn host_key_prompt_then_remembered() {
             .unwrap_err();
         assert_eq!(error.kind, ErrorKind::HostKeyUnknown);
 
-        let ok = HostKeyApproval {
-            fingerprint: host_key.fingerprint,
-            remember: true,
-        };
+        let ok = HostKeyApproval::of(&host_key, true);
         let info = manager
             .connect(profile(&server, auth.clone()), Some(ok), OWNER)
             .await
@@ -2665,10 +2659,7 @@ async fn a_jump_host_trusted_once_stays_trusted_until_exit() {
         .err()
         .expect("an unknown jump host asks first");
     let host_key = error.host_key.expect("the question names the jump host");
-    let once = HostKeyApproval {
-        fingerprint: host_key.fingerprint,
-        remember: false,
-    };
+    let once = HostKeyApproval::of(&host_key, false);
     let connection = poros_lib::ssh::connect(
         "test",
         &jumped(),
@@ -2680,10 +2671,7 @@ async fn a_jump_host_trusted_once_stays_trusted_until_exit() {
     .unwrap();
     poros_lib::ssh::disconnect(&connection.handle).await;
     // A transfer connection pins only the server's key, yet gets through the jump host.
-    let pinned = HostKeyApproval {
-        fingerprint: connection.host_key_fingerprint,
-        remember: false,
-    };
+    let pinned = HostKeyApproval::for_server(&jumped(), &connection.host_key_fingerprint);
     let worker = poros_lib::ssh::connect(
         "test",
         &jumped(),
@@ -2738,10 +2726,7 @@ async fn a_host_on_record_is_asked_for_the_key_type_on_record() {
     assert_eq!(error.kind, ErrorKind::HostKeyChanged);
     let host_key = error.host_key.unwrap();
     assert_eq!(host_key.algorithm, "ssh-rsa");
-    let approval = HostKeyApproval {
-        fingerprint: host_key.fingerprint,
-        remember: true,
-    };
+    let approval = HostKeyApproval::of(&host_key, true);
     let replaced = connect_with_password(&server, &known_hosts, Some(approval))
         .await
         .unwrap();
