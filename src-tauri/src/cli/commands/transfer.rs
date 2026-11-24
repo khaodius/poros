@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{absolute_local, expand, make_dirs, missing};
+use super::{absolute_local, distinct, expand, make_dirs, missing, operand, same_name};
 use crate::cli::args::TransferArgs;
 use crate::cli::context::Context;
 use crate::cli::output::Reply;
@@ -69,11 +69,18 @@ pub async fn upload(context: &Context, arguments: &TransferArgs) -> AppResult<Re
         .ok_or_else(|| AppError::invalid("Name what to upload and where"))?;
     let mut items = Vec::with_capacity(sources.len());
     for source in sources {
-        items.push(local_item(source)?);
+        let item = local_item(source)?;
+        // A file named twice is sent once.
+        if !items
+            .iter()
+            .any(|kept: &TransferItem| kept.path == item.path)
+        {
+            items.push(item);
+        }
     }
     let connected = context.connected().await?;
     let files = connected.files();
-    let target = connected.resolve(destination);
+    let target = operand(connected, destination)?;
     let found = match files.stat(&target).await? {
         Some(stat) if stat.is_dir => Destination::Folder,
         Some(_) => Destination::File,
@@ -90,6 +97,7 @@ pub async fn upload(context: &Context, arguments: &TransferArgs) -> AppResult<Re
     if let Some(name) = &placement.rename_to {
         items[0].name = name.clone();
     }
+    refuse_same_names(&items, &placement.folder)?;
     match files.stat(&placement.folder).await? {
         Some(stat) if stat.is_dir => {}
         Some(_) => return Err(protocol::not_a_folder(&placement.folder)),
@@ -118,7 +126,7 @@ pub async fn download(context: &Context, arguments: &TransferArgs) -> AppResult<
     let connected = context.connected().await?;
     let files = connected.files();
     let mut items = Vec::new();
-    for source in expand(connected, sources).await? {
+    for source in distinct(expand(connected, sources).await?) {
         let stat = files.stat(&source).await?.ok_or_else(|| missing(&source))?;
         let name = remote_path::file_name(&source).to_string();
         if name.is_empty() || name == "/" {
@@ -156,6 +164,7 @@ pub async fn download(context: &Context, arguments: &TransferArgs) -> AppResult<
     if let Some(name) = &placement.rename_to {
         items[0].name = name.clone();
     }
+    refuse_same_names(&items, &placement.folder)?;
     let folder = PathBuf::from(&placement.folder);
     if !folder.is_dir() {
         if folder.exists() {
@@ -201,6 +210,14 @@ fn local_item(source: &str) -> AppResult<TransferItem> {
         is_dir: metadata.is_dir(),
         size: if metadata.is_dir() { 0 } else { metadata.len() },
     })
+}
+
+/// Two items with one name would go to one path, and the second would replace the first.
+fn refuse_same_names(items: &[TransferItem], folder: &str) -> AppResult<()> {
+    let named = items
+        .iter()
+        .map(|item| (item.name.as_str(), item.path.as_str()));
+    same_name(named, folder).map_or(Ok(()), Err)
 }
 
 fn missing_folder(folder: &str) -> AppError {

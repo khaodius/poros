@@ -4,18 +4,22 @@
 
 use serde_json::json;
 
-use super::{each, expand, make_dirs, missing};
+use super::{
+    distinct, each, expand, has_wildcards, make_dirs, missing, operand, refuse_dots, same_name,
+};
 use crate::cli::args::{ChmodArgs, ChownArgs, Conflict, MakeDirArgs, PlaceArgs, RemoveArgs};
 use crate::cli::context::{Connected, Context};
 use crate::cli::exit::Exit;
 use crate::cli::output::{plural, Reply};
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::file_ops::{
-    self, DeleteRequest, FileOperations, Location, Mode, ModeChange, MoveCopyRequest,
+    self, names, DeleteRequest, FileOperations, Location, Mode, ModeChange, MoveCopyRequest,
     PermissionRequest,
 };
-use crate::protocol::{self, Protocol};
+use crate::protocol::{self, Protocol, RemoteFileSystem};
 use crate::remote_path;
+
+const MAX_FREE_NAME_ATTEMPTS: usize = 10_000;
 
 fn operations(context: &Context) -> FileOperations {
     FileOperations::new(context.sessions.clone(), context.events.clone())
@@ -28,6 +32,9 @@ fn operation_id() -> String {
 pub async fn make_dirs_command(context: &Context, arguments: &MakeDirArgs) -> AppResult<Reply> {
     let connected = context.connected().await?;
     let files = connected.files();
+    for path in &arguments.paths {
+        operand(connected, path)?;
+    }
     each(&arguments.paths, |path| {
         let path = connected.resolve(path);
         let files = files.clone();
@@ -57,10 +64,16 @@ pub async fn make_dirs_command(context: &Context, arguments: &MakeDirArgs) -> Ap
 pub async fn remove(context: &Context, arguments: &RemoveArgs) -> AppResult<Reply> {
     let connected = context.connected().await?;
     let files = connected.files();
-    let paths = match expand(connected, &arguments.paths).await {
-        Err(error) if arguments.force && error.kind == ErrorKind::NotFound => Vec::new(),
-        result => result?,
-    };
+    refuse_dots(&arguments.paths)?;
+    refuse_patterns_at_the_top(connected, &arguments.paths)?;
+    // One operand at a time, so -f passes over only a pattern that matches nothing.
+    let mut paths = Vec::new();
+    for path in &arguments.paths {
+        match expand(connected, std::slice::from_ref(path)).await {
+            Err(error) if arguments.force && error.kind == ErrorKind::NotFound => {}
+            result => paths.extend(result?),
+        }
+    }
     let mut doomed = Vec::new();
     let mut refused = Vec::new();
     for path in paths {
@@ -69,6 +82,7 @@ pub async fn remove(context: &Context, arguments: &RemoveArgs) -> AppResult<Repl
                 "The top folder of the server cannot be deleted",
             ));
         }
+        refuse_own_folder(connected, &path)?;
         match files.stat(&path).await? {
             None if arguments.force => {}
             None => refused.push(missing(&path)),
@@ -133,6 +147,49 @@ pub async fn remove(context: &Context, arguments: &RemoveArgs) -> AppResult<Repl
     .with_failures(failed, total, all_failed))
 }
 
+/// `rm` and `mv` refuse the home folder and the folder the connection starts in, however they
+/// are spelled (`~`, `~/`, the whole path), as they refuse `.`.
+fn refuse_own_folder(connected: &Connected, path: &str) -> AppResult<()> {
+    let which = own_folder(
+        &protocol::normalize(path),
+        &protocol::normalize(&connected.info.home),
+        &protocol::normalize(&connected.info.initial_path),
+    );
+    match which {
+        Some(which) => Err(
+            AppError::invalid(format!("{path} is {which}; name what is inside it")).with_path(path),
+        ),
+        None => Ok(()),
+    }
+}
+
+fn own_folder(path: &str, home: &str, start: &str) -> Option<&'static str> {
+    if path == home {
+        Some("the home folder")
+    } else if path == start {
+        Some("the folder this connection starts in")
+    } else {
+        None
+    }
+}
+
+/// A pattern at the top of the server, such as the `/*` that `"$UNSET/*"` leaves, is refused
+/// rather than matched against everything there.
+fn refuse_patterns_at_the_top(connected: &Connected, paths: &[String]) -> AppResult<()> {
+    for path in paths {
+        let resolved = operand(connected, path)?;
+        if remote_path::parent(&resolved).as_deref() == Some("/")
+            && has_wildcards(remote_path::file_name(&resolved))
+        {
+            return Err(AppError::invalid(format!(
+                "{path} is a pattern at the top of the server; name the items to delete"
+            ))
+            .with_path(path.clone()));
+        }
+    }
+    Ok(())
+}
+
 /// `mv` and `cp`: into a folder that exists, or one item to a new name.
 pub async fn place(context: &Context, arguments: &PlaceArgs, moving: bool) -> AppResult<Reply> {
     let connected = context.connected().await?;
@@ -141,15 +198,26 @@ pub async fn place(context: &Context, arguments: &PlaceArgs, moving: bool) -> Ap
         .paths
         .split_last()
         .ok_or_else(|| AppError::invalid("Name what to move and where"))?;
-    let sources = expand(connected, sources).await?;
-    for source in &sources {
-        if files.stat(source).await?.is_none() {
-            return Err(missing(source));
-        }
+    if moving {
+        refuse_dots(sources)?;
     }
-    let destination = connected.resolve(destination);
+    let sources = distinct(expand(connected, sources).await?);
+    let mut source_stats = Vec::with_capacity(sources.len());
+    for source in &sources {
+        if moving {
+            refuse_own_folder(connected, source)?;
+        }
+        source_stats.push(files.stat(source).await?.ok_or_else(|| missing(source))?);
+    }
+    let destination = operand(connected, destination)?;
     let found = files.stat(&destination).await?;
     let verb = if moving { "Moved" } else { "Copied" };
+    let replaces_itself = match (found, &sources[..], arguments.conflict) {
+        (Some(stat), [source], Conflict::Replace) if !stat.is_dir => {
+            same_file(&*files, source, &destination).await
+        }
+        _ => false,
+    };
 
     if let (Some(stat), true) = (found, sources.len() > 1) {
         if !stat.is_dir {
@@ -167,61 +235,88 @@ pub async fn place(context: &Context, arguments: &PlaceArgs, moving: bool) -> Ap
                     format!("Skipped: {destination} exists"),
                 ))
             }
-            Conflict::Replace => {
-                files.delete(std::slice::from_ref(&destination)).await?;
-                split(&destination)?
+            Conflict::Replace if replaces_itself => {
+                return Err(AppError::invalid(format!(
+                    "{destination} would be replaced with itself"
+                ))
+                .with_path(destination))
             }
-            Conflict::KeepBoth => (split(&destination)?.0, None),
+            Conflict::Replace if source_stats[0].is_dir => {
+                return Err(AppError::new(
+                    ErrorKind::AlreadyExists,
+                    format!("{destination} is a file, and a folder cannot replace it"),
+                )
+                .with_path(destination))
+            }
+            Conflict::Replace | Conflict::KeepBoth => split(&destination)?,
         },
         None => split(&destination)?,
     };
 
-    if moving || connected.info.protocol != Protocol::Sftp {
-        if let Some(renamed) = rename_in_place(connected, &sources, &folder, &new_name).await? {
-            return Ok(renamed);
+    if connected.info.protocol != Protocol::Sftp {
+        if !moving {
+            return Err(AppError::unsupported(format!(
+                "{} cannot copy on the server; copying needs SFTP",
+                connected.info.protocol.display_name()
+            )));
+        }
+        let ([source], [stat], Some(name)) = (&sources[..], &source_stats[..], &new_name) else {
+            return Err(unsupported_elsewhere(connected));
+        };
+        if remote_path::parent(source).as_deref() != Some(folder.as_str()) {
+            return Err(unsupported_elsewhere(connected));
+        }
+        let clash = found.map(|_| arguments.conflict);
+        return rename_in_place(&*files, source, stat.is_dir, &folder, name, clash).await;
+    }
+    if matches!(arguments.conflict, Conflict::Fail | Conflict::Replace) {
+        let named = sources
+            .iter()
+            .map(|source| (remote_path::file_name(source), source.as_str()));
+        if let Some(mut error) = same_name(named, &folder) {
+            error
+                .message
+                .push_str("; keep both with --conflict keep-both");
+            return Err(error);
         }
     }
-    if !moving && connected.info.protocol != Protocol::Sftp {
-        return Err(AppError::unsupported(format!(
-            "{} cannot copy on the server; copying needs SFTP",
-            connected.info.protocol.display_name()
-        )));
-    }
-    let names: Vec<String> = sources
-        .iter()
-        .map(|source| remote_path::file_name(source).to_string())
-        .collect();
     let operations = operations(context);
     let conflict = match arguments.conflict {
-        // Placing under a new name goes through a free name first, then the rename.
-        _ if new_name.is_some() => file_ops::Conflict::KeepBoth,
         Conflict::Fail => {
-            let taken = operations
-                .conflicts(
-                    Location::Remote {
-                        session_id: connected.info.id.clone(),
-                    },
-                    names,
-                    folder.clone(),
-                )
-                .await?;
-            if !taken.is_empty() {
-                return Err(AppError::new(
-                    ErrorKind::AlreadyExists,
-                    format!(
-                        "{folder} already has {}; choose what happens with --conflict",
-                        taken.join(", ")
-                    ),
-                )
-                .with_path(folder));
+            if new_name.is_none() {
+                let names: Vec<String> = sources
+                    .iter()
+                    .map(|source| remote_path::file_name(source).to_string())
+                    .collect();
+                let taken = operations
+                    .conflicts(
+                        Location::Remote {
+                            session_id: connected.info.id.clone(),
+                        },
+                        names,
+                        folder.clone(),
+                    )
+                    .await?;
+                if !taken.is_empty() {
+                    return Err(AppError::new(
+                        ErrorKind::AlreadyExists,
+                        format!(
+                            "{folder} already has {}; choose what happens with --conflict",
+                            taken.join(", ")
+                        ),
+                    )
+                    .with_path(folder));
+                }
             }
-            file_ops::Conflict::Replace
+            // Checked again as each item is placed, links that lead nowhere included, since
+            // something may take a name meanwhile.
+            file_ops::Conflict::Fail
         }
         Conflict::Replace => file_ops::Conflict::Replace,
         Conflict::Skip => file_ops::Conflict::Skip,
         Conflict::KeepBoth => file_ops::Conflict::KeepBoth,
     };
-    let mut summary = operations
+    let summary = operations
         .move_or_copy(MoveCopyRequest {
             operation_id: operation_id(),
             location: Location::Remote {
@@ -231,12 +326,22 @@ pub async fn place(context: &Context, arguments: &PlaceArgs, moving: bool) -> Ap
             sources: sources.clone(),
             target_directory: folder,
             conflict,
+            target_name: new_name,
         })
         .await?;
-    if let (Some(name), Some(placed)) = (&new_name, summary.placed.first_mut()) {
-        if remote_path::file_name(placed) != name {
-            *placed = files.rename(placed, name).await?;
-        }
+    // One item that could not be placed is the command's error, with its own status, as with
+    // the other commands given one path.
+    if let ([source], [], 0, [_], [error]) = (
+        &sources[..],
+        &summary.placed[..],
+        summary.skipped,
+        &summary.failures[..],
+        &summary.errors[..],
+    ) {
+        return Err(match error.path {
+            Some(_) => error.clone(),
+            None => error.clone().with_path(source.clone()),
+        });
     }
     let mut text = summary
         .placed
@@ -266,41 +371,110 @@ pub async fn place(context: &Context, arguments: &PlaceArgs, moving: bool) -> Ap
     .with_failures(failed, sources.len(), Exit::Failure))
 }
 
+/// Whether two paths name one file, as spelled or once links are followed: a link to a file,
+/// or the file reached through a linked folder. Where the server cannot follow links, as on
+/// FTP, the spelling decides.
+async fn same_file(files: &dyn RemoteFileSystem, first: &str, second: &str) -> bool {
+    if first == second {
+        return true;
+    }
+    match (
+        files.canonicalize(first).await,
+        files.canonicalize(second).await,
+    ) {
+        (Ok(first), Ok(second)) => first == second,
+        _ => false,
+    }
+}
+
 fn split(path: &str) -> AppResult<(String, Option<String>)> {
     let folder = remote_path::parent(path)
         .ok_or_else(|| AppError::invalid(format!("{path} has no folder above it")))?;
     Ok((folder, Some(remote_path::file_name(path).to_string())))
 }
 
-/// A move that stays in its folder is a rename, the only move protocols other than SFTP offer.
-/// `None` when the move is of another kind.
+/// A move that stays in `folder` is a rename, the only move protocols other than SFTP offer.
+/// `clash` is what to do about the file that has the new name, when one does.
 async fn rename_in_place(
-    connected: &Connected,
-    sources: &[String],
+    files: &dyn RemoteFileSystem,
+    source: &str,
+    is_dir: bool,
     folder: &str,
-    new_name: &Option<String>,
-) -> AppResult<Option<Reply>> {
-    let ([source], Some(name)) = (sources, new_name) else {
-        return unsupported_elsewhere(connected).map(|()| None);
+    name: &str,
+    clash: Option<Conflict>,
+) -> AppResult<Reply> {
+    let placed = match clash {
+        Some(Conflict::Replace) => {
+            replace_by_renaming(files, source, &remote_path::join(folder, name)).await?
+        }
+        Some(Conflict::KeepBoth) => {
+            let free = free_name(files, folder, name, is_dir).await?;
+            files.rename(source, &free).await?
+        }
+        _ => files.rename(source, name).await?,
     };
-    if remote_path::parent(source).as_deref() != Some(folder) {
-        return unsupported_elsewhere(connected).map(|()| None);
-    }
-    let placed = connected.files().rename(source, name).await?;
-    Ok(Some(Reply::new(
+    Ok(Reply::new(
         json!({ "placed": [placed], "skipped": 0, "failures": [], "methods": ["rename"] }),
         format!("Moved to {placed}"),
-    )))
+    ))
 }
 
-fn unsupported_elsewhere(connected: &Connected) -> AppResult<()> {
-    match connected.info.protocol {
-        Protocol::Sftp => Ok(()),
-        protocol => Err(AppError::unsupported(format!(
-            "{} can only rename within a folder; moving to another folder needs SFTP",
-            protocol.display_name()
-        ))),
+/// Puts `source` in the place of the file `target` with renames alone, since these protocols
+/// never rename over a file. The old one is moved aside first, and deleted only once the new
+/// one is in place, or put back when the rename fails. When it cannot be put back, the error
+/// says where it is.
+async fn replace_by_renaming(
+    files: &dyn RemoteFileSystem,
+    source: &str,
+    target: &str,
+) -> AppResult<String> {
+    let name = remote_path::file_name(target);
+    let aside = files.rename(target, &names::temporary(name)).await?;
+    let placed = match files.rename(source, name).await {
+        Ok(placed) => placed,
+        Err(mut error) => {
+            if let Err(problem) = files.rename(&aside, name).await {
+                error.message.push_str(&format!(
+                    "; the old {name} could not be put back ({}) and is now {aside}",
+                    problem.message
+                ));
+            }
+            return Err(error);
+        }
+    };
+    if let Err(problem) = files.delete(std::slice::from_ref(&aside)).await {
+        log::warn!("The old {target} is left as {aside}: {}", problem.message);
     }
+    Ok(placed)
+}
+
+/// A numbered name for `name` that nothing in `folder` has.
+async fn free_name(
+    files: &dyn RemoteFileSystem,
+    folder: &str,
+    name: &str,
+    is_dir: bool,
+) -> AppResult<String> {
+    for candidate in names::numbered(name, is_dir).take(MAX_FREE_NAME_ATTEMPTS) {
+        if files
+            .stat(&remote_path::join(folder, &candidate))
+            .await?
+            .is_none()
+        {
+            return Ok(candidate);
+        }
+    }
+    Err(AppError::new(
+        ErrorKind::AlreadyExists,
+        format!("Every name like {name} is taken in {folder}"),
+    ))
+}
+
+fn unsupported_elsewhere(connected: &Connected) -> AppError {
+    AppError::unsupported(format!(
+        "{} can only rename within a folder; moving to another folder needs SFTP",
+        connected.info.protocol.display_name()
+    ))
 }
 
 /// Octal (`644`) or symbolic (`u+x,go-w`) permissions, as changes for files and for folders;
@@ -466,11 +640,172 @@ async fn permissions(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+    use std::ops::Range;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    use async_trait::async_trait;
+
     use super::*;
+    use crate::model::DirListing;
+    use crate::protocol::{Capabilities, ReadStream, RemoteStat, WriteRequest, WriteStream};
+
+    /// Files by path on a server that never renames over a file, whose renames can be made to
+    /// fail one by one.
+    struct Renames {
+        files: Mutex<BTreeMap<String, String>>,
+        calls: AtomicUsize,
+        /// Which renames fail, counted from 0.
+        failing: Vec<usize>,
+    }
+
+    impl Renames {
+        fn new(files: &[(&str, &str)], failing: &[usize]) -> Self {
+            Self {
+                files: Mutex::new(
+                    files
+                        .iter()
+                        .map(|(path, contents)| (path.to_string(), contents.to_string()))
+                        .collect(),
+                ),
+                calls: AtomicUsize::new(0),
+                failing: failing.to_vec(),
+            }
+        }
+
+        fn files(&self) -> BTreeMap<String, String> {
+            self.files.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl RemoteFileSystem for Renames {
+        fn protocol(&self) -> Protocol {
+            Protocol::Ftp
+        }
+
+        fn home(&self) -> &str {
+            "/"
+        }
+
+        fn capabilities(&self) -> Capabilities {
+            Capabilities::default()
+        }
+
+        async fn canonicalize(&self, path: &str) -> AppResult<String> {
+            Ok(protocol::normalize(path))
+        }
+
+        async fn list_dir(&self, _path: &str) -> AppResult<DirListing> {
+            unimplemented!()
+        }
+
+        async fn make_dir(&self, _parent: &str, _name: &str) -> AppResult<String> {
+            unimplemented!()
+        }
+
+        async fn rename(&self, path: &str, new_name: &str) -> AppResult<String> {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
+            if self.failing.contains(&call) {
+                return Err(AppError::new(
+                    ErrorKind::PermissionDenied,
+                    "Permission denied",
+                ));
+            }
+            let renamed = remote_path::join(&remote_path::parent(path).unwrap(), new_name);
+            let mut files = self.files.lock().unwrap();
+            if files.contains_key(&renamed) {
+                return Err(protocol::already_exists(&renamed));
+            }
+            let contents = files.remove(path).ok_or_else(|| super::missing(path))?;
+            files.insert(renamed.clone(), contents);
+            Ok(renamed)
+        }
+
+        async fn delete(&self, paths: &[String]) -> AppResult<()> {
+            let mut files = self.files.lock().unwrap();
+            for path in paths {
+                files.remove(path);
+            }
+            Ok(())
+        }
+
+        async fn stat(&self, path: &str) -> AppResult<Option<RemoteStat>> {
+            Ok(self
+                .files
+                .lock()
+                .unwrap()
+                .get(path)
+                .map(|contents| RemoteStat {
+                    is_dir: false,
+                    size: contents.len() as u64,
+                    modified: None,
+                    permissions: None,
+                }))
+        }
+
+        async fn ensure_dir(&self, _path: &str) -> AppResult<()> {
+            unimplemented!()
+        }
+
+        async fn set_attributes(
+            &self,
+            _path: &str,
+            _modified: Option<i64>,
+            _permissions: Option<u32>,
+        ) -> AppResult<()> {
+            unimplemented!()
+        }
+
+        async fn open_read(
+            self: Arc<Self>,
+            _path: &str,
+            _range: Range<u64>,
+        ) -> AppResult<Box<dyn ReadStream>> {
+            unimplemented!()
+        }
+
+        async fn open_write(
+            self: Arc<Self>,
+            _request: WriteRequest,
+        ) -> AppResult<Box<dyn WriteStream>> {
+            unimplemented!()
+        }
+    }
 
     fn apply(text: &str, mode: u32) -> (u32, u32) {
         let (files, folders) = parse_mode_change(text).unwrap();
         (files.apply(mode), folders.apply(mode))
+    }
+
+    #[test]
+    fn the_home_and_start_folders_are_known_however_they_are_spelled() {
+        let own = |path: &str| {
+            let resolved = protocol::normalize(&protocol::resolve_against("/home/me", path));
+            own_folder(&resolved, "/home/me", "/srv/site")
+        };
+        for spelled in [
+            "~",
+            "~/",
+            "~/.",
+            " ~ ",
+            "/home/me",
+            "/home/me/",
+            "/home//me",
+        ] {
+            assert_eq!(own(spelled), Some("the home folder"), "{spelled}");
+        }
+        for spelled in ["/srv/site", "/srv/site/", "/srv/./site"] {
+            assert_eq!(
+                own(spelled),
+                Some("the folder this connection starts in"),
+                "{spelled}"
+            );
+        }
+        for spelled in ["~/notes", "/home", "/srv", "/srv/site/www", "notes"] {
+            assert_eq!(own(spelled), None, "{spelled}");
+        }
     }
 
     #[test]
@@ -488,5 +823,66 @@ mod tests {
         assert!(parse_mode_change("u*x").is_err());
         assert!(parse_mode_change("z+x").is_err());
         assert!(parse_mode_change("u+q").is_err());
+    }
+
+    const BEFORE: [(&str, &str); 2] = [("/f/draft.txt", "new"), ("/f/notes.txt", "old")];
+
+    #[tokio::test]
+    async fn the_new_file_takes_the_old_ones_place() {
+        let files = Renames::new(&BEFORE, &[]);
+        let placed = replace_by_renaming(&files, "/f/draft.txt", "/f/notes.txt")
+            .await
+            .unwrap();
+        assert_eq!(placed, "/f/notes.txt");
+        assert_eq!(
+            files.files(),
+            BTreeMap::from([("/f/notes.txt".to_string(), "new".to_string())])
+        );
+    }
+
+    #[tokio::test]
+    async fn the_old_file_is_put_back_when_the_new_one_cannot_take_its_place() {
+        // The second rename, of the new file onto the name, fails.
+        let files = Renames::new(&BEFORE, &[1]);
+        let error = replace_by_renaming(&files, "/f/draft.txt", "/f/notes.txt")
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind, ErrorKind::PermissionDenied);
+        assert_eq!(error.message, "Permission denied");
+        assert_eq!(
+            files.files(),
+            BEFORE
+                .iter()
+                .map(|(path, contents)| (path.to_string(), contents.to_string()))
+                .collect()
+        );
+    }
+
+    #[tokio::test]
+    async fn the_error_says_where_the_old_file_is_when_it_cannot_be_put_back() {
+        // Moving the old file aside works; placing the new one and putting the old one back
+        // both fail.
+        let files = Renames::new(&BEFORE, &[1, 2]);
+        let error = replace_by_renaming(&files, "/f/draft.txt", "/f/notes.txt")
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind, ErrorKind::PermissionDenied);
+        let left = files.files();
+        let aside: Vec<&String> = left
+            .keys()
+            .filter(|path| path.starts_with("/f/.notes.txt.poros-"))
+            .collect();
+        assert_eq!(aside.len(), 1, "{left:?}");
+        assert_eq!(left[aside[0]], "old");
+        assert_eq!(left["/f/draft.txt"], "new");
+        assert!(!left.contains_key("/f/notes.txt"));
+        assert_eq!(
+            error.message,
+            format!(
+                "Permission denied; the old notes.txt could not be put back (Permission denied) \
+                 and is now {}",
+                aside[0]
+            )
+        );
     }
 }
