@@ -183,8 +183,7 @@ Filter rules keep the order they are typed in, across the defaults, the site and
 the first rule that matches decides, as in rsync. So
 `--exclude=node_modules/ --include='*/' --include='*.js' --exclude='*'` copies the JavaScript files
 and leaves `node_modules` alone. Typed rules are checked before the dialog's Include and Exclude
-fields. A backup folder inside the target
-is never deleted, whatever the rules say.
+fields. A backup folder inside the target is never deleted, whatever the rules say.
 
 Arguments that make no sense over Poros's own SSH connection are noted and passed over, such as
 `-e`, `--partial-dir`, `--sparse`, `-H`, `-A` and `-X`. A few are refused with the reason:
@@ -301,9 +300,12 @@ the system keychain unless `--no-keychain` is given. Otherwise the password come
 
 **Host keys.** Keys are checked against the ones Poros trusts and `~/.ssh/known_hosts`. An
 unknown key exits with status 5 and a changed one with 6, both with the fingerprint.
-`--host-key SHA256:...` (`POROS_HOST_KEY`) accepts that key for the run, `--trust-new-host`
-accepts a host seen for the first time but never a changed key, and `--save-host-key` remembers
-what was accepted. Certificates of FTPS, WebDAV and S3 servers work the same way.
+`--host-key SHA256:...` (`POROS_HOST_KEY`) pins the server to that key for the run: any other key
+is refused, even one already trusted, and the option is refused with status 2 where there is no
+key to check, such as plain FTP, B2, Google Drive, OneDrive or Box. `--trust-new-host` accepts a
+host seen for the first time but never a changed key, and `--save-host-key` remembers what was
+accepted. Certificates of FTPS, WebDAV and S3 servers work the same way. With `schedule`,
+`--host-key` needs `--connection` and pins that connection's server alone.
 
 **JSON.** `--json` (`POROS_JSON=1`) prints one JSON document on standard output, errors included:
 `{"error": {"kind", "message", "path", "hostKey", "exitCode", "hint"}}`. A command given one path
@@ -365,7 +367,7 @@ and `--audience`, and takes no password, so none shows in a process list.
 a signal. `poros-cli` reads the app's settings, saved connections and trusted host keys from its
 config folder (`--config-dir` or `POROS_CONFIG_DIR` picks another, `--default-settings` ignores
 the saved settings) and writes nothing there except a host key it is told to remember, a cloud
-sign-in the provider renewed, and the results and switches of scheduled tasks.
+sign-in the provider renewed, and the results, switches and lock files of scheduled tasks.
 
 **Without the app.** In `src-tauri`, `cargo build --release --no-default-features --features cli
 --bin poros-cli` builds it without the web view, GTK or the Windows shell, for servers and
@@ -573,8 +575,8 @@ The Windows installers are not code-signed yet, so SmartScreen may warn about an
   and application key. Leave the S3 endpoint empty for Amazon S3, or enter another service's,
   such as `s3.eu-central-003.backblazeb2.com` or `http://localhost:9000`. Buckets show as
   folders at the top level; a key restricted to one bucket opens in it. Renaming copies and then
-  deletes, and deleting on B2 hides the file, so earlier versions stay until the bucket's
-  lifecycle rules remove them.
+  deletes, and deleting on B2 hides the file, so earlier versions stay until you delete them for
+  good under Versions or Show deleted files, or the bucket's lifecycle rules remove them.
 - **rsync** runs over SSH only and needs rsync 2.6.4 or newer on the server. rsync daemons
   (`rsync://`, port 873) are not supported. Servers without rsync fall back to SFTP.
 - **Data** is stored in `~/.config/io.github.khaodius.poros/` on Linux and
