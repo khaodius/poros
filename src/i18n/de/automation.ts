@@ -105,6 +105,11 @@ export const automation = {
   theFullPathsOfAll: "die vollständigen Pfade aller ausgewählten Elemente",
   theNamesOfAllSelected: "die Namen aller ausgewählten Elemente",
   theFolderShown: "der angezeigte Ordner",
+  keepPlaceholdersOutOfAnotherShell:
+    "Setzen Sie keine Platzhalter in eine Befehlszeichenkette, die eine weitere Shell liest, etwa {bashExample} oder {sshExample}: Diese Shell würde einen Namen als Teil ihres Befehls lesen.",
+  cannotTellHowTheShellReads:
+    "Poros kann nicht sicher erkennen, wie die Shell diesen Befehl liest: Er enthält ein Here-Document, {ansiQuoted} oder ein offenes Anführungszeichen oder eine offene Klammer. Jeder Platzhalter wird als {parameter} usw. eingesetzt. So bleibt ein Name nur außerhalb von Anführungszeichen ein einzelnes Wort.",
+  commandWithParameters: "{command} mit {parameters}",
   stoppedAfter: "Nach {elapsed} gestoppt",
   endedBySignal: "Nach {elapsed} durch Signal {signal} beendet",
   endedWithoutStatus: "Nach {elapsed} ohne Exit-Status beendet",
