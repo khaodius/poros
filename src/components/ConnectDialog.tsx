@@ -1,6 +1,7 @@
 import { useRef, useState, type FormEvent } from "react";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { FolderOpen, Import, Plus } from "lucide-react";
+import { useLatest } from "../hooks/useLatest";
 import { useOptionCheck } from "../hooks/useOptionCheck";
 import {
   EMPTY_DRAFT,
@@ -60,6 +61,7 @@ export function ConnectDialog({
   const saveConnection = useSavedConnections((state) => state.save);
   const removeConnection = useSavedConnections((state) => state.remove);
   const openDialog = useUiStore((state) => state.open);
+  const latestOnClose = useLatest(onClose);
   const [draft, setDraft] = useState(initialDraft);
   const [busy, setBusy] = useState<"saving" | "connecting" | null>(null);
   const [error, setError] = useState<string | null>(initialError ?? null);
@@ -187,7 +189,7 @@ export function ConnectDialog({
     const result = await connectInTab(profileFromDraft(connectDraft), targetTabId);
     setBusy(null);
     if (!("error" in result)) {
-      onClose();
+      latestOnClose.current();
       return;
     }
     setError(result.error.message);

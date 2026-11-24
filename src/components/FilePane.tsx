@@ -333,6 +333,11 @@ export function FilePane({
   const [searchFocus, setSearchFocus] = useState(0);
   const recentSearches = useSearchStore((state) => state.recent[source.key]) ?? NO_SEARCHES;
   const [dialog, setDialog] = useState<PaneDialog | null>(null);
+  // A field whose row is no longer on show, as after going to another folder with the mouse's
+  // back button, ends there, so it does not come back when the folder is shown again.
+  if (renaming !== null && !pane.listing?.entries.some((entry) => entry.path === renaming)) {
+    setRenaming(null);
+  }
   const [pathEditRequest, setPathEditRequest] = useState(0);
   const sectionRef = useRef<HTMLElement>(null);
   const filterRef = useRef<HTMLInputElement>(null);
@@ -600,6 +605,10 @@ export function FilePane({
       }
     : pane;
 
+  /** Closes `shown` only, so a dialog that finishes its work after it was dismissed leaves alone
+   * the one opened since. */
+  const closeDialog = (shown: PaneDialog) => () =>
+    setDialog((current) => (current === shown ? null : current));
   const openNewFolder = () => pane.listing && !inResults && setDialog({ type: "newFolder" });
   const openNewFile = () =>
     pane.listing && !inResults && setDialog({ type: "newFile", example: exampleFileName() });
@@ -1553,7 +1562,7 @@ export function FilePane({
           title="New folder"
           label={`Create in ${pane.listing.path}`}
           confirmLabel="Create"
-          onClose={() => setDialog(null)}
+          onClose={closeDialog(dialog)}
           onSubmit={async (name) => {
             const created = await source.mkdir(pane.listing!.path, name);
             writeLog("info", `Created ${where} folder ${created}`);
@@ -1568,7 +1577,7 @@ export function FilePane({
           label={`Create in ${pane.listing.path}`}
           placeholder={dialog.example}
           confirmLabel="Create"
-          onClose={() => setDialog(null)}
+          onClose={closeDialog(dialog)}
           onSubmit={async (name) => {
             const created = await source.makeFile(pane.listing!.path, name);
             writeLog("info", `Created ${where} file ${created}`);
@@ -1581,7 +1590,7 @@ export function FilePane({
         <NewVaultDialog
           folder={pane.listing.path}
           onCreate={createVault}
-          onClose={() => setDialog(null)}
+          onClose={closeDialog(dialog)}
         />
       )}
 
@@ -1595,7 +1604,7 @@ export function FilePane({
           } into`}
           initialValue={pane.listing.path}
           confirmLabel={dialog.mode === "move" ? "Move" : "Copy"}
-          onClose={() => setDialog(null)}
+          onClose={closeDialog(dialog)}
           onSubmit={async (folder) => {
             const self = getPane(tabId);
             if (!self || !pane.listing) return;
@@ -1619,7 +1628,7 @@ export function FilePane({
           sessionId={sessionId}
           folder={inResults ? folderOfResults(dialog.entries) : pane.listing.path}
           entries={dialog.entries}
-          onClose={() => setDialog(null)}
+          onClose={closeDialog(dialog)}
           onApplied={() => {
             if (!inResults) return void pane.refresh();
             // The dialog forgets the listing of the one folder it is given; results from
@@ -1652,7 +1661,7 @@ export function FilePane({
           listing={pane.listing}
           checking={pane.stale === "refreshing"}
           summary={(entries) => <DeleteSummary entries={entries} where={where} />}
-          onClose={() => setDialog(null)}
+          onClose={closeDialog(dialog)}
           onConfirm={async (entries) => {
             const removed = entries.map((entry) => entry.path);
             const next = entryAfterRemoval(pane.visibleEntries, new Set(removed), pane.cursorPath);

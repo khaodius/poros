@@ -1,3 +1,4 @@
+import { useLatest } from "../hooks/useLatest";
 import { pluralize } from "../lib/format";
 import { transfers } from "../lib/ipc";
 import { closeRemoteTab, familyOf } from "../state/tabActions";
@@ -21,13 +22,14 @@ export function CloseTabDialog({
   vaultTransfers,
   onClose,
 }: CloseTabDialogProps) {
+  const latestOnClose = useLatest(onClose);
   const close = async (pauseTransfers: boolean) => {
     const [serverId, ...vaultIds] = familyOf(sessionId);
     // Closing the tab locks the server's vaults, and nothing is copied into a locked vault.
     const paused = pauseTransfers ? [serverId, ...vaultIds] : vaultTransfers > 0 ? vaultIds : [];
     await Promise.all(paused.map((id) => transfers.pauseSession(id).catch(() => 0)));
     closeRemoteTab(tabId, sessionId);
-    onClose();
+    latestOnClose.current();
   };
 
   return (
