@@ -911,6 +911,8 @@ export interface MoveCopyRequest {
   sources: string[];
   targetDirectory: string;
   conflict: NameClash;
+  /** The name the one item takes in the target folder, when not its own. */
+  targetName?: string;
 }
 
 export type OperationMethod = "rename" | "copyData" | "command" | "stream" | "local";

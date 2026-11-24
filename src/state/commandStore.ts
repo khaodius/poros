@@ -10,6 +10,7 @@ import type { ServerCommand } from "../lib/settings";
 import type { CommandResult, OutputChunk } from "../lib/types";
 import { forgetServerListings } from "./listings";
 import { listPanes } from "./paneRegistry";
+import { currentSessionId } from "./sessionStore";
 import { useToastStore } from "./toastStore";
 
 /** Output kept in the window; the oldest text goes first. */
@@ -92,7 +93,7 @@ async function runEach(run: CommandRun, hooks: RunHooks): Promise<RunSummary> {
     try {
       last = await serverCommands.run({
         runId,
-        sessionId: run.sessionId,
+        sessionId: currentSessionId(run.sessionId),
         command,
         directory: run.directory || null,
       });
@@ -121,8 +122,9 @@ async function runEach(run: CommandRun, hooks: RunHooks): Promise<RunSummary> {
 }
 
 export function refreshServerPanes(sessionId: string): void {
+  const current = currentSessionId(sessionId);
   for (const pane of listPanes()) {
-    if (pane.kind === "remote" && pane.sessionId === sessionId) pane.refresh();
+    if (pane.kind === "remote" && pane.sessionId === current) pane.refresh();
   }
 }
 

@@ -182,6 +182,7 @@ impl Fixture {
                 sources: sources.iter().map(|source| self.path(source)).collect(),
                 target_directory: self.path(target),
                 conflict,
+                target_name: None,
             })
             .await
             .unwrap()
@@ -518,6 +519,329 @@ async fn copies_within_the_server_every_way() {
     fixture.close().await;
 }
 
+/// Items are placed four at a time. Each source here finds the same name free before any of them
+/// has created it, so without a claim on the name they would all be written to it.
+#[tokio::test]
+async fn copies_made_together_get_names_of_their_own() {
+    let Some(server) = server() else { return };
+    let fixture = Fixture::new(&server, "together-copy").await;
+    let files = ["a.txt", "a (2).txt", "a (3).txt", "a (4).txt"];
+    let folders = ["site", "site (2)"];
+
+    for (index, features) in EVERY_WAY.into_iter().enumerate() {
+        let operations = fixture.operations(features);
+        let folder = format!("copies-{index}");
+        fixture.mkdir(&folder).await;
+        for name in files {
+            fixture
+                .write(&format!("{folder}/{name}"), name.as_bytes())
+                .await;
+        }
+        for name in folders {
+            fixture.mkdir(&format!("{folder}/{name}")).await;
+            fixture
+                .write(&format!("{folder}/{name}/index.html"), name.as_bytes())
+                .await;
+        }
+        let inside = |names: &[&str]| -> Vec<String> {
+            names
+                .iter()
+                .map(|name| format!("{folder}/{name}"))
+                .collect()
+        };
+
+        let sources = inside(&files);
+        let sources: Vec<&str> = sources.iter().map(String::as_str).collect();
+        let copied = fixture
+            .run(
+                &operations,
+                Mode::Copy,
+                &sources,
+                &folder,
+                Conflict::KeepBoth,
+            )
+            .await;
+        assert!(
+            copied.failures.is_empty(),
+            "{features:?}: {:?}",
+            copied.failures
+        );
+        let mut placed = copied.placed.clone();
+        placed.sort();
+        assert_eq!(
+            placed,
+            inside(&["a (5).txt", "a (6).txt", "a (7).txt", "a (8).txt"])
+                .iter()
+                .map(|path| fixture.path(path))
+                .collect::<Vec<_>>(),
+            "{features:?}"
+        );
+        let session = fixture.session().await;
+        for (name, copy) in files.iter().zip(&copied.placed) {
+            let contents = session.sftp().unwrap().read_to_end(copy, 64).await.unwrap();
+            assert_eq!(contents, name.as_bytes(), "{features:?} {copy}");
+        }
+
+        let sources = inside(&folders);
+        let sources: Vec<&str> = sources.iter().map(String::as_str).collect();
+        let copied = fixture
+            .run(
+                &operations,
+                Mode::Copy,
+                &sources,
+                &folder,
+                Conflict::KeepBoth,
+            )
+            .await;
+        assert!(
+            copied.failures.is_empty(),
+            "{features:?}: {:?}",
+            copied.failures
+        );
+        let mut placed = copied.placed.clone();
+        placed.sort();
+        assert_eq!(
+            placed,
+            [
+                fixture.path(&format!("{folder}/site (3)")),
+                fixture.path(&format!("{folder}/site (4)"))
+            ],
+            "{features:?}"
+        );
+        for (name, copy) in folders.iter().zip(&copied.placed) {
+            let entries = session.sftp().unwrap().entries(copy).await.unwrap();
+            assert_eq!(entries.len(), 1, "{features:?} {copy}: {entries:?}");
+            let contents = session
+                .sftp()
+                .unwrap()
+                .read_to_end(&format!("{copy}/index.html"), 64)
+                .await
+                .unwrap();
+            assert_eq!(contents, name.as_bytes(), "{features:?} {copy}");
+        }
+    }
+
+    fixture.close().await;
+}
+
+/// Two items moved into a folder that has both their names: "keep both" numbers each one, and
+/// neither is moved over the other.
+#[tokio::test]
+async fn items_moved_together_are_all_kept() {
+    let Some(server) = server() else { return };
+    let fixture = Fixture::new(&server, "together-move").await;
+
+    for (index, features) in [EVERY_WAY[0], EVERY_WAY[3]].into_iter().enumerate() {
+        let operations = fixture.operations(features);
+        let (from, to) = (format!("from-{index}"), format!("to-{index}"));
+        fixture.mkdir(&from).await;
+        fixture.mkdir(&to).await;
+        for name in ["a.txt", "a (2).txt"] {
+            fixture
+                .write(&format!("{to}/{name}"), format!("kept {name}").as_bytes())
+                .await;
+            fixture
+                .write(
+                    &format!("{from}/{name}"),
+                    format!("moved {name}").as_bytes(),
+                )
+                .await;
+        }
+
+        let moved = fixture
+            .run(
+                &operations,
+                Mode::Move,
+                &[&format!("{from}/a.txt"), &format!("{from}/a (2).txt")],
+                &to,
+                Conflict::KeepBoth,
+            )
+            .await;
+        assert!(
+            moved.failures.is_empty(),
+            "{features:?}: {:?}",
+            moved.failures
+        );
+        assert_eq!(
+            fixture.names(&to).await,
+            ["a (2).txt", "a (3).txt", "a (4).txt", "a.txt"],
+            "{features:?}"
+        );
+        assert!(fixture.names(&from).await.is_empty(), "{features:?}");
+        for name in ["a.txt", "a (2).txt"] {
+            assert_eq!(
+                fixture.read(&format!("{to}/{name}")).await,
+                format!("kept {name}").as_bytes(),
+                "{features:?}"
+            );
+        }
+        let session = fixture.session().await;
+        for (name, placed) in ["a.txt", "a (2).txt"].iter().zip(&moved.placed) {
+            let contents = session
+                .sftp()
+                .unwrap()
+                .read_to_end(placed, 64)
+                .await
+                .unwrap();
+            assert_eq!(
+                contents,
+                format!("moved {name}").as_bytes(),
+                "{features:?} {placed}"
+            );
+        }
+    }
+
+    fixture.close().await;
+}
+
+/// Two items with one name, from different folders, never end up as one: the second is
+/// numbered, skipped or refused as the choice for name clashes says, and never replaces the
+/// first.
+#[tokio::test]
+async fn items_with_one_name_do_not_replace_each_other() {
+    let Some(server) = server() else { return };
+    let fixture = Fixture::new(&server, "one-name").await;
+    let operations = fixture.operations(ServerFeatures::default());
+
+    for (mode, conflict) in [
+        (Mode::Move, Conflict::KeepBoth),
+        (Mode::Move, Conflict::Replace),
+        (Mode::Move, Conflict::Skip),
+        (Mode::Copy, Conflict::Replace),
+    ] {
+        let case = format!("{mode:?}-{conflict:?}").to_lowercase();
+        for folder in ["", "/first", "/second", "/archive"] {
+            fixture.mkdir(&format!("{case}{folder}")).await;
+        }
+        fixture
+            .write(&format!("{case}/first/report.csv"), b"first")
+            .await;
+        fixture
+            .write(&format!("{case}/second/report.csv"), b"second")
+            .await;
+
+        let summary = fixture
+            .run(
+                &operations,
+                mode,
+                &[
+                    &format!("{case}/first/report.csv"),
+                    &format!("{case}/second/report.csv"),
+                ],
+                &format!("{case}/archive"),
+                conflict,
+            )
+            .await;
+
+        let mut contents = Vec::new();
+        for folder in ["first", "second", "archive"] {
+            for name in fixture.names(&format!("{case}/{folder}")).await {
+                contents.push(fixture.read(&format!("{case}/{folder}/{name}")).await);
+            }
+        }
+        contents.sort();
+        contents.dedup();
+        assert_eq!(
+            contents,
+            [b"first".to_vec(), b"second".to_vec()],
+            "{case}: one item's contents are gone"
+        );
+        assert_eq!(
+            fixture.read(&format!("{case}/archive/report.csv")).await,
+            b"first",
+            "{case}"
+        );
+        let archived = fixture.names(&format!("{case}/archive")).await;
+        match conflict {
+            Conflict::KeepBoth => {
+                assert_eq!(archived, ["report (2).csv", "report.csv"], "{case}");
+                assert!(
+                    summary.failures.is_empty(),
+                    "{case}: {:?}",
+                    summary.failures
+                );
+            }
+            Conflict::Skip => {
+                assert_eq!(archived, ["report.csv"], "{case}");
+                assert_eq!(summary.skipped, 1, "{case}");
+            }
+            _ => {
+                assert_eq!(archived, ["report.csv"], "{case}");
+                assert_eq!(summary.failures.len(), 1, "{case}: {:?}", summary.failures);
+                assert_eq!(
+                    summary.failures[0].path,
+                    fixture.path(&format!("{case}/second/report.csv")),
+                    "{case}"
+                );
+            }
+        }
+    }
+
+    fixture.close().await;
+}
+
+/// `album` is a link to `photos`, so `album/inside` is a folder inside `photos` however it is
+/// spelled, and `photos` cannot go into it.
+#[tokio::test]
+async fn a_folder_does_not_go_into_itself_through_a_link() {
+    let Some(server) = server() else { return };
+    let fixture = Fixture::new(&server, "into-itself").await;
+
+    for (index, features) in [EVERY_WAY[0], EVERY_WAY[3]].into_iter().enumerate() {
+        let operations = fixture.operations(features);
+        let base = format!("case-{index}");
+        for folder in ["", "/photos", "/photos/inside"] {
+            fixture.mkdir(&format!("{base}{folder}")).await;
+        }
+        fixture.write(&format!("{base}/photos/a.jpg"), b"a").await;
+        fixture
+            .session()
+            .await
+            .sftp()
+            .unwrap()
+            .make_symlink(&fixture.path(&format!("{base}/album")), "photos")
+            .await
+            .unwrap();
+
+        for (mode, verb) in [(Mode::Copy, "copy"), (Mode::Move, "move")] {
+            let summary = fixture
+                .run(
+                    &operations,
+                    mode,
+                    &[&format!("{base}/photos")],
+                    &format!("{base}/album/inside"),
+                    Conflict::KeepBoth,
+                )
+                .await;
+            assert!(summary.placed.is_empty(), "{features:?} {verb}");
+            let messages: Vec<&str> = summary
+                .failures
+                .iter()
+                .map(|failure| failure.message.as_str())
+                .collect();
+            assert_eq!(
+                messages,
+                [format!("Cannot {verb} the folder photos into itself")],
+                "{features:?}"
+            );
+            assert_eq!(
+                fixture.names(&format!("{base}/photos")).await,
+                ["a.jpg", "inside"],
+                "{features:?} {verb}"
+            );
+            assert!(
+                fixture
+                    .names(&format!("{base}/photos/inside"))
+                    .await
+                    .is_empty(),
+                "{features:?} {verb}"
+            );
+        }
+    }
+
+    fixture.close().await;
+}
+
 /// /dev/shm is a separate filesystem on Linux, so a rename there fails and the move falls back
 /// to `mv`, or without commands to copying and deleting.
 #[tokio::test]
@@ -554,6 +878,7 @@ async fn moves_across_disks() {
                 sources: vec![fixture.path(&folder)],
                 target_directory: other_disk.clone(),
                 conflict: Conflict::KeepBoth,
+                target_name: None,
             })
             .await
             .unwrap();
@@ -624,6 +949,7 @@ async fn moving_across_disks_keeps_what_could_not_be_copied() {
             sources: vec![fixture.path("photos")],
             target_directory: other_disk.clone(),
             conflict: Conflict::KeepBoth,
+            target_name: None,
         })
         .await
         .unwrap();

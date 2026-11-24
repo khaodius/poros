@@ -156,6 +156,7 @@ impl Session {
             protocol: self.protocol(),
             profile: self.profile.clone(),
             host_key_fingerprint: self.host_key_fingerprint.clone(),
+            vault_root: self.vault().map(|vault| vault.root().to_string()),
         }
     }
 }
@@ -170,6 +171,8 @@ pub struct RemoteTarget {
     protocol: Protocol,
     profile: ConnectProfile,
     host_key_fingerprint: String,
+    /// The vault's folder, for the session of an unlocked vault.
+    vault_root: Option<String>,
 }
 
 impl RemoteTarget {
@@ -659,6 +662,47 @@ impl SessionManager {
             .cloned()
     }
 
+    /// The session to reach a target's files through now: its own while it is open, else an open
+    /// session that stands in for it (see `stands_in_for`), such as the one a reconnect or
+    /// connecting again opened, in whichever window. A vault's files are reached through the
+    /// vault alone, unlocked again when it was locked, never through its server's session.
+    pub async fn reach(&self, target: &RemoteTarget) -> AppResult<Arc<Session>> {
+        let error = match self.get(&target.session_id).await {
+            Ok(session) => return Ok(session),
+            Err(error) => error,
+        };
+        let mut stand_ins: Vec<Arc<Session>> = self
+            .sessions
+            .read()
+            .await
+            .values()
+            .filter(|session| stands_in_for(session, target))
+            .cloned()
+            .collect();
+        // One opened from the same saved connection comes first.
+        let saved = target.profile.saved_connection_id.as_deref();
+        stand_ins.sort_by_key(|session| {
+            saved.is_none() || session.profile.saved_connection_id.as_deref() != saved
+        });
+        for stand_in in stand_ins {
+            if let Ok(session) = self.get(&stand_in.id).await {
+                return Ok(session);
+            }
+        }
+        if error.kind != ErrorKind::SessionNotFound {
+            return Err(error);
+        }
+        let advice = if target.vault_root.is_some() {
+            "is locked. Unlock the vault again"
+        } else {
+            "is no longer connected. Connect to it again"
+        };
+        Err(AppError::new(
+            ErrorKind::SessionNotFound,
+            format!("{} {advice} to reach this file", target.label),
+        ))
+    }
+
     /// The session's details, for a window taking over a tab; the window becomes its owner,
     /// and the owner of the vaults unlocked on it.
     pub async fn adopt(&self, id: &str, owner: &str) -> AppResult<SessionInfo> {
@@ -733,6 +777,25 @@ fn same_account(profile: &ConnectProfile, like: &ConnectProfile) -> bool {
         && profile.username == like.username
 }
 
+/// Whether `session` reaches the very machine a target's session was on, the same way, and shows
+/// the same files: the same account, through the same jump host and proxy setting, holding the
+/// host key or certificate the target was trusted with when it had one, and the same unlocked
+/// vault for a vault's target or the server's own files for a server's.
+fn stands_in_for(session: &Session, target: &RemoteTarget) -> bool {
+    let shows_the_same_files = match (&target.vault_root, session.vault()) {
+        (Some(root), Some(vault)) => vault.root() == root && !vault.is_locked(),
+        (None, None) => true,
+        _ => false,
+    };
+    session.id != target.session_id
+        && same_account(&session.profile, &target.profile)
+        && session.profile.jump_connection_id == target.profile.jump_connection_id
+        && session.profile.bypass_proxy == target.profile.bypass_proxy
+        && (target.host_key_fingerprint.is_empty()
+            || session.host_key_fingerprint == target.host_key_fingerprint)
+        && shows_the_same_files
+}
+
 /// The session of an unlocked vault on `server`.
 fn vault_session_of(id: &str, server: &Session, files: Arc<VaultFs>, owner: &str) -> Session {
     let info = SessionInfo {
@@ -769,4 +832,235 @@ fn vault_session_of(id: &str, server: &Session, files: Arc<VaultFs>, owner: &str
 pub async fn open_sftp(handle: &SshHandle) -> AppResult<RemoteFs> {
     let channel = handle.channel_open_session().await?;
     RemoteFs::open(channel).await
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ops::Range;
+
+    use async_trait::async_trait;
+
+    use super::*;
+    use crate::model::DirListing;
+    use crate::protocol::{Capabilities, ReadStream, RemoteStat, WriteRequest, WriteStream};
+
+    /// Files for a session that is never asked for any: these tests only pick sessions.
+    struct NoFiles;
+
+    fn untouched<T>() -> AppResult<T> {
+        Err(AppError::unsupported("not used by these tests"))
+    }
+
+    #[async_trait]
+    impl RemoteFileSystem for NoFiles {
+        fn protocol(&self) -> Protocol {
+            Protocol::Sftp
+        }
+
+        fn home(&self) -> &str {
+            "/"
+        }
+
+        fn capabilities(&self) -> Capabilities {
+            Capabilities::default()
+        }
+
+        async fn canonicalize(&self, _path: &str) -> AppResult<String> {
+            untouched()
+        }
+
+        async fn list_dir(&self, _path: &str) -> AppResult<DirListing> {
+            untouched()
+        }
+
+        async fn make_dir(&self, _parent: &str, _name: &str) -> AppResult<String> {
+            untouched()
+        }
+
+        async fn rename(&self, _path: &str, _new_name: &str) -> AppResult<String> {
+            untouched()
+        }
+
+        async fn delete(&self, _paths: &[String]) -> AppResult<()> {
+            untouched()
+        }
+
+        async fn stat(&self, _path: &str) -> AppResult<Option<RemoteStat>> {
+            untouched()
+        }
+
+        async fn ensure_dir(&self, _path: &str) -> AppResult<()> {
+            untouched()
+        }
+
+        async fn set_attributes(
+            &self,
+            _path: &str,
+            _modified: Option<i64>,
+            _permissions: Option<u32>,
+        ) -> AppResult<()> {
+            untouched()
+        }
+
+        async fn open_read(
+            self: Arc<Self>,
+            _path: &str,
+            _range: Range<u64>,
+        ) -> AppResult<Box<dyn ReadStream>> {
+            untouched()
+        }
+
+        async fn open_write(
+            self: Arc<Self>,
+            _request: WriteRequest,
+        ) -> AppResult<Box<dyn WriteStream>> {
+            untouched()
+        }
+    }
+
+    /// root@10.0.0.5 over SFTP, through the saved jump host `jump` when given.
+    fn profile(jump: Option<&str>, saved: Option<&str>) -> ConnectProfile {
+        serde_json::from_value(serde_json::json!({
+            "protocol": "sftp",
+            "host": "10.0.0.5",
+            "port": 22,
+            "username": "root",
+            "auth": { "type": "agent" },
+            "jumpConnectionId": jump,
+            "savedConnectionId": saved,
+        }))
+        .unwrap()
+    }
+
+    fn session(id: &str, profile: ConnectProfile, host_key: &str) -> Session {
+        Session {
+            id: id.to_string(),
+            info: SessionInfo {
+                id: id.to_string(),
+                label: "root@10.0.0.5".into(),
+                host: profile.host.clone(),
+                port: profile.port,
+                username: profile.username.clone(),
+                home: "/root".into(),
+                initial_path: "/root".into(),
+                saved_connection_id: profile.saved_connection_id.clone(),
+                protocol: profile.protocol,
+                vault: None,
+                coarse_times: NoFiles.coarse_times(),
+            },
+            profile,
+            host_key_fingerprint: host_key.to_string(),
+            owner: Mutex::new("main".into()),
+            link: Link::Direct(Arc::new(NoFiles)),
+            opened_at: Instant::now(),
+        }
+    }
+
+    /// What a document opened on the session `prod`, now closed, remembers of it.
+    fn closed_target(profile: ConnectProfile, host_key: &str) -> RemoteTarget {
+        session("prod", profile, host_key).target()
+    }
+
+    async fn manager_with(sessions: Vec<Session>) -> (tempfile::TempDir, SessionManager) {
+        let config = tempfile::tempdir().unwrap();
+        let manager = SessionManager::new(config.path().join("known_hosts"), Events::default());
+        for session in sessions {
+            let id = session.id.clone();
+            manager.sessions.write().await.insert(id, Arc::new(session));
+        }
+        (config, manager)
+    }
+
+    async fn reached(manager: &SessionManager, target: &RemoteTarget) -> Result<String, ErrorKind> {
+        match manager.reach(target).await {
+            Ok(session) => Ok(session.id.clone()),
+            Err(error) => Err(error.kind),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_session_through_another_jump_host_does_not_stand_in() {
+        let target = closed_target(profile(Some("bastion-prod"), None), "SHA256:prod");
+        let (_config, manager) = manager_with(vec![session(
+            "staging",
+            profile(Some("bastion-staging"), None),
+            "SHA256:prod",
+        )])
+        .await;
+        assert_eq!(
+            reached(&manager, &target).await,
+            Err(ErrorKind::SessionNotFound)
+        );
+
+        let mut without_proxy = profile(Some("bastion-prod"), None);
+        without_proxy.bypass_proxy = true;
+        let (_config, manager) =
+            manager_with(vec![session("direct", without_proxy, "SHA256:prod")]).await;
+        assert_eq!(
+            reached(&manager, &target).await,
+            Err(ErrorKind::SessionNotFound)
+        );
+
+        let (_config, manager) = manager_with(vec![
+            session(
+                "staging",
+                profile(Some("bastion-staging"), None),
+                "SHA256:prod",
+            ),
+            session("again", profile(Some("bastion-prod"), None), "SHA256:prod"),
+        ])
+        .await;
+        assert_eq!(reached(&manager, &target).await, Ok("again".into()));
+    }
+
+    #[tokio::test]
+    async fn a_session_holding_another_host_key_does_not_stand_in() {
+        let target = closed_target(profile(None, None), "SHA256:prod");
+        let (_config, manager) = manager_with(vec![session(
+            "forwarded",
+            profile(None, None),
+            "SHA256:staging",
+        )])
+        .await;
+        assert_eq!(
+            reached(&manager, &target).await,
+            Err(ErrorKind::SessionNotFound)
+        );
+
+        let (_config, manager) = manager_with(vec![
+            session("forwarded", profile(None, None), "SHA256:staging"),
+            session("again", profile(None, None), "SHA256:prod"),
+        ])
+        .await;
+        assert_eq!(reached(&manager, &target).await, Ok("again".into()));
+    }
+
+    #[tokio::test]
+    async fn the_same_saved_connection_stands_in_first() {
+        let target = closed_target(profile(None, Some("saved-prod")), "SHA256:prod");
+        let mut sessions: Vec<Session> = (0..8)
+            .map(|index| {
+                let id = format!("quick-{index}");
+                session(&id, profile(None, None), "SHA256:prod")
+            })
+            .collect();
+        sessions.push(session(
+            "saved",
+            profile(None, Some("saved-prod")),
+            "SHA256:prod",
+        ));
+        let (_config, manager) = manager_with(sessions).await;
+        assert_eq!(reached(&manager, &target).await, Ok("saved".into()));
+    }
+
+    #[tokio::test]
+    async fn its_own_session_comes_first_while_it_is_open() {
+        let target = closed_target(profile(None, None), "SHA256:prod");
+        let (_config, manager) = manager_with(vec![
+            session("again", profile(None, None), "SHA256:prod"),
+            session("prod", profile(None, None), "SHA256:prod"),
+        ])
+        .await;
+        assert_eq!(reached(&manager, &target).await, Ok("prod".into()));
+    }
 }
