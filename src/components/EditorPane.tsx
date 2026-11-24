@@ -474,11 +474,14 @@ export default function EditorPane({ tab, visible, active }: EditorPaneProps) {
             <span>
               {cursor.selected > 0
                 ? t("editor.lineColumnSelected", {
-                    line: cursor.line,
-                    column: cursor.column,
+                    line: String(cursor.line),
+                    column: String(cursor.column),
                     selected: cursor.selected,
                   })
-                : t("editor.lineColumn", { line: cursor.line, column: cursor.column })}
+                : t("editor.lineColumn", {
+                    line: String(cursor.line),
+                    column: String(cursor.column),
+                  })}
             </span>
             <span>{languageName ?? t("editor.plainText")}</span>
             <button

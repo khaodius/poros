@@ -23,7 +23,7 @@ export const archives = {
     "No program that extracts archives was found. Install 7-Zip, or name a program above.",
   onServers: "On servers",
   archivesOnAnSftpServer:
-    "Archives on an SFTP server are extracted on the server, with the programs it has. Poros looks for {programs} the first time, and uses the one that opens each format best. Servers that allow SFTP alone cannot extract; download the archive to extract it here.",
+    "Archives on an SFTP server are extracted on the server, with the programs it has. Poros looks for {programs} and {lastProgram} the first time, and uses the one that opens each format best. Servers that allow SFTP alone cannot extract; download the archive to extract it here.",
   programsFileType: "Programs",
 
   // lib/archives

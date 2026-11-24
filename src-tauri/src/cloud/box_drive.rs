@@ -821,7 +821,7 @@ impl UploadTarget for BoxUpload {
             let response = self
                 .files
                 .api
-                .send_expecting(&|http| http.post(&url).json(&body), &[StatusCode::CONFLICT])
+                .send_repeatable(&|http| http.post(&url).json(&body), &[StatusCode::CONFLICT])
                 .await?;
             if response.status() == StatusCode::CONFLICT {
                 let conflict = conflicting_item(response).await?;

@@ -1,5 +1,5 @@
 // The interface's language: which catalog is active, `t` and `useT` to write its messages, and
-// the `Intl` formats that follow it. Changing the language re-renders every component that
+// the `Intl` formats that go with it. Changing the language re-renders every component that
 // called `useT`, so the whole window changes at once without a restart.
 
 import { create } from "zustand";
@@ -89,18 +89,48 @@ function warnMissing(key: string, locale: string): void {
   console.warn(`No ${locale} text for ${key}; showing the English.`);
 }
 
+const formatLocales = new Map<string, string>();
+
+/**
+ * The tag dates, times and numbers are written in while the interface shows `locale`: the
+ * computer's own when the interface is in English or in the computer's language and script, so
+ * an en-GB, it-IT or de-AT computer keeps its own formats, and the translation's tag otherwise.
+ * Words, such as lists and plural forms, follow the translation whatever this gives.
+ */
+export function formatLocaleFor(locale: string, system: string | undefined): string {
+  if (!system) return locale;
+  const id = `${locale} ${system}`;
+  let found = formatLocales.get(id);
+  if (found === undefined) {
+    found = locale;
+    try {
+      const [canonical] = Intl.getCanonicalLocales(system);
+      const ownScript = languageAndScript(locale);
+      const sameLanguage = ownScript !== null && languageAndScript(canonical) === ownScript;
+      if (canonical && (locale === ENGLISH.locale || sameLanguage)) found = canonical;
+    } catch {
+      // Not a tag Intl knows: the translation's own formats.
+    }
+    formatLocales.set(id, found);
+  }
+  return found;
+}
+
 const translators = new Map<string, Translate>();
 
 /** One translator per language, so its identity only changes with the language. */
 export function translatorFor(translation: Translation): Translate {
-  let translate = translators.get(translation.locale);
+  const numberLocale = formatLocaleFor(translation.locale, systemLocale());
+  const id = `${translation.locale} ${numberLocale}`;
+  let translate = translators.get(id);
   if (!translate) {
     translate = createTranslate(
       translation,
       ENGLISH,
       import.meta.env.DEV ? warnMissing : undefined,
+      numberLocale,
     );
-    translators.set(translation.locale, translate);
+    translators.set(id, translate);
   }
   return translate;
 }
@@ -155,9 +185,14 @@ export function midSentence(label: string): string {
   return translation.lowercaseMidSentence ? label.toLocaleLowerCase(translation.locale) : label;
 }
 
-/** The tag numbers, dates and plurals follow, such as `de`. */
+/** The tag of the language the interface shows, which its words and plurals follow: `de`. */
 export function activeLocale(): string {
   return useLanguageStore.getState().translation.locale;
+}
+
+/** The tag dates, times and numbers follow, such as `de-AT`; see `formatLocaleFor`. */
+export function formatLocale(): string {
+  return formatLocaleFor(activeLocale(), systemLocale());
 }
 
 function remember(choice: LanguageChoice): void {
@@ -193,9 +228,9 @@ export function applyRememberedLanguage(): void {
 
 const numberFormats = new Map<string, Intl.NumberFormat>();
 
-/** A number format in the active language, made once for each set of options. */
+/** A number format as the user's region writes numbers, made once for each set of options. */
 export function numberFormat(options: Intl.NumberFormatOptions = {}): Intl.NumberFormat {
-  const locale = activeLocale();
+  const locale = formatLocale();
   const id = `${locale} ${JSON.stringify(options)}`;
   let format = numberFormats.get(id);
   if (!format) {
@@ -205,14 +240,14 @@ export function numberFormat(options: Intl.NumberFormatOptions = {}): Intl.Numbe
   return format;
 }
 
-/** `1,234` in English, `1.234` in German. */
+/** `1,234` in the United States, `1.234` in Germany. */
 export function formatNumber(value: number, options?: Intl.NumberFormatOptions): string {
   return numberFormat(options).format(value);
 }
 
 const listFormats = new Map<string, Intl.ListFormat>();
 
-/** `a, b and c` in English, `a, b und c` in German. */
+/** `a, b, and c` in English, `a, b und c` in German: words, so in the interface's language. */
 export function formatList(items: readonly string[], options?: Intl.ListFormatOptions): string {
   const locale = activeLocale();
   const id = `${locale} ${JSON.stringify(options ?? {})}`;
@@ -226,9 +261,10 @@ export function formatList(items: readonly string[], options?: Intl.ListFormatOp
 
 const dateTimeFormats = new Map<string, Intl.DateTimeFormat>();
 
-/** A date and time format in the active language, made once for each set of options. */
-export function dateTimeFormat(options: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
-  const locale = activeLocale();
+function cachedDateTimeFormat(
+  locale: string,
+  options: Intl.DateTimeFormatOptions,
+): Intl.DateTimeFormat {
   const id = `${locale} ${JSON.stringify(options)}`;
   let format = dateTimeFormats.get(id);
   if (!format) {
@@ -236,4 +272,17 @@ export function dateTimeFormat(options: Intl.DateTimeFormatOptions): Intl.DateTi
     dateTimeFormats.set(id, format);
   }
   return format;
+}
+
+/** A date and time format as the user's region writes them, made once for each set of options. */
+export function dateTimeFormat(options: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
+  return cachedDateTimeFormat(formatLocale(), options);
+}
+
+/**
+ * Names of weekdays and months on their own, as words a message puts in a sentence, so in the
+ * interface's language: `Mon` and `May` in English, `Mo` and `Mai` in German.
+ */
+export function dateWordFormat(options: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
+  return cachedDateTimeFormat(activeLocale(), options);
 }

@@ -247,7 +247,9 @@ function SourceList({ sources, busy, onRead, onChoose }: SourceListProps) {
             ? t("connect.foundFiles", { files: formatList(info.found, LIST_OF_NAMES) })
             : info.places.length > 0
               ? t("connect.notFoundInChoose", {
-                  places: formatList(info.places, { type: "disjunction" }),
+                  places: info.places.reduce((either, place) =>
+                    t("connect.placeOrPlace", { first: either, second: place }),
+                  ),
                   choose: text.choose,
                 })
               : text.choose;
