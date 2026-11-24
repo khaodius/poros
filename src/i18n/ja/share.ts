@@ -1,0 +1,127 @@
+import type { TranslatedArea } from "../catalog";
+
+export const share = {
+  // components/ShareDialog
+  share: "{name} を共有",
+  share2: "{selectionSummary}を共有",
+  onIn: "{service} の {folder}",
+  links: "リンク",
+  lookingForLinksItAlready: "既存のリンクを探しています...",
+  changeLink: "リンクを変更",
+  newLink: "新しいリンク",
+  letsPeople: "許可する操作",
+  whoCanOpenIt: "開ける人",
+  worksFor: "有効期間",
+  noEnd: "無期限",
+  custom: "カスタム",
+  howMany: "数",
+  unit: "単位",
+  passwordOptional: "パスワード (省略可)",
+  anyoneWithTheLinkCan: "リンクを知っている人は誰でも開けます",
+  copyNewLink: "新しいリンクをコピー",
+  copyNewLinks: "新しいリンクをコピー",
+  linkAddress: "リンクのアドレス",
+  openInBrowser: "ブラウザーで開く",
+  stopSharing: "共有を停止",
+  peopleWhoHaveThisLink: "このリンクを知っている人も開けなくなります。",
+  keepSharing: "共有を続ける",
+  minutes2: "分",
+  hours2: "時間",
+  days2: "日",
+  link: "リンク",
+  links2: { other: "{count} 個のリンク" },
+  keepsOneLinkPerItem:
+    "{service} では項目ごとにリンクが 1 つのため、上のリンクは、それを知っているすべての人に対して変わります。",
+  keepsOneLinkPerItemSo:
+    "{service} では項目ごとにリンクが 1 つのため、既にリンクがある項目では、それを知っているすべての人に対してリンクが変わります。",
+  changing: "変更しています...",
+  creating: "作成しています...",
+  copied: "コピーしました",
+  stopping: "停止しています...",
+  couldNotReadTheLinksItHas: "既存のリンクを読み取れませんでした: {message}",
+  createLink: "リンクを作成",
+  createLinks: { other: "{count} 個のリンクを作成" },
+  copyLink: "リンクをコピー",
+  checking: "確認しています...",
+  makingTheLink: "リンクを作成しています...",
+  noLinkYet: "リンクはまだありません",
+
+  // lib/shareLinks
+  shareLinkNotInA: "共有リンク (金庫内では不可)",
+  shareLinkCloudStorageOnly: "共有リンク (クラウドストレージのみ)",
+  shareLinkFilesOnly: "共有リンク (ファイルのみ)",
+  shareLink: "共有リンク...",
+  days: { other: "{count} 日" },
+  hours: { other: "{count} 時間" },
+  minutes: { other: "{count} 分" },
+  seconds: { other: "{count} 秒" },
+  files: { other: "{count} 個のファイル" },
+  folders: { other: "{count} 個のフォルダー" },
+  view: "表示",
+  n1Hour: "1 時間",
+  n1Day: "1 日",
+  n7Days: "7 日",
+  anyoneWithTheLink: "リンクを知っている全員",
+  peopleAlreadyInvited: "既に招待されているユーザー",
+  peopleIn: "{organization} のユーザー",
+  peopleInYourOrganization: "組織内のユーザー",
+  enterHowLongTheLinkShouldWork: "リンクの有効期間を整数で入力してください。",
+  chooseHowLongTheLinkShouldWork: "リンクの有効期間を選んでください。",
+  linksHereLastAtMost: "ここでのリンクの有効期間は最長 {lifetime} です。",
+  anyoneWithThisLinkCanDownload:
+    "このリンクを知っている人は、{until}、{what}をダウンロードできます。",
+  anyoneWithThisLinkCanEdit: "このリンクを知っている人は、{until}、{what}を開いて変更できます。",
+  anyoneWithThisLinkCanView: "このリンクを知っている人は、{until}、{what}を開けます。",
+  anyoneWithOneOfTheseLinksCanDownload:
+    "これらのリンクのいずれかを知っている人は、{until}、{what}をダウンロードできます。",
+  anyoneWithOneOfTheseLinksCanEdit:
+    "これらのリンクのいずれかを知っている人は、{until}、{what}を開いて変更できます。",
+  anyoneWithOneOfTheseLinksCanView:
+    "これらのリンクのいずれかを知っている人は、{until}、{what}を開けます。",
+  peopleInWithThisLinkCanDownload:
+    "{organization} のユーザーのうち、このリンクを知っている人は、{until}、{what}をダウンロードできます。",
+  peopleInWithThisLinkCanEdit:
+    "{organization} のユーザーのうち、このリンクを知っている人は、{until}、{what}を開いて変更できます。",
+  peopleInWithThisLinkCanView:
+    "{organization} のユーザーのうち、このリンクを知っている人は、{until}、{what}を開けます。",
+  peopleInWithOneOfTheseLinksCanDownload:
+    "{organization} のユーザーのうち、これらのリンクのいずれかを知っている人は、{until}、{what}をダウンロードできます。",
+  peopleInWithOneOfTheseLinksCanEdit:
+    "{organization} のユーザーのうち、これらのリンクのいずれかを知っている人は、{until}、{what}を開いて変更できます。",
+  peopleInWithOneOfTheseLinksCanView:
+    "{organization} のユーザーのうち、これらのリンクのいずれかを知っている人は、{until}、{what}を開けます。",
+  peopleInYourOrganizationWithThisLinkCanDownload:
+    "組織内のユーザーのうち、このリンクを知っている人は、{until}、{what}をダウンロードできます。",
+  peopleInYourOrganizationWithThisLinkCanEdit:
+    "組織内のユーザーのうち、このリンクを知っている人は、{until}、{what}を開いて変更できます。",
+  peopleInYourOrganizationWithThisLinkCanView:
+    "組織内のユーザーのうち、このリンクを知っている人は、{until}、{what}を開けます。",
+  peopleInYourOrganizationWithOneOfTheseLinksCanDownload:
+    "組織内のユーザーのうち、これらのリンクのいずれかを知っている人は、{until}、{what}をダウンロードできます。",
+  peopleInYourOrganizationWithOneOfTheseLinksCanEdit:
+    "組織内のユーザーのうち、これらのリンクのいずれかを知っている人は、{until}、{what}を開いて変更できます。",
+  peopleInYourOrganizationWithOneOfTheseLinksCanView:
+    "組織内のユーザーのうち、これらのリンクのいずれかを知っている人は、{until}、{what}を開けます。",
+  peopleAlreadyInvitedWhoHaveThisLinkCanDownload:
+    "既に招待されているユーザーのうち、このリンクを知っている人は、{until}、{what}をダウンロードできます。",
+  peopleAlreadyInvitedWhoHaveThisLinkCanEdit:
+    "既に招待されているユーザーのうち、このリンクを知っている人は、{until}、{what}を開いて変更できます。",
+  peopleAlreadyInvitedWhoHaveThisLinkCanView:
+    "既に招待されているユーザーのうち、このリンクを知っている人は、{until}、{what}を開けます。",
+  peopleAlreadyInvitedWhoHaveOneOfTheseLinksCanDownload:
+    "既に招待されているユーザーのうち、これらのリンクのいずれかを知っている人は、{until}、{what}をダウンロードできます。",
+  peopleAlreadyInvitedWhoHaveOneOfTheseLinksCanEdit:
+    "既に招待されているユーザーのうち、これらのリンクのいずれかを知っている人は、{until}、{what}を開いて変更できます。",
+  peopleAlreadyInvitedWhoHaveOneOfTheseLinksCanView:
+    "既に招待されているユーザーのうち、これらのリンクのいずれかを知っている人は、{until}、{what}を開けます。",
+  statementWithPassword: "{statement}最初にパスワードを求められます。",
+  theItemItIsFor: "対象の項目",
+  theFileItIsFor: "対象のファイル",
+  theFolderAndEverythingInIt: "フォルダーとその中のすべて",
+  theFile: "このファイル",
+  untilDeadline: "{deadline} まで",
+  untilYouStopSharing: "共有を停止するまで",
+  forAsLongAsItIsThere: "対象がある限り",
+  sharedBefore: "以前の共有: {statement}",
+  notWhatWasAsked: "要求とは異なります: {statement}",
+} satisfies TranslatedArea<"share">;
