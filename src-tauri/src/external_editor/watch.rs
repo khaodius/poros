@@ -359,7 +359,11 @@ mod tests {
         let temporary = watched.path.with_file_name("report.txt.tmp");
         std::fs::write(&temporary, "same").unwrap();
         // A later time than the first write, which Windows clocks can give both writes.
-        let later = std::fs::metadata(&watched.path).unwrap().modified().unwrap() + COARSE_TIME;
+        let later = std::fs::metadata(&watched.path)
+            .unwrap()
+            .modified()
+            .unwrap()
+            + COARSE_TIME;
         std::fs::File::options()
             .write(true)
             .open(&temporary)
