@@ -231,16 +231,16 @@ describe("linkStatement", () => {
 
   it("says who can do what until when", () => {
     expect(linkStatement(subject)).toBe(
-      "Anyone with this link can download the file until 14 May, 18:30.",
+      "Anyone with this link can download the file until May 14 at 18:30.",
     );
     expect(linkStatement({ ...subject, kind: "view" })).toBe(
-      "Anyone with this link can open the file until 14 May, 18:30.",
+      "Anyone with this link can open the file until May 14 at 18:30.",
     );
   });
 
   it("names the year of an end in another year", () => {
-    expect(formatDeadline(localSeconds(2025, 1, 3, 9, 5), now)).toBe("3 January 2025, 09:05");
-    expect(formatDeadline(localSeconds(2024, 12, 31, 23, 59), now)).toBe("31 December, 23:59");
+    expect(formatDeadline(localSeconds(2025, 1, 3, 9, 5), now)).toBe("January 3, 2025 at 09:05");
+    expect(formatDeadline(localSeconds(2024, 12, 31, 23, 59), now)).toBe("December 31 at 23:59");
   });
 
   it("says how a link without an end stops", () => {
@@ -271,10 +271,10 @@ describe("linkStatement", () => {
       "People in your organization with this link",
     );
     expect(linkStatement({ ...subject, audience: "invited", kind: "view" })).toBe(
-      "People already invited who have this link can open the file until 14 May, 18:30.",
+      "People already invited who have this link can open the file until May 14 at 18:30.",
     );
     expect(linkStatement({ ...subject, count: 3 })).toBe(
-      "Anyone with one of these links can download the file it is for until 14 May, 18:30.",
+      "Anyone with one of these links can download the file it is for until May 14 at 18:30.",
     );
     expect(linkStatement({ ...subject, count: 2, folder: true, kind: "view" })).toContain(
       "can open the item it is for",
@@ -283,7 +283,7 @@ describe("linkStatement", () => {
 
   it("says when the link asks for a password", () => {
     expect(linkStatement({ ...subject, kind: "view", hasPassword: true })).toBe(
-      "Anyone with this link can open the file until 14 May, 18:30. It asks for the password first.",
+      "Anyone with this link can open the file until May 14 at 18:30. It asks for the password first.",
     );
   });
 });

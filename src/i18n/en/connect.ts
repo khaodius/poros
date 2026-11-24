@@ -7,7 +7,7 @@ export const connect = {
   importFromFilezillaWinscpAnd: "Import from FileZilla, WinSCP and other apps",
   importConnections: "Import connections",
   newConnection: "New connection",
-  connectionsYouSaveAppearHere: "Connections you save appear here.",
+  emptyConnectionList: "Connections you save appear here. {importLink}",
   importThemFromAnotherApp: "Import them from another app",
   protocol: "Protocol",
   account: "Account",
@@ -94,10 +94,12 @@ export const connect = {
 
   // components/ImportConnectionsDialog
   importFrom: "Import from {label}",
-  importedFrom: "Imported {imported} from {label}.",
-  imported: "Imported {imported}.",
+  importedFrom: {
+    one: "Imported {count} connection from {label}.",
+    other: "Imported {count} connections from {label}.",
+  },
+  imported: { one: "Imported {count} connection.", other: "Imported {count} connections." },
   theseCouldNotBeSaved: "These could not be saved: {failures}",
-  importedConnections: { one: "{count} connection", other: "{count} connections" },
   passwordsLeftOut: {
     one: "The system keychain is not available, so {count} password was left out; Poros asks for them when you connect.",
     other:
@@ -109,7 +111,10 @@ export const connect = {
     "Poros copies the saved sites of these apps into its own saved connections. Nothing changes in the other app.",
   chooseFile: "Choose file...",
   alreadySaved: "Already saved",
-  leftOutSincePorosCannot: "{count} left out, since Poros cannot connect to them as they are",
+  leftOutSincePorosCannot: {
+    one: "{count} left out, since Poros cannot connect to them as they are",
+    other: "{count} left out, since Poros cannot connect to them as they are",
+  },
   putFolderNamesInFront: "Put folder names in front of connection names",
   reading: "Reading...",
   otherFile: "Other file...",
@@ -121,6 +126,8 @@ export const connect = {
   importCountConnections: { one: "Import {count} connection", other: "Import {count} connections" },
   foundFiles: "Found {files}",
   notFoundInChoose: "Not found in {places}. {choose}",
+  throughConnection: "through {name}",
+  neededByConnection: "needed by {name}",
   placeOrPlace: "{first} or {second}",
   keepThePasswordsInTheKeychain: {
     one: "Keep the {count} password in the system keychain",

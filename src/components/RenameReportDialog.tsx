@@ -82,7 +82,8 @@ export function RenameReportDialog({ report, onClose }: RenameReportDialogProps)
               count: renamedCount,
               total: t("rename.items", { count: outcomes.length }),
               folder: <strong>{folder}</strong>,
-            })}{" "}
+            })}
+            {t("common.sentenceSeparator")}
             {stranded
               ? t("rename.theOthersKeepTheirOldNamesButOne")
               : t("rename.theOthersKeepTheirOldNames")}

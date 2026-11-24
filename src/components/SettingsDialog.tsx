@@ -877,7 +877,7 @@ function UpdateSettingsPage({ settings }: { settings: Settings }) {
       ? [
           describeInstall(install, formatVersion(target.version)),
           ...(install.stage === "ready" ? restartWarnings : []),
-        ].join(" ")
+        ].join(t("common.sentenceSeparator"))
       : (checkError ??
         (update
           ? t("updates.versionIsAvailable", { version: formatVersion(update.version) })

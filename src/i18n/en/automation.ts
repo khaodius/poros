@@ -51,7 +51,6 @@ export const automation = {
   whenTheQueueFinishes: "When the queue finishes",
 
   // components/WhenDoneCountdown
-  theTransferQueueHasFinished: "The transfer queue has finished. {title} in {seconds}.",
   seconds: { one: "{count} second", other: "{count} seconds" },
 
   // components/commandMenu
@@ -60,6 +59,15 @@ export const automation = {
   editCommands: "Edit commands...",
 
   // lib/automation
+  queueFinishedClosingPorosIn: "The transfer queue has finished. Closing Poros in {seconds}.",
+  queueFinishedLockingIn: "The transfer queue has finished. Locking the computer in {seconds}.",
+  queueFinishedSleepingIn:
+    "The transfer queue has finished. Putting the computer to sleep in {seconds}.",
+  queueFinishedHibernatingIn:
+    "The transfer queue has finished. Hibernating the computer in {seconds}.",
+  queueFinishedLoggingOffIn: "The transfer queue has finished. Logging off in {seconds}.",
+  queueFinishedShuttingDownIn:
+    "The transfer queue has finished. Shutting down the computer in {seconds}.",
   filesTransferredIn: {
     one: "{count} file transferred ({size}) in {duration}",
     other: "{count} files transferred ({size}) in {duration}",
@@ -85,8 +93,8 @@ export const automation = {
   confirmShutDownNow: "Shut down now",
   transfersFinishedWithErrors: "Transfers finished with errors",
   transfersFinished: "Transfers finished",
-  failedCount: "{count} failed",
-  skippedCount: "{count} skipped",
+  failedCount: { one: "{count} failed", other: "{count} failed" },
+  skippedCount: { one: "{count} skipped", other: "{count} skipped" },
 
   // lib/commands
   eachSelectedItemsFullPath: "each selected item's full path, running once per item",
@@ -103,8 +111,14 @@ export const automation = {
   // state/commandStore
   stopped: "Stopped",
   nothingToRun: "Nothing to run",
-  allCommandsFinished: "All {finished} commands finished",
-  ofCommandsFailed: "{failed} of {finished} commands failed",
+  allCommandsFinished: {
+    one: "All {count} commands finished",
+    other: "All {count} commands finished",
+  },
+  ofCommandsFailed: {
+    one: "{count} of {finished} commands failed",
+    other: "{count} of {finished} commands failed",
+  },
 
   // state/whenDone
   whenTheQueueFinished: "When the queue finished",

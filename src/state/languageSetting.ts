@@ -1,7 +1,7 @@
 // Keeps the window's language on the one Settings names, here and in every other window, as
 // each window loads the settings again when one saves them.
 
-import { setLanguage, SYSTEM_LANGUAGE } from "../i18n";
+import { setLanguage } from "../i18n";
 import { useSettingsStore } from "./settingsStore";
 
 /** Until the settings load, the language the last run used stays, so nothing flickers. */
@@ -19,13 +19,11 @@ export function followLanguageSetting(): () => void {
       apply();
     }
   });
-  // System follows the computer when its language changes while Poros runs.
-  const followSystem = () => {
-    if (useSettingsStore.getState().settings.interface.language === SYSTEM_LANGUAGE) apply();
-  };
-  window.addEventListener("languagechange", followSystem);
+  // The computer's language can change while Poros runs: System follows it, and every choice
+  // follows its region for numbers and dates.
+  window.addEventListener("languagechange", apply);
   return () => {
     unsubscribe();
-    window.removeEventListener("languagechange", followSystem);
+    window.removeEventListener("languagechange", apply);
   };
 }

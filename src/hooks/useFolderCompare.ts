@@ -206,9 +206,9 @@ export function useFolderCompare({
 
   const toggle = useCallback(() => {
     void folderCompare.toggle(tabId).then((reason) => {
-      if (reason) showToast("info", `${reason}.`);
+      if (reason) showToast("info", t("common.asSentence", { text: reason }));
     });
-  }, [tabId, showToast]);
+  }, [tabId, showToast, t]);
 
   const countable = useMemo(
     () => (pane.showHidden ? listing?.entries : listing?.entries.filter((entry) => !entry.hidden)),

@@ -34,7 +34,7 @@ export function RsyncOptionsEditor({ options, direction, onChange, initiallyOpen
             <summary>
               <span>{group.title}</span>
               {changed > 0 && (
-                <span className="rsync-group-count">{t("rsync.changed", { changed })}</span>
+                <span className="rsync-group-count">{t("rsync.changed", { count: changed })}</span>
               )}
             </summary>
             <div className="rsync-fields">
@@ -180,7 +180,7 @@ function Field({ field, options, disabled, onChange }: FieldProps) {
 interface NumberInputProps {
   value: number | null;
   max: number;
-  unit?: string;
+  unit?: (count: number) => string;
   label: string;
   disabled: boolean;
   /** Blank means no value. */
@@ -214,7 +214,7 @@ function NumberInput({ value, max, unit, label, disabled, optional, onChange }: 
         }}
         onBlur={() => setTyped(null)}
       />
-      {unit && <span className="rsync-unit">{unit}</span>}
+      {unit && <span className="rsync-unit">{unit(value ?? 0)}</span>}
     </span>
   );
 }
