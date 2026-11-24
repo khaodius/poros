@@ -19,9 +19,10 @@ use tokio::sync::mpsc;
 
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::remote_path;
+use crate::ssh::exec;
 use checksum::{block_length, STRONG_SUM_BYTES};
 use delta::{find_matches, BlockSum, Reconstruction, Signature, Token};
-pub use process::{run_command, shell_quote, CommandOutput, RemoteProcess};
+pub use process::{shell_quote, CommandOutput, RemoteProcess};
 
 /// The newest protocol without negotiated checksums and incremental file lists.
 const PROTOCOL_VERSION: i32 = 29;
@@ -36,6 +37,8 @@ const MAX_BLOCK_COUNT: i32 = 1 << 22;
 const MIN_STRONG_LENGTH: i32 = 2;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 const PROBE_OUTPUT_LIMIT: usize = 64 * 1024;
+/// How long the server's shell may take to start rsync once it is asked to.
+const START_TIMEOUT: Duration = Duration::from_secs(30);
 const FILE_THREAD_BUFFER: usize = 256 * 1024;
 
 const ITEM_BASIS_TYPE_FOLLOWS: u16 = 1 << 11;
@@ -112,14 +115,15 @@ pub struct Backup {
     pub suffix: String,
 }
 
-/// The protocol version of rsync on the server, or `None` when it does not run.
+/// The protocol version of rsync on the server, or `None` when it does not run. It is asked the
+/// way transfers start it, through `sh`.
 pub async fn probe(channel: Channel<Msg>, rsync_path: &str) -> AppResult<Option<i32>> {
-    let command = format!("{rsync_path} --version");
+    let script = format!("{rsync_path} --version");
     // Input is closed at once, so a server that forces another program for every command
     // does not keep this waiting.
     let probed = tokio::time::timeout(
         PROBE_TIMEOUT,
-        run_command(channel, &command, PROBE_OUTPUT_LIMIT),
+        exec::run_script(channel, &script, PROBE_OUTPUT_LIMIT),
     )
     .await;
     Ok(match probed {
@@ -149,13 +153,27 @@ pub async fn upload(
     request: &Upload<'_>,
     pace: &impl Pace,
 ) -> AppResult<DeltaReport> {
-    let command = upload_command(request);
-    let mut process = RemoteProcess::start(channel, &command).await?;
+    let mut process = start(channel, &upload_command(request)).await?;
     let report = send_file(&mut process, request, pace).await?;
     process.finish().await?;
     Ok(report)
 }
 
+/// Starts `command` under `sh` with the channel as its input. Names are in the script `sh` reads,
+/// never on the line the login shell reads.
+async fn start(channel: Channel<Msg>, command: &str) -> AppResult<RemoteProcess> {
+    tokio::time::timeout(START_TIMEOUT, exec::hand_over(channel, command))
+        .await
+        .unwrap_or_else(|_| {
+            Err(AppError::new(
+                ErrorKind::Rsync,
+                "The server's shell did not start rsync",
+            ))
+        })
+}
+
+/// The command that receives an upload, for `sh`: the rsync path as the user set it, and the
+/// target and backup options quoted.
 fn upload_command(request: &Upload<'_>) -> String {
     let mut options = String::from("-I");
     if request.preserve_timestamps {
@@ -186,15 +204,19 @@ pub async fn download(
     request: &Download<'_>,
     pace: &impl Pace,
 ) -> AppResult<(DeltaReport, RemoteFile)> {
-    let command = format!(
-        "{} --server --sender -tL . {}",
-        request.rsync_path,
-        shell_quote(&server_path(request.source))
-    );
-    let mut process = RemoteProcess::start(channel, &command).await?;
+    let mut process = start(channel, &download_command(request)).await?;
     let received = receive_file(&mut process, request, pace).await?;
     process.finish().await?;
     Ok(received)
+}
+
+/// The command that sends a download, for `sh`.
+fn download_command(request: &Download<'_>) -> String {
+    format!(
+        "{} --server --sender -tL . {}",
+        request.rsync_path,
+        shell_quote(&server_path(request.source))
+    )
 }
 
 /// Keeps a path that starts with a dash from reading as an option.
@@ -724,5 +746,58 @@ mod tests {
             upload_command(&request),
             "rsync --server -It --block-size=2048 -b --suffix='' --backup-dir='/srv/old files' . '/srv/a'"
         );
+    }
+
+    /// `sh` gives rsync each name whole, whatever it holds; the login shell never sees one.
+    #[cfg(unix)]
+    #[test]
+    fn rsync_gets_hostile_names_whole() {
+        use crate::ssh::exec::tests::{printed_words, run_locally, HOSTILE_NAMES};
+        use crate::ssh::exec::ScriptInput;
+
+        let stub = "rsync() { printf '%s\\0' \"$@\"; }\n";
+        for name in HOSTILE_NAMES {
+            let target = format!("/srv/{name}");
+            let request = Upload {
+                rsync_path: "rsync",
+                source: Path::new("a"),
+                target: &target,
+                size: 1,
+                modified: 0,
+                permissions: 0o644,
+                preserve_timestamps: false,
+                preserve_permissions: true,
+                block_size: None,
+                backup: Some(Backup {
+                    folder: Some(format!("/srv/old/{name}")),
+                    suffix: name.to_string(),
+                }),
+            };
+            let script = format!("{stub}{}", upload_command(&request));
+            assert_eq!(
+                printed_words(&run_locally(&script, ScriptInput::Empty)),
+                [
+                    "--server".to_string(),
+                    "-Ip".into(),
+                    "-b".into(),
+                    format!("--suffix={name}"),
+                    format!("--backup-dir=/srv/old/{name}"),
+                    ".".into(),
+                    target.clone(),
+                ]
+            );
+            let request = Download {
+                rsync_path: "rsync",
+                source: name,
+                basis: Path::new("a"),
+                output: Path::new("b"),
+                block_size: None,
+            };
+            let script = format!("{stub}{}", download_command(&request));
+            assert_eq!(
+                printed_words(&run_locally(&script, ScriptInput::Empty)),
+                ["--server", "--sender", "-tL", ".", &server_path(name)]
+            );
+        }
     }
 }
