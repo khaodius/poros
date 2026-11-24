@@ -532,6 +532,19 @@ impl SessionManager {
                 (Link::Direct(files), fingerprint)
             }
         };
+        self.add(id, profile, link, host_key_fingerprint, owner)
+            .await
+    }
+
+    /// Keeps a session over the connection `link` open, in the folder its profile starts in.
+    async fn add(
+        &self,
+        id: &str,
+        profile: ConnectProfile,
+        link: Link,
+        host_key_fingerprint: String,
+        owner: &str,
+    ) -> AppResult<SessionInfo> {
         let files = match &link {
             Link::Ssh { fs, .. } => fs.clone() as Arc<dyn RemoteFileSystem>,
             Link::Direct(files) => files.clone(),
@@ -771,6 +784,21 @@ impl SessionManager {
         for id in ids {
             let _ = self.disconnect(&id).await;
         }
+    }
+}
+
+#[cfg(test)]
+impl SessionManager {
+    /// A session over files that stand in for a server, for tests that need no real one.
+    pub(crate) async fn open_over(
+        &self,
+        profile: ConnectProfile,
+        files: Arc<dyn RemoteFileSystem>,
+    ) -> SessionInfo {
+        let id = uuid::Uuid::new_v4().to_string();
+        self.add(&id, profile, Link::Direct(files), String::new(), "test")
+            .await
+            .unwrap()
     }
 }
 
