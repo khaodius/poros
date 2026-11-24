@@ -4,9 +4,11 @@ mod find;
 mod integrity;
 mod manage;
 mod schedule;
+mod share;
 mod sync;
 mod transfer;
 
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::path::{Component, Path, PathBuf};
 
@@ -50,6 +52,7 @@ pub async fn run(
         Command::Checksum(arguments) => integrity::checksum(context, arguments).await,
         Command::Verify(arguments) => integrity::verify(context, arguments).await,
         Command::Sync(arguments) => sync::synchronize(context, arguments).await,
+        Command::Share(arguments) => share::share(context, arguments).await,
         Command::Exec(arguments) => exec::execute(context, arguments, json).await,
         Command::Schedule(arguments) => schedule::schedule(context, arguments).await,
         Command::Batch => Err(AppError::invalid("batch cannot run inside batch")),
@@ -103,6 +106,33 @@ where
 
 fn missing(path: &str) -> AppError {
     AppError::new(ErrorKind::NotFound, format!("{path} does not exist")).with_path(path)
+}
+
+/// Two of the items, as (name, path) pairs, that have one name, so that in `folder` one would
+/// replace the other.
+fn same_name<'a>(
+    items: impl IntoIterator<Item = (&'a str, &'a str)>,
+    folder: &str,
+) -> Option<AppError> {
+    let mut seen = HashMap::new();
+    for (name, path) in items {
+        if let Some(first) = seen.insert(name, path) {
+            let message = format!(
+                "{first} and {path} have the same name, so one would replace the other in {folder}"
+            );
+            return Some(AppError::new(ErrorKind::AlreadyExists, message).with_path(path));
+        }
+    }
+    None
+}
+
+/// Each path once, where it is first named, as `cp` copies a source named twice only once.
+fn distinct(paths: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    paths
+        .into_iter()
+        .filter(|path| seen.insert(path.clone()))
+        .collect()
 }
 
 /// Creates `path` and the folders above it that are missing; returns whether it made any.
@@ -175,12 +205,37 @@ fn matches_wildcards(pattern: &str, name: &str) -> bool {
         .all(|character| *character == '*')
 }
 
+/// A server path a command acts on. An empty one, which is what an unset shell variable
+/// leaves, is refused rather than taken as the connection's own folder, which `.` names.
+fn operand(connected: &Connected, path: &str) -> AppResult<String> {
+    if path.trim().is_empty() {
+        return Err(AppError::invalid(
+            "A path is empty; write . for the connection's own folder",
+        ));
+    }
+    Ok(connected.resolve(path))
+}
+
+/// `rm` and `mv` refuse a path whose last part is `.` or `..`, as POSIX `rm` does.
+fn refuse_dots(paths: &[String]) -> AppResult<()> {
+    for path in paths {
+        let last = path.trim().trim_end_matches('/').rsplit('/').next();
+        if matches!(last, Some("." | "..")) {
+            return Err(AppError::invalid(format!(
+                "{path} ends in . or ..; name the folder itself"
+            ))
+            .with_path(path.clone()));
+        }
+    }
+    Ok(())
+}
+
 /// Server paths with `*` or `?` in their last part become the entries they match, as a shell
 /// would expand them. Hidden names match only a pattern that starts with a dot.
 async fn expand(connected: &Connected, paths: &[String]) -> AppResult<Vec<String>> {
     let mut expanded = Vec::with_capacity(paths.len());
     for path in paths {
-        let resolved = connected.resolve(path);
+        let resolved = operand(connected, path)?;
         let name = remote_path::file_name(&resolved);
         if !has_wildcards(name) {
             expanded.push(resolved);
@@ -238,6 +293,46 @@ mod tests {
         assert!(matches_wildcards("*", ""));
         assert!(!matches_wildcards("?", ""));
         assert!(has_wildcards("*.txt") && !has_wildcards("plain.txt"));
+    }
+
+    #[test]
+    fn items_with_one_name_are_found() {
+        let named = |paths: &[&'static str]| {
+            paths
+                .iter()
+                .map(|path| (remote_path::file_name(path), *path))
+                .collect::<Vec<_>>()
+        };
+        let found = same_name(
+            named(&["/in/a/report.csv", "/in/b/notes.txt", "/in/b/report.csv"]),
+            "/archive",
+        )
+        .unwrap();
+        assert_eq!(found.kind, ErrorKind::AlreadyExists);
+        assert_eq!(
+            found.message,
+            "/in/a/report.csv and /in/b/report.csv have the same name, so one would replace the \
+             other in /archive"
+        );
+        assert!(same_name(named(&["/in/a/report.csv", "/in/a/report"]), "/archive").is_none());
+        assert!(same_name(named(&["/only.txt"]), "/archive").is_none());
+    }
+
+    #[test]
+    fn paths_named_twice_are_kept_once() {
+        let named = ["/in/p1.txt", "/in/p2.txt", "/in/p1.txt"].map(String::from);
+        assert_eq!(distinct(named.to_vec()), ["/in/p1.txt", "/in/p2.txt"]);
+    }
+
+    #[test]
+    fn paths_ending_in_dots_are_refused() {
+        let refused = |path: &str| refuse_dots(&[path.to_string()]).is_err();
+        for path in [".", "..", "./", "keep/..", "a/./", " .. ", "/srv/www/."] {
+            assert!(refused(path), "{path}");
+        }
+        for path in ["/", "keep", ".hidden", "...", "a.b/c", "~", "../keep"] {
+            assert!(!refused(path), "{path}");
+        }
     }
 
     #[test]

@@ -306,6 +306,7 @@ mod tests {
             protocol: Protocol::Sftp,
             vault: None,
             coarse_times: false,
+            sharing: None,
         }
     }
 

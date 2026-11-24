@@ -37,7 +37,7 @@ pub use oauth::{missing_client, Authorization, OAuthClient, OAuthVault, Provider
 const FOLDER_CACHE_TTL: Duration = Duration::from_secs(60);
 
 /// Everything but unreserved characters is escaped in a path segment of a URL.
-const URL_SEGMENT: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+pub(crate) const URL_SEGMENT: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
     .remove(b'-')
     .remove(b'.')
     .remove(b'_')
@@ -140,7 +140,8 @@ pub async fn sign_in(client: &OAuthClient, cancel: &CancellationToken) -> AppRes
     oauth::sign_in(&http, client, open_in_browser, cancel).await
 }
 
-fn open_in_browser(url: &str) -> AppResult<()> {
+/// Hands a web address to the system's browser.
+fn launch_browser(url: &str) -> std::io::Result<()> {
     #[cfg(windows)]
     let mut command = {
         let mut command = std::process::Command::new("rundll32");
@@ -151,13 +152,27 @@ fn open_in_browser(url: &str) -> AppResult<()> {
     let mut command = std::process::Command::new("open");
     #[cfg(all(unix, not(target_os = "macos")))]
     let mut command = std::process::Command::new("xdg-open");
-    command.arg(url).spawn().map_err(|error| {
+    command.arg(url).spawn().map(drop)
+}
+
+fn open_in_browser(url: &str) -> AppResult<()> {
+    launch_browser(url).map_err(|error| {
         AppError::new(
             ErrorKind::Io,
             format!("Could not open the browser to sign in: {error}"),
         )
-    })?;
-    Ok(())
+    })
+}
+
+/// Opens a share link in the browser. The address was parsed as a web address, so it is
+/// escaped and cannot be taken for an option or another program's scheme.
+pub fn open_link(url: &reqwest::Url) -> AppResult<()> {
+    launch_browser(url.as_str()).map_err(|error| {
+        AppError::new(
+            ErrorKind::Io,
+            format!("Could not open the browser: {error}"),
+        )
+    })
 }
 
 /// Opens a session's file system, returning it with the fingerprint of the certificate the

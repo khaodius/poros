@@ -12,6 +12,8 @@ use hmac::{Hmac, Mac};
 use russh::keys::{Algorithm, HashAlg, PublicKey};
 use sha1::Sha1;
 
+use crate::storage;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostKeyStatus {
     Trusted,
@@ -38,6 +40,8 @@ pub struct KnownHosts {
     system_files: Vec<PathBuf>,
     /// Keys trusted until Poros closes, shared by every clone.
     trusted_until_exit: Arc<Mutex<Vec<(String, PublicKey)>>>,
+    /// Held while the app's file is rewritten, so keys trusted at once all stay on record.
+    writing: Arc<Mutex<()>>,
 }
 
 impl KnownHosts {
@@ -46,6 +50,7 @@ impl KnownHosts {
             app_file,
             system_files,
             trusted_until_exit: Arc::default(),
+            writing: Arc::default(),
         }
     }
 
@@ -146,6 +151,7 @@ impl KnownHosts {
 
     /// Replaces any recorded key of the same algorithm for the host.
     pub fn trust(&self, host: &str, port: u16, key: &PublicKey) -> io::Result<()> {
+        let _writing = self.writing.lock().unwrap();
         let host_port = host_pattern(host, port);
         let existing = fs::read_to_string(&self.app_file).unwrap_or_default();
         let mut kept: Vec<&str> = existing
@@ -172,16 +178,24 @@ impl KnownHosts {
         if let Some(parent) = self.app_file.parent() {
             fs::create_dir_all(parent)?;
         }
-        let temporary = self.app_file.with_extension("tmp");
-        {
-            let mut file = fs::File::create(&temporary)?;
-            for line in &kept {
-                writeln!(file, "{line}")?;
-            }
-            file.sync_all()?;
+        let temporary = storage::temporary_beside(&self.app_file);
+        let written =
+            write_lines(&temporary, &kept).and_then(|()| fs::rename(&temporary, &self.app_file));
+        if written.is_err() {
+            let _ = fs::remove_file(&temporary);
+        } else {
+            storage::remove_left_temporaries(&self.app_file);
         }
-        fs::rename(&temporary, &self.app_file)
+        written
     }
+}
+
+fn write_lines(path: &Path, lines: &[&str]) -> io::Result<()> {
+    let mut file = fs::File::create(path)?;
+    for line in lines {
+        writeln!(file, "{line}")?;
+    }
+    file.sync_all()
 }
 
 pub fn fingerprint(key: &PublicKey) -> String {
@@ -339,6 +353,7 @@ fn glob_match(pattern: &str, text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     const KEY_A: &str = "AAAAC3NzaC1lZDI1NTE5AAAAIJdD7y3aLq454yWBdwLWbieU1ebz9/cu7/QEXn9OIeZJ";
     const KEY_B: &str = "AAAAC3NzaC1lZDI1NTE5AAAAIA6rWI3G1sz07DnfFlrouTcysQlj2P+jpNSOEWD9OJ3X";
@@ -572,6 +587,44 @@ mod tests {
         assert_eq!(contents.lines().count(), 2, "{contents}");
         assert!(contents.contains(&format!("[h]:2222 ssh-ed25519 {KEY_B}")));
         assert!(contents.contains(&format!("other ssh-ed25519 {KEY_A}")));
+    }
+
+    #[test]
+    fn keys_trusted_at_once_both_stay_on_record() {
+        for _ in 0..20 {
+            let (_dir, known_hosts) = store("", "");
+            let start = std::sync::Barrier::new(2);
+            std::thread::scope(|scope| {
+                for (host, b64) in [("first", KEY_A), ("second", KEY_B)] {
+                    let (known_hosts, start) = (&known_hosts, &start);
+                    scope.spawn(move || {
+                        start.wait();
+                        known_hosts.trust(host, 22, &key(b64)).unwrap();
+                    });
+                }
+            });
+            for (host, b64) in [("first", KEY_A), ("second", KEY_B)] {
+                assert_eq!(
+                    known_hosts.check(host, 22, &key(b64)),
+                    HostKeyStatus::Trusted,
+                    "{host}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn trusting_a_key_removes_the_temporary_files_writes_cut_short_left() {
+        let (dir, known_hosts) = store("", "");
+        let aged = |name: &str, age: u64| {
+            crate::storage::tests::file_aged(dir.path(), name, Duration::from_secs(age))
+        };
+        let id = || uuid::Uuid::new_v4().simple();
+        let left = aged(&format!("app_known_hosts.{}.tmp", id()), 120);
+        let written_now = aged(&format!("app_known_hosts.{}.tmp", id()), 0);
+        known_hosts.trust("first", 22, &key(KEY_A)).unwrap();
+        assert!(!left.exists());
+        assert!(written_now.exists());
     }
 
     #[test]

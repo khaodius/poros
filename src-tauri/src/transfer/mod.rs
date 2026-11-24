@@ -347,6 +347,8 @@ pub(crate) struct Shared {
     /// Where unfinished transfers are saved between runs; unset in tests.
     queue_file: OnceLock<PathBuf>,
     saving: AtomicBool,
+    /// Held while the queue is saved, so saves are written one at a time.
+    writing: Mutex<()>,
     /// Unset in tests, where restored servers connect directly.
     route_resolver: OnceLock<RouteResolver>,
     /// Jobs writing into these folders are not saved between runs.
@@ -446,35 +448,49 @@ pub struct TransferWatch {
 }
 
 impl TransferWatch {
-    /// Waits until none of `ids` is queued, running, paused or waiting on a conflict.
+    /// Waits until none of `ids` is queued, running, paused or waiting on a conflict. The
+    /// jobs must have been watched (`Queue::watch`) as they were queued.
     pub async fn wait(&self, ids: &[JobId]) -> JobsOutcome {
         loop {
-            let (outcome, pending) = {
-                let queue = self.shared.queue.lock().unwrap();
+            {
+                let mut queue = self.shared.queue.lock().unwrap();
                 let mut outcome = JobsOutcome::default();
                 let mut pending = false;
                 for id in ids {
-                    match queue.job(*id) {
-                        Some(job) => match job.state {
-                            JobState::Done => {
-                                outcome.done += 1;
-                                outcome.bytes += job.spec.size;
+                    let (state, size) = match queue.job(*id) {
+                        Some(job) => (job.state, job.spec.size),
+                        None => match queue.ended(*id) {
+                            Some(ended) => (ended.state, ended.size),
+                            None => {
+                                outcome.removed += 1;
+                                continue;
                             }
-                            JobState::Failed => outcome.failed += 1,
-                            JobState::Skipped => outcome.skipped += 1,
-                            JobState::Queued
-                            | JobState::Running
-                            | JobState::Paused
-                            | JobState::Conflict => pending = true,
                         },
-                        // Done jobs leave the queue when completed ones are not kept.
-                        None => outcome.removed += 1,
+                    };
+                    match state {
+                        JobState::Done => {
+                            outcome.done += 1;
+                            outcome.bytes += size;
+                        }
+                        JobState::Failed => outcome.failed += 1,
+                        JobState::Skipped => outcome.skipped += 1,
+                        JobState::Queued
+                        | JobState::Running
+                        | JobState::Paused
+                        | JobState::Conflict => {
+                            if queue.job(*id).is_some() {
+                                pending = true;
+                            } else {
+                                // Taken off the queue before it finished.
+                                outcome.removed += 1;
+                            }
+                        }
                     }
                 }
-                (outcome, pending)
-            };
-            if !pending || self.shared.stopping.load(Ordering::Relaxed) {
-                return outcome;
+                if !pending || self.shared.stopping.load(Ordering::Relaxed) {
+                    queue.unwatch(ids);
+                    return outcome;
+                }
             }
             tokio::time::sleep(TICK * 2).await;
         }
@@ -578,6 +594,7 @@ impl TransferManager {
             borrowed_relays: tokio::sync::Mutex::new(()),
             queue_file: OnceLock::new(),
             saving: AtomicBool::new(false),
+            writing: Mutex::new(()),
             route_resolver: OnceLock::new(),
             unsaved_folders: Mutex::new(Vec::new()),
         });
@@ -729,7 +746,7 @@ impl TransferManager {
             if !auto_start && batch.as_ref().is_none_or(|batch| !batch.unattended) {
                 queue.hold_for_start();
             }
-            files
+            let ids: Vec<JobId> = files
                 .into_iter()
                 .map(|file| {
                     let spec = JobSpec {
@@ -748,7 +765,9 @@ impl TransferManager {
                     };
                     queue.add_resolved(spec, file.resolution)
                 })
-                .collect()
+                .collect();
+            queue.watch(&ids);
+            ids
         };
         self.shared.work.notify_waiters();
         Ok(ids)
@@ -915,7 +934,8 @@ enum Placement {
     Last,
 }
 
-/// Changes the queue, then deletes the temporary files of jobs that left it unfinished.
+/// Changes the queue, then deletes the temporary files of jobs that left it unfinished and
+/// says which folders changed.
 fn update_queue(shared: &Arc<Shared>, change: impl FnOnce(&mut Queue)) {
     let abandoned = {
         let mut queue = shared.queue.lock().unwrap();
@@ -935,6 +955,7 @@ fn update_queue(shared: &Arc<Shared>, change: impl FnOnce(&mut Queue)) {
                         discard_with_browsing_session(&shared, &partial).await
                     }
                 }
+                shared.queue.lock().unwrap().deleted(&partial);
             }
         });
     }
@@ -1219,6 +1240,7 @@ fn log_summary(events: &Events, finished: &QueueFinished) {
 
 #[cfg(test)]
 mod tests {
+    use super::queue::{Release, RunOutcome};
     use super::*;
     use crate::ssh::proxy::{Proxy, ProxyKind};
     use crate::ssh::{AuthMethod, Route};
@@ -1318,6 +1340,119 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(&kept[0]).unwrap(),
             "{\"servers\": [], \"jobs\": ["
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_save_at_exit_keeps_the_latest_queue_while_a_background_save_is_written() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file = temp_dir.path().join("transfers.json");
+        let events = Events::default();
+        let sessions = Arc::new(SessionManager::new(
+            temp_dir.path().join("known_hosts"),
+            events.clone(),
+        ));
+        let manager = TransferManager::new(sessions, events, TransferSettings::default());
+        manager.keep_queue_in(file.clone());
+        manager.shared.targets.lock().unwrap().insert(
+            "session".into(),
+            Arc::new(SessionTarget::new("session".into(), login(), false)),
+        );
+        let spec = |index: usize| JobSpec {
+            session_id: "session".into(),
+            source_session_id: None,
+            direction: Direction::Upload,
+            kind: JobKind::File,
+            name: format!("{index}.bin"),
+            source: format!("/local/{index}.bin"),
+            target: format!("/remote/{index}.bin"),
+            target_directory: "/remote".into(),
+            size: 10,
+            ancestors: Arc::from([]),
+            options: None,
+            batch: None,
+        };
+        // Large enough that writing the queue takes a while.
+        let mut queued = 20_000;
+        {
+            let mut queue = manager.shared.queue.lock().unwrap();
+            queue.paused = true;
+            for index in 0..queued {
+                queue.add(spec(index));
+            }
+        }
+        for _ in 0..10 {
+            persist::save_in_background(&manager.shared);
+            // Poros quits while that save is written, after one more change.
+            manager.shared.queue.lock().unwrap().add(spec(queued));
+            queued += 1;
+            persist::save(&manager.shared);
+            while manager.shared.saving.load(Ordering::Acquire) {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            let saved = crate::storage::read_json::<serde_json::Value>(&file);
+            let jobs = saved.unwrap().unwrap()["jobs"].as_array().unwrap().len();
+            assert_eq!(jobs, queued);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_watch_tells_jobs_removed_before_they_ran_from_copied_ones() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let events = Events::default();
+        let sessions = Arc::new(SessionManager::new(
+            temp_dir.path().join("known_hosts"),
+            events.clone(),
+        ));
+        let settings = TransferSettings {
+            keep_completed: false,
+            ..TransferSettings::default()
+        };
+        let manager = TransferManager::new(sessions, events, settings.clone());
+        let spec = |name: &str| JobSpec {
+            session_id: "session".into(),
+            source_session_id: None,
+            direction: Direction::Upload,
+            kind: JobKind::File,
+            name: name.into(),
+            source: format!("/local/{name}"),
+            target: format!("/remote/{name}"),
+            target_directory: "/remote".into(),
+            size: 10,
+            ancestors: Arc::from([]),
+            options: None,
+            batch: None,
+        };
+        // Under one lock, so no worker gets to the jobs.
+        let ids: Vec<JobId> = {
+            let mut queue = manager.shared.queue.lock().unwrap();
+            let ids: Vec<JobId> = ["copied", "already there", "removed"]
+                .into_iter()
+                .map(|name| queue.add_resolved(spec(name), ExistsAction::Overwrite))
+                .collect();
+            queue.watch(&ids);
+            queue.remove(&ids[2..]);
+            for outcome in [
+                RunOutcome::Completed,
+                RunOutcome::Skipped("Already exists".into()),
+            ] {
+                let claim = queue.claim(Instant::now()).unwrap();
+                assert!(matches!(queue.release(claim.id, &outcome), Release::Settle));
+                queue.settle(claim.id, outcome, &settings, Instant::now());
+            }
+            assert_eq!(queue.jobs().count(), 0);
+            ids
+        };
+        let outcome = manager.watch().wait(&ids).await;
+        assert_eq!(
+            outcome,
+            JobsOutcome {
+                done: 1,
+                failed: 0,
+                skipped: 1,
+                removed: 1,
+                bytes: 10,
+            }
         );
     }
 

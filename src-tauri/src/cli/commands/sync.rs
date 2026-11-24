@@ -4,7 +4,7 @@
 
 use serde_json::json;
 
-use super::absolute_local;
+use super::{absolute_local, operand};
 use crate::cli::args::{Direction, SyncArgs, SyncConflict};
 use crate::cli::context::Context;
 use crate::cli::exit::Exit;
@@ -76,7 +76,7 @@ pub async fn synchronize(context: &Context, arguments: &SyncArgs) -> AppResult<R
             connected.info.protocol.display_name()
         )));
     }
-    let remote = connected.resolve(&arguments.remote);
+    let remote = operand(connected, &arguments.remote)?;
     let direction = match arguments.direction {
         Direction::Up => SyncDirection::Upload,
         Direction::Down => SyncDirection::Download,
