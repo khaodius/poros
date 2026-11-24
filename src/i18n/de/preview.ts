@@ -1,0 +1,155 @@
+import type { TranslatedArea } from "../catalog";
+
+export const preview = {
+  // components/PreviewImage
+  fitInThePane: "An den Bereich anpassen",
+  showAtActualSize: "In Originalgröße zeigen",
+
+  // components/PreviewPane
+  brokenLink: "Defekte Verknüpfung",
+  notARegularFile: "Keine reguläre Datei",
+  theFileThisLinkLeads: "Die Datei, auf die diese Verknüpfung zeigt, ist nicht vorhanden.",
+  thereIsNothingInIt: "Darin ist nichts, wovon eine Vorschau möglich wäre.",
+  nothingToPreview: "Keine Vorschau",
+  nothingToPreviewDetail:
+    "Setzen Sie den Cursor auf eine Datei oder einen Ordner, um sie hier zu sehen.",
+  preview: "Vorschau",
+  folders: { one: "{count} Ordner", other: "{count} Ordner" },
+  files: { one: "{count} Datei", other: "{count} Dateien" },
+  theAccountSignedInHere: "Das hier angemeldete Konto darf es nicht öffnen.",
+  itWasDeletedMovedOr: "Es wurde nach dem Auflisten gelöscht, verschoben oder umbenannt.",
+  connectionLost: "Verbindung unterbrochen",
+  theVaultIsLocked: "Der Tresor ist gesperrt",
+  theVaultIsLockedDetail: "Entsperren Sie ihn erneut, um eine Vorschau seiner Dateien zu sehen.",
+  thePreviewTriesAgainAs: "Die Vorschau versucht es erneut, sobald die Verbindung frei ist.",
+  itStayedBusyForA: "Sie war eine Weile belegt. Versuchen Sie es gleich noch einmal.",
+  thePreviewWaitsRatherThan: "Die Vorschau wartet, statt die Übertragung zu bremsen.",
+  couldNotLoadThePreview: "Die Vorschau konnte nicht geladen werden",
+  openInEditorF4: "Im Editor öffnen (F4)",
+  openInEditor: "Im Editor öffnen",
+  thisFileChangedAfterIt: "Diese Datei hat sich nach dem Auflisten geändert.",
+  onlyTheBeginningIsShown: "Nur der Anfang wird gezeigt: {shown} von {size}.",
+  listedAs0Bytes: "Mit 0 Bytes gelistet",
+  listedAs0BytesDetail:
+    "Manche Server geben für Dateien, die sie selbst erzeugen, keine Größe an. Sie ist also vielleicht nicht leer. Beim Lesen zeigt sich, was darin steht.",
+  showPreview: "Vorschau zeigen",
+  previewNotLoaded: "Vorschau nicht geladen",
+  previewNotLoadedDetail:
+    "Lesen von diesem Speicher kann Kosten verursachen, daher wird die Datei nur auf Anfrage gelesen.",
+  emptyFile: "Leere Datei",
+  theServerSaysThereIs: "Laut Server ist sie leer.",
+  thereIsNothingInIt2: "Sie ist leer.",
+  tooLargeToPreview: "Zu groß für eine Vorschau",
+  loadAnyway: "Trotzdem laden",
+  thisPictureCannotBeShown: "Dieses Bild kann nicht gezeigt werden",
+  thisPictureCannotBeShownDetail:
+    "Es ist vielleicht beschädigt oder von einer Art, die dieses System nicht decodiert.",
+  theFirstBytes: { one: "Das erste Byte:", other: "Die ersten {count} Bytes:" },
+  folderNotListed: "Ordner nicht gelistet",
+  folderNotListedDetail:
+    "Auflisten auf diesem Speicher kann Kosten verursachen, daher wird der Ordner nur auf Anfrage gelistet.",
+  cryptomatorVault: "Cryptomator-Tresor",
+  cryptomatorVaultDetail: "Öffnen Sie den Ordner, um ihn zu entsperren und seine Dateien zu sehen.",
+  emptyFolder: "Leerer Ordner",
+  items: { one: "{count} Element", other: "{count} Elemente" },
+  thumbnailsNotLoaded: "Miniaturen nicht geladen",
+  thumbnailsNotLoadedDetail:
+    "Lesen von diesem Speicher kann Kosten verursachen, daher werden Bilder nur auf Anfrage gelesen.",
+  itemsSelected: "{count} Elemente ausgewählt",
+  notTextOrAPicture: "Weder Text noch Bild",
+  noPermissionToReadFile: "Keine Berechtigung zum Lesen dieser Datei",
+  noPermissionToReadFolder: "Keine Berechtigung zum Lesen dieses Ordners",
+  fileNoLongerThere: "Diese Datei ist nicht mehr vorhanden",
+  folderNoLongerThere: "Dieser Ordner ist nicht mehr vorhanden",
+  pictureHasPixelsShowsUpTo:
+    "Dieses Bild hat {dimensions} Pixel. Bilder bis {megapixels} Megapixel erscheinen von selbst.",
+  pictureHasPixelsMoreThanShown:
+    "Dieses Bild hat {dimensions} Pixel, mehr als eine Vorschau zeigen kann.",
+  pictureIsSizeLoadsUpTo:
+    "Dieses Bild ist {size} groß. Bilder bis {limit} werden von selbst geladen.",
+  pictureIsSizeMoreThanLoaded: "Dieses Bild ist {size} groß, mehr als eine Vorschau laden kann.",
+  sizeWithBytes: { one: "{size} ({count} Byte)", other: "{size} ({count} Bytes)" },
+  type: "Typ",
+  link: "Verknüpfung",
+  toAFolder: "Zu einem Ordner",
+  toAFile: "Zu einer Datei",
+  modified: "Geändert",
+  permissions: "Berechtigungen",
+  owner: "Besitzer",
+  contentsWithSize: "{contents} ({size})",
+  imageOfFormat: "{format}-Bild",
+  textInEncoding: "Text, {encoding}",
+  dimensions: "Abmessungen",
+  contains: "Enthält",
+  selected: "Ausgewählt",
+  totalSize: "Gesamtgröße",
+  foldersRow: "Ordner",
+  notCountedInTheSize: "Nicht in der Größe enthalten",
+
+  // components/PreviewSettings
+  largestPictureLoaded: "Größtes geladenes Bild",
+  largestPictureLoadedHint:
+    "Größere Bilder zeigen ihre Details und die Schaltfläche Trotzdem laden.",
+  textReadFromAFile: "Aus einer Datei gelesener Text",
+  textReadFromAFileHint: "Von einer längeren Datei erscheint der Anfang.",
+  thumbnailSize: "Größe der Miniaturen",
+  whenTheCursorRestsOn: "Wenn der Cursor auf einer Datei ruht",
+  onAClickOfShow: "Beim Klick auf Vorschau zeigen",
+  filesOnThisComputerLoad: "Dateien auf diesem Computer laden",
+  filesOnServersLoad: "Dateien auf Servern laden",
+  sftpFtpAndWebdav: "SFTP, FTP und WebDAV.",
+  filesOnStorageThatCharges: "Dateien auf Speicher, der Lesezugriffe berechnet, laden",
+  s3BackblazeB2GoogleDrive:
+    "S3, Backblaze B2, Google Drive, OneDrive und Box sowie Tresore darauf.",
+
+  // components/PreviewSplit
+  resizePreview: "Größe der Vorschau ändern",
+  dragToResizeDoubleClick: "Ziehen ändert die Größe, Doppelklick setzt sie zurück",
+
+  // components/PreviewThumbnails
+  andMore: "und {count} weitere",
+
+  // lib/previewLoad
+  theFileChangesAsIt: "Die Datei ändert sich beim Lesen",
+
+  // lib/previewSniff
+  webp: "WebP",
+  pdfDocument: "PDF-Dokument",
+  gzipArchive: "gzip-Archiv",
+  xzArchive: "xz-Archiv",
+  zstandardArchive: "Zstandard-Archiv",
+  sevenZipArchive: "7-Zip-Archiv",
+  rarArchive: "RAR-Archiv",
+  tarArchive: "tar-Archiv",
+  elfProgram: "ELF-Programm",
+  sqliteDatabase: "SQLite-Datenbank",
+  officeDocument: "Office-Dokument",
+  oggMedia: "Ogg-Medien",
+  flacAudio: "FLAC-Audio",
+  wavAudio: "WAV-Audio",
+  aviVideo: "AVI-Video",
+  matroskaOrWebmVideo: "Matroska- oder WebM-Video",
+  webFont: "Webschrift",
+  webassemblyModule: "WebAssembly-Modul",
+  tiffImage: "TIFF-Bild",
+  photoshopImage: "Photoshop-Bild",
+  rpmPackage: "RPM-Paket",
+  heifImage: "HEIF-Bild",
+  mpeg4Audio: "MPEG-4-Audio",
+  windowsProgram: "Windows-Programm",
+  bzip2Archive: "bzip2-Archiv",
+  mp3Audio: "MP3-Audio",
+  arArchive: "ar-Archiv",
+  javaClass: "Java-Klasse",
+  machOProgram: "Mach-O-Programm",
+  zipArchive: "ZIP-Archiv",
+  quicktimeVideo: "QuickTime-Video",
+  mpeg4Video: "MPEG-4-Video",
+  epubBook: "EPUB-Buch",
+  javaArchive: "Java-Archiv",
+  androidPackage: "Android-Paket",
+
+  // lib/previewText
+  utf8WithBom: "UTF-8 mit BOM",
+  latin1: "Latin-1",
+} satisfies TranslatedArea<"preview">;
