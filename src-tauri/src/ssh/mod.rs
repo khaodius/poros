@@ -2,6 +2,7 @@
 //! can open extra connections with the same profile, including its proxy and jump hosts.
 
 mod auth;
+pub mod exec;
 pub mod keys;
 pub mod known_hosts;
 pub mod proxy;

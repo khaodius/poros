@@ -99,7 +99,7 @@ const formatLocales = new Map<string, string>();
  *   writes "1.234,5" on a German computer, and an Arabic or Persian one brings no digits of
  *   its own into an English sentence.
  * - Where Intl has no data for the language in that region, such as `en-RU`, the language's
- *   own formats in Latin digits, with the computer's 12- or 24-hour clock.
+ *   own formats in Latin digits, with a 24-hour clock when the computer uses one.
  * - The translation's own tag when the computer gives no usable tag or region.
  * Words, such as lists and plural forms, follow the translation whatever this gives.
  */
@@ -121,10 +121,16 @@ export function formatLocaleFor(locale: string, system: string | undefined): str
         if (new Intl.Locale(resolved).region === region) {
           found = regional;
         } else {
+          // Only a 24-hour clock says something: en-US, and its 12-hour clock, is the default
+          // of many computers outside the United States.
           const { hourCycle } = new Intl.DateTimeFormat(system, {
             hour: "numeric",
           }).resolvedOptions();
-          found = new Intl.Locale(locale, { numberingSystem: "latn", hourCycle }).toString();
+          const twentyFourHours = hourCycle === "h23" || hourCycle === "h24";
+          found = new Intl.Locale(locale, {
+            numberingSystem: "latn",
+            ...(twentyFourHours && { hourCycle }),
+          }).toString();
         }
       }
     } catch {

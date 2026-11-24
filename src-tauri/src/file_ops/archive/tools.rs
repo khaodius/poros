@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::formats::ArchiveFormat;
-use crate::rsync::shell_quote;
+use crate::ssh::exec::shell_quote;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -439,17 +439,16 @@ pub const SERVER_PROGRAMS: &[&str] = &[
 
 /// The script that lists which of [`SERVER_PROGRAMS`] a server has, which tar its `tar` is, and
 /// whether its `unrar` is RARLAB's.
-/// It runs under `sh`, whatever the login shell. The last line shows it ran at all, as servers
-/// that allow SFTP alone can succeed without running anything.
+/// It is a script for `sh`, whatever the login shell. The last line shows it ran at all, as
+/// servers that allow SFTP alone can succeed without running anything.
 pub fn server_probe() -> String {
-    let script = format!(
+    format!(
         "for program in {}; do command -v \"$program\" >/dev/null 2>&1 && echo \"tool $program\"; \
          done; command -v tar >/dev/null 2>&1 && echo \"tar $(tar --version 2>&1 | head -n 1)\"; \
          command -v unrar >/dev/null 2>&1 && echo \"unrar $(unrar 2>&1 | grep -i -m 1 unrar)\"; \
          echo poros-archive-tools",
         SERVER_PROGRAMS.join(" ")
-    );
-    format!("sh -c {}", shell_quote(&script))
+    )
 }
 
 pub const PROBE_DONE: &str = "poros-archive-tools";
@@ -695,11 +694,54 @@ mod tests {
         );
     }
 
+    /// `sh` gives the extracting program the archive and folder whole, whatever they hold, and
+    /// the file a single-file format is written to is the one planned.
+    #[cfg(unix)]
+    #[test]
+    fn hostile_archive_names_reach_the_program_whole() {
+        use crate::ssh::exec::tests::{printed_words, run_locally, HOSTILE_NAMES};
+        use crate::ssh::exec::ScriptInput;
+
+        let stub = "tar() { printf '%s\\0' \"$@\"; }\n";
+        let gnu_tar = tool(ToolKind::GnuTar, "tar");
+        for name in HOSTILE_NAMES {
+            let (archive, folder) = (format!("/srv/{name}.tgz"), format!("/srv/{name}"));
+            let planned = plan(
+                &gnu_tar,
+                Format::TarGzip,
+                &placement(&archive, &folder, None),
+            );
+            let script = format!("{stub}{}", shell_script(&planned.unwrap()));
+            let words = printed_words(&run_locally(&script, ScriptInput::Empty));
+            assert_eq!(words[words.len() - 3..], [archive.as_str(), "-C", &folder]);
+        }
+
+        let output = tempfile::tempdir().unwrap();
+        let gzip = tool(ToolKind::Gzip, "gzip");
+        for name in HOSTILE_NAMES.iter().filter(|name| !name.contains('/')) {
+            let file = output.path().join(name).to_string_lossy().into_owned();
+            let planned = plan(
+                &gzip,
+                Format::Gzip,
+                &placement(&format!("/srv/{name}.gz"), "/srv", Some(&file)),
+            );
+            let stub = "gzip() { printf '%s\\0' \"$@\"; }\n";
+            let script = format!("{stub}{}", shell_script(&planned.unwrap()));
+            run_locally(&script, ScriptInput::Empty);
+            let written = std::fs::read(&file).unwrap();
+            assert_eq!(printed_words(&written), ["-dc", &format!("/srv/{name}.gz")]);
+        }
+        assert_eq!(
+            std::fs::read_dir(output.path()).unwrap().count(),
+            HOSTILE_NAMES.len()
+        );
+    }
+
     #[test]
     fn probes_under_sh() {
         let probe = server_probe();
-        assert!(probe.starts_with("sh -c '"));
+        assert!(probe.starts_with("for program in 7zz "));
         assert!(probe.contains("command -v"));
-        assert!(probe.ends_with("echo poros-archive-tools'"));
+        assert!(probe.ends_with("echo poros-archive-tools"));
     }
 }

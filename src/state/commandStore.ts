@@ -2,8 +2,9 @@ import { create } from "zustand";
 import {
   commandSucceeded,
   describeResult,
-  expandCommand,
+  prepareCommands,
   type CommandTarget,
+  type PreparedCommand,
 } from "../lib/commands";
 import { onCommandOutput, serverCommands, toAppError } from "../lib/ipc";
 import type { ServerCommand } from "../lib/settings";
@@ -26,7 +27,7 @@ export interface CommandRun {
   /** The folder the commands run in. */
   directory: string;
   /** Run one after another. */
-  commands: string[];
+  commands: PreparedCommand[];
   /** Reloads the session's panes afterwards. */
   refresh: boolean;
 }
@@ -90,12 +91,13 @@ async function runEach(run: CommandRun, hooks: RunHooks): Promise<RunSummary> {
     const runId = crypto.randomUUID();
     outputHandlers.set(runId, hooks.output);
     hooks.control.runId = runId;
-    if (several) hooks.note(`$ ${command}\n`);
+    if (several) hooks.note(`$ ${command.display}\n`);
     try {
       last = await serverCommands.run({
         runId,
         sessionId: currentSessionId(run.sessionId),
-        command,
+        command: command.command,
+        arguments: command.arguments,
         directory: run.directory || null,
       });
       if (!commandSucceeded(last)) failed++;
@@ -206,7 +208,7 @@ export function runServerCommand(
     title: command.name.trim() || command.command.trim(),
     sessionId,
     directory: target.folder,
-    commands: expandCommand(command.command, target),
+    commands: prepareCommands(command.command, target),
     refresh: command.refresh,
   };
   if (command.showOutput) {

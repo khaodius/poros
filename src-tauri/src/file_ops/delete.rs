@@ -18,9 +18,9 @@ use crate::error::{AppError, AppResult, ErrorKind};
 use crate::model::EntryKind;
 use crate::protocol;
 use crate::remote_path;
-use crate::rsync::shell_quote;
 use crate::session::Session;
 use crate::sftp::RemoteFs;
+use crate::ssh::exec::{self, shell_quote, ScriptInput};
 
 /// SFTP channels opened to delete over. Most servers run an SFTP server process for each, so
 /// they also work in parallel on the server.
@@ -28,8 +28,8 @@ const SFTP_CHANNELS: usize = 4;
 const REQUESTS_PER_CHANNEL: usize = 64;
 /// Entries of one folder started at once; the requests they make are limited separately.
 const PARALLEL_ENTRIES: usize = 256;
-/// The longest command sent at once. Linux takes at most 128 KiB in one argument, and the
-/// shell gets the whole command as one.
+/// The longest script sent at once. Its names become the arguments of `find` and `rm`, which
+/// stay far below what a server takes for one command.
 const COMMAND_LIMIT: usize = 64 * 1024;
 /// What the script around the names takes, besides the folder twice.
 const SCRIPT_ROOM: usize = 512;
@@ -201,21 +201,7 @@ impl Commands<'_> {
     }
 
     async fn run_batch(&self, folder: &str, marker: &str, names: &[String]) -> AppResult<Batch> {
-        let arguments = names
-            .iter()
-            .map(|name| shell_quote(&format!("./{name}")))
-            .collect::<Vec<_>>()
-            .join(" ");
-        let script = format!(
-            "cd -- {folder} || exit {FOLDER_UNREACHABLE}; \
-             [ -e {marker} ] || exit {OTHER_FOLDER}; \
-             printf '{TOTAL_LINE}%s\\n' \"$(find {arguments} 2>/dev/null | wc -l)\"; \
-             LC_ALL=C rm -rfv -- {arguments}",
-            folder = shell_quote(folder),
-            marker = shell_quote(marker),
-        );
-        // Whatever the login shell, `sh` runs the script.
-        let command = format!("sh -c {}", shell_quote(&script));
+        let script = batch_script(folder, marker, names);
         let mut output = BatchOutput {
             commands: self,
             folder,
@@ -225,7 +211,7 @@ impl Commands<'_> {
             latest: Vec::new(),
             reported: HashSet::new(),
         };
-        let exit_status = run_streaming(self.session, &command, self.cancel, &mut output).await;
+        let exit_status = run_streaming(self.session, &script, self.cancel, &mut output).await;
         if output.counted.is_none() {
             self.counted(1);
         }
@@ -351,10 +337,27 @@ impl Lines for BatchOutput<'_> {
     }
 }
 
-/// Splits names into groups small enough for one command each. Each name is in the command
-/// twice, with `./` before it, quoted once for the script and again for `sh -c`.
+/// The script that removes `names` from `folder`, for `sh`, which alone reads its quoting.
+fn batch_script(folder: &str, marker: &str, names: &[String]) -> String {
+    let arguments = names
+        .iter()
+        .map(|name| shell_quote(&format!("./{name}")))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!(
+        "cd -- {folder} || exit {FOLDER_UNREACHABLE}; \
+         [ -e {marker} ] || exit {OTHER_FOLDER}; \
+         printf '{TOTAL_LINE}%s\\n' \"$(find {arguments} 2>/dev/null | wc -l)\"; \
+         LC_ALL=C rm -rfv -- {arguments}",
+        folder = shell_quote(folder),
+        marker = shell_quote(marker),
+    )
+}
+
+/// Splits names into groups small enough for one script each. Each name is in the script
+/// twice, quoted, with `./` before it.
 fn batches(folder: &str, names: Vec<String>) -> Vec<Vec<String>> {
-    let quoted_length = |text: &str| shell_quote(&shell_quote(text)).len();
+    let quoted_length = |text: &str| shell_quote(text).len();
     let room = COMMAND_LIMIT.saturating_sub(SCRIPT_ROOM + 2 * quoted_length(folder));
     let mut batches = Vec::new();
     let mut batch = Vec::new();
@@ -417,18 +420,17 @@ trait Lines {
     fn caught_up(&mut self);
 }
 
-/// Runs `command` on the server, handing what it prints to `lines`; returns how it exited, if it
+/// Runs `script` on the server, handing what it prints to `lines`; returns how it exited, if it
 /// said. Cancelling signals the command and closes its output, which ends `rm -v` at the next
 /// entry it names.
 async fn run_streaming(
     session: &Session,
-    command: &str,
+    script: &str,
     cancel: &CancellationToken,
     lines: &mut impl Lines,
 ) -> AppResult<Option<u32>> {
     let mut channel = session.open_command_channel().await?;
-    channel.exec(true, command).await?;
-    let _ = channel.eof().await;
+    exec::start_script(&channel, script, ScriptInput::Empty).await?;
     let mut output = LineSplitter::default();
     let mut errors = LineSplitter::default();
     let mut exit_status = None;
@@ -744,19 +746,47 @@ mod tests {
         assert!(split.len() > 1);
         assert_eq!(split.concat(), names);
         for batch in &split {
-            let arguments = batch
-                .iter()
-                .map(|name| shell_quote(&format!("./{name}")))
-                .collect::<Vec<_>>()
-                .join(" ");
-            let script = format!(
-                "cd -- {} || exit 97; [ -e '.poros-delete-00000000000000000000000000000000' ] \
-                 || exit 98; printf 'total %s\\n' \"$(find {arguments} 2>/dev/null | wc -l)\"; \
-                 LC_ALL=C rm -rfv -- {arguments}",
-                shell_quote("/srv/www")
+            let script = batch_script(
+                "/srv/www",
+                ".poros-delete-00000000000000000000000000000000",
+                batch,
             );
-            assert!(format!("sh -c {}", shell_quote(&script)).len() <= COMMAND_LIMIT);
+            assert!(script.len() <= COMMAND_LIMIT);
         }
         assert_eq!(batches("/srv", vec!["one".into()]), [["one"]]);
+    }
+
+    /// Run by `sh` as a server runs it, the script removes exactly the names it is given, in the
+    /// folder it is given, whatever they hold.
+    #[cfg(unix)]
+    #[test]
+    fn the_script_removes_hostile_names_and_nothing_else() {
+        use crate::ssh::exec::tests::{run_locally, HOSTILE_NAMES};
+
+        let root = tempfile::tempdir().unwrap();
+        let folder = root.path().join("it's a $(folder)");
+        std::fs::create_dir(&folder).unwrap();
+        let marker = ".poros-delete-marker";
+        std::fs::write(folder.join(marker), b"").unwrap();
+        std::fs::write(folder.join("keep"), b"").unwrap();
+        let names: Vec<String> = HOSTILE_NAMES
+            .iter()
+            .filter(|name| !name.contains('/'))
+            .map(|name| name.to_string())
+            .collect();
+        for name in &names {
+            std::fs::create_dir(folder.join(name)).unwrap();
+            std::fs::write(folder.join(name).join("inside"), b"").unwrap();
+        }
+        let script = batch_script(&folder.to_string_lossy(), marker, &names);
+        let output = String::from_utf8(run_locally(&script, ScriptInput::Empty)).unwrap();
+        assert!(output.starts_with(TOTAL_LINE), "{output}");
+        let mut left: Vec<String> = std::fs::read_dir(&folder)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        assert_eq!(left, [marker, "keep"]);
+        assert!(!root.path().join("poros-pwned").exists());
     }
 }

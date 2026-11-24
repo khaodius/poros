@@ -10,12 +10,19 @@ use md5::Md5;
 use sha1::Sha1;
 use sha2::{Digest, Sha256, Sha512};
 
+use crate::error::AppResult;
+use crate::rsync::{shell_quote, CommandOutput};
+use crate::session::Session;
+use crate::ssh::exec::{self, CommandLine};
+
 const READ_CHUNK: usize = 256 * 1024;
 const MEBIBYTE: u64 = 1024 * 1024;
 /// Parts are at least this long, so a file of a few MiB is hashed whole.
 const MIN_PART: u64 = 4 * MEBIBYTE;
 /// At most this many parts per file, each hashed by its own process on the server.
 const MAX_PARTS: u64 = 64;
+/// More than a digest line ever takes.
+const DIGEST_OUTPUT_LIMIT: usize = 64 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Algorithm {
@@ -197,6 +204,41 @@ pub fn hash_file_parts(path: &Path, length: u64, parts: Parts) -> std::io::Resul
         hasher.update(&buffer[..read]);
     }
     Ok(hasher.finish())
+}
+
+/// The server's digest of one file: from its command under `sh`, or, on a server without `sh`
+/// that runs the command itself as SFTPGo does, from the command as a line of its own when the
+/// path is one any login shell reads alike (see [`exec::portable`]). `None` when the server
+/// could not give one.
+pub async fn server_digest(
+    session: &Session,
+    path: &str,
+    algorithm: Algorithm,
+) -> AppResult<Option<Vec<u8>>> {
+    let channel = session.open_command_channel().await?;
+    let script = format!("{} -- {}", algorithm.command(), shell_quote(path));
+    let output = exec::run_script(channel, &script, DIGEST_OUTPUT_LIMIT).await?;
+    if let Some(digest) = digest_from(&output, algorithm) {
+        return Ok(Some(digest));
+    }
+    // One file per command: SFTPGo hashes only the last argument.
+    let Some(line) = CommandLine::portable(&[algorithm.command(), "--"], &[path]) else {
+        return Ok(None);
+    };
+    let channel = session.open_command_channel().await?;
+    let output = exec::run_line(channel, &line, DIGEST_OUTPUT_LIMIT).await?;
+    Ok(digest_from(&output, algorithm))
+}
+
+fn digest_from(output: &CommandOutput, algorithm: Algorithm) -> Option<Vec<u8>> {
+    if output.exit_status != Some(0) {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.output);
+    parse_output(&text, algorithm)
+        .into_iter()
+        .next()
+        .map(|(_, digest)| digest)
 }
 
 pub fn to_hex(digest: &[u8]) -> String {

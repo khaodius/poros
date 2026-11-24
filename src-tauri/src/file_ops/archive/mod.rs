@@ -26,9 +26,9 @@ use super::{names, Progress};
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::model::EntryKind;
 use crate::remote_path;
-use crate::rsync::{run_command, shell_quote};
 use crate::session::Session;
 use crate::sftp::RemoteFs;
+use crate::ssh::exec;
 use formats::{unpacked_name, HEAD_BYTES};
 use tools::{choose, custom_plan, plan, shell_script, Placement, Plan};
 
@@ -144,7 +144,7 @@ async fn cancellable<T>(
 /// The tools a server has, found with one command. Servers that run no commands have none.
 pub async fn server_tools(session: &Session) -> AppResult<Vec<Tool>> {
     let channel = session.open_command_channel().await?;
-    let output = run_command(channel, &tools::server_probe(), COMMAND_OUTPUT_LIMIT).await?;
+    let output = exec::run_script(channel, &tools::server_probe(), COMMAND_OUTPUT_LIMIT).await?;
     tools::parse_server_probe(&String::from_utf8_lossy(&output.output)).ok_or_else(|| {
         AppError::unsupported(
             "This server runs no commands, so archives on it cannot be extracted there. \
@@ -256,12 +256,12 @@ where
         },
     )
     .ok_or_else(|| not_an_archive(&name))?;
-    let command = format!("sh -c {}", shell_quote(&shell_script(&plan)));
+    let script = shell_script(&plan);
     fs.make_dir(&parent, &folder_name).await?;
 
     let result = cancellable(cancel, async {
         let channel = session.open_command_channel().await?;
-        run_command(channel, &command, COMMAND_OUTPUT_LIMIT).await
+        exec::run_script(channel, &script, COMMAND_OUTPUT_LIMIT).await
     })
     .await;
     let tool_name = tool.kind.display_name();

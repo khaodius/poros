@@ -1,5 +1,13 @@
 import { useState, type FormEvent } from "react";
-import { PLACEHOLDERS, expandCommand, needsSelection, type CommandTarget } from "../lib/commands";
+import {
+  PLACEHOLDERS,
+  needsSelection,
+  placeholderAdvice,
+  prepareCommands,
+  readsUncertainly,
+  uncertainCommandWarning,
+  type CommandTarget,
+} from "../lib/commands";
 import { useCommandStore } from "../state/commandStore";
 import { Dialog } from "./Dialog";
 import { useT } from "../i18n";
@@ -19,6 +27,7 @@ export function RunCommandDialog({ sessionId, target, onClose }: RunCommandDialo
   const [refresh, setRefresh] = useState(true);
   const trimmed = command.trim();
   const missingSelection = needsSelection(trimmed) && target.items.length === 0;
+  const uncertain = readsUncertainly(trimmed);
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -29,7 +38,7 @@ export function RunCommandDialog({ sessionId, target, onClose }: RunCommandDialo
       title: t("automation.runACommand"),
       sessionId,
       directory: target.folder,
-      commands: expandCommand(trimmed, target),
+      commands: prepareCommands(trimmed, target),
       refresh,
     });
   };
@@ -61,6 +70,8 @@ export function RunCommandDialog({ sessionId, target, onClose }: RunCommandDialo
             </div>
           ))}
         </dl>
+        <p className="field-hint">{placeholderAdvice()}</p>
+        {uncertain && <p className="field-hint warning-text">{uncertainCommandWarning()}</p>}
         <label className="check">
           <input
             type="checkbox"
