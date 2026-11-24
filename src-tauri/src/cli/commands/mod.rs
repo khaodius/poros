@@ -3,6 +3,7 @@ mod exec;
 mod find;
 mod integrity;
 mod manage;
+mod share;
 mod sync;
 mod transfer;
 mod versions;
@@ -52,6 +53,7 @@ pub async fn run(
         Command::Checksum(arguments) => integrity::checksum(context, arguments).await,
         Command::Verify(arguments) => integrity::verify(context, arguments).await,
         Command::Sync(arguments) => sync::synchronize(context, arguments).await,
+        Command::Share(arguments) => share::share(context, arguments).await,
         Command::Exec(arguments) => exec::execute(context, arguments, json).await,
         Command::Batch => Err(AppError::invalid("batch cannot run inside batch")),
     }

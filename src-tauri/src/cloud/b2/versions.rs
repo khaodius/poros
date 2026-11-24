@@ -179,7 +179,12 @@ fn prefix_of(key: &str) -> String {
 
 impl B2Fs {
     fn permit(&self, need: Need, name: &str, path: &str) -> AppResult<()> {
-        match refusal(&self.capabilities, self.name_prefix.as_deref(), need, name) {
+        match refusal(
+            &self.key_capabilities,
+            self.name_prefix.as_deref(),
+            need,
+            name,
+        ) {
             Some(message) => {
                 Err(AppError::new(ErrorKind::PermissionDenied, message).with_path(path))
             }
