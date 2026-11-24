@@ -19,17 +19,15 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use tokio::sync::OwnedSemaphorePermit;
-use tokio_util::sync::CancellationToken;
 
 use super::backend::{Backend, Gate, Lease, Limits, Purpose};
-use crate::automation::remote_command::{self, OutputStream};
-use crate::checksum::{parse_output, Algorithm};
+use crate::checksum::{server_digest, Algorithm};
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::events::Events;
 use crate::ftp::FtpFs;
 use crate::protocol::RemoteFileSystem;
-use crate::rsync::shell_quote;
 use crate::session::{Session, SessionManager};
+use crate::ssh::exec;
 use crate::ssh::HostKeyApproval;
 
 /// How long a request waits for a dropped connection to come back before it fails.
@@ -338,32 +336,18 @@ impl Backend for SessionBackend {
         if session.vault().is_some() {
             return None;
         }
-        let command = format!("{} -- {}", Algorithm::Sha256.command(), shell_quote(path));
-        let mut output = String::new();
-        let ran = tokio::time::timeout(
-            HASH_LIMIT,
-            remote_command::run_on(
-                &session,
-                &command,
-                None,
-                &CancellationToken::new(),
-                |stream, text| {
-                    if stream == OutputStream::Stdout {
-                        output.push_str(text);
-                    }
-                },
-            ),
-        )
-        .await;
-        let digest = match ran {
-            Ok(Ok(result)) if result.succeeded() => parse_output(&output, Algorithm::Sha256)
-                .into_iter()
-                .next()
-                .map(|(_, digest)| digest),
-            _ => None,
-        };
-        if digest.is_none() {
-            // Shell-less accounts and servers without the command stay that way.
+        // A name goes to the server's sha256sum in a script for `sh`, never on the exec line,
+        // where the account's login shell (fish, csh, ...) would read its quotes its own way.
+        let digest =
+            tokio::time::timeout(HASH_LIMIT, server_digest(&session, path, Algorithm::Sha256))
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .flatten();
+        // Shell-less accounts and servers without the command stay that way. A server without
+        // `sh` that runs the command itself (SFTPGo) hashes only names any shell reads alike, so
+        // a name with other characters says nothing about the next one.
+        if digest.is_none() && exec::portable(path) {
             self.cannot_hash.store(true, Ordering::Relaxed);
         }
         digest

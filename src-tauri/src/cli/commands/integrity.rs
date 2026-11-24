@@ -6,20 +6,17 @@ use serde_json::json;
 
 use super::browse::read_range;
 use super::{absolute_local, each, expand, missing};
-use crate::checksum::{hash_file, parse_output, Algorithm};
+use crate::checksum::{hash_file, server_digest, Algorithm};
 use crate::cli::args::{ChecksumArgs, HashAlgorithm, VerifyArgs};
 use crate::cli::context::{Connected, Context};
 use crate::cli::exit::Exit;
 use crate::cli::output::{plural, Reply};
 use crate::error::{AppError, AppResult};
 use crate::protocol::Protocol;
-use crate::rsync::{shell_quote, CommandOutput};
-use crate::ssh::exec::{self, CommandLine};
+use crate::rsync::shell_quote;
 use crate::sync::{
     SyncAction, SyncDirection, SyncManager, SyncOptions, SyncPlanView, SyncReason, SyncRequest,
 };
-
-const COMMAND_OUTPUT_LIMIT: usize = 64 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Method {
@@ -64,7 +61,7 @@ async fn remote_digest(
         return Err(AppError::invalid(format!("{path} is a folder")).with_path(path));
     }
     if !stream_only && connected.info.protocol == Protocol::Sftp {
-        match server_digest(connected, path, algorithm).await {
+        match server_digest(&connected.session, path, algorithm).await {
             Ok(Some(digest)) => return Ok((digest, Method::ServerCommand)),
             Ok(None) => log::info!(
                 "The server could not run {} on {path}; reading it instead",
@@ -80,40 +77,6 @@ async fn remote_digest(
     })
     .await?;
     Ok((hasher.finish(), Method::Streamed))
-}
-
-/// The server's digest of `path`: from its command under `sh`, or, on a server without `sh` that
-/// runs the command itself as SFTPGo does, from the command as a line of its own, when the path
-/// is one any login shell reads alike.
-async fn server_digest(
-    connected: &Connected,
-    path: &str,
-    algorithm: Algorithm,
-) -> AppResult<Option<Vec<u8>>> {
-    let channel = connected.session.open_command_channel().await?;
-    let script = format!("{} -- {}", algorithm.command(), shell_quote(path));
-    let output = exec::run_script(channel, &script, COMMAND_OUTPUT_LIMIT).await?;
-    if let Some(digest) = digest_from(&output, algorithm) {
-        return Ok(Some(digest));
-    }
-    // One file per command: SFTPGo hashes only the last argument.
-    let Some(line) = CommandLine::portable(&[algorithm.command(), "--"], &[path]) else {
-        return Ok(None);
-    };
-    let channel = connected.session.open_command_channel().await?;
-    let output = exec::run_line(channel, &line, COMMAND_OUTPUT_LIMIT).await?;
-    Ok(digest_from(&output, algorithm))
-}
-
-fn digest_from(output: &CommandOutput, algorithm: Algorithm) -> Option<Vec<u8>> {
-    if output.exit_status != Some(0) {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&output.output);
-    parse_output(&text, algorithm)
-        .into_iter()
-        .next()
-        .map(|(_, digest)| digest)
 }
 
 pub async fn checksum(context: &Context, arguments: &ChecksumArgs) -> AppResult<Reply> {

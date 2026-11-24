@@ -10,6 +10,7 @@
 //! wrote. Tests take turns, as they share the account's record of lines.
 
 use std::collections::BTreeSet;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::{Arc, Mutex};
@@ -23,6 +24,7 @@ use poros_lib::file_ops::{
     MoveCopyRequest, PermissionRequest, ServerFeatures,
 };
 use poros_lib::model::EntryKind;
+use poros_lib::mount::manager::{MountManager, MountRequest};
 use poros_lib::protocol::Protocol;
 use poros_lib::search::{
     Engine, Engines, KindFilter, PatternKind, SearchManager, SearchReport, SearchRequest,
@@ -895,6 +897,76 @@ async fn transfers_check_and_rsync_files_of_hostile_names() {
         .collect();
     assert!(unchecked.is_empty(), "{unchecked:#?}");
     fixture.assert_only_fixed_lines(&[]).await;
+    fixture.assert_nothing_ran().await;
+    fixture.close().await;
+}
+
+/// A drive checks each file a program writes with the server's `sha256sum`, given the name in a
+/// script for `sh`. Skipped where this computer cannot mount.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_drive_checks_uploads_of_hostile_names_with_the_servers_command() {
+    let Some(account) = account() else { return };
+    if let Some(missing) = MountManager::support().missing {
+        eprintln!("Skipped: {}", missing.problem);
+        return;
+    }
+    let _turn = ONE_AT_A_TIME.lock().await;
+    let fixture = Fixture::new(&account, "drive").await;
+    fixture.mkdir(HOSTILE_FOLDER).await;
+    // Uploads are verified and not read back, so each check is the server's command or none.
+    let mounts = MountManager::new(
+        fixture.manager.clone(),
+        Events::default(),
+        fixture.local.path().join("spool"),
+        Arc::new(|| (true, false)),
+    );
+    let at = fixture.local.path().join("drive");
+    let mounted = mounts
+        .mount(MountRequest {
+            session_id: fixture.session.id.clone(),
+            mount_point: at.to_string_lossy().into_owned(),
+            remote_root: fixture.path(HOSTILE_FOLDER),
+            read_only: false,
+        })
+        .await;
+    match mounted {
+        Ok(_) => {}
+        Err(error) if error.message.starts_with("Could not mount at") => {
+            eprintln!("Skipped: {}", error.message);
+            fixture.close().await;
+            return;
+        }
+        Err(error) => panic!("{}", error.message),
+    }
+    fixture.forget_exec_lines().await;
+
+    let drive = at.clone();
+    tokio::task::spawn_blocking(move || {
+        for (index, name) in HOSTILE_NAMES.iter().enumerate() {
+            let mut file = std::fs::File::create(drive.join(name))
+                .unwrap_or_else(|error| panic!("{name:?}: {error}"));
+            file.write_all(&pattern(900, index as u64)).unwrap();
+            // Waits for the upload and its check, and fails if the check found a difference.
+            file.sync_all()
+                .unwrap_or_else(|error| panic!("{name:?}: {error}"));
+        }
+    })
+    .await
+    .unwrap();
+    let lines = fixture.exec_lines().await;
+    mounts.unmount_all().await;
+
+    assert_eq!(
+        fixture.names(HOSTILE_FOLDER).await,
+        names_of(&HOSTILE_NAMES)
+    );
+    for (index, name) in HOSTILE_NAMES.iter().enumerate() {
+        let stored = fixture.read(&format!("{HOSTILE_FOLDER}/{name}")).await;
+        assert!(stored == pattern(900, index as u64), "{name:?}");
+    }
+    // One `sh -s` for each upload: every file was hashed under `sh`, and none was given to the
+    // login shell on a line of its own.
+    assert_eq!(lines, vec![SCRIPT_LINE; HOSTILE_NAMES.len()]);
     fixture.assert_nothing_ran().await;
     fixture.close().await;
 }

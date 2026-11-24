@@ -386,6 +386,8 @@ pub(crate) mod tests {
     /// No code starts a command or a shell on a server except through this module, so none can
     /// put a name on the line a login shell reads: the only others are the user's own commands,
     /// which alone may send text as it was written, and the terminal, which asks for a shell.
+    /// `remote_command::run_on` sends a command without names as it is, so only the places that
+    /// run what the user wrote call it (`run_on,` and `run_on}` catch it imported by name).
     #[test]
     fn only_this_module_sends_exec_requests() {
         let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -393,7 +395,15 @@ pub(crate) mod tests {
         sources_holding(
             &source,
             &source,
-            &[".exec(", "::exec(", "written_by_user", "request_shell"],
+            &[
+                ".exec(",
+                "::exec(",
+                "written_by_user",
+                "request_shell",
+                "remote_command::run_on",
+                "run_on,",
+                "run_on}",
+            ],
             &mut found,
         );
         found.retain(|(path, _)| path != "ssh/exec.rs");
@@ -405,6 +415,8 @@ pub(crate) mod tests {
                     "automation/remote_command.rs".to_string(),
                     "written_by_user"
                 ),
+                ("automation/runner.rs".to_string(), "remote_command::run_on"),
+                ("cli/commands/exec.rs".to_string(), "remote_command::run_on"),
                 ("terminal.rs".to_string(), "request_shell"),
             ]
         );
