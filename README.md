@@ -77,7 +77,9 @@
   differ.
 - **Preview** the file under the cursor beside the list: pictures, highlighted text and source code,
   a folder's pictures as thumbnails and a hex view of anything else, read only once the cursor rests
-  and only as far as needed.
+  and only as far as needed. Right-click a picture for Preview. Zoom any picture with the wheel, a
+  pinch or the small - and + buttons in its corner and drag it around, and click a thumbnail to open
+  that picture on its own and step through the others.
 - **Built-in editor** for text files up to 16 MiB, local or on any server, with syntax highlighting
   and find and replace. Each save uploads the file and warns first if it changed on the server.
 - **Open in any program**: a file opens in the program set up for its type, or one you choose, and
@@ -600,6 +602,9 @@ The Windows installers are not code-signed yet, so SmartScreen may warn about an
 | Ctrl + Shift + D                   | Compare the folders of two panes              |
 | F3                                 | Show or hide the preview                      |
 | Ctrl + Shift + P                   | Move the keyboard into the preview            |
+| +, -, 0 in the preview             | Zoom a picture in, out, back to fit the pane  |
+| Left, Right in the preview         | Previous, next picture opened from thumbnails |
+| Esc in the preview                 | Back to the thumbnails, else to the list      |
 | Tab                                | Switch pane                                   |
 | Backspace, Alt + Up                | Parent folder                                 |
 | Alt + Home                         | Home folder                                   |

@@ -4,8 +4,15 @@ export const preview = {
   // components/PreviewImage
   fitInThePane: "An den Bereich anpassen",
   showAtActualSize: "In Originalgröße zeigen",
+  zoom: "Zoom",
+  zoomIn: "Vergrößern",
+  zoomOut: "Verkleinern",
 
   // components/PreviewPane
+  backToAllPictures: "Zurück zu allen Bildern",
+  previousPicture: "Vorheriges Bild",
+  nextPicture: "Nächstes Bild",
+  pictureOfCount: "{index} von {count}",
   brokenLink: "Defekte Verknüpfung",
   notARegularFile: "Keine reguläre Datei",
   theFileThisLinkLeads: "Die Datei, auf die diese Verknüpfung zeigt, ist nicht vorhanden.",
@@ -107,6 +114,7 @@ export const preview = {
   dragToResizeDoubleClick: "Ziehen ändert die Größe, Doppelklick setzt sie zurück",
 
   // components/PreviewThumbnails
+  openPicture: "{name} öffnen",
   andMore: { one: "und {count} weiteres", other: "und {count} weitere" },
 
   // lib/previewLoad

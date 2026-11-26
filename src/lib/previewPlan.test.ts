@@ -6,6 +6,7 @@ import {
   changedSinceListed,
   firstStep,
   fitsThumbnail,
+  isPreviewablePicture,
   listsExactTimes,
   nextStep,
   paneStorage,
@@ -417,6 +418,29 @@ describe("summarize", () => {
       "b.JPG",
       "link.webp",
     ]);
+  });
+});
+
+describe("isPreviewablePicture", () => {
+  it("offers files and links to files named as pictures the preview shows, of any size", () => {
+    const offered = [
+      entry("a.png", 2000),
+      entry("B.JPEG", 3000),
+      entry("huge.webp", 40 * MEBIBYTE),
+      entry("empty.gif", 0),
+      entry("logo.svg", 900),
+      entry("link.avif", 11, { kind: "symlink", linkTarget: "file" }),
+    ];
+    const notOffered = [
+      entry("photos.png", 4096, { kind: "dir" }),
+      entry("broken.png", 11, { kind: "symlink", linkTarget: "broken" }),
+      entry("scan.tiff", 5000),
+      entry("raw.heic", 5000),
+      entry("notes.txt", 500),
+      entry("png", 500),
+    ];
+    expect(offered.filter(isPreviewablePicture)).toEqual(offered);
+    expect(notOffered.filter(isPreviewablePicture)).toEqual([]);
   });
 });
 

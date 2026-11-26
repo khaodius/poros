@@ -58,6 +58,7 @@ import {
 } from "lucide-react";
 import { useBackForwardButtons } from "../hooks/useBackForwardButtons";
 import { useFolderCompare, useHiddenIdentical } from "../hooks/useFolderCompare";
+import { useLatest } from "../hooks/useLatest";
 import { useListingPrefetch } from "../hooks/useListingPrefetch";
 import { usePane, type Focus } from "../hooks/usePane";
 import { useBucketVersioning, usePaneVersions } from "../hooks/usePaneVersions";
@@ -69,6 +70,7 @@ import { sameFilesystem, toLocation, worksInPlace, type FileOrigin } from "../li
 import type { FileSource } from "../lib/fileSource";
 import { PANE_KEYBOARD_TARGET } from "../lib/focus";
 import { FOCUS_PREVIEW_SHORTCUT, isFocusPreviewKey, nextPane } from "../lib/paneFocus";
+import { isPreviewablePicture } from "../lib/previewPlan";
 import { toAppError } from "../lib/ipc";
 import { englishCount, formatSize } from "../lib/format";
 import { baseName, exampleFileName, samePath } from "../lib/path";
@@ -376,6 +378,11 @@ export function FilePane({
   }
   const [pathEditRequest, setPathEditRequest] = useState(0);
   const previewOpen = usePreviewOpen(tabId);
+  /**
+   * The picture asked for with Preview in the menu, with the cursor and selection it was asked
+   * with: it applies until they change, and then the preview goes on as usual.
+   */
+  const [previewRequest, setPreviewRequest] = useState<{ path: string; at: string } | null>(null);
   const sectionRef = useRef<HTMLElement>(null);
   const filterRef = useRef<HTMLInputElement>(null);
   const writeLog = useLogStore((state) => state.write);
@@ -787,6 +794,12 @@ export function FilePane({
 
   const markActive = () => updatePane(tabId, { visible: true, activatedAt: Date.now() });
 
+  const previewSubjectAt = (shown: Pick<typeof pane, "cursorPath" | "selection">) =>
+    JSON.stringify([shown.cursorPath, [...shown.selection]]);
+  if (previewRequest && previewRequest.at !== previewSubjectAt(pane)) setPreviewRequest(null);
+  /** The pane as it is when a menu item is chosen, after the right-click moved the cursor. */
+  const latestPane = useLatest(pane);
+
   /** Opens or closes the preview. The keyboard goes back to the list if the preview had it. */
   const switchPreview = () => {
     const leaving = sectionRef.current?.querySelector(".preview")?.contains(document.activeElement);
@@ -812,6 +825,12 @@ export function FilePane({
     previewWantsFocus.current = false;
     focusPreview();
   }, [previewOpen]);
+
+  /** Preview in the menu: the picture in the preview, on its own among several selected. */
+  const previewPicture = (entry: FileEntry) => {
+    setPreviewRequest({ path: entry.path, at: previewSubjectAt(latestPane.current) });
+    goToPreview();
+  };
 
   const startDrag = (event: ReactPointerEvent<HTMLElement>, entry: FileEntry) => {
     if (deletions.has(entry.path)) return;
@@ -1282,6 +1301,16 @@ export function FilePane({
         : []),
       ...(entry && !isDirLike(entry)
         ? [
+            ...(isPreviewablePicture(entry)
+              ? [
+                  {
+                    label: t("preview.preview"),
+                    icon: <Eye size={14} />,
+                    shortcut: FOCUS_PREVIEW_SHORTCUT,
+                    onSelect: () => previewPicture(entry),
+                  },
+                ]
+              : []),
             ...openMenuItems(openTarget(entry), ownGroup()),
             {
               label: t("common.edit"),
@@ -1701,6 +1730,8 @@ export function FilePane({
                   onSwitchPane={focusNextPane}
                   onLeave={focusList}
                   leftOut={deletedPaths}
+                  request={previewRequest?.path ?? null}
+                  onRequestDone={() => setPreviewRequest(null)}
                 />
               ) : null
             }

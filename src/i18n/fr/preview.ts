@@ -4,8 +4,15 @@ export const preview = {
   // components/PreviewImage
   fitInThePane: "Ajuster au volet",
   showAtActualSize: "Afficher en taille réelle",
+  zoom: "Zoom",
+  zoomIn: "Zoom avant",
+  zoomOut: "Zoom arrière",
 
   // components/PreviewPane
+  backToAllPictures: "Retour à toutes les images",
+  previousPicture: "Image précédente",
+  nextPicture: "Image suivante",
+  pictureOfCount: "{index} sur {count}",
   brokenLink: "Lien rompu",
   notARegularFile: "Pas un fichier ordinaire",
   theFileThisLinkLeads: "Le fichier vers lequel pointe ce lien n’existe pas.",
@@ -118,6 +125,7 @@ export const preview = {
   dragToResizeDoubleClick: "Faites glisser pour redimensionner, double-cliquez pour rétablir",
 
   // components/PreviewThumbnails
+  openPicture: "Ouvrir {name}",
   andMore: { one: "et {count} autre", many: "et {count} d’autres", other: "et {count} autres" },
 
   // lib/previewLoad

@@ -8418,6 +8418,30 @@ textarea::placeholder {
   height: 22px;
 }
 
+.preview-header.has-back {
+  gap: 6px;
+  padding-left: 3px;
+}
+
+.preview-header .icon-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Previous, "3 of 10", next: the pictures beside the one opened from the thumbnails. */
+.preview-steps {
+  display: flex;
+  flex: none;
+  align-items: center;
+}
+
+.preview-steps-count {
+  color: var(--text-muted);
+  font-size: var(--font-size-tiny);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .preview-body {
   position: relative;
   flex: 1;
@@ -8436,35 +8460,101 @@ textarea::placeholder {
 
 /* A picture lies on a checkerboard, which shows through where the picture is see-through. */
 .preview-image {
-  display: flex;
+  position: relative;
   flex: 1;
   min-height: 0;
-  padding: 12px;
-  overflow: auto;
   background: var(--surface-sunken);
 }
 
-.preview-image-toggle {
-  display: flex;
-  flex: none;
-  margin: auto;
-  padding: 0;
-  background: none;
-  border: none;
-  border-radius: 0;
+/* Scrolls once the picture is zoomed past the pane. The component places and sizes the picture. */
+.preview-image-frame {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
   cursor: zoom-in;
+  touch-action: none;
 }
 
-.preview-image.is-actual-size .preview-image-toggle {
+.preview-image-frame.is-zoomed {
   cursor: zoom-out;
 }
 
-/* Sized by the component, which measures the space it is fitted in. */
+.preview-image-frame.can-pan {
+  cursor: grab;
+}
+
+.preview-image-frame.is-dragging {
+  cursor: grabbing;
+}
+
+.preview-image-canvas {
+  position: relative;
+  min-width: 100%;
+  min-height: 100%;
+}
+
 .preview-image img {
+  position: absolute;
   display: block;
+  max-width: none;
   background: repeating-conic-gradient(var(--surface-pressed) 0% 25%, var(--surface-raised) 0% 50%)
     0 0 / 16px 16px;
   box-shadow: 0 0 0 1px var(--border);
+}
+
+/* Out of the way until the pointer is over the picture or the preview has the keyboard. */
+.preview-zoom {
+  position: absolute;
+  right: calc(var(--scrollbar-size) + 6px);
+  bottom: calc(var(--scrollbar-size) + 6px);
+  display: flex;
+  align-items: center;
+  padding: 2px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+
+.preview-image:hover .preview-zoom,
+.preview:focus .preview-zoom,
+.preview-zoom:focus-within {
+  opacity: 1;
+}
+
+.preview-zoom-button,
+.preview-zoom-level {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
+  padding: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-tiny);
+  font-variant-numeric: tabular-nums;
+  background: none;
+  border: none;
+  border-radius: var(--radius-small);
+}
+
+.preview-zoom-button {
+  width: 20px;
+}
+
+.preview-zoom-level {
+  min-width: 40px;
+  padding: 0 4px;
+}
+
+.preview-zoom-button:hover:not(:disabled),
+.preview-zoom-level:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.preview-zoom-button:disabled {
+  opacity: 0.4;
 }
 
 .preview-notice {
@@ -8647,11 +8737,18 @@ textarea::placeholder {
   display: flex;
   align-items: center;
   justify-content: center;
+  width: 100%;
   aspect-ratio: 1;
+  padding: 0;
   overflow: hidden;
   background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: var(--radius-small);
+  cursor: zoom-in;
+}
+
+.preview-tile-picture:hover {
+  border-color: var(--accent);
 }
 
 .preview-tile-picture img {
