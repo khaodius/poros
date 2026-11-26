@@ -4,8 +4,15 @@ export const preview = {
   // components/PreviewImage
   fitInThePane: "Fit in the pane",
   showAtActualSize: "Show at actual size",
+  zoom: "Zoom",
+  zoomIn: "Zoom in",
+  zoomOut: "Zoom out",
 
   // components/PreviewPane
+  backToAllPictures: "Back to all pictures",
+  previousPicture: "Previous picture",
+  nextPicture: "Next picture",
+  pictureOfCount: "{index} of {count}",
   brokenLink: "Broken link",
   notARegularFile: "Not a regular file",
   theFileThisLinkLeads: "The file this link leads to is not there.",
@@ -103,6 +110,7 @@ export const preview = {
   dragToResizeDoubleClick: "Drag to resize, double-click to reset",
 
   // components/PreviewThumbnails
+  openPicture: "Open {name}",
   andMore: { one: "and {count} more", other: "and {count} more" },
 
   // lib/previewLoad

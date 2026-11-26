@@ -264,10 +264,15 @@ export function problemOf(error: AppError, inVault: boolean): Problem {
   }
 }
 
+/** Whether an item is a file whose name says it is a picture the preview shows. */
+export function isPreviewablePicture(entry: FileEntry): boolean {
+  const isFile = entry.kind === "file" || entry.linkTarget === "file";
+  return isFile && nameHint(entry.name) === "image";
+}
+
 /** Whether a file may be a picture the grid can draw, going by what its folder lists. */
 export function mayHaveThumbnail(entry: FileEntry, caps: Caps): boolean {
-  const isFile = entry.kind === "file" || entry.linkTarget === "file";
-  if (!isFile || nameHint(entry.name) !== "image") return false;
+  if (!isPreviewablePicture(entry)) return false;
   return !listsOwnSize(entry) || (entry.size > 0 && entry.size <= caps.imageBytes);
 }
 

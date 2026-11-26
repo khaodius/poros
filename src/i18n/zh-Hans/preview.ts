@@ -4,8 +4,15 @@ export const preview = {
   // components/PreviewImage
   fitInThePane: "适应窗格大小",
   showAtActualSize: "按实际大小显示",
+  zoom: "缩放",
+  zoomIn: "放大",
+  zoomOut: "缩小",
 
   // components/PreviewPane
+  backToAllPictures: "返回所有图片",
+  previousPicture: "上一张图片",
+  nextPicture: "下一张图片",
+  pictureOfCount: "第 {index} 张，共 {count} 张",
   brokenLink: "损坏的链接",
   notARegularFile: "不是普通文件",
   theFileThisLinkLeads: "此链接指向的文件不存在。",
@@ -99,6 +106,7 @@ export const preview = {
   dragToResizeDoubleClick: "拖动以调整大小，双击以重置",
 
   // components/PreviewThumbnails
+  openPicture: "打开 {name}",
   andMore: { other: "以及另外 {count} 项" },
 
   // lib/previewLoad

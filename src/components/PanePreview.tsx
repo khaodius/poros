@@ -19,6 +19,9 @@ interface PanePreviewProps {
   onLeave: () => void;
   /** Rows on show that are not there to read: deleted files shown among the others. */
   leftOut?: ReadonlySet<string>;
+  /** The picture asked for with Preview in the list's menu, while it still applies. */
+  request?: string | null;
+  onRequestDone?: () => void;
 }
 
 /**
@@ -35,6 +38,8 @@ export function PanePreview({
   onSwitchPane,
   onLeave,
   leftOut,
+  request,
+  onRequestDone,
 }: PanePreviewProps) {
   const remoteSession = source.kind === "remote" ? sessionId : undefined;
   // A vault's bytes come over the connection of the server it is on.
@@ -79,6 +84,8 @@ export function PanePreview({
       onRefresh={() => void refresh()}
       onSwitchPane={onSwitchPane}
       onLeave={onLeave}
+      request={request}
+      onRequestDone={onRequestDone}
     />
   );
 }

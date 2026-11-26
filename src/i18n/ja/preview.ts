@@ -4,8 +4,15 @@ export const preview = {
   // components/PreviewImage
   fitInThePane: "ペインに合わせる",
   showAtActualSize: "実際のサイズで表示",
+  zoom: "ズーム",
+  zoomIn: "拡大",
+  zoomOut: "縮小",
 
   // components/PreviewPane
+  backToAllPictures: "すべての画像に戻る",
+  previousPicture: "前の画像",
+  nextPicture: "次の画像",
+  pictureOfCount: "{index} / {count}",
   brokenLink: "リンク切れ",
   notARegularFile: "通常のファイルではありません",
   theFileThisLinkLeads: "このリンクの参照先のファイルがありません。",
@@ -104,6 +111,7 @@ export const preview = {
   dragToResizeDoubleClick: "ドラッグでサイズを変更、ダブルクリックで元に戻します",
 
   // components/PreviewThumbnails
+  openPicture: "{name} を開く",
   andMore: { other: "ほか {count} 個" },
 
   // lib/previewLoad

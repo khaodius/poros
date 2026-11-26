@@ -8,7 +8,10 @@ import {
   type ReactNode,
 } from "react";
 import {
+  ArrowLeft,
   Ban,
+  ChevronLeft,
+  ChevronRight,
   CircleSlash,
   Eye,
   FileCheck,
@@ -24,6 +27,7 @@ import {
   Unplug,
   type LucideIcon,
 } from "lucide-react";
+import { PreviewKeys, usePreviewKeys, type PreviewKeyHandler } from "../hooks/usePreviewKeys";
 import { useRestedLoad, type Rested } from "../hooks/useRestedLoad";
 import { formatDate, formatPermissions, formatSize } from "../lib/format";
 import type { FileView } from "../lib/previewLoad";
@@ -82,6 +86,13 @@ interface PreviewPaneProps {
   onSwitchPane: (from: HTMLElement) => void;
   /** Escape and Shift+Tab go back to the file list. */
   onLeave: () => void;
+  /**
+   * The picture asked for with Preview in the list's menu, while the cursor and selection stay
+   * as they were then. Among several selected pictures, it opens on its own.
+   */
+  request?: string | null;
+  /** The user went on from the picture asked for, to another or back to them all. */
+  onRequestDone?: () => void;
 }
 
 interface Handlers {
@@ -101,9 +112,12 @@ export function PreviewPane({
   onRefresh,
   onSwitchPane,
   onLeave,
+  request = null,
+  onRequestDone = () => undefined,
 }: PreviewPaneProps) {
   const t = useT();
   const settings = useSettingsStore((state) => state.settings.interface.preview);
+  const [keyHandlers] = useState(() => new Set<PreviewKeyHandler>());
   const caps = useMemo(() => capsOf(settings), [settings]);
   const shared = { place, caps, mode: settings.load[place.storage], dateFormat };
   const handlers = { onOpenInEditor, onRefresh };
@@ -116,6 +130,7 @@ export function PreviewPane({
         <FilePreview
           key={JSON.stringify([subject.entry.path, subject.entry.size, subject.entry.modified])}
           entry={subject.entry}
+          requested={request === subject.entry.path}
           {...shared}
           {...handlers}
         />
@@ -128,12 +143,20 @@ export function PreviewPane({
           entry={subject.entry}
           box={settings.thumbnailSize}
           {...shared}
+          {...handlers}
         />
       );
       break;
     case "selection":
       content = (
-        <SelectionPreview entries={subject.entries} box={settings.thumbnailSize} {...shared} />
+        <SelectionPreview
+          entries={subject.entries}
+          box={settings.thumbnailSize}
+          request={request}
+          onRequestDone={onRequestDone}
+          {...shared}
+          {...handlers}
+        />
       );
       break;
     case "special":
@@ -170,9 +193,18 @@ export function PreviewPane({
   // Arrow and page keys scroll what the preview shows, wherever in it that scrolls.
   const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.ctrlKey || event.metaKey || event.altKey) return;
+    for (const handler of keyHandlers) {
+      if (handler(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+    }
     const pane = event.currentTarget;
     const scroller =
-      pane.querySelector<HTMLElement>(".cm-scroller, .preview-image, .preview-scroll") ?? pane;
+      pane.querySelector<HTMLElement>(
+        ".cm-scroller, .preview-image-frame, .preview-scroll:not([hidden])",
+      ) ?? pane;
     const page = Math.max(LINE_SCROLL, scroller.clientHeight - LINE_SCROLL);
     const scrolls: Record<string, () => void> = {
       ArrowDown: () => scroller.scrollBy({ top: LINE_SCROLL }),
@@ -215,7 +247,7 @@ export function PreviewPane({
       onKeyDown={handleKeyDown}
       onMouseDown={keepFocus}
     >
-      {content}
+      <PreviewKeys.Provider value={keyHandlers}>{content}</PreviewKeys.Provider>
     </aside>
   );
 }
@@ -223,14 +255,18 @@ export function PreviewPane({
 function Header({
   icon,
   title,
+  before,
   children,
 }: {
   icon: ReactNode;
   title: string;
+  /** Ahead of the icon, as the way back to the pictures a picture was opened from. */
+  before?: ReactNode;
   children?: ReactNode;
 }) {
   return (
-    <header className="preview-header">
+    <header className={before ? "preview-header has-back" : "preview-header"}>
+      {before}
       {icon}
       <span className="preview-name" title={title}>
         {title}
@@ -458,6 +494,16 @@ function kindOf(view: FileView | null): string | undefined {
   return undefined;
 }
 
+interface FilePreviewProps extends SharedProps, Handlers {
+  entry: FileEntry;
+  /** The user asked for this file, so it loads without waiting for a rest or a click. */
+  requested?: boolean;
+  /** Goes back to the pictures this one was opened from. */
+  onBack?: () => void;
+  /** In the header after the name, as the way to the pictures beside this one. */
+  navigation?: ReactNode;
+}
+
 function FilePreview({
   entry,
   place,
@@ -466,7 +512,10 @@ function FilePreview({
   dateFormat,
   onOpenInEditor,
   onRefresh,
-}: SharedProps & Handlers & { entry: FileEntry }) {
+  requested = false,
+  onBack,
+  navigation,
+}: FilePreviewProps) {
   const t = useT();
   /** The user asked for a picture over the cap. */
   const [anyway, setAnyway] = useState(false);
@@ -491,7 +540,7 @@ function FilePreview({
     storage: place.storage,
     inVault: place.inVault,
     // What needs no read, as an empty file or a picture over the cap, shows without asking.
-    eager: anyway || firstStep(entry, caps, anyway, place.sizes).step === "show",
+    eager: anyway || requested || firstStep(entry, caps, anyway, place.sizes).step === "show",
     load: (signal) => readFileView(place, entry, caps, anyway, signal),
   });
   const view = state.status === "ready" ? state.result : null;
@@ -506,7 +555,24 @@ function FilePreview({
 
   return (
     <>
-      <Header icon={<FileIcon entry={entry} />} title={entry.name}>
+      <Header
+        icon={<FileIcon entry={entry} />}
+        title={entry.name}
+        before={
+          onBack && (
+            <button
+              type="button"
+              className="icon-button"
+              title={t("preview.backToAllPictures")}
+              aria-label={t("preview.backToAllPictures")}
+              onClick={onBack}
+            >
+              <ArrowLeft size={15} />
+            </button>
+          )
+        }
+      >
+        {navigation}
         {view?.view === "text" && (
           <button
             type="button"
@@ -696,12 +762,10 @@ function HexView({ bytes }: { bytes: Uint8Array }) {
 
 function FolderPreview({
   entry,
-  place,
-  caps,
-  mode,
-  dateFormat,
   box,
-}: SharedProps & { entry: FileEntry; box: number }) {
+  ...shared
+}: SharedProps & Handlers & { entry: FileEntry; box: number }) {
+  const { place, caps, mode, dateFormat } = shared;
   const t = useT();
   const { state, show } = useRestedLoad<DirListing>({
     key: JSON.stringify([place.connection, entry.path, entry.modified]),
@@ -746,7 +810,15 @@ function FolderPreview({
       />
     );
   } else if (summary && summary.pictures.length > 0) {
-    body = <Pictures place={place} pictures={summary.pictures} box={box} caps={caps} />;
+    return (
+      <Gallery
+        pictures={summary.pictures}
+        box={box}
+        header={<Header icon={<FileIcon entry={entry} />} title={entry.name} />}
+        details={<Details rows={rows} />}
+        {...shared}
+      />
+    );
   } else {
     body = (
       <Notice
@@ -770,17 +842,31 @@ function FolderPreview({
   );
 }
 
-function Pictures({
-  place,
-  pictures,
-  box,
-  caps,
-}: {
-  place: PreviewPlace;
+interface GalleryProps extends SharedProps, Handlers {
   pictures: FileEntry[];
   box: number;
-  caps: Caps;
-}) {
+  /** What the preview shows above and below the thumbnails, for the folder or selection. */
+  header: ReactNode;
+  details: ReactNode;
+  /** A picture among them to open, as asked for with Preview in the list's menu. */
+  request?: string | null;
+  onRequestDone?: () => void;
+}
+
+/**
+ * Thumbnails of pictures, each of which opens on its own in the preview, to zoom in on and to
+ * step through the others from. The thumbnails stay where they were scrolled to meanwhile.
+ */
+function Gallery({
+  pictures,
+  box,
+  header,
+  details,
+  request = null,
+  onRequestDone,
+  ...shared
+}: GalleryProps) {
+  const t = useT();
   const shown = useMemo(
     () =>
       [...pictures]
@@ -788,65 +874,157 @@ function Pictures({
         .slice(0, MAX_TILES),
     [pictures],
   );
-  return (
-    <div className="preview-body preview-scroll">
-      <PreviewThumbnails
-        place={place}
-        entries={shown}
-        total={pictures.length}
-        box={box}
-        caps={caps}
-      />
+  /** The picture opened from the thumbnails, or from one to the next. */
+  const [chosen, setChosen] = useState<string | null>(null);
+  const asked = request !== null && shown.some((picture) => picture.path === request);
+  const index = shown.findIndex((picture) => picture.path === (asked ? request : chosen));
+  const viewing = index >= 0 ? shown[index] : null;
+
+  const open = (path: string | null) => {
+    setChosen(path);
+    if (asked) onRequestDone?.();
+  };
+  const step = (by: 1 | -1) => {
+    const next = shown[index + by];
+    if (viewing && next) open(next.path);
+  };
+
+  usePreviewKeys((event) => {
+    if (!viewing) return false;
+    if (event.key === "Escape" || event.key === "Backspace") {
+      open(null);
+      return true;
+    }
+    if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && !event.shiftKey) {
+      // A picture zoomed wider than the pane scrolls with them instead.
+      const frame = event.currentTarget.querySelector(".preview-image-frame");
+      if (frame && frame.scrollWidth > frame.clientWidth) return false;
+      step(event.key === "ArrowRight" ? 1 : -1);
+      return true;
+    }
+    return false;
+  });
+
+  const navigation = viewing && shown.length > 1 && (
+    <div className="preview-steps">
+      <button
+        type="button"
+        className="icon-button"
+        title={t("preview.previousPicture")}
+        aria-label={t("preview.previousPicture")}
+        disabled={index === 0}
+        onClick={() => step(-1)}
+      >
+        <ChevronLeft size={15} />
+      </button>
+      <span className="preview-steps-count">
+        {t("preview.pictureOfCount", { index: index + 1, count: shown.length })}
+      </span>
+      <button
+        type="button"
+        className="icon-button"
+        title={t("preview.nextPicture")}
+        aria-label={t("preview.nextPicture")}
+        disabled={index === shown.length - 1}
+        onClick={() => step(1)}
+      >
+        <ChevronRight size={15} />
+      </button>
     </div>
+  );
+
+  return (
+    <>
+      {viewing ? (
+        <FilePreview
+          key={JSON.stringify([viewing.path, viewing.size, viewing.modified])}
+          entry={viewing}
+          requested
+          onBack={() => open(null)}
+          navigation={navigation}
+          {...shared}
+        />
+      ) : (
+        header
+      )}
+      <div className="preview-body preview-scroll" hidden={viewing !== null}>
+        <PreviewThumbnails
+          place={shared.place}
+          entries={shown}
+          total={pictures.length}
+          box={box}
+          caps={shared.caps}
+          onOpen={(picture) => open(picture.path)}
+        />
+      </div>
+      {!viewing && details}
+    </>
   );
 }
 
 function SelectionPreview({
   entries,
-  place,
-  caps,
-  mode,
   box,
-}: SharedProps & { entries: FileEntry[]; box: number }) {
+  request = null,
+  onRequestDone,
+  ...shared
+}: SharedProps &
+  Handlers & {
+    entries: FileEntry[];
+    box: number;
+    request?: string | null;
+    onRequestDone?: () => void;
+  }) {
   const t = useT();
+  const { caps, mode } = shared;
   const summary = useMemo(() => summarize(entries, caps), [entries, caps]);
   const selection = useMemo(() => selectionKey(entries), [entries]);
   /** The selection whose thumbnails the user asked for, where they do not load by themselves. */
   const [asked, setAsked] = useState("");
-  const waitsForClick = mode === "click" && asked !== selection;
+  // A picture asked for with Preview in the list's menu is as good as a click.
+  const requested = request !== null && summary.pictures.some((entry) => entry.path === request);
+  const waitsForClick = mode === "click" && asked !== selection && !requested;
   const rows: Row[] = [[t("preview.selected"), contentsText({ ...summary, bytes: 0 })]];
   if (summary.files > 0) rows.push([t("preview.totalSize"), sizeText(summary.bytes)]);
   if (summary.folders > 0) rows.push([t("preview.foldersRow"), t("preview.notCountedInTheSize")]);
 
-  let body: ReactNode;
-  if (summary.pictures.length === 0) {
-    body = (
-      <Notice
-        icon={Files}
-        title={t("preview.items", { count: entries.length })}
-        detail={summary.files > 0 ? formatSize(summary.bytes) : undefined}
+  const header = (
+    <Header
+      icon={<Files size={16} aria-hidden />}
+      title={t("preview.itemsSelected", { count: entries.length })}
+    />
+  );
+  if (summary.pictures.length > 0 && !waitsForClick) {
+    return (
+      <Gallery
+        pictures={summary.pictures}
+        box={box}
+        header={header}
+        details={<Details rows={rows} />}
+        request={request}
+        onRequestDone={onRequestDone}
+        {...shared}
       />
     );
-  } else if (waitsForClick) {
-    body = (
-      <Notice
-        icon={Eye}
-        title={t("preview.thumbnailsNotLoaded")}
-        detail={t("preview.thumbnailsNotLoadedDetail")}
-        action={{ label: t("preview.showPreview"), onSelect: () => setAsked(selection) }}
-      />
-    );
-  } else {
-    body = <Pictures place={place} pictures={summary.pictures} box={box} caps={caps} />;
   }
 
   return (
     <>
-      <Header
-        icon={<Files size={16} aria-hidden />}
-        title={t("preview.itemsSelected", { count: entries.length })}
-      />
-      {body}
+      {header}
+      {summary.pictures.length === 0 ? (
+        <Notice
+          icon={Files}
+          title={t("preview.items", { count: entries.length })}
+          detail={summary.files > 0 ? formatSize(summary.bytes) : undefined}
+        />
+      ) : (
+        <Notice
+          icon={Eye}
+          title={t("preview.thumbnailsNotLoaded")}
+          detail={t("preview.thumbnailsNotLoadedDetail")}
+          action={{ label: t("preview.showPreview"), onSelect: () => setAsked(selection) }}
+        />
+      )}
       <Details rows={rows} />
     </>
   );

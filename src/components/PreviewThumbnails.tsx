@@ -30,6 +30,8 @@ interface PreviewThumbnailsProps {
   /** The longer side of a thumbnail, in pixels. */
   box: number;
   caps: Caps;
+  /** Opens a picture on its own, larger. */
+  onOpen: (entry: FileEntry) => void;
 }
 
 /**
@@ -37,12 +39,26 @@ interface PreviewThumbnailsProps {
  * tiles on show are fetched, a few at a time, and one that scrolls away before its turn is
  * dropped from the line.
  */
-export function PreviewThumbnails({ place, entries, total, box, caps }: PreviewThumbnailsProps) {
+export function PreviewThumbnails({
+  place,
+  entries,
+  total,
+  box,
+  caps,
+  onOpen,
+}: PreviewThumbnailsProps) {
   const t = useT();
   return (
     <div className="preview-grid" style={{ "--thumbnail-size": `${box}px` } as CSSProperties}>
       {entries.map((entry) => (
-        <ThumbnailTile key={entry.path} place={place} entry={entry} box={box} caps={caps} />
+        <ThumbnailTile
+          key={entry.path}
+          place={place}
+          entry={entry}
+          box={box}
+          caps={caps}
+          onOpen={onOpen}
+        />
       ))}
       {total > entries.length && (
         <p className="preview-grid-more">
@@ -58,6 +74,7 @@ interface ThumbnailTileProps {
   entry: FileEntry;
   box: number;
   caps: Caps;
+  onOpen: (entry: FileEntry) => void;
 }
 
 interface Drawn {
@@ -67,8 +84,9 @@ interface Drawn {
   thumbnail: Thumbnail | null;
 }
 
-function ThumbnailTile({ place, entry, box, caps }: ThumbnailTileProps) {
-  const tileRef = useRef<HTMLDivElement>(null);
+function ThumbnailTile({ place, entry, box, caps, onOpen }: ThumbnailTileProps) {
+  const t = useT();
+  const tileRef = useRef<HTMLButtonElement>(null);
   const key = JSON.stringify([place.connection, entry.path, entry.size, entry.modified, box]);
   const [drawn, setDrawn] = useState<Drawn | null>(null);
   const latest = useRef({ place, entry, caps });
@@ -130,7 +148,15 @@ function ThumbnailTile({ place, entry, box, caps }: ThumbnailTileProps) {
 
   return (
     <figure className="preview-tile" title={entry.name}>
-      <div ref={tileRef} className="preview-tile-picture">
+      <button
+        type="button"
+        ref={tileRef}
+        className="preview-tile-picture"
+        // The preview keeps the keyboard, and Enter there is for the picture opened.
+        tabIndex={-1}
+        aria-label={t("preview.openPicture", { name: entry.name })}
+        onClick={() => onOpen(entry)}
+      >
         {thumbnail?.url ? (
           <img
             src={thumbnail.url}
@@ -148,7 +174,7 @@ function ThumbnailTile({ place, entry, box, caps }: ThumbnailTileProps) {
             <FileIcon entry={entry} size={PLACEHOLDER_ICON_SIZE} />
           </span>
         )}
-      </div>
+      </button>
       <figcaption>{entry.name}</figcaption>
     </figure>
   );
